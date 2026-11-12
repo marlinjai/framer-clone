@@ -9,6 +9,9 @@ import 'server-only';
 //      (auth-brain not answering                          -> 503 auth_unavailable, via withAuthAvailability)
 //   2. the request's active company with the `sites` grant, mapped to its workspace -> else 403
 //   3. site branches switched on for that company          -> else 404 not_found (as if the route did not exist)
+//      (skipped for the two requests that only end something, `endsOnly`: discarding a branch and revoking its
+//      public preview link. With the switch off a link is hidden, not gone, and would show again the day the
+//      switch returns; a person who wants it gone must be able to end it, plan decision 86.)
 //   4. the action's permission on that workspace           -> else 401/403
 //      (OpenFGA not answering                             -> 503 authz_unavailable)
 // The repository then resolves every id through that workspace: a site or branch of another company answers the
@@ -27,7 +30,11 @@ export type BranchGuardResult =
   | { ok: true; scope: TenantScope; companyId: string; userId: string }
   | { ok: false; response: Response };
 
-export async function guardBranchRoute(req: Request, action: FramerAction): Promise<BranchGuardResult> {
+export async function guardBranchRoute(
+  req: Request,
+  action: FramerAction,
+  options: { endsOnly?: boolean } = {},
+): Promise<BranchGuardResult> {
   if (!isEditorHost(req.headers.get('host'))) {
     return { ok: false, response: jsonError('not_found', 'not found', 404) };
   }
@@ -40,7 +47,7 @@ export async function guardBranchRoute(req: Request, action: FramerAction): Prom
     const denial = activeScopeDenial(scopeResult.error);
     return { ok: false, response: jsonError(denial.code, denial.message, 403) };
   }
-  if (!siteBranchesEnabled(scopeResult.companyId)) {
+  if (!options.endsOnly && !siteBranchesEnabled(scopeResult.companyId)) {
     return { ok: false, response: jsonError('not_found', 'not found', 404) };
   }
   const auth = await authenticateRequest(req, scopeResult.scope.workspaceId, action);

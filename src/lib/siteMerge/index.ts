@@ -13,6 +13,6 @@
 
 export { mergeDocuments, type DocumentMerge, type MergeDocument, type MergePage } from './document';
 export { mergedDocumentProblems, type MergeProblem, type ToProject } from './validate';
-export { diffDocuments, type DocumentChanges, type UnitChanges } from './diff';
+export { countChanges, diffDocuments, type DocumentChanges, type UnitChanges } from './diff';
 export { danglingReferences, type DanglingReference } from './references';
 export { conflictId, type ConflictKind, type MergeAnswers, type MergeConflict, type MergeSide, type MergeUnit } from './types';

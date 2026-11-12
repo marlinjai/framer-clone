@@ -86,7 +86,7 @@ describe('shownValue', () => {
 describe('reviewDocuments', () => {
   const base = doc([page('home', [node('a', { children: 'Hi' })]), page('about', [node('b')]), page('old', [node('o')])]);
 
-  it('lists changed, added and removed pages with their elements, and leaves unchanged ones out', () => {
+  it('lists changed pages with their elements, counts the elements of a page that is new or removed as a whole, and leaves unchanged ones out', () => {
     const after = doc(
       [page('home', [node('a', { children: 'Hello' })], { updatedAt: '2026-11-09' }), page('about', [node('b')], { updatedAt: '2026-11-10' }), page('team', [node('t', { children: 'Team' })])],
       { name: 'Renamed', siteSettings: { language: 'en' } },
@@ -97,8 +97,20 @@ describe('reviewDocuments', () => {
     expect(review.units.map((u) => [u.id, u.change])).toEqual([['home', 'changed'], ['team', 'added'], ['old', 'removed']]);
     const team = review.units.find((u) => u.id === 'team')!;
     expect(team).toMatchObject({ title: 'Title team', slug: { before: null, after: 'team' } });
-    expect(team.elements.map((e) => [e.id, e.kind])).toEqual([['root-team', 'added'], ['t', 'added']]);
-    expect(review.units.find((u) => u.id === 'old')!.elements.map((e) => e.kind)).toEqual(['removed', 'removed']);
+    // New or removed as a whole: counted, never listed element by element (a large new page was a thousand rows).
+    expect(team).toMatchObject({ elements: [], elementCount: 2 });
+    expect(review.units.find((u) => u.id === 'old')).toMatchObject({ elements: [], elementCount: 2 });
+    const home = review.units.find((u) => u.id === 'home')!;
+    expect(home.elements.map((e) => [e.id, e.kind])).toEqual([['a', 'changed']]);
+    expect(home.elementCount).toBeUndefined();
+  });
+
+  it('a new page of a thousand elements is one line of the review, not a thousand', () => {
+    const many = Array.from({ length: 1_000 }, (_, i) => node(`n${i}`, { children: `Text ${i}` }));
+    const review = reviewDocuments(base, doc([...base.pages, page('big', many)]));
+    const big = review.units.find((u) => u.id === 'big')!;
+    expect(big).toMatchObject({ change: 'added', elements: [], elementCount: 1_001 });
+    expect(JSON.stringify(review).length).toBeLessThan(2_000);
   });
 
   it('names a new address and changed page settings outside the elements', () => {
@@ -115,7 +127,8 @@ describe('reviewDocuments', () => {
     const units = reviewDocuments(withCard, changedCard).units;
     expect(units).toEqual([expect.objectContaining({ unit: 'component', id: 'card', title: 'Card', change: 'changed' })]);
     expect(units[0].elements).toEqual([expect.objectContaining({ id: 'c', kind: 'changed' })]);
-    expect(reviewDocuments(changedCard, base).units).toEqual([expect.objectContaining({ unit: 'component', id: 'card', change: 'removed' })]);
+    expect(reviewDocuments(changedCard, base).units).toEqual([expect.objectContaining({ unit: 'component', id: 'card', change: 'removed', elements: [], elementCount: 2 })]);
+    expect(reviewDocuments(base, withCard).units).toEqual([expect.objectContaining({ unit: 'component', id: 'card', change: 'added', elements: [], elementCount: 2 })]);
   });
 
   it('agrees with the counts of diffDocuments', () => {

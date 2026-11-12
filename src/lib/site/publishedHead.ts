@@ -300,3 +300,22 @@ export function buildBusinessJsonLd(input: SiteHeadInput): Record<string, unknow
 export function jsonLdScriptText(data: Record<string, unknown>): string {
   return JSON.stringify(data).replace(/</g, '\\u003c');
 }
+
+/**
+ * Metadata for a branch's public preview (site branches, slice S8): never indexed and never followed, with no
+ * canonical address, no Open Graph address and no manifest. The address of a preview is a secret that expires;
+ * nothing may point a search engine or a sharing card at it, or at the live site as if this were it.
+ */
+export function previewMetadata(metadata: Metadata): Metadata {
+  const { alternates: _alternates, manifest: _manifest, metadataBase: _base, ...rest } = metadata;
+  void _alternates;
+  void _manifest;
+  void _base;
+  const openGraph = rest.openGraph ? { ...rest.openGraph } : undefined;
+  if (openGraph) delete (openGraph as { url?: unknown }).url;
+  return {
+    ...rest,
+    ...(openGraph ? { openGraph } : {}),
+    robots: { index: false, follow: false, noarchive: true },
+  };
+}

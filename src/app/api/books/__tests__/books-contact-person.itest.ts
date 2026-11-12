@@ -280,12 +280,13 @@ describe('contact persons on an invoice: forward', () => {
     expect(read.json.contactPersons).toBeNull();
   });
 
-  it('an invoice without a contact person freezes a version 2 snapshot with none', async () => {
+  it('an invoice without a contact person freezes a version 1 snapshot (readable by the build before contact persons)', async () => {
     const customer = await business();
     const id = await draftFor(customer.id);
     expect((await api.issue(id)).status).toBe(200);
     const view = await getDocument(scopeFor(env.appDb, env.tgId, tenantId, dir), id);
-    expect(view.document.customerSnapshot).toMatchObject({ v: 2, contactPerson: null });
+    expect(view.document.customerSnapshot).toMatchObject({ v: 1 });
+    expect(view.document.customerSnapshot).not.toHaveProperty('contactPerson');
     expect((await api.get(id)).json.contactPerson).toBeNull();
   });
 
@@ -409,7 +410,7 @@ describe('contact persons on an invoice: resume', () => {
     await api.setPerson(id, { contactPersonId: null });
     expect((await api.issue(id)).status).toBe(200);
     const view = await getDocument(scopeFor(env.appDb, env.tgId, tenantId, dir), id);
-    expect(view.document.customerSnapshot).toMatchObject({ v: 2, contactPerson: null });
+    expect(view.document.customerSnapshot).toMatchObject({ v: 1 });
   });
 
   it('an archived person (and an erased one) also stops the issue', async () => {

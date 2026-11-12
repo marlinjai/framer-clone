@@ -1,7 +1,7 @@
 {
   "comparedWith": {
     "file": "docs/primitives-score/latest.json",
-    "generatedAt": "2026-11-12T01:27:58.787Z",
+    "generatedAt": "2026-11-12T03:30:01.984Z",
     "included": 1845
   },
   "framerPlugin": {
@@ -19,7 +19,7 @@
     },
     "framerTyped": 549,
     "ourRenderer": 1796,
-    "ourPanel": 1241,
+    "ourPanel": 1244,
     "documentedNotMeasured": 83
   },
   "byKind": [
@@ -307,7 +307,7 @@
       },
       "framerTyped": 0,
       "ourRenderer": 3,
-      "ourPanel": 0,
+      "ourPanel": 3,
       "framerTypedOursFails": 0,
       "oursPassesFramerUntyped": 3,
       "framerTypedPanelFails": 0
@@ -10430,9 +10430,11 @@
       "id": "scene:godrays-hero",
       "verdict": "unknown",
       "reason": "an FX scene of this app's own engine, which this mapping has not settled",
-      "symbols": [],
+      "symbols": [
+        "ComponentNode"
+      ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "fx-scene:scene:hub-hero",
@@ -10440,9 +10442,11 @@
       "id": "scene:hub-hero",
       "verdict": "unknown",
       "reason": "an FX scene of this app's own engine, which this mapping has not settled",
-      "symbols": [],
+      "symbols": [
+        "ComponentNode"
+      ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "fx-scene:scene:noise-gradient",
@@ -10450,9 +10454,11 @@
       "id": "scene:noise-gradient",
       "verdict": "unknown",
       "reason": "an FX scene of this app's own engine, which this mapping has not settled",
-      "symbols": [],
+      "symbols": [
+        "ComponentNode"
+      ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-element-attribute:a.download",

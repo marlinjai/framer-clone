@@ -98,10 +98,12 @@ export const REFUSED_RENDER_ATTRIBUTES: ReadonlySet<string> = new Set(words(`
  * `data-fc-theme` and its `-mode` and `-sheet` forms belong to the theme sheet
  * (src/lib/site/theme.ts): a stored node carrying `data-fc-theme="frame"` would take
  * the page background on a surface, and one carrying the mode would show the other mode.
+ * `data-fc-preview-` marks the band of a branch's public preview (src/server/sites/renderSitePage.tsx): a stored
+ * node may not pass for it.
  * `data-fc-map-` belongs to the map embed (src/lib/renderer/mapEmbed): its button
  * records consent, so a stored node must not be able to look like one.
  */
-const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|map(?:-|$)|site-base|page-base|fonts|effects|rules|responsive|behaviour|theme|b$)/;
+const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|map(?:-|$)|site-base|page-base|fonts|effects|rules|responsive|behaviour|theme|preview(?:-|$)|b$)/;
 
 /** A custom element's shape. A colon would let createElementNS read `x-y:script` as `script`. */
 const CUSTOM_ELEMENT = /^[a-z][a-z0-9._]*-[a-z0-9._-]*$/;

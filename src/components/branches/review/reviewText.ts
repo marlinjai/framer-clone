@@ -17,8 +17,35 @@ export function valueText(value: unknown): string {
     const characters = (value as { characters?: unknown }).characters;
     return typeof characters === 'number' ? `${characters.toLocaleString('en')} characters, too long to show here` : 'too long to show here';
   }
-  const json = JSON.stringify(value);
-  return json.length > 160 ? `${json.slice(0, 157)}...` : json;
+  // Never raw data: a site owner reads "3 items" or which settings a group holds, not JSON.
+  if (Array.isArray(value)) return value.length === 1 ? '1 item' : `${value.length} items`;
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (keys.length === 0) return 'empty';
+  const named = keys.slice(0, 3).map((key) => fieldText(key)).join(', ');
+  return keys.length > 3 ? `${named} and ${keys.length - 3} more` : named;
+}
+
+/**
+ * One answer to a question, as the button says it: what choosing this side does, in a sentence. A removal against
+ * a change reads "Remove it" and "Keep it, with its changes" (plan section 5, rule 6); a place or an order names
+ * whose it is; a value shows the value.
+ */
+export function choiceText(conflict: ShownConflictJson, side: 'main' | 'branch', mainName: string): string {
+  const whose = side === 'main' ? mainName : 'the branch';
+  if (conflict.removedOn) return conflict.removedOn === side ? `Remove it, as ${whose} did` : `Keep it, with the changes ${whose} made`;
+  switch (conflict.kind) {
+    case 'moved':
+    case 'cycle':
+      return `Put it where ${whose} put it`;
+    case 'order':
+      return `Use the order ${whose} has`;
+    case 'added-twice':
+      return `Keep the one ${whose} added`;
+    case 'slug':
+      return `${side === 'main' ? mainName : 'Branch'} keeps this address: ${valueText(side === 'main' ? conflict.main : conflict.branch)}`;
+    default:
+      return `${side === 'main' ? mainName : 'Branch'}: ${valueText(side === 'main' ? conflict.main : conflict.branch)}`;
+  }
 }
 
 const FIELD_NAMES: Record<string, string> = {
@@ -52,12 +79,12 @@ export function conflictText(conflict: ShownConflictJson, review: DocumentReview
 }
 
 const CONFLICT_KIND_TEXT: Record<string, string> = {
-  moved: 'moved on both sides',
-  order: 'order changed on both sides',
-  removed: 'removed on one side, changed on the other',
-  'added-twice': 'added on both sides',
+  moved: 'moved to two different places',
+  order: 'put in two different orders',
+  removed: 'removed in one place, changed in the other',
+  'added-twice': 'added in both places',
   cycle: 'moved into each other',
-  slug: 'address taken on both sides',
+  slug: 'the same address used twice',
 };
 
 function elementLabel(review: DocumentReview | undefined, container: string | undefined, id: string): string | null {
@@ -74,7 +101,8 @@ export function reviewTotals(review: DocumentReview): { pages: number; component
   return {
     pages: review.units.filter((u) => u.unit === 'page').length,
     components: review.units.filter((u) => u.unit === 'component').length,
-    elements: review.units.reduce((n, u) => n + u.elements.length, 0),
+    // A page or component that is new or removed as a whole counts with every element it holds.
+    elements: review.units.reduce((n, u) => n + (u.elementCount ?? u.elements.length), 0),
     settings: review.site.length + review.settings.length + (review.pageOrder ? 1 : 0),
   };
 }
@@ -119,6 +147,9 @@ export function mergeBlocker(review: BranchReviewJson, canMerge: boolean | undef
   if (canMerge === false) return 'Only an admin of this workspace may merge.';
   if (review.conflicts.length > 0) return `${review.conflicts.length === 1 ? 'One question needs' : `${review.conflicts.length} questions need`} an answer first.`;
   if (review.problems.length > 0) return review.problems[0].message;
-  if (review.review && totalsText(review.review) === 'No changes yet' && review.upToDate) return 'The branch changes nothing yet.';
+  // The server's own word (what a merge would write), not the change list's totals: a branch that only moves
+  // frames on the editor's canvas lists no element and can still be merged.
+  const nothing = review.unchanged ?? (review.review ? totalsText(review.review) === 'No changes yet' : false);
+  if (nothing && review.upToDate) return 'The branch changes nothing yet.';
   return null;
 }

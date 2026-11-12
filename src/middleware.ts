@@ -4,7 +4,8 @@ import type { NextRequest } from 'next/server';
 // that pulls `server-only` + Prisma, which cannot run in the edge middleware.
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
-import { publishedHostAllows, routeFor } from '@/lib/hostRoutes';
+import { previewHostAllows, publishedHostAllows, routeFor } from '@/lib/hostRoutes';
+import { isPreviewHost } from '@/lib/sites/previewHost';
 import { CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, reportOnlyPolicy } from '@/lib/site/cspReportOnly';
 // The dependency-free bearer test, NOT src/lib/auth-machine.ts: that pulls the
 // auth-brain SDK and `server-only`, which cannot run in the edge middleware.
@@ -232,7 +233,69 @@ function refuseOnPublishedHost(request: NextRequest, routePath: string): NextRes
   });
 }
 
+/**
+ * What every answer of a preview host carries (a branch's public preview link,
+ * src/lib/sites/previewHost.ts), a refusal included. The address is the
+ * secret, so:
+ *   - never indexed (`x-robots-tag`), whatever the page's own metadata says;
+ *   - never stored by a browser or a shared cache: a revoked link must stop
+ *     working at once, also from a cache;
+ *   - never sent on as a referrer: a link on the page, or a font or picture
+ *     loaded from elsewhere, would hand the address to that site;
+ *   - never framed: the page is the branch, shown to whoever holds the link.
+ */
+function withPreviewHeaders(response: NextResponse | Response): NextResponse | Response {
+  response.headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
+  response.headers.set('cache-control', 'private, no-store');
+  response.headers.set('referrer-policy', 'no-referrer');
+  response.headers.set('content-security-policy', "frame-ancestors 'none'");
+  response.headers.set('x-frame-options', 'DENY');
+  return response;
+}
+
+/**
+ * A preview host: the site pages and the catalogue reads their shop parts
+ * make, as reads, and nothing else. Not a published host, so the published
+ * allowlist does not apply: no form submit, no order, no payment, no report,
+ * no other API, no server action, and no method but GET and HEAD. The page
+ * decides whether the link exists (a database read the edge cannot make) and
+ * answers 404 when it does not.
+ */
+function routePreview(request: NextRequest): NextResponse {
+  const { pathname } = request.nextUrl;
+  const routePath = pathname === '/' ? `/${HOME_REWRITE_SENTINEL}` : pathname;
+  const isApi = isUnder(normalizedPath(routePath), '/api');
+  const allowed =
+    !request.headers.has('next-action') &&
+    isEditorPlanePath(routePath) === null &&
+    previewHostAllows(routePath, request.method) &&
+    // An `/api` path must name a preview API route (the catalogue reads), never fall through to the site pages.
+    (!isApi || (routeFor(routePath)?.route.startsWith('/api/') ?? false));
+  if (!allowed) {
+    if (isApi) return NextResponse.json({ error: { code: 'not_found', message: 'not found' } }, { status: 404 });
+    // Said in words too: a form posted without JavaScript lands here.
+    return new NextResponse('Not found. This is a preview: nothing can be sent from it.', {
+      status: 404,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+    });
+  }
+  // No cookie travels on: a preview reads nothing from the visitor, and the
+  // apex session the browser still sends must never reach a handler here.
+  const headers = new Headers(request.headers);
+  headers.delete('cookie');
+  headers.delete('authorization');
+  const init = { request: { headers } };
+  const response =
+    pathname === '/' ? NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url), init) : NextResponse.next(init);
+  // No report-only policy: its reports are posted to the page's own host, and a preview host takes no post.
+  return response;
+}
+
 export async function middleware(request: NextRequest) {
+  // Before everything else, and only by the host's shape: a preview host is
+  // never the editor and never a published site.
+  const host = request.headers.get('host');
+  if (!isEditorHostname(host) && isPreviewHost(host)) return withPreviewHeaders(routePreview(request));
   return withFrameGuard(request, await route(request));
 }
 

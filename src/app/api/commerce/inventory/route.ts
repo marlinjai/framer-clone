@@ -30,12 +30,12 @@
 // authorized per-project route; THIS route only decides the tenant, from the
 // request HOST and never from a session (D2 / D4).
 
-import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
+import { resolveStorefrontCommerceForRead } from '@/server/commerce/storefrontTenant';
 import { handleInventory } from '@/server/commerce/readHandlers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request): Promise<Response> {
-  return handleInventory(req, () => resolveStorefrontCommerce(req.headers.get('host')));
+  return handleInventory(req, () => resolveStorefrontCommerceForRead(req.headers.get('host')));
 }

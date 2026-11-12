@@ -79,6 +79,11 @@ export interface RenderPublishedPageInput {
   /** Resolved analytics binding; injection is gated on `enabled` + a public key. */
   analytics?: ResolvedAnalytics;
   /**
+   * Set when this is a branch's public preview, not a published page: the sentence every form and the checkout
+   * show instead of sending anything.
+   */
+  unavailable?: string | null;
+  /**
    * Where the site's product page lives (`/products` for `products/:handle`,
    * productPagePath in src/lib/pages/slug.ts), or null when it has none: the
    * base of every `{{product.href}}` link.
@@ -179,7 +184,7 @@ function resolveTracker(analytics: ResolvedAnalytics | undefined): TrackerPayloa
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent, theme } = input;
+  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, unavailable = null, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent, theme } = input;
   const tracker = resolveTracker(analytics);
 
   const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo }, productPagePath, budget);
@@ -282,7 +287,7 @@ export async function renderPublishedPage(
           // the consent banner above it. Constant text apart from numbers.
           <style data-fc-sticky-cta-style="" dangerouslySetInnerHTML={{ __html: stickyCtaCss(breakpoints) }} />
         ) : null}
-        <CommercePageProviders language={consent?.language}>{tree}</CommercePageProviders>
+        <CommercePageProviders language={consent?.language} unavailable={unavailable}>{tree}</CommercePageProviders>
         {sticky.bar ? (
           // Measures the bar for the page padding (a fallback height applies without it).
           <script data-fc-sticky-cta-measure="" dangerouslySetInnerHTML={{ __html: stickyCtaMeasureScript() }} />

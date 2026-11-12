@@ -25,7 +25,9 @@ import 'server-only';
 
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { UPDATE_FROM_MAIN_LABEL } from '@/lib/sites/branchLabels';
 import {
+  countChanges,
   diffDocuments,
   mergeDocuments,
   mergedDocumentProblems,
@@ -37,10 +39,12 @@ import {
 } from '@/lib/siteMerge';
 import { stableStringify } from '@/lib/ai/serializers/normalize';
 // A conflict value larger than 4,096 characters (as JSON) is shown as its size: a removed page is a whole page.
-import { reviewDocuments, shownValue, type DocumentReview } from '@/lib/siteMerge/elementChanges';
+import { reviewDocuments, shownConflictValue, type DocumentReview } from '@/lib/siteMerge/elementChanges';
 import { getPrismaClient } from '@/server/db';
 import {
   BranchClosedError,
+  BranchUnchangedError,
+  SiteNeedsRepublishError,
   BranchConflictsError,
   BranchMergeInvalidError,
   BranchNotFoundError,
@@ -101,6 +105,8 @@ export interface BranchReview {
   upToDate: boolean;
   /** What the branch changed since its fork point. */
   branchChanges: DocumentChanges;
+  /** The branch changes nothing a merge would write (countChanges is zero): a merge is refused. */
+  unchanged: boolean;
   /** What main changed since the fork point; null when up to date. */
   mainChanges: DocumentChanges | null;
   /** Conflicts of bringing main in that still need an answer; empty when up to date. */
@@ -111,6 +117,12 @@ export interface BranchReview {
   review: DocumentReview;
   /** The versions the review was computed from: a page drawn from older reads reloads (S5). */
   versions: { main: number; branch: number };
+  /**
+   * A short key over everything this review was computed from: the token's state and the record as last
+   * written (its answers, its ready and approval marks, its name and note). A page that holds a review asks
+   * with it, and is told `current` by a read of three small rows instead of a new computation.
+   */
+  state: string;
   /** Why the result would not be a valid site, once no conflict is open. */
   problems: Array<{ code: string; message: string; pageId?: string; componentId?: string }>;
 }
@@ -141,6 +153,8 @@ interface Stamp {
   mergedMainVersion: number | null;
   /** On a merged branch whose merge was undone: the branch that took the merged work. */
   undoneIntoBranchId: string | null;
+  /** When the record was last written: every change of its answers and its review marks moves it. */
+  recordUpdatedAt: Date;
 }
 
 /** A stamp of an open branch, with the three documents read in the same snapshot. */
@@ -167,6 +181,11 @@ export function reviewToken(stamp: Pick<Stamp, 'baseVersion' | 'mainVersion' | '
     .slice(0, 32);
 }
 
+/** The key of {@link BranchReview.state}: the token and the moment the record was last written. Not a secret. */
+export function reviewStateKey(token: string, recordUpdatedAt: Date): string {
+  return createHash('sha256').update(JSON.stringify([token, recordUpdatedAt.getTime()])).digest('base64url').slice(0, 32);
+}
+
 /** A draft's answers, read defensively: anything malformed (or a draft from before this shape) reads as none. */
 export function draftAnswers(raw: Prisma.JsonValue | null | undefined): Record<string, { fingerprint: string; pick: MergeSide }> {
   const out: Record<string, { fingerprint: string; pick: MergeSide }> = {};
@@ -191,7 +210,8 @@ function draftOf(answers: Record<string, { fingerprint: string; pick: MergeSide 
 
 
 function shown(conflict: MergeConflict): ShownConflict {
-  return { ...conflict, base: shownValue(conflict.base), main: shownValue(conflict.main), branch: shownValue(conflict.branch) };
+  const value = (v: unknown) => shownConflictValue(conflict.unit.kind, conflict.path, v);
+  return { ...conflict, base: value(conflict.base), main: value(conflict.main), branch: value(conflict.branch) };
 }
 
 /** Text a person typed, for storing: control and bidirectional characters removed, trimmed, bounded. */
@@ -216,6 +236,27 @@ async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Refuses a write of main's working copy by site branches (a merge, an undo) while visitors are served that
+ * working copy: a published site with no frozen revision, which only data from before the immutable published
+ * copy can be (every publish since freezes one). Under main's row lock, in the writing transaction.
+ */
+async function assertNotServedFromWorkingCopy(tx: Prisma.TransactionClient, scope: TenantScope, mainSiteId: string): Promise<void> {
+  const live = await tx.site.findFirst({
+    where: { id: mainSiteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
+    select: { status: true, publishedRevisionId: true },
+  });
+  if (live?.status === 'published' && live.publishedRevisionId === null) throw new SiteNeedsRepublishError();
+}
+
+/**
+ * Whether merging `branch`, forked at `base`, would write nothing: no change the diff counts, and the site's name
+ * (which a merge carries beside the document, and the diff leaves out) the same.
+ */
+function changesNothing(base: MergeDocument, branch: MergeDocument): boolean {
+  return branch.name === base.name && countChanges(diffDocuments(base, branch)) === 0;
+}
+
 export class SiteBranchMergeService {
   private readonly branches: SiteBranchRepository;
 
@@ -235,7 +276,7 @@ export class SiteBranchMergeService {
   private async stamp(client: Prisma.TransactionClient | PrismaClient, scope: TenantScope, branchId: string): Promise<Stamp> {
     const record = await client.siteBranch.findFirst({
       where: { id: branchId, workspaceId: scope.workspaceId },
-      select: { siteId: true, status: true, name: true, baseVersion: true, mergeDraft: true, mergedMainVersion: true, undoneIntoBranchId: true },
+      select: { siteId: true, status: true, name: true, baseVersion: true, mergeDraft: true, mergedMainVersion: true, undoneIntoBranchId: true, updatedAt: true },
     });
     if (!record) throw new SiteNotFoundError(branchId);
     const main = await client.site.findFirst({
@@ -265,6 +306,7 @@ export class SiteBranchMergeService {
       mergeDraft: record.mergeDraft,
       mergedMainVersion: record.mergedMainVersion,
       undoneIntoBranchId: record.status === 'merged' ? record.undoneIntoBranchId : null,
+      recordUpdatedAt: record.updatedAt,
     };
   }
 
@@ -332,16 +374,18 @@ export class SiteBranchMergeService {
     stamp: Stamp,
     kept: Record<string, { fingerprint: string; pick: MergeSide }>,
     checked = false,
-  ): Promise<boolean> {
+  ): Promise<{ kept: boolean; recordUpdatedAt: Date }> {
     const same = stableStringify(draftAnswers(stamp.mergeDraft)) === stableStringify(kept);
-    if (same && !checked) return true;
+    if (same && !checked) return { kept: true, recordUpdatedAt: stamp.recordUpdatedAt };
     return this.prisma.$transaction(async (tx) => {
       await this.lockPair(tx, scope, stamp);
       const now = await this.stamp(tx, scope, stamp.branchId);
-      if (reviewToken(now) !== reviewToken(stamp) || stableStringify(now.mergeDraft) !== stableStringify(stamp.mergeDraft)) return false;
-      if (same) return true;
-      await tx.siteBranch.update({ where: { id: stamp.branchId }, data: { mergeDraft: draftOf(kept) } });
-      return true;
+      if (reviewToken(now) !== reviewToken(stamp) || stableStringify(now.mergeDraft) !== stableStringify(stamp.mergeDraft)) {
+        return { kept: false, recordUpdatedAt: now.recordUpdatedAt };
+      }
+      if (same) return { kept: true, recordUpdatedAt: now.recordUpdatedAt };
+      const written = await tx.siteBranch.update({ where: { id: stamp.branchId }, data: { mergeDraft: draftOf(kept) }, select: { updatedAt: true } });
+      return { kept: true, recordUpdatedAt: written.updatedAt };
     });
   }
 
@@ -360,38 +404,61 @@ export class SiteBranchMergeService {
     return now;
   }
 
-  /** The review of a branch. A read: it writes nothing but the pruning of answers that no longer apply. */
-  async changes(scope: TenantScope, branchId: string): Promise<BranchReview> {
+  /**
+   * The key of a branch's review as it would be computed now, by the stamp alone: three small rows, no
+   * document. Equal to the `state` of a review a page holds: that review is still the one. A closed branch
+   * throws as the review does.
+   */
+  async reviewState(scope: TenantScope, branchId: string): Promise<string> {
     assertScope(scope);
+    const stamp = await this.stamp(this.prisma, scope, branchId);
+    this.open(stamp);
+    return reviewStateKey(reviewToken(stamp), stamp.recordUpdatedAt);
+  }
+
+  /**
+   * The review of a branch. A read: it writes nothing but the pruning of answers that no longer apply.
+   * With `ifState` (the `state` of the review the caller holds): `{ current: true }` when nothing it was
+   * computed from moved, without reading a document.
+   */
+  async changes(scope: TenantScope, branchId: string): Promise<BranchReview>;
+  async changes(scope: TenantScope, branchId: string, ifState: string | undefined): Promise<BranchReview | { current: true; state: string }>;
+  async changes(scope: TenantScope, branchId: string, ifState?: string): Promise<BranchReview | { current: true; state: string }> {
+    assertScope(scope);
+    if (ifState !== undefined && (await this.reviewState(scope, branchId)) === ifState) return { current: true, state: ifState };
     const state = await this.readState(scope, branchId);
+    const brought = this.upToDate(state) ? null : this.bringMainIn(state, draftAnswers(state.stamp.mergeDraft));
+    const kept = brought ? Object.fromEntries(brought.merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }])) : {};
+    const stored = await this.keepDraft(scope, state.stamp, kept);
+    // The key of what was read. When the pruning above wrote, or another write landed meanwhile, the next ask
+    // with this key computes once more: never the other way round, a newer key over an older review.
+    const at = stored.kept ? stored.recordUpdatedAt : state.stamp.recordUpdatedAt;
+    return this.reviewOf(scope, state, brought, at);
+  }
+
+  /** The review of a state already read and, when the branch is behind main, already merged with its answers. */
+  private async reviewOf(
+    scope: TenantScope,
+    state: ReviewState,
+    brought: ReturnType<SiteBranchMergeService['bringMainIn']> | null,
+    recordUpdatedAt: Date,
+  ): Promise<BranchReview> {
     const { stamp } = state;
-    const upToDate = this.upToDate(state);
-    const answers = draftAnswers(stamp.mergeDraft);
-    let conflicts: ShownConflict[] = [];
-    let settled: BranchReview['settled'] = [];
-    let problems: BranchReview['problems'] = [];
-    let kept: Record<string, { fingerprint: string; pick: MergeSide }> = {};
-    if (upToDate) {
-      problems = mergedDocumentProblems(state.branch, state.main, toProjectSnapshot);
-    } else {
-      const brought = this.bringMainIn(state, answers);
-      conflicts = brought.merge.conflicts.map(shown);
-      settled = brought.merge.settled.map(({ conflict, pick }) => ({ id: conflict.id, pick, conflict: shown(conflict) }));
-      kept = Object.fromEntries(brought.merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
-      problems = brought.problems;
-    }
-    await this.keepDraft(scope, stamp, kept);
+    const upToDate = brought === null;
+    const token = reviewToken(stamp);
     return {
-      branch: await this.branches.getBranch(scope, stamp.mainId, branchId),
-      token: reviewToken(stamp),
+      branch: await this.branches.getBranch(scope, stamp.mainId, stamp.branchId),
+      token,
       upToDate,
       branchChanges: diffDocuments(state.base, state.branch),
+      unchanged: changesNothing(state.base, state.branch),
       mainChanges: upToDate ? null : diffDocuments(state.base, state.main),
-      conflicts,
-      settled,
-      problems,
+      conflicts: brought ? brought.merge.conflicts.map(shown) : [],
+      settled: brought ? brought.merge.settled.map(({ conflict, pick }) => ({ id: conflict.id, pick, conflict: shown(conflict) })) : [],
+      problems: brought ? brought.problems : mergedDocumentProblems(state.branch, state.main, toProjectSnapshot),
       review: reviewDocuments(state.base, state.branch),
       versions: { main: stamp.mainVersion, branch: stamp.branchVersion },
+      state: reviewStateKey(token, recordUpdatedAt),
     };
   }
 
@@ -399,7 +466,8 @@ export class SiteBranchMergeService {
    * Store conflict answers without bringing main in (slice S5): the review saves each answer as it is given, so a
    * reload, another tab or the next day finds it (section 6, "Resume"). Only answers that settle a conflict of the
    * state the token names are kept; the branch's content is not touched, and nothing is applied until Update.
-   * Answers the review afresh; 409 `branch_review_stale` when the state moved (the review reloads).
+   * Answers the review afresh, from the merge this call ran with the stored answers (it used to compute the
+   * whole review a second time); 409 `branch_review_stale` when the state moved (the review reloads).
    */
   async answer(scope: TenantScope, branchId: string, input: { token: string; resolutions: MergeAnswers }): Promise<BranchReview> {
     assertScope(scope);
@@ -408,14 +476,15 @@ export class SiteBranchMergeService {
     for (let attempt = 1; ; attempt++) {
       const state = await this.readState(scope, branchId);
       if (reviewToken(state.stamp) !== input.token) throw new BranchReviewStaleError();
-      if (this.upToDate(state)) break;
-      const { merge } = this.bringMainIn(state, { ...draftAnswers(state.stamp.mergeDraft), ...input.resolutions });
-      const kept = Object.fromEntries(merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
+      if (this.upToDate(state)) return this.reviewOf(scope, state, null, state.stamp.recordUpdatedAt);
+      const brought = this.bringMainIn(state, { ...draftAnswers(state.stamp.mergeDraft), ...input.resolutions });
+      const kept = Object.fromEntries(brought.merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
       // Under the locks, and only when the state is still the one read: an answer is never stored against a newer one.
-      if (await this.keepDraft(scope, state.stamp, kept, true)) break;
+      const stored = await this.keepDraft(scope, state.stamp, kept, true);
+      // What is stored now is exactly the answers that merge settled, so its result is the review of the stored state.
+      if (stored.kept) return this.reviewOf(scope, state, brought, stored.recordUpdatedAt);
       if (attempt >= ANSWER_ATTEMPTS) throw new BranchReviewStaleError();
     }
-    return this.changes(scope, branchId);
   }
 
   /**
@@ -449,7 +518,7 @@ export class SiteBranchMergeService {
     const kept = Object.fromEntries(merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
     // Stored before anything else is tried: a request refused below, or one whose write finds the state moved,
     // keeps the answers that applied, so the person never gives them twice.
-    const answersKept = await this.keepDraft(scope, stamp, kept, true);
+    const answersKept = (await this.keepDraft(scope, stamp, kept, true)).kept;
     if (merge.conflicts.length > 0) throw new BranchConflictsError(merge.conflicts.map(shown), reviewToken(stamp), answersKept);
     if (problems.length > 0) throw new BranchMergeInvalidError(problems, answersKept);
 
@@ -493,7 +562,7 @@ export class SiteBranchMergeService {
         return write;
       }, WRITE_TRANSACTION),
     );
-    this.announce(stamp.branchId, written, persisted, 'update', ['Brought in the changes from main']);
+    this.announce(stamp.branchId, written, persisted, 'update', [UPDATE_FROM_MAIN_LABEL]);
     // The token of exactly what this update wrote, never read again afterwards: a save landing after the commit
     // must not be carried into a merge unseen (section 6, "the merge names the branch version it reviewed").
     const token = reviewToken({
@@ -575,6 +644,10 @@ export class SiteBranchMergeService {
       throw new BranchUpdatedFirstError(updated.token);
     }
 
+    // Nothing to merge is refused here, not only by the screen and the agent's tool: a merge that writes an
+    // identical main would still close the branch and end the undo of the merge before it.
+    if (changesNothing(state.base, state.branch)) throw new BranchUnchangedError();
+
     // Up to date: main's name is the fork point's, so the branch's name (renamed or not) is the merged one.
     const merged: MergeDocument = state.branch;
     const problems = mergedDocumentProblems(merged, state.main, toProjectSnapshot);
@@ -588,6 +661,7 @@ export class SiteBranchMergeService {
         const current = await this.verify(tx, scope, stamp);
         if (current.status === 'merged') return { kind: 'repeat', stamp: current } as const;
         if (current.status === 'discarded') throw new BranchClosedError('discarded', current.mainId);
+        await assertNotServedFromWorkingCopy(tx, scope, stamp.mainId);
         const write = await this.sites.writeWorkingCopyIn(tx, scope, persisted, { mustExist: true, expectedVersion: stamp.mainVersion });
         if (merged.name !== stamp.mainName) {
           await tx.site.updateMany({ where: { id: stamp.mainId, workspaceId: scope.workspaceId }, data: { name: merged.name } });
@@ -626,7 +700,7 @@ export class SiteBranchMergeService {
       }, WRITE_TRANSACTION),
     );
     if (outcome.kind === 'repeat') return this.mergedOutcome(scope, outcome.stamp);
-    forgetBranchContent(stamp.branchId);
+    forgetBranchContent(stamp.branchId, 'merged');
     this.announce(stamp.mainId, outcome.write, persisted, 'merge', [`Merged branch ${stamp.recordName}`]);
     return { merged: true, branch: await this.branches.getBranch(scope, stamp.mainId, stamp.branchId), mainVersion: outcome.write.version };
   }
@@ -661,6 +735,7 @@ export class SiteBranchMergeService {
         });
         if (!main) throw new SiteNotFoundError(mainSiteId);
         if (main.branchOfSiteId) throw new SiteIsBranchError('a merge is undone on its site, not on a branch.');
+        await assertNotServedFromWorkingCopy(tx, scope, main.id);
         const record = await tx.siteBranch.findFirst({
           where: { id: branchId, siteId: main.id, workspaceId: scope.workspaceId },
           select: { ...RECORD_SELECT, mainBeforeDocument: true, mainBeforeEnded: true },

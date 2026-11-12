@@ -53,7 +53,7 @@ import {
 } from './errors';
 import { closedBranchError } from './branches/closed';
 import { validateBranchName } from '@/lib/sites/branches';
-import { forgetBranchContent, freeOpenName } from './branches/repository';
+import { clearExpiredKeptCopies, forgetBranchContent, freeOpenName } from './branches/repository';
 import { namedSiteImages } from '@/lib/site/siteImages';
 import { fxSiteImagePaths } from '@/lib/fxScene/fxScene';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
@@ -318,7 +318,7 @@ function parsePlaces(raw: unknown): ErasurePlace[] {
   return Array.isArray(raw) ? (raw as ErasurePlace[]) : [];
 }
 
-function assertScope(scope: TenantScope): void {
+export function assertScope(scope: TenantScope): void {
   if (
     !scope ||
     typeof scope.workspaceId !== 'string' ||
@@ -1030,6 +1030,12 @@ export class SiteRepository {
     if (result.count === 1) {
       // The name is in the editor's document but moves no version: the kept copy of it is stale now.
       forgetSiteDocuments(siteId);
+      // On a branch the name is part of what a merge writes, and "Looks good" is bound to the branch's version,
+      // which a rename does not move: a reviewer's approval is for the name they saw, so it goes.
+      await this.prisma.siteBranch.updateMany({
+        where: { branchSiteId: siteId, workspaceId: scope.workspaceId, approvedBranchVersion: { not: null } },
+        data: { approvedBy: null, approvedAt: null, approvedBranchVersion: null },
+      });
       return { name, updatedAt };
     }
 
@@ -1367,6 +1373,8 @@ export class SiteRepository {
 
       // Every copy the site's branches keep, in the same transaction: otherwise a merge could bring an erased
       // value back into main (plan docs/plans/2026-11-10-site-branches.md, section 7).
+      // A kept pre-merge copy past its 30 days goes first, with whatever it held: it is not rewritten, not counted.
+      await clearExpiredKeptCopies(tx, scope.workspaceId, siteId);
       for await (const source of this.branchEraseSources(tx, scope, siteId)) {
         found.push(...findMatches(source.document, source.location, matcher));
         const rewrite = rewriteDocument(source.document, source.location, matcher, replacement, chosen);
@@ -1465,13 +1473,21 @@ export class SiteRepository {
    * every kept pre-merge copy. Ordered by branch id, so a search and the erase after it list them alike.
    */
   private async *branchEraseSources(tx: Prisma.TransactionClient, scope: TenantScope, siteId: string): AsyncGenerator<BranchEraseSource> {
-    // Only the ids up front: each record's documents are loaded when its turn comes and released after it, so ten
-    // large branches never sit in memory together.
-    const ids = await tx.siteBranch.findMany({
-      where: { siteId, workspaceId: scope.workspaceId },
-      orderBy: { id: 'asc' },
-      select: { id: true },
-    });
+    // Up front only what is small: each record's name, note and status, and WHETHER it holds a document. The
+    // documents are loaded when a record's turn comes and released after it, so ten large branches never sit in
+    // memory together, and a closed record without a kept copy (most of them) costs no read of its own. A kept
+    // copy whose 30 days are over is not a copy any more (the erase removes it before it gets here, a search
+    // leaves it alone), so it is not listed. One without a date, which no code writes, is read to be safe.
+    const records = await tx.$queryRaw<
+      Array<{ id: string; name: string; status: 'open' | 'ready' | 'merged' | 'discarded'; reviewNote: string | null; branchSiteId: string | null; hasBase: boolean; hasKept: boolean }>
+    >`
+      SELECT b.id, b.name, b.status::text AS status, b.review_note AS "reviewNote", b.branch_site_id AS "branchSiteId",
+             (b.base_document IS NOT NULL) AS "hasBase",
+             -- The column is a timestamp without zone holding UTC, so it is compared with UTC now, whatever the session's zone.
+             (b.main_before_document IS NOT NULL AND (b.main_before_expires_at IS NULL OR b.main_before_expires_at > (now() AT TIME ZONE 'UTC'))) AS "hasKept"
+      FROM public.site_branches b
+      WHERE b.site_id = ${siteId} AND b.workspace_id = ${scope.workspaceId}
+      ORDER BY b.id ASC`;
     // A rewritten name stays a valid branch name, unique among the open ones as the index compares them (a
     // number is added when the rewrite makes it equal another, checked in SQL): an erase never fails on the
     // name's own rules.
@@ -1481,12 +1497,19 @@ export class SiteRepository {
       if (record.status !== 'open' && record.status !== 'ready') return stem;
       return freeOpenName(client, siteId, stem, record.id);
     };
-    for (const { id } of ids) {
-      const record = await tx.siteBranch.findFirst({
-        where: { id, siteId, workspaceId: scope.workspaceId },
-        select: { id: true, name: true, status: true, branchSiteId: true, reviewNote: true, baseDocument: true, mainBeforeDocument: true },
-      });
-      if (!record) continue;
+    for (const listed of records) {
+      const documents =
+        listed.hasBase || listed.hasKept
+          ? await tx.siteBranch.findFirst({
+              where: { id: listed.id, siteId, workspaceId: scope.workspaceId },
+              select: { baseDocument: listed.hasBase, mainBeforeDocument: listed.hasKept },
+            })
+          : null;
+      const record = {
+        ...listed,
+        baseDocument: (documents?.baseDocument ?? null) as Prisma.JsonValue | null,
+        mainBeforeDocument: (documents?.mainBeforeDocument ?? null) as Prisma.JsonValue | null,
+      };
       const label = { branchId: record.id, name: record.name, branchStatus: record.status };
       const content = record.branchSiteId
         ? await tx.site.findFirst({ where: { id: record.branchSiteId, workspaceId: scope.workspaceId }, select: WORKING_COPY_SELECT })

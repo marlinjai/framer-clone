@@ -207,7 +207,8 @@ for (const [engine, type] of ENGINES) {
           return json(route, { merged: true, branch: summary({ status: 'merged' }), mainVersion: 9 });
         });
       });
-      const merge = page.getByRole('button', { name: 'Merge into Bakery' });
+      // Behind main the button says what its press would do first; up to date it is the merge.
+      const merge = page.getByRole('button', { name: /^(Update from Bakery first|Merge into Bakery)$/ });
       await page.getByText(/Home: Branch title: text|Home: .*: text/).waitFor();
       expect(await merge.isDisabled()).toBe(true);
       await tabTo(page, /^Branch: Branch title$/);

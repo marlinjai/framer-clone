@@ -26,6 +26,13 @@ export interface HostRoute {
    * HEAD is implied wherever GET is listed.
    */
   published?: readonly ('GET' | 'POST')[];
+  /**
+   * True when a PREVIEW host (a branch's public preview link,
+   * src/lib/sites/previewHost.ts) may read it, with GET and HEAD only. A
+   * preview host is not a published host: it reaches nothing else, so no form,
+   * order, payment or report can be posted from a preview, and no API answers.
+   */
+  preview?: true;
   /** Why it is classified so, for the reader of this table. */
   why: string;
 }
@@ -33,7 +40,7 @@ export interface HostRoute {
 export const HOST_ROUTES: readonly HostRoute[] = [
   // Published pages. `/` on a published host never reaches the editor page:
   // the middleware rewrites it to the home sentinel, a path of the catch-all.
-  { route: '/[...slug]', published: ['GET'], why: 'the published site pages (src/app/(site))' },
+  { route: '/[...slug]', published: ['GET'], preview: true, why: 'the published site pages (src/app/(site)); on a preview host, the branch read only' },
   { route: '/', why: 'the editor; a published host rewrites `/` to its home page instead' },
   // Per-host files. The matcher leaves them out, so the middleware never runs
   // on them; each answers for the requesting host itself.
@@ -49,9 +56,9 @@ export const HOST_ROUTES: readonly HostRoute[] = [
 
   // What a published page calls.
   { route: '/api/forms/submit', published: ['POST'], why: 'a published form posts here (src/lib/forms/sendForm.ts)' },
-  { route: '/api/commerce/products', published: ['GET'], why: 'the storefront islands read the catalog' },
-  { route: '/api/commerce/products/[handle]', published: ['GET'], why: 'the storefront islands read one product' },
-  { route: '/api/commerce/inventory', published: ['GET'], why: 'the storefront islands read availability' },
+  { route: '/api/commerce/products', published: ['GET'], preview: true, why: 'the storefront islands read the catalog; a preview reads its site\'s catalogue too' },
+  { route: '/api/commerce/products/[handle]', published: ['GET'], preview: true, why: 'the storefront islands read one product; a preview reads its site\'s catalogue too' },
+  { route: '/api/commerce/inventory', published: ['GET'], preview: true, why: 'the storefront islands read availability; a preview reads its site\'s catalogue too' },
   { route: '/api/commerce/orders', published: ['POST'], why: 'the checkout island places the order (CheckoutButton.tsx)' },
   { route: '/api/commerce/orders/[orderId]/pay', published: ['POST'], why: 'the checkout pays the order (storefrontGateway.ts)' },
   { route: '/api/csp-report', published: ['POST'], why: 'the report-only policy of a published page reports to its own host' },
@@ -98,6 +105,10 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/projects/[projectId]/branches', why: 'site branches: list and create (authoring)' },
   { route: '/api/projects/[projectId]/branches/[branchId]', why: 'site branches: read, rename, ready, discard (authoring)' },
   { route: '/api/projects/[projectId]/branches/[branchId]/undo-merge', why: 'site branches: undo the site\'s latest merge, the merged work into a new branch (authoring)' },
+  {
+    route: '/api/projects/[projectId]/branches/[branchId]/preview-link',
+    why: 'site branches: read, make and revoke the public preview link (authoring); the link itself is served on its own host by the site pages',
+  },
   { route: '/api/projects/[projectId]/branch/changes', why: 'site branches: the review of a branch (authoring)' },
   { route: '/api/projects/[projectId]/branch/update', why: 'site branches: bring main into a branch (authoring)' },
   { route: '/api/projects/[projectId]/branch/answers', why: 'site branches: store conflict answers without bringing main in (authoring)' },
@@ -267,4 +278,15 @@ export function publishedHostAllows(pathname: string, method: string): boolean {
   if (!route?.published) return false;
   const verb = method.toUpperCase() === 'HEAD' ? 'GET' : method.toUpperCase();
   return (route.published as readonly string[]).includes(verb);
+}
+
+/**
+ * May a preview host (a branch's public preview link) serve `method pathname`?
+ * Only a route marked `preview`, and only as a read: GET or HEAD. Everything
+ * else, every API route included, is refused.
+ */
+export function previewHostAllows(pathname: string, method: string): boolean {
+  const verb = method.toUpperCase();
+  if (verb !== 'GET' && verb !== 'HEAD') return false;
+  return routeFor(pathname)?.preview === true;
 }

@@ -18,6 +18,7 @@ export const dynamic = 'force-dynamic';
 
 export const POST = withAuthAvailability(
   reviewRoute({
+    answers: true,
     action: 'editSite',
     what: 'updating from main',
     body: z.object({ token: tokenSchema, resolutions: resolutionsSchema.optional() }),

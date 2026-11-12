@@ -21,6 +21,8 @@ import 'server-only';
 // the copy and its `base_version` are of one moment, and the cap of open branches is counted under it too.
 
 import { randomUUID } from 'node:crypto';
+import { LIVE_EVENTS } from '@/lib/projects/liveEvents';
+import { publishSiteEvent } from '../liveBus';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import {
@@ -91,6 +93,9 @@ export type SiteBranchContext =
 
 /** How many closed branches a listing shows. The records stay; only the listing is bounded. */
 const CLOSED_LISTED = 20;
+
+/** How many of the latest merges a listing always holds, however many branches were discarded after them. */
+const MERGED_ALWAYS_LISTED = 3;
 
 /** Copying a site at the 10 MB limit, page by page, fits in this. */
 const BRANCH_WRITE_TRANSACTION = { maxWait: 5_000, timeout: 30_000 } as const;
@@ -215,13 +220,73 @@ export function isIdClash(err: unknown): boolean {
   return named.every((t) => t === 'id' || t === 'branch_site_id' || /_pkey$|branch_site_id/.test(String(t)));
 }
 
-/** The open branches of a main site whose fork point names the site differently from main now. */
-async function renamedSinceFork(client: Prisma.TransactionClient | PrismaClient, mainSiteId: string, workspaceId: string): Promise<Set<string>> {
+/**
+ * The open branches of a main site whose fork point names the site differently from main now; with `branchId`,
+ * that one branch only. Compared with `base_name`, the fork document's name as a stored column, so no fork
+ * document is unpacked for it (the whole document of every open branch was, on every status read).
+ */
+async function renamedSinceFork(
+  client: Prisma.TransactionClient | PrismaClient,
+  mainSiteId: string,
+  workspaceId: string,
+  branchId: string | null = null,
+): Promise<Set<string>> {
   const rows = await client.$queryRaw<{ id: string }[]>`
     SELECT b.id FROM public.site_branches b JOIN public.sites s ON s.id = b.site_id AND s.workspace_id = b.workspace_id
     WHERE b.site_id = ${mainSiteId} AND b.workspace_id = ${workspaceId} AND b.status IN ('open', 'ready')
-      AND b.base_document IS NOT NULL AND (b.base_document->>'name') IS DISTINCT FROM s.name`;
+      AND (${branchId}::text IS NULL OR b.id = ${branchId}::text)
+      AND b.base_version IS NOT NULL AND b.base_name IS DISTINCT FROM s.name`;
   return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Remove the copies kept for "Undo this merge" whose 30 days are over (S7), for one main site. No timer looks
+ * for them: every place that reads a site's branches calls this (the branch list, the editor's page, an erase
+ * of personal data), and it writes only when its read found one, so a plain read stays a read. Until it runs,
+ * every reader treats an expired copy as gone: the undo refuses it by its date, the summaries offer no undo,
+ * and the image delete check does not count it.
+ */
+export async function clearExpiredKeptCopies(
+  client: Prisma.TransactionClient | PrismaClient,
+  workspaceId: string,
+  mainSiteId: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const where = { siteId: mainSiteId, workspaceId, mainBeforeExpiresAt: { lt: now } };
+  const expired = await client.siteBranch.findFirst({ where, select: { id: true } });
+  if (!expired) return;
+  await client.siteBranch.updateMany({
+    where,
+    data: { mainBeforeDocument: Prisma.DbNull, mainBeforeExpiresAt: null, mainBeforeEnded: 'expired' },
+  });
+}
+
+/**
+ * How many merged and discarded records a site keeps. They hold a name and a review note and no content, and
+ * exist so an old address can say what happened to its branch. Without a bound they grow for ever, and an
+ * erase of personal data reads every one.
+ */
+export const CLOSED_RECORDS_KEPT = 50;
+
+/**
+ * Delete a main site's oldest closed records beyond {@link CLOSED_RECORDS_KEPT}. Run when a branch is closed,
+ * in that transaction and under main's row lock, never by a read. Kept whatever their age: a merged record
+ * whose copy for the undo is still live, and a record that another one names as where its undone merge went.
+ * A record's age is when it was closed, not when it was last touched (clearing an expired copy or an erase of
+ * personal data rewrites old records). A pruned record's old address then answers as a missing site.
+ */
+async function pruneClosedRecords(tx: Prisma.TransactionClient, mainSiteId: string): Promise<void> {
+  const old = await tx.$queryRaw<{ id: string }[]>`
+    SELECT b.id FROM public.site_branches b
+    WHERE b.site_id = ${mainSiteId} AND b.status IN ('merged', 'discarded')
+      AND (b.main_before_expires_at IS NULL OR b.main_before_expires_at <= (now() AT TIME ZONE 'UTC'))
+      AND NOT EXISTS (
+        SELECT 1 FROM public.site_branches o WHERE o.site_id = b.site_id AND o.undone_into_branch_id = b.id
+      )
+    ORDER BY coalesce(b.merged_at, b.discarded_at, b.updated_at) DESC, b.id DESC
+    OFFSET ${CLOSED_RECORDS_KEPT}`;
+  if (old.length === 0) return;
+  await tx.siteBranch.deleteMany({ where: { id: { in: old.map((r) => r.id) }, siteId: mainSiteId, status: { in: ['merged', 'discarded'] } } });
 }
 
 export class SiteBranchRepository {
@@ -318,18 +383,17 @@ export class SiteBranchRepository {
             version: 1,
           },
         });
-        for (const page of main.pages) {
-          await tx.sitePage.create({
-            data: {
-              siteId: branchId,
-              workspaceId: scope.workspaceId,
-              tenantGroupId: scope.tenantGroupId,
-              pageId: page.pageId,
-              slug: page.slug,
-              snapshot: page.snapshot as Prisma.InputJsonValue,
-            },
-          });
-        }
+        // One statement for all pages, as the undo of a merge copies them: main's row lock is held meanwhile.
+        await tx.sitePage.createMany({
+          data: main.pages.map((page) => ({
+            siteId: branchId,
+            workspaceId: scope.workspaceId,
+            tenantGroupId: scope.tenantGroupId,
+            pageId: page.pageId,
+            slug: page.slug,
+            snapshot: page.snapshot as Prisma.InputJsonValue,
+          })),
+        });
         const record = await tx.siteBranch.create({
           data: {
             id: branchId,
@@ -364,12 +428,7 @@ export class SiteBranchRepository {
   async listBranches(scope: TenantScope, mainSiteId: string): Promise<BranchList> {
     assertScope(scope);
     const main = await this.loadMain(this.prisma, scope, mainSiteId);
-    // The copy of the site kept for "Undo this merge" goes once its 30 days are over (S7): removed here, the
-    // next time anyone looks at the site's branches, so no timer has to find it.
-    await this.prisma.siteBranch.updateMany({
-      where: { siteId: main.id, workspaceId: scope.workspaceId, mainBeforeExpiresAt: { lt: new Date() } },
-      data: { mainBeforeDocument: Prisma.DbNull, mainBeforeExpiresAt: null, mainBeforeEnded: 'expired' },
-    });
+    await clearExpiredKeptCopies(this.prisma, scope.workspaceId, main.id);
     const [open, closed, renamed] = await Promise.all([
       this.prisma.siteBranch.findMany({
         where: { siteId: main.id, workspaceId: scope.workspaceId, status: { in: ['open', 'ready'] } },
@@ -384,11 +443,28 @@ export class SiteBranchRepository {
       }),
       renamedSinceFork(this.prisma, main.id, scope.workspaceId),
     ]);
+    // The switcher offers the undo of the latest merge and says where an undone merge went. Neither may fall
+    // out of the list because many branches were discarded since: the latest merges are always in it, and so
+    // is every closed branch that a listed merge names as where its work went (an open one is in `open`).
+    const listed = new Set([...open, ...closed].map((row) => row.id));
+    const latestMerged = await this.prisma.siteBranch.findMany({
+      where: { siteId: main.id, workspaceId: scope.workspaceId, status: 'merged', id: { notIn: [...listed] } },
+      orderBy: { mergedAt: 'desc' },
+      take: MERGED_ALWAYS_LISTED,
+      select: RECORD_SELECT,
+    });
+    const newestListedMerge = closed.filter((row) => row.status === 'merged').length;
+    const more = latestMerged.slice(0, Math.max(0, MERGED_ALWAYS_LISTED - newestListedMerge));
+    for (const row of more) listed.add(row.id);
+    const wentTo = [...closed, ...more].map((row) => row.undoneIntoBranchId).filter((id): id is string => !!id && !listed.has(id));
+    const targets = wentTo.length
+      ? await this.prisma.siteBranch.findMany({ where: { id: { in: wentTo }, siteId: main.id, workspaceId: scope.workspaceId }, select: RECORD_SELECT })
+      : [];
     return {
       mainSiteId: main.id,
       mainVersion: main.version,
       open: open.map((row) => summaryOf(row, main.version, renamed.has(row.id))),
-      closed: closed.map((row) => summaryOf(row, main.version)),
+      closed: [...closed, ...more, ...targets].map((row) => summaryOf(row, main.version)),
     };
   }
 
@@ -401,7 +477,7 @@ export class SiteBranchRepository {
       select: RECORD_SELECT,
     });
     if (!row) throw new BranchNotFoundError(branchId);
-    return summaryOf(row, main.version, (await renamedSinceFork(this.prisma, main.id, scope.workspaceId)).has(row.id));
+    return summaryOf(row, main.version, (await renamedSinceFork(this.prisma, main.id, scope.workspaceId, row.id)).has(row.id));
   }
 
   /**
@@ -429,7 +505,7 @@ export class SiteBranchRepository {
       select: RECORD_SELECT,
     });
     if (!main || !row) throw new SiteNotFoundError(siteId);
-    const renamed = (await renamedSinceFork(this.prisma, site.branchOfSiteId, scope.workspaceId)).has(row.id);
+    const renamed = (await renamedSinceFork(this.prisma, site.branchOfSiteId, scope.workspaceId, row.id)).has(row.id);
     return { kind: 'branch', siteId: site.id, mainSiteId: site.branchOfSiteId, branch: summaryOf(row, main.version, renamed) };
   }
 
@@ -523,7 +599,7 @@ export class SiteBranchRepository {
       });
       return { branch: summaryOf(row, main.version), discarded: true };
     }, BRANCH_WRITE_TRANSACTION);
-    if (outcome.discarded) forgetBranchContent(branchId);
+    if (outcome.discarded) forgetBranchContent(branchId, 'discarded');
     return outcome;
   }
 
@@ -550,6 +626,9 @@ export class SiteBranchRepository {
       select: RECORD_SELECT,
     });
     await tx.site.deleteMany({ where: { id: branchId, branchOfSiteId: { not: null } } });
+    // The public preview link ends with the branch (S8): there is nothing left for it to show.
+    await tx.siteBranchPreview.deleteMany({ where: { branchId } });
+    await pruneClosedRecords(tx, row.siteId);
     return row;
   }
 
@@ -592,7 +671,10 @@ export class SiteBranchRepository {
  * What this process holds of a closed or deleted branch's content: the document route's kept copies and a
  * running generation's draft. Run after the commit that closed it, as a site delete does.
  */
-export function forgetBranchContent(branchId: string): void {
+export function forgetBranchContent(branchId: string, closed?: 'merged' | 'discarded'): void {
+  // An editor tab open on the branch hears it at once (plan section 6): its unsaved work can go nowhere on
+  // this branch any more, and the tab says so with a way on, instead of at its next failed save.
+  if (closed) publishSiteEvent(branchId, LIVE_EVENTS.branchClosed, { status: closed });
   forgetSiteDocuments(branchId);
   endLiveGenerationOfSite(branchId, 'site_changed');
 }

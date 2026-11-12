@@ -23,6 +23,8 @@ import { unstable_rethrow } from 'next/navigation';
 import { getPrismaClient } from '@/server/db';
 import { normalizeRequestHost } from '@/server/domains/hostname';
 import { DEFAULT_LANGUAGE } from '@/lib/site/siteSettings';
+import { isPreviewHost } from '@/lib/sites/previewHost';
+import { resolvePreviewSite } from './branches/previewLinks';
 import { getCachedPublishedSite } from './cachedResolver';
 import { loadSitePrimaryHost } from './primaryHost';
 import type { PublishedSite } from './publicResolver';
@@ -34,7 +36,11 @@ export const getRequestHost = cache(async (): Promise<string | null> => {
 
 /** The published site the request's host names, or null (editor host, unknown, draft). */
 export const resolveSiteForRequest = cache(async (): Promise<PublishedSite | null> => {
-  return getCachedPublishedSite(await getRequestHost());
+  const host = await getRequestHost();
+  // A branch's public preview link: its own resolver, one read per request and never cached, so a revoked or
+  // expired link ends at once. The site it returns carries `preview`, which everything that renders reads.
+  if (isPreviewHost(host)) return resolvePreviewSite(host);
+  return getCachedPublishedSite(host);
 });
 
 /**
@@ -45,6 +51,9 @@ export const getPrimaryHostForRequest = cache(async (): Promise<string | null> =
   const site = await resolveSiteForRequest();
   if (!site) return null;
   const requestHost = normalizeRequestHost(await getRequestHost());
+  // A preview carries main's site id (previewLinks.ts): its primary host would be the LIVE site's address,
+  // and every absolute address on the page would point there. A preview's only host is its own.
+  if (site.preview) return requestHost;
   return loadSitePrimaryHost(getPrismaClient(), site.siteId, requestHost);
 });
 

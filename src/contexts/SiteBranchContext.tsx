@@ -11,6 +11,7 @@
 import React from 'react';
 import type { EditorBranchState } from '@/lib/sites/branches';
 import { branchClient } from '@/lib/sites/branchClient';
+import { BRANCH_CLOSED_BROWSER_EVENT } from '@/lib/projects/liveEvents';
 
 export const BRANCH_REFRESH_MS = 60_000;
 
@@ -35,7 +36,8 @@ export function SiteBranchProvider({ initial, children }: { initial: EditorBranc
       const { branch } = await branchClient.get(now.mainSiteId, now.siteId);
       if (current.current?.kind === 'branch' && current.current.siteId === now.siteId) setState({ ...now, branch });
     } catch {
-      // A failed refresh changes nothing shown; a closed branch is told by its next save (410) and its page.
+      // A failed refresh changes nothing shown. A closed branch does not fail: its record answers with its
+      // status, and the top bar then says what happened and what can still be done (BranchClosedElsewhere).
     }
   }, []);
 
@@ -45,11 +47,15 @@ export function SiteBranchProvider({ initial, children }: { initial: EditorBranc
       if (document.visibilityState === 'visible') void refresh();
     };
     document.addEventListener('visibilitychange', onVisible);
+    // The live stream heard that this branch was merged or discarded elsewhere: read the record now.
+    const onClosed = () => void refresh();
+    window.addEventListener(BRANCH_CLOSED_BROWSER_EVENT, onClosed);
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh();
     }, BRANCH_REFRESH_MS);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener(BRANCH_CLOSED_BROWSER_EVENT, onClosed);
       window.clearInterval(timer);
     };
   }, [initial?.kind, refresh]);

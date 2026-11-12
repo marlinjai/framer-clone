@@ -23,6 +23,7 @@ import {
   SnapshotIn,
 } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
+import { UPDATE_FROM_MAIN_LABEL } from '@/lib/sites/branchLabels';
 
 const HistoryEntryModel = types.model('HistoryEntry', {
   id: types.identifier,
@@ -86,6 +87,10 @@ const HistoryStore = types
       patches: IJsonPatch[];
       inversePatches: IJsonPatch[];
     } | undefined,
+    // The id of an "update from main" step this tab has undone and not redone (site branches). The branch still
+    // counts as up to date with main, so merging it like this takes main's changes out of main: the top bar says
+    // so for as long as this holds, also after later edits have dropped the step from the redo tail.
+    undoneUpdateId: undefined as string | undefined,
   }))
   .views(self => ({
     get canUndo() {
@@ -268,6 +273,7 @@ const HistoryStore = types
             entry.inversePatches.slice().reverse(),
           );
           self.undoIdx--;
+          if (entry.remote && entry.actionName === UPDATE_FROM_MAIN_LABEL) self.undoneUpdateId = entry.id;
         });
       },
 
@@ -277,6 +283,7 @@ const HistoryStore = types
           const entry = self.history[self.undoIdx];
           applyPatch(self.targetStore!, entry.patches.slice());
           self.undoIdx++;
+          if (entry.id === self.undoneUpdateId) self.undoneUpdateId = undefined;
         });
       },
 
@@ -296,6 +303,7 @@ const HistoryStore = types
         // A gesture's patches were recorded against the tree before the clear: dropped too.
         self.batch = undefined;
         self.displaced = undefined;
+        self.undoneUpdateId = undefined;
       },
 
       // ------ Gesture batching ------

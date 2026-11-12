@@ -12,7 +12,7 @@ import { getPrismaClient } from '@/server/db';
 import type { BranchSummaryJson, ClosedBranchNotice, EditorBranchState } from '@/lib/sites/branches';
 import type { TenantScope } from '../repository';
 import { SiteNotFoundError } from '../errors';
-import { getSiteBranchRepository, type BranchSummary } from './repository';
+import { clearExpiredKeptCopies, getSiteBranchRepository, type BranchSummary } from './repository';
 import { siteBranchesEnabled } from './switch';
 
 export function summaryJson(summary: BranchSummary): BranchSummaryJson {
@@ -54,9 +54,14 @@ export async function editorBranchState(
       where: { id: siteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId },
       select: { branchOfSiteId: true },
     });
+    // With the switch off too: how long a kept copy lives does not depend on the switch.
+    if (row) await clearExpiredKeptCopies(prisma, scope.workspaceId, row.branchOfSiteId ?? siteId);
     return row?.branchOfSiteId ? 'hidden' : null;
   }
   const context = await getSiteBranchRepository().siteBranchContext(scope, siteId);
+  // Opening the editor on a site or one of its branches ends the copies kept for "Undo this merge" whose 30
+  // days are over, so a site whose branch list nobody opens does not keep one for ever.
+  await clearExpiredKeptCopies(prisma, scope.workspaceId, context.kind === 'main' ? siteId : context.mainSiteId);
   if (context.kind === 'main') {
     return { kind: 'main', siteId, siteName: await siteName(prisma, scope, siteId), openBranches: context.openBranches };
   }
@@ -90,6 +95,7 @@ export async function closedBranchNotice(
     select: { name: true },
   });
   if (!main) return null;
+  await clearExpiredKeptCopies(prisma, scope.workspaceId, record.siteId);
   const status = record.status === 'merged' ? 'merged' : 'discarded';
   const closedAt = (status === 'merged' ? record.mergedAt : record.discardedAt) ?? record.updatedAt;
   const merged = status === 'merged';

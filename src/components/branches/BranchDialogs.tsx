@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 // Not crypto.randomUUID: browsers offer it only in a secure context, and the dialog is mounted with the editor.
 import { v4 as uuidv4 } from 'uuid';
-import { BRANCH_NAME_MAX_LENGTH, validateBranchName } from '@/lib/sites/branches';
+import { BRANCH_NAME_MAX_LENGTH, MAX_OPEN_BRANCHES_PER_SITE, validateBranchName } from '@/lib/sites/branches';
 import { BranchApiError, branchClient, changeCountText } from '@/lib/sites/branchClient';
 import { leaveClosedBranch, openSite, savedBeforeLeaving } from './leave';
 
@@ -30,7 +30,7 @@ function messageOf(err: unknown): string {
   return 'Something went wrong. Nothing was changed; try again.';
 }
 
-function NameField({ id, value, onChange, error }: { id: string; value: string; onChange: (v: string) => void; error: string | null }) {
+function NameField({ id, value, onChange, error, describedBy }: { id: string; value: string; onChange: (v: string) => void; error: string | null; describedBy?: string }) {
   return (
     <div className="grid gap-1.5">
       <label htmlFor={id} className="text-sm font-medium">
@@ -42,7 +42,7 @@ function NameField({ id, value, onChange, error }: { id: string; value: string; 
         maxLength={BRANCH_NAME_MAX_LENGTH * 2}
         onChange={(e) => onChange(e.target.value)}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : undefined}
+        aria-describedby={[error ? `${id}-error` : null, describedBy].filter(Boolean).join(' ') || undefined}
         className="h-9 rounded-md border bg-background px-3 text-sm"
         autoFocus
       />
@@ -55,13 +55,46 @@ function NameField({ id, value, onChange, error }: { id: string; value: string; 
   );
 }
 
+/**
+ * How many branches a site may have open, and how many it has, said before the person types a name. `count` is
+ * undefined while it is not known: the limit alone is said then.
+ */
+export function branchLimitText(siteName: string, count: number | undefined, current = true): { text: string; reached: boolean } {
+  const max = MAX_OPEN_BRANCHES_PER_SITE;
+  if (count === undefined) return { text: `A site can have up to ${max} open branches at a time.`, reached: false };
+  // A count from when the editor was opened may be out of date: it is said as that, and turns nothing off.
+  if (count >= max && !current) {
+    return {
+      text: `${siteName} had ${max} open branches when this page was opened, the most a site can have. If one was merged or discarded since, a new one can be made.`,
+      reached: true,
+    };
+  }
+  if (count >= max) {
+    return {
+      text: `${siteName} already has ${max} open branches, the most a site can have. Merge or discard one of them, then make a new one.`,
+      reached: true,
+    };
+  }
+  if (count === 0) return { text: `${siteName} has no open branch yet. A site can have up to ${max} at a time.`, reached: false };
+  return { text: `${count} of ${max} branches are open on ${siteName}.`, reached: false };
+}
+
 /** "New branch": a copy of main's working copy as stored now, opened in the editor. */
-export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId, returnFocusTo }: ReturnFocus & {
+export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId, siteName, openBranches, openBranchesAreCurrent = false, returnFocusTo }: ReturnFocus & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mainSiteId: string;
   /** The site open now, saved before the new branch opens. */
   fromSiteId: string;
+  /** The name of the site the branch is a copy of (main's name, also when the dialog is opened on a branch). */
+  siteName: string;
+  /** How many branches of the site are open, when the switcher knows. */
+  openBranches?: number;
+  /**
+   * Whether that number was just read from the server. Only then does the limit turn "Create branch" off: a
+   * number from when the editor was opened may be out of date, and the server decides in any case.
+   */
+  openBranchesAreCurrent?: boolean;
 }) {
   const id = useId();
   const [name, setName] = useState('');
@@ -76,9 +109,13 @@ export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId, re
       setBranchId(uuidv4());
     }
   }, [open]);
+  const limit = branchLimitText(siteName, openBranches, openBranchesAreCurrent);
+  const full = limit.reached && openBranchesAreCurrent;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    // Enter in the name field submits the form whatever the button says: the limit is kept here too.
+    if (full) return;
     const checked = validateBranchName(name);
     if (!checked.ok) return setError(checked.message);
     setBusy(true);
@@ -104,16 +141,28 @@ export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId, re
           <DialogHeader>
             <DialogTitle>New branch</DialogTitle>
             <DialogDescription>
-              A copy of the site as it is saved now. Change it without touching the site, then merge it back. A branch is
-              never published by itself.
+              A copy of {siteName} as it is saved now. Change it without touching {siteName}, then merge it back. A branch
+              is never published by itself.
             </DialogDescription>
           </DialogHeader>
-          <NameField id={id} value={name} onChange={setName} error={error} />
+          <NameField id={id} value={name} onChange={setName} error={error} describedBy={`${id}-limit`} />
+          {/* The limit and where the site stands, before the server has to refuse. At the limit it is the reason
+              "Create branch" is off, as text everyone can read. */}
+          <p id={`${id}-limit`} data-limit-reached={full ? '' : undefined} className={`text-sm ${full ? 'text-destructive' : 'text-muted-foreground'}`}>
+            {limit.text}
+          </p>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy}>
+            {/* At the limit not `disabled`: the button stays reachable by keyboard, says why, and does nothing. */}
+            <Button
+              type="submit"
+              disabled={busy}
+              aria-disabled={full ? true : undefined}
+              aria-describedby={full ? `${id}-limit` : undefined}
+              className={full ? 'cursor-not-allowed opacity-50' : undefined}
+            >
               {busy ? 'Creating…' : 'Create branch'}
             </Button>
           </DialogFooter>

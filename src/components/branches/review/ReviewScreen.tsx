@@ -16,10 +16,11 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Check, GitMerge, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
+import SharePreview from '@/components/branches/SharePreview';
 import { BranchApiError, branchClient, type BranchReviewJson, type MergeSideJson, type ShownConflictJson } from '@/lib/sites/branchClient';
 import type { UnitReview } from '@/lib/siteMerge/elementChanges';
 import { ReviewPane } from './ReviewPane';
-import { conflictText, escapeId, fieldText, KIND_COLOR, KIND_TEXT, mergeBlocker, outlineSheet, totalsText, valueText } from './reviewText';
+import { choiceText, conflictText, escapeId, fieldText, KIND_COLOR, KIND_TEXT, mergeBlocker, outlineSheet, totalsText, valueText } from './reviewText';
 
 /** How often an open review reads the server again (also on returning to the tab). */
 export const REVIEW_REFRESH_MS = 30_000;
@@ -68,6 +69,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
   const reloadedFor = useRef<string | null>(null);
   const lastToken = useRef<string | null>(null);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const reasonId = React.useId();
 
   const branchModel = useMemo(() => drawingCopy(branch.snapshot), [branch.snapshot]);
   const mainModel = useMemo(() => drawingCopy(main.snapshot), [main.snapshot]);
@@ -81,6 +83,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
       const older = v !== undefined && (v.main !== main.version || v.branch !== branch.version);
       const moved = lastToken.current !== null && lastToken.current !== review.token;
       lastToken.current = review.token;
+      lastState.current = review.state ?? null;
       if ((older || moved) && reloadedFor.current !== review.token) {
         reloadedFor.current = review.token;
         router.refresh();
@@ -103,24 +106,39 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
   );
 
   const read = useCallback(() => branchClient.changes(branchId).then(show, failed), [branchId, show, failed]);
+  /**
+   * The regular look: asks with the key of the review the page holds, and is told `current` when nothing it was
+   * computed from moved, which costs the server three small rows instead of the whole review. Anything else it
+   * answers is the review itself. Without a key (an older server, nothing loaded yet) it is a plain read.
+   */
+  const lastState = useRef<string | null>(null);
+  const look = useCallback(() => {
+    const state = lastState.current;
+    if (!state) return read();
+    return branchClient.changesIfMoved(branchId, state).then((answer) => ('current' in answer ? undefined : show(answer)), failed);
+  }, [branchId, read, show, failed]);
 
   useEffect(() => {
     if (merged) return;
     void read();
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void read();
+      if (document.visibilityState === 'visible') void look();
     }, REVIEW_REFRESH_MS);
-    const onVisible = () => document.visibilityState === 'visible' && void read();
+    const onVisible = () => document.visibilityState === 'visible' && void look();
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [read, merged]);
+  }, [read, look, merged]);
 
   const review = loaded.kind === 'ok' ? loaded.review : null;
   const units = review?.review?.units ?? [];
   const unit: UnitReview | undefined = units.find((u) => u.id === unitId) ?? units[0];
+
+  // Built when the unit or the selected element changes, not on every render (a notice, a busy mark, a typed note).
+  const mainOutlines = useMemo(() => outlineSheet(unit, 'main', focusId, escapeId), [unit, focusId]);
+  const branchOutlines = useMemo(() => outlineSheet(unit, 'branch', focusId, escapeId), [unit, focusId]);
 
   /** A refusal because the state moved: read again and say so. */
   const stale = (err: unknown) => {
@@ -194,14 +212,24 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
 
   if (merged) {
     return (
-      <main className="mx-auto flex max-w-xl flex-col gap-3 p-8" aria-live="polite">
-        <h1 className="text-lg font-semibold">Merged into {mainName}</h1>
+      <main className="mx-auto flex max-w-xl flex-col gap-3 p-8">
+        {/* The screen is new, so a live region would say nothing: the heading takes the focus and is read. */}
+        <h1 className="text-lg font-semibold outline-none" tabIndex={-1} ref={(el) => el?.focus()}>
+          Merged into {mainName}
+        </h1>
         <p className="text-sm text-muted-foreground">
           The branch “{branchName}” is closed and its changes are in {mainName}. Nothing was published: publish from {mainName} when it is ready.
         </p>
-        <div>
+        <p className="text-sm text-muted-foreground">
+          Changed your mind? For 30 days, and as long as no other branch is merged into {mainName}, this merge can be undone from the branch’s
+          page.
+        </p>
+        <div className="flex flex-wrap gap-2">
           <Button asChild>
             <a href={`/projects/${encodeURIComponent(mainSiteId)}`}>Open {mainName}</a>
+          </Button>
+          <Button asChild variant="outline">
+            <a href={`/projects/${encodeURIComponent(branchId)}`}>Undo this merge…</a>
           </Button>
         </div>
       </main>
@@ -211,8 +239,22 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
   const blocker = review ? mergeBlocker(review, can?.merge) : 'Reading the review…';
   const editOff = can?.edit === false ? 'Only someone who may edit this site can answer.' : undefined;
   const reviewOff = can?.review === false ? 'You may not review branches of this site.' : undefined;
-  const allConflicts = review ? [...review.conflicts.map((c) => ({ c, pick: null as MergeSideJson | null })), ...review.settled.filter((s) => s.conflict).map((s) => ({ c: s.conflict!, pick: s.pick }))] : [];
+  // In one fixed order (by id), answered or not: a question a person has just answered stays where it is, and
+  // with it the keyboard's focus. Sorted open-first, an answered one would jump to the end on every answer.
+  const allConflicts = review
+    ? [...review.conflicts.map((c) => ({ c, pick: null as MergeSideJson | null })), ...review.settled.filter((s) => s.conflict).map((s) => ({ c: s.conflict!, pick: s.pick }))].sort((a, b) =>
+        a.c.id < b.c.id ? -1 : a.c.id > b.c.id ? 1 : 0,
+      )
+    : [];
+  /** Why an answer cannot be given now (text for a described reason), or null. While one is being stored: no reason, just not yet. */
+  const answerOff = (c: ShownConflictJson, side: MergeSideJson): string | null =>
+    editOff ?? (!c.options.includes(side) ? 'This answer is not possible here.' : busy !== null ? 'wait' : null);
   const openCount = review?.conflicts.length ?? 0;
+  const behind = Boolean(review && !review.upToDate);
+  const mergeHint = behind ? `Brings the changes made to ${mainName} into the branch first. Then look again and merge.` : `Merge into ${mainName}. Nothing is published.`;
+  // What a pane says when it draws nothing, by why: still reading, could not read, nothing changed, nothing picked.
+  const idleText =
+    loaded.kind === 'loading' ? 'Reading the changes…' : loaded.kind === 'failed' ? 'The changes could not be read.' : units.length === 0 ? 'This branch changes no page yet.' : 'Pick a page on the left.';
   const mainPage = drawnPage(mainModel, unit);
   const branchPage = drawnPage(branchModel, unit);
   const status = review?.branch;
@@ -230,19 +272,37 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
             Review “{branchName}” for {mainName}
           </h1>
           <p className="text-xs text-muted-foreground" aria-live="polite">
-            {review?.review ? totalsText(review.review) : loaded.kind === 'failed' ? loaded.message : 'Reading the changes…'}
+            {review?.review ? totalsText(review.review) : loaded.kind === 'failed' ? 'The changes could not be read.' : 'Reading the changes…'}
             {status?.approved ? ' · Looks good' : status?.status === 'ready' ? ' · Ready for review' : ''}
           </p>
         </div>
-        <Button size="sm" variant="outline" disabled={!review || busy !== null || Boolean(reviewOff) || status?.approved} title={reviewOff} onClick={() => act('approve')}>
-          <Check aria-hidden /> {status?.approved ? 'Looks good' : 'Looks good'}
+        <SharePreview
+          mainSiteId={mainSiteId}
+          branchId={branchId}
+          branchName={branchName}
+          disabledReason={can?.edit === false ? 'Only someone who may edit this site can share a preview.' : undefined}
+        />
+        <Button size="sm" variant="outline" disabled={!review || busy !== null || Boolean(reviewOff) || status?.approved} aria-pressed={Boolean(status?.approved)} title={reviewOff} onClick={() => act('approve')}>
+          <Check aria-hidden /> Looks good
         </Button>
         <Button size="sm" variant="outline" disabled={!review || busy !== null || Boolean(reviewOff)} title={reviewOff} aria-expanded={sendingBack} onClick={() => setSendingBack((v) => !v)}>
           <Undo2 aria-hidden /> Send back
         </Button>
-        <Button size="sm" variant="brand" disabled={!review || busy !== null || blocker !== null} title={blocker ?? `Merge into ${mainName}. Nothing is published.`} onClick={() => act('merge')}>
-          <GitMerge aria-hidden /> {busy === 'merge' ? 'Merging…' : `Merge into ${mainName}`}
+        {/* Behind main, the press brings main's changes into the branch and stops for another look: say that. */}
+        <Button
+          size="sm"
+          variant="brand"
+          disabled={!review || busy !== null || blocker !== null}
+          // What the press does is text the button points at; why it is off is said below ("Merge is not possible yet").
+          aria-describedby={blocker === null ? `${reasonId}-merge` : undefined}
+          title={blocker ?? mergeHint}
+          onClick={() => act('merge')}
+        >
+          <GitMerge aria-hidden /> {busy === 'merge' ? (behind ? 'Updating…' : 'Merging…') : behind ? `Update from ${mainName} first` : `Merge into ${mainName}`}
         </Button>
+        <span id={`${reasonId}-merge`} className="sr-only">
+          {mergeHint}
+        </span>
       </header>
 
       {sendingBack ? (
@@ -269,20 +329,32 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
         </form>
       ) : null}
 
-      {notice || blocker || status?.reviewNote ? (
+      {notice || blocker || status?.reviewNote || reviewOff || editOff ? (
         <div className="flex flex-col gap-1 border-b border-border px-4 py-2 text-sm" aria-live="polite">
           {notice ? (
             <p role={notice.tone === 'error' ? 'alert' : 'status'} className={notice.tone === 'error' ? 'text-destructive' : ''}>
               {notice.text}
             </p>
           ) : null}
+          {loaded.kind === 'failed' ? (
+            <div>
+              <Button size="sm" variant="outline" onClick={() => void read()}>
+                Try again
+              </Button>
+            </div>
+          ) : null}
           {status?.reviewNote && status.status === 'open' ? <p className="text-muted-foreground">Sent back with the note: “{status.reviewNote}”</p> : null}
-          {review && blocker && !notice ? <p className="text-muted-foreground">Merge is not possible yet: {blocker}</p> : null}
+          {review && blocker ? <p className="text-muted-foreground">Merge is not possible yet: {blocker}</p> : null}
+          {/* Why a button is off, in words everyone can reach: a disabled button's tooltip is not. */}
+          {reviewOff ? <p className="text-muted-foreground">“Looks good” and “Send back” are off: {reviewOff}</p> : null}
+          {editOff ? <p className="text-muted-foreground">The answers are off: {editOff}</p> : null}
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
-        <nav className="w-80 shrink-0 overflow-auto border-r border-border p-3 text-sm" aria-label="Changes">
+      {/* On a narrow window the list sits above the panes, and the two panes above each other. */}
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        {/* Not a navigation landmark: it holds the questions and their answers as well as the list of changes. */}
+        <div role="region" className="max-h-[45dvh] w-full shrink-0 overflow-auto border-b border-border p-3 text-sm lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r" aria-label="Questions and changes">
           {review && !review.upToDate ? (
             <section className="mb-4 rounded-md border border-border p-2" aria-label={`${mainName} changed`}>
               <p className="mb-2">
@@ -298,6 +370,8 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
                       All from the branch
                     </Button>
                   </div>
+                  <span id={`${reasonId}-edit`} className="sr-only">{editOff ?? ''}</span>
+                  <span id={`${reasonId}-option`} className="sr-only">This answer is not possible here.</span>
                   <ol className="flex flex-col gap-2">
                     {allConflicts.map(({ c, pick }) => (
                       <li key={c.id} className="rounded border border-border p-2" data-conflict={c.id}>
@@ -309,13 +383,16 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
                               size="sm"
                               variant={pick === side ? 'default' : 'outline'}
                               aria-pressed={pick === side}
-                              disabled={busy !== null || Boolean(editOff) || !c.options.includes(side)}
-                              title={editOff ?? (c.options.includes(side) ? undefined : 'This answer is not possible here.')}
-                              className="h-auto justify-start whitespace-normal text-left"
-                              onClick={() => answer({ [c.id]: { fingerprint: c.fingerprint, pick: side } })}
+                              // Never `disabled`: the button a person just pressed keeps the keyboard's focus while
+                              // the answer is stored, and one that cannot be used says why to everyone.
+                              aria-disabled={answerOff(c, side) ? true : undefined}
+                              aria-describedby={answerOff(c, side) && !busy ? `${reasonId}-${answerOff(c, side) === editOff ? 'edit' : 'option'}` : undefined}
+                              className={`h-auto justify-start whitespace-normal break-words text-left ${answerOff(c, side) ? 'cursor-not-allowed opacity-60' : ''}`}
+                              onClick={() => {
+                                if (!answerOff(c, side)) answer({ [c.id]: { fingerprint: c.fingerprint, pick: side } });
+                              }}
                             >
-                              <span className="font-medium">{side === 'main' ? mainName : 'Branch'}:</span>{' '}
-                              <span className="break-all">{valueText(side === 'main' ? c.main : c.branch)}</span>
+                              {choiceText(c, side, mainName)}
                             </Button>
                           ))}
                         </div>
@@ -333,6 +410,8 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
               >
                 {busy === 'update' ? 'Updating…' : 'Update the branch'}
               </Button>
+              {/* Why it is off, as text: a disabled button's tooltip reaches neither a keyboard nor a touch screen. */}
+              {openCount > 0 && !editOff ? <p className="mt-1 text-muted-foreground">Every question needs an answer first.</p> : null}
             </section>
           ) : null}
 
@@ -391,11 +470,19 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
                           <span className="font-medium">{fieldText(f.field)}</span> changed
                         </li>
                       ))}
+                    {u.elementCount !== undefined ? (
+                      // New or removed as a whole: one line, not one per element (the picture beside shows it).
+                      <li className="text-xs text-muted-foreground" data-whole-unit={u.id}>
+                        {u.change === 'added' ? 'The whole' : 'This'} {u.unit === 'page' ? 'page' : 'component'} {u.change === 'added' ? 'is new' : 'is removed'}
+                        {u.elementCount > 0 ? `, with ${u.elementCount.toLocaleString('en-GB')} ${u.elementCount === 1 ? 'element' : 'elements'}` : ''}.
+                      </li>
+                    ) : null}
                     {u.elements.map((e) => (
                       <li key={e.id}>
                         <button
                           type="button"
-                          className={`w-full rounded px-1 py-0.5 text-left text-xs hover:bg-muted ${focusId === e.id ? 'bg-muted' : ''}`}
+                          className={`min-h-6 w-full rounded px-1 py-1 text-left text-xs hover:bg-muted ${focusId === e.id ? 'bg-muted' : ''}`}
+                          aria-current={focusId === e.id ? 'true' : undefined}
                           data-element={e.id}
                           onClick={() => setFocusId(e.id)}
                         >
@@ -415,9 +502,13 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
             ))}
           </ul>
           {review?.review && units.length === 0 && review.review.site.length + review.review.settings.length === 0 ? (
-            <p className="text-muted-foreground">This branch changes nothing yet.</p>
+            <p className="text-muted-foreground">
+              {review.unchanged === false
+                ? 'This branch changes no page: it only arranges the frames on the editor’s canvas differently. Merging brings that arrangement to the site.'
+                : 'This branch changes nothing yet.'}
+            </p>
           ) : null}
-        </nav>
+        </div>
 
         <div className="flex min-w-0 flex-1 flex-col gap-2 overflow-hidden p-3">
           {unit?.unit === 'component' ? (
@@ -428,14 +519,14 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
               The outlines mark what the branch changed since it began. {mainName} has changed since then, so some may not be on its side.
             </p>
           ) : null}
-          <div className="flex min-h-0 flex-1 gap-3">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 sm:flex-row">
             <ReviewPane
               side="main"
               title={`${mainName} (main)`}
               page={mainPage}
               site={mainModel.site}
-              emptyText={unit?.change === 'added' ? `This ${unit.unit} is new on the branch.` : 'Pick a page on the left.'}
-              outlines={outlineSheet(unit, 'main', focusId, escapeId)}
+              emptyText={unit?.change === 'added' ? `This ${unit.unit} is new on the branch.` : idleText}
+              outlines={mainOutlines}
               focusId={focusId}
             />
             <ReviewPane
@@ -443,8 +534,8 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
               title={`${branchName} (branch)`}
               page={branchPage}
               site={branchModel.site}
-              emptyText={unit?.change === 'removed' ? `The branch removes this ${unit.unit}.` : 'Pick a page on the left.'}
-              outlines={outlineSheet(unit, 'branch', focusId, escapeId)}
+              emptyText={unit?.change === 'removed' ? `The branch removes this ${unit.unit}.` : idleText}
+              outlines={branchOutlines}
               focusId={focusId}
             />
           </div>

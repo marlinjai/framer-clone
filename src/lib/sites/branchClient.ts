@@ -78,6 +78,8 @@ export interface BranchReviewJson {
   token: string;
   upToDate: boolean;
   branchChanges: DocumentChangesJson;
+  /** The branch changes nothing a merge would write. Absent from an older server. */
+  unchanged?: boolean;
   mainChanges: DocumentChangesJson | null;
   conflicts: ShownConflictJson[];
   settled: Array<{ id: string; pick: MergeSideJson; conflict?: ShownConflictJson }>;
@@ -85,6 +87,16 @@ export interface BranchReviewJson {
   /** The change list: what the branch changes, per page and element (S5). Absent from an older server. */
   review?: DocumentReview;
   versions?: { main: number; branch: number };
+  /** A key over everything the review was computed from; `changesIfMoved` asks with it. Absent from an older server. */
+  state?: string;
+}
+
+/** A branch's public preview link as the editor shows it (PreviewLinkSummary in src/server/sites/branches/previewLinks.ts). */
+export interface PreviewLinkJson {
+  expiresAt: string;
+  expired: boolean;
+  createdBy: string;
+  createdAt: string;
 }
 
 export const branchClient = {
@@ -97,6 +109,12 @@ export const branchClient = {
     call<{ branch: BranchSummaryJson; discarded: boolean }>('DELETE', `${site(mainId)}/branches/${encodeURIComponent(branchId)}`),
   get: (mainId: string, branchId: string) => call<{ branch: BranchSummaryJson }>('GET', `${site(mainId)}/branches/${encodeURIComponent(branchId)}`),
   changes: (branchId: string) => call<BranchReviewJson>('GET', `${site(branchId)}/branch/changes`),
+  /**
+   * The review again, unless nothing it was computed from moved since the one that carried `state`: then
+   * `{ current: true }`, which the server answers without computing anything. For the page's regular look.
+   */
+  changesIfMoved: (branchId: string, state: string) =>
+    call<BranchReviewJson | { current: true; state: string }>('GET', `${site(branchId)}/branch/changes?ifState=${encodeURIComponent(state)}`),
   update: (branchId: string, token: string) =>
     call<{ updated: boolean; branch: BranchSummaryJson; token: string }>('POST', `${site(branchId)}/branch/update`, { token }),
   answers: (branchId: string, token: string, resolutions: Record<string, { fingerprint: string; pick: MergeSideJson }>) =>
@@ -112,6 +130,14 @@ export const branchClient = {
       'POST',
       `${site(mainId)}/branches/${encodeURIComponent(branchId)}/undo-merge`,
     ),
+  /** The branch's public preview link (S8), without its address: only a hash of it is stored. Null when it has none. */
+  previewLink: (mainId: string, branchId: string) =>
+    call<{ link: PreviewLinkJson | null }>('GET', `${site(mainId)}/branches/${encodeURIComponent(branchId)}/preview-link`),
+  /** Make the link, replacing the one the branch had. The address comes back this one time. */
+  makePreviewLink: (mainId: string, branchId: string, days: number) =>
+    call<{ link: PreviewLinkJson & { url: string } }>('POST', `${site(mainId)}/branches/${encodeURIComponent(branchId)}/preview-link`, { days }),
+  revokePreviewLink: (mainId: string, branchId: string) =>
+    call<{ revoked: boolean }>('DELETE', `${site(mainId)}/branches/${encodeURIComponent(branchId)}/preview-link`),
 };
 
 /** How much a branch changes, in one line: "2 pages, 14 elements changed". */

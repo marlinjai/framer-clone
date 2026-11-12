@@ -372,6 +372,9 @@ model SiteBranch {
 
   baseVersion  Int?  @map("base_version")
   baseDocument Json? @map("base_document")
+  // The database also keeps `base_name`, a stored generated column (`base_document->>'name'`, migration
+  // 20261112180000_site_branch_backstops), read by raw SQL only. Prisma cannot write a generated column, so
+  // it is not a field here.
 
   // The review in progress: conflict answers keyed to the values they were given for (S3, S5).
   mergeDraft Json? @map("merge_draft")
@@ -412,12 +415,48 @@ model SiteBranch {
   // Composite, as on `sites.branch_of_site_id`: a record of another workspace's site cannot exist.
   site       Site  @relation("SiteBranchMain", fields: [siteId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
   // SET NULL: whatever deletes the content row, the record reads as closed rather than pointing at nothing.
+  // The database holds a second key beside this one, (branch_site_id, workspace_id) to sites(id, workspace_id)
+  // with SET NULL on branch_site_id only (migration 20261112180000_site_branch_backstops): Prisma cannot write
+  // that column list, so the content row's workspace is enforced there and not named here.
   branchSite Site? @relation("SiteBranchRow", fields: [branchSiteId], references: [id], onDelete: SetNull)
 
+  // The public preview link (S8), at most one per branch.
+  preview SiteBranchPreview?
+
+  // For the composite foreign key of `site_branch_previews`.
+  @@unique([id, workspaceId])
   @@index([siteId])
   @@index([workspaceId])
   @@index([tenantGroupId])
   @@map("site_branches")
+  @@schema("public")
+}
+
+// The public preview link of a branch (S8): `preview-<token>.<sites base host>` shows the branch's working copy,
+// read only, to anyone who holds the address. Only a SHA-256 of the token is stored. A new link replaces the row,
+// revoking deletes it, closing or deleting the branch takes it along.
+model SiteBranchPreview {
+  id       String @id
+  branchId String @unique @map("branch_id")
+
+  // --- hard isolation boundary (both indexed), copied from the branch ---
+  workspaceId   String  @map("workspace_id")
+  tenantGroupId String  @map("tenant_group_id")
+  companyId     String? @map("company_id")
+
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Composite: a link of another workspace's branch cannot exist.
+  branch SiteBranch @relation(fields: [branchId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+
+  // What Prisma asks of a one-to-one relation over two columns; `branchId` alone is already unique.
+  @@unique([branchId, workspaceId])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@map("site_branch_previews")
   @@schema("public")
 }
 

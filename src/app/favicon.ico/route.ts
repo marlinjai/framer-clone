@@ -7,6 +7,8 @@
 // This replaces the app-directory `favicon.ico` file, which Next linked on
 // every route, published sites included.
 
+import { isPreviewHost } from '@/lib/sites/previewHost';
+import { resolvePreviewFavicon } from '@/server/sites/branches/previewLinks';
 import { resolveSiteAndPrimaryHost } from '@/server/sites/requestSite';
 import { iconHref } from '@/lib/site/publishedHead';
 
@@ -16,7 +18,27 @@ export const dynamic = 'force-dynamic';
 /** The platform icon, a static file in public/. */
 const PLATFORM_FAVICON_PATH = '/platform-favicon.ico';
 
+/**
+ * On a branch's public preview: the icon of the branch, like the page around it, answered privately (this route is
+ * outside the middleware's matcher, so it sets what the middleware sets on a preview's pages).
+ */
+async function previewFavicon(host: string | null): Promise<Response> {
+  const headers = { 'cache-control': 'private, no-store', 'x-robots-tag': 'noindex, nofollow, noarchive', 'referrer-policy': 'no-referrer' };
+  let icon: string | null | undefined;
+  try {
+    // The link and the branch's settings only: the page beside this request has loaded the branch already.
+    const site = await resolvePreviewFavicon(host);
+    if (!site) return new Response(null, { status: 404, headers });
+    icon = iconHref(site.faviconUrl);
+  } catch (err) {
+    console.error('favicon.ico: could not resolve the preview.', err);
+    return new Response(null, { status: 503, headers });
+  }
+  return icon ? new Response(null, { status: 307, headers: { ...headers, location: icon } }) : new Response(null, { status: 404, headers });
+}
+
 export async function GET(request: Request): Promise<Response> {
+  if (isPreviewHost(request.headers.get('host'))) return previewFavicon(request.headers.get('host'));
   let resolved: Awaited<ReturnType<typeof resolveSiteAndPrimaryHost>> = null;
   try {
     resolved = await resolveSiteAndPrimaryHost(request.headers.get('host'));

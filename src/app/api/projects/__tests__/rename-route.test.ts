@@ -42,6 +42,8 @@ const fakePrisma = {
       return r ? { name: r.name, projectUpdatedAt: r.projectUpdatedAt } : null;
     }),
   },
+  // A rename also drops a branch's approval (none here: no branch rows).
+  siteBranch: { updateMany: vi.fn(async () => ({ count: 0 })) },
 };
 
 vi.mock('@/server/sites', async (importActual) => {

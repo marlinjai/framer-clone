@@ -5,6 +5,11 @@
 // the conflicts of bringing main in with the answers given so far, whether the result is a valid site, and a
 // `token` over the versions it was computed from. Computed on request, never stored.
 //
+// GET ...?ifState=<state> : `state` is the key a review carries over everything it was computed from. When it is
+// still current the answer is `{ current: true, state }`, from three small rows and without a document read.
+// The review page asks this way every 30 seconds, so an open page costs a full computation only when
+// something moved.
+//
 // A closed branch answers 410 `branch_closed`; a branch of another company, or missing, 404.
 // Guards: src/server/sites/branches/routeGuard.ts.
 
@@ -19,6 +24,10 @@ export const GET = withAuthAvailability(
   reviewRoute({
     action: 'viewSite',
     what: 'reading the review',
-    run: ({ scope, branchId }) => getSiteBranchMergeService().changes(scope, branchId),
+    run: ({ scope, branchId, query }) => {
+      const ifState = query.get('ifState');
+      // A key is 32 characters; anything else is no key and gets the review.
+      return getSiteBranchMergeService().changes(scope, branchId, ifState && ifState.length <= 64 ? ifState : undefined);
+    },
   }),
 );

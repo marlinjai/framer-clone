@@ -409,14 +409,35 @@ path (it serves its rows until its next save or publish freezes them). Which sit
 
 Site branches (`docs/plans/2026-11-10-site-branches.md`) are off unless `SITE_BRANCHES_COMPANIES` is set on the app:
 unset or empty is off for everyone, `*` is on for every company, or a comma separated list of auth-brain company ids.
-Turning it off hides branches without deleting them. It is not set on production until the feature's last slice (S9).
+Turning it off hides branches without deleting them. Two requests still work then, because they only end something:
+discarding a branch and revoking its public preview link (a person who is signed in and may edit the site). A link that
+is not revoked shows again the day the switch returns. It is not set on production until the feature's last slice (S9).
 The same switch decides what an agent is offered: the branch tools of the MCP endpoint (`create_branch`, `merge_branch` and
 the others) are in the tool list and callable only for a key of a company in the list. The public plugin (0.4.0) already
 ships the work-on-a-branch skill; it checks the tool list first and works on the site directly while the tools are absent.
 
+**Public preview links (slice S8).** A person who may edit a site can give an open branch a public address,
+`preview-<token>.PUBLIC_SITE_BASE_HOST` (production: `preview-<token>.sites.lumitra.co`), which shows the branch
+read only to anyone who has it. It needs nothing new on the server: the address is one label under the wildcard record
+and certificate that published sites already use, and no site can be given a label that starts with `preview-`.
+**The certificate for `*.PUBLIC_SITE_BASE_HOST` must stay one wildcard certificate** (issued by DNS validation, as
+it is today): the secret of a preview is its hostname, and a certificate issued for a single preview host would
+publish that hostname in the public certificate transparency logs. Never route a preview label through a router
+that asks for its own certificate. To check: `openssl s_client -connect <any label>.sites.lumitra.co:443
+-servername <any label>.sites.lumitra.co` must show `*.sites.lumitra.co` as the name, for a label never used
+before. Without `PUBLIC_SITE_BASE_HOST` no link can be made. A link shows nothing once it is revoked or expired, once its
+branch is merged or discarded, and while `SITE_BRANCHES_COMPANIES` does not list the branch's company. Migration
+`20261112120000_site_branch_previews` is additive (one table, one unique index on `site_branches` that every row
+satisfies) and needs no reversing; older code ignores the table, so after a code rollback every preview address answers
+404 until the code is rolled forward again.
+
 Migration `20261111000000_site_branches` is additive (one nullable column on `sites`, one table, constraints every
 existing row satisfies) and needs no reversing. Migration `20261112000000_site_branch_merge_undo` (slice S7) adds four nullable columns to `site_branches` and needs
-no reversing either; older code ignores them.
+no reversing either; older code ignores them. Migration `20261112180000_site_branch_backstops` (the whole-feature
+review) adds a second foreign key and a trigger on `site_branches` and one stored generated column, `base_name`; it
+needs Postgres 15 or later (the foreign key clears one column of two on delete), is additive, and older code ignores
+all three. Prisma's schema does not name the second key or the generated column: both exist in the database only, so a
+schema comparison (`prisma migrate diff`) reports them as differences that are meant to be there.
 **Before rolling the code back past the first of the two with open branches**, merge or
 discard them: older code does not know the column and lists each open branch as one more draft site in its company's
 dashboard. It cannot publish one or give it a domain (a `CHECK` constraint and a trigger refuse that whatever code
