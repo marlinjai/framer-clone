@@ -262,7 +262,10 @@ describe('the repository as it is', () => {
   it(
     'reaches the lazy mount module by dynamic import only: from the published island, and from the editor\'s layer for its canvas and preview',
     () => {
-      const importers = importersOf(path.join(REPO_ROOT, MOUNT)).sort((a, b) => a.file.localeCompare(b.file));
+      // The mount's own tests import it directly, with the engine stood in for: they are not part of any page.
+      const importers = importersOf(path.join(REPO_ROOT, MOUNT))
+        .filter((importer) => !importer.file.includes('/__tests__/'))
+        .sort((a, b) => a.file.localeCompare(b.file));
       expect(importers).toEqual([
         { file: 'src/components/fx/FxLayer.tsx', dynamic: true },
         { file: 'src/lib/renderer/server/FxIsland.tsx', dynamic: true },

@@ -490,9 +490,10 @@ export const FRAMER_RULES: Record<RowKind, KindRules> = {
   'aria-pattern': { table: ARIA_PATTERN, fallback: () => unknown('no typed path and no fetched Framer page covers it', 'KnownNodeClass') },
   component: { table: COMPONENT, fallback: () => unknown('a component promise this mapping has not settled', 'ComponentNode') },
   'page-item': { table: PAGE_ITEM, fallback: () => unknown('a page-level item this mapping has not settled', 'WithWebPageInfoTrait') },
-  // Lumitra FX scenes are this app's own engine: whether Framer can draw the same layered WebGL scene
-  // without a code component has not been looked into, so nothing is claimed either way.
-  'fx-scene': { table: {}, fallback: () => unknown('an FX scene of this app\'s own engine, which this mapping has not settled') },
+  // Lumitra FX scenes are this app's own engine. What the typings do say: no node class draws a layered
+  // WebGL scene. Whether a code component can draw the same one has not been looked into, so beyond
+  // that nothing is claimed either way.
+  'fx-scene': { table: {}, fallback: () => unknown('an FX scene of this app\'s own engine: no node class of the plugin typings draws a layered WebGL scene, and a code component has not been tried', 'KnownNodeClass') },
 };
 
 export function classifyFramer(kind: string, id: string): FramerVerdict {
