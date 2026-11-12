@@ -149,6 +149,69 @@ for (const [engine, type] of ENGINES) {
       await page.close();
     });
 
+    // The whole-feature review asked whether the top bar holds on a branch when the window is narrow: a branch
+    // adds a badge, a switcher with the branch's name, Update, Share preview and Review and merge to it.
+    it.each([
+      { name: 'a small laptop', width: 1024 },
+      { name: 'a tablet', width: 768 },
+      { name: 'a phone', width: 390 },
+    ])('on $name the top bar of a branch behind main keeps every control inside the window and none over another', async ({ width }) => {
+      const state = onBranch({ mainMoved: true, name: 'Spring sale with the new pricing page and the long name of it' });
+      const { page, crashes } = await openEditor(browser, bundle, { viewport: { width, height: 800 } }, async (p) => {
+        await p.addInitScript((s) => {
+          (window as unknown as { __BRANCH_STATE__: unknown }).__BRANCH_STATE__ = s;
+        }, state);
+      });
+      page.setDefaultTimeout(5000);
+      await page.getByRole('button', { name: /Review and merge/ }).waitFor();
+      const seen = await page.evaluate(() => {
+        const bar = document.querySelector('[data-editor-topbar]')!;
+        const name = (el: Element) => (el.getAttribute('aria-label') ?? el.textContent ?? '').trim().slice(0, 40);
+        const controls = [...bar.querySelectorAll('button, a')]
+          .map((el) => ({ el, r: el.getBoundingClientRect() }))
+          .filter(({ el, r }) => r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden');
+        const window_ = document.documentElement.clientWidth;
+        const outside = controls.filter(({ r }) => r.left < -0.5 || r.right > window_ + 0.5).map(({ el, r }) => `${name(el)} [${Math.round(r.left)}, ${Math.round(r.right)}]`);
+        const over: string[] = [];
+        for (let i = 0; i < controls.length; i += 1) {
+          for (let j = i + 1; j < controls.length; j += 1) {
+            const a = controls[i];
+            const b = controls[j];
+            if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+            const w = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+            const h = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+            if (w > 1 && h > 1) over.push(`${name(a.el)} over ${name(b.el)} by ${Math.round(w)}px`);
+          }
+        }
+        // What a click in the middle of each control lands on: itself, not a neighbour painted over it.
+        const covered = controls
+          .filter(({ el, r }) => {
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return !(hit && (el.contains(hit) || hit.contains(el)));
+          })
+          .map(({ el }) => name(el));
+        return {
+          outside,
+          over,
+          covered,
+          names: controls.map(({ el }) => name(el)),
+          scrolls: document.documentElement.scrollWidth > window_ + 1,
+          barBottom: bar.getBoundingClientRect().bottom,
+        };
+      });
+      expect(seen.outside, `outside the window at ${width}px`).toEqual([]);
+      expect(seen.over, `over one another at ${width}px`).toEqual([]);
+      expect(seen.covered, `covered at ${width}px`).toEqual([]);
+      expect(seen.scrolls).toBe(false);
+      // The controls a branch needs are all there, at every width.
+      expect(seen.names.some((n) => /Review and merge/.test(n))).toBe(true);
+      expect(seen.names.some((n) => /^Update/.test(n))).toBe(true);
+      expect(seen.names.some((n) => /Switch branch/.test(n))).toBe(true);
+      expect(seen.names.some((n) => /Back to projects/.test(n))).toBe(true);
+      expect(crashes).toEqual([]);
+      await page.close();
+    });
+
     it('shows Review and merge in place of Publish on a branch, and opens the review with Enter', async () => {
       const { page, crashes, went } = await open(onBranch(), async () => undefined);
       expect(await page.getByRole('button', { name: 'Publish', exact: true }).count()).toBe(0);
