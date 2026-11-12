@@ -86,4 +86,30 @@ describe('company model erasure (offline)', () => {
     expect((await executeModelBlobErasure(plan, ports)).complete).toBe(true);
     expect(store.size).toBe(0);
   });
+
+  // The interleaving the executor's re-check does NOT close. This test pins the current, known-unsafe behaviour so
+  // that nobody wires the executor believing the re-check is atomic. When a lock or tombstone protocol exists, replace
+  // it with the same interleaving run against that protocol and assert the blob SURVIVES (see the todos below).
+  it('RACE (documented, unsafe): a reference created between the re-check and the delete loses its blob', async () => {
+    const key = `served/${h('a')}`;
+    const blobs = new Set([key]);
+    const rows = new Set<string>(); // sites holding a row for the hash
+    const report = await executeModelBlobErasure({ keys: [key], kept: [] }, {
+      rowsReferencing: async () => rows.size, // t1: 0
+      deleteBlob: async (k) => {
+        // t2: site B's upload finds the blob present, skips `put`, inserts its row, and commits ...
+        rows.add('site-b');
+        // t3: ... and only then does the storage delete land.
+        blobs.delete(k);
+      },
+    });
+    expect(report.deleted).toEqual([key]); // the executor believes it was safe
+    expect(rows.size).toBe(1); // a committed row exists
+    expect(blobs.has(key)).toBe(false); // and its blob is gone: a dangling reference
+  });
+
+  it.todo('PROTOCOL: with the shared lock or tombstone, the same interleaving keeps the blob (or makes the upload re-put it)');
+  it.todo('PROTOCOL: an upload that has put the blob but not yet committed its row cannot have the blob deleted under it');
+  it.todo('PROTOCOL: a stuck storage delete does not block uploads past the lock timeout, and the erasure stays unprocessed');
+  it.todo('PROTOCOL: run both orders (eraser first, upload first) and a crash of either side between its steps, against Postgres');
 });

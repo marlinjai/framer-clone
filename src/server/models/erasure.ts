@@ -14,6 +14,29 @@
 //      (`executeModelBlobErasure`), which re-checks each blob right before deleting it,
 //   5. mark the erasure processed only if the executor reports no failure and no unknown (a retry is then safe: every
 //      step is idempotent, a blob already gone is not an error).
+// THE RACE THIS FILE DOES NOT CLOSE (read before wiring). `executeModelBlobErasure` re-checks `rowsReferencing(key)`
+// and then calls `deleteBlob(key)`. Those are two separate operations, so the re-check is NOT atomic with the delete:
+//   t1  eraser:  rowsReferencing(served/H) -> 0
+//   t2  site B:  upload of the same content finds the blob already stored (the pipeline skips `put` for a blob that
+//                exists, and writes blobs BEFORE it inserts the row), then inserts its row for H and commits
+//   t3  eraser:  deleteBlob(served/H)       -> the blob is gone while site B's committed row points at it
+// Site B now serves a 404 for a model it owns, and nothing repairs it. The window is the storage round trip (network
+// time), not a few microseconds. A narrower variant: site B has put the blob but not yet inserted its row at t1, so
+// the count is 0 and the delete removes what B is about to reference. Re-checking more often only shrinks the window.
+// Closing it needs ONE protocol that covers BOTH the creation of a reference and the deletion, proven by an
+// interleaving test, before any live cleanup is enabled. Acceptable shapes (pick one when wiring, none is built):
+//   (a) a per-hash lock shared by both sides: an upload holds the lock in SHARED mode from before it decides to skip
+//       or perform `put` until its row commits; the eraser takes it EXCLUSIVELY, recounts, deletes the blob and only
+//       then releases. Postgres advisory locks keyed on the hash serve if the lock spans the storage delete (so it is
+//       held by a session, not a transaction that ends first) and has a timeout so a stuck storage call cannot wedge
+//       uploads.
+//   (b) a tombstone: the eraser, in one transaction, records `deleting(H)` only if no row references H; an upload, in
+//       the same transaction that inserts its row, refuses (or waits for) a hash with a live tombstone and re-puts the
+//       bytes after the tombstone clears; the tombstone is cleared only after the blob delete is confirmed. The row
+//       insert and the tombstone check must be ordered by a row lock or a unique constraint, never by two reads.
+//   (c) any equivalent, including never deleting shared blobs inline and only sweeping them by age under (a) or (b).
+// Until then this executor stays unwired, and a company erasure must not be marked processed on the strength of it.
+//
 // Blobs are content-addressed and shared across sites and companies, so a blob goes only when no remaining row of any
 // site keeps it. Originals are user content and go with the company, by the same rule.
 
