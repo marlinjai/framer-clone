@@ -105,12 +105,18 @@ export function DimensionInput({
   const parsed = parseStyleValue(value, bareUnit);
   const [localValue, setLocalValue] = useState(parsed.value?.toString() ?? '');
   const [unit, setUnit] = useState(parsed.unit);
+  // Bumped after every commit so the field shows what the parent ended up
+  // holding. The parent may clamp or round what was typed (an effect's duration
+  // is limited to 150 to 400ms): when the held value then equals the previous
+  // one, `value` does not change and the typed text would stay on screen as if
+  // it were stored. The effect runs after the parent's update of the same event.
+  const [syncTick, setSyncTick] = useState(0);
 
   useEffect(() => {
     const p = parseStyleValue(value, bareUnit);
     setLocalValue(p.value?.toString() ?? '');
     setUnit(p.unit);
-  }, [value, bareUnit]);
+  }, [value, bareUnit, syncTick]);
 
   // The unit a typed number gets when the current unit is a keyword.
   const numericUnit = units.find((u) => !KEYWORD_UNITS.has(u)) ?? 'px';
@@ -120,6 +126,7 @@ export function DimensionInput({
 
   const emit = useCallback((next: string) => {
     if (next !== normalizeIncoming(value, bareUnit)) onChange(next);
+    setSyncTick((tick) => tick + 1);
   }, [bareUnit, onChange, value]);
 
   const commit = useCallback((rawText: string, currentUnit: string) => {

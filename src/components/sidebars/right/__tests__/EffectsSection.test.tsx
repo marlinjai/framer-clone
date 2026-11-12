@@ -3,10 +3,10 @@
 // every write is one undo step and never leaks into the DOM attributes.
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { getSnapshot } from 'mobx-state-tree';
 import PageModel from '@/models/PageModel';
-import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
+import ComponentModel, { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
 import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
 import HistoryStore from '@/stores/HistoryStore';
 import { EffectsSection, hoverOptionsFor } from '../sections/EffectsSection';
@@ -18,14 +18,14 @@ const D = 'bp-d';
 const T = 'bp-t';
 const P = 'bp-p';
 
-function setup(type = 'section', props: Record<string, unknown> = {}, withChildren = true) {
+function setup(type = 'section', props: Record<string, unknown> = {}, withChildren = true, id = 'node') {
   const page = PageModel.create({
     id: 'page',
     metadata: { title: 'Home' },
     appComponentTree: getSnapshot(createIntrinsicComponent('root', 'div', {})),
     canvasNodes: defaultViewportSnapshots([D, T, P]),
   });
-  page.appComponentTree.addChild(createIntrinsicComponent('node', type as 'div', props));
+  page.appComponentTree.addChild(createIntrinsicComponent(id, type as 'div', props));
   const node = page.appComponentTree.children[0] as ComponentInstance;
   if (withChildren && type !== 'img') {
     node.addChild(createIntrinsicComponent('c1', 'p', { children: 'One' }));
@@ -145,6 +145,125 @@ describe('EffectsSection', () => {
     render(<EffectsSection component={section} breakpointId={D} />);
     fireEvent.click(screen.getByRole('button', { name: /Effects/ }));
     expect(screen.queryByText('Scroll')).toBeNull();
+  });
+});
+
+describe('EffectsSection settings stay what the field shows', () => {
+  const slideUp = (extra: Record<string, unknown> = {}) => normalizeAppear({ kind: 'slide-up', ...extra });
+  const field = (label: string) => within(row(label)).getByRole('textbox') as HTMLInputElement;
+  const commitText = (label: string, text: string) => {
+    fireEvent.change(field(label), { target: { value: text } });
+    fireEvent.keyDown(field(label), { key: 'Enter' });
+  };
+
+  it('shows 400, not what was typed, when the duration is already at its ceiling', () => {
+    const { node } = setup('section', { effects: { appear: slideUp({ duration: 400 }) } });
+    render(<EffectsSection component={node} breakpointId={D} />);
+    commitText('Duration', '1000');
+    expect(node.getEffect('appear', D).duration).toBe(400);
+    expect(field('Duration').value).toBe('400');
+  });
+
+  it('shows the floor and the ceiling of distance, delay and stagger step the same way', () => {
+    const { node } = setup('section', { effects: { appear: slideUp({ distance: 48, delay: 600, stagger: 80 }) } });
+    render(<EffectsSection component={node} breakpointId={D} />);
+    commitText('Distance', '100');
+    expect(node.getEffect('appear', D).distance).toBe(48);
+    expect(field('Distance').value).toBe('48');
+    commitText('Delay', '9000');
+    expect(node.getEffect('appear', D).delay).toBe(600);
+    expect(field('Delay').value).toBe('600');
+    commitText('Step', '500');
+    expect(node.getEffect('appear', D).stagger).toBe(80);
+    expect(field('Step').value).toBe('80');
+  });
+
+  it('keeps direction, duration and distance together when each is changed in turn', () => {
+    const { node } = setup();
+    render(<EffectsSection component={node} breakpointId={D} />);
+    fireEvent.click(screen.getByRole('button', { name: /Effects/ }));
+    fireEvent.change(select('Appear'), { target: { value: 'slide-left' } });
+    commitText('Duration', '350');
+    commitText('Distance', '30');
+    fireEvent.change(select('Appear'), { target: { value: 'slide-right' } });
+    expect(node.getEffect('appear', D)).toMatchObject({ kind: 'slide-right', duration: 350, distance: 30 });
+    expect(select('Appear').value).toBe('slide-right');
+    expect(field('Duration').value).toBe('350');
+  });
+
+  it('survives a save and reload: the stored snapshot restores direction and duration', () => {
+    const { node } = setup();
+    node.setEffect('appear', slideUp({ kind: 'slide-left', duration: 320, distance: 24 }), D);
+    const saved = JSON.parse(JSON.stringify(getSnapshot(node)));
+    const page = PageModel.create({
+      id: 'page2',
+      metadata: { title: 'Home' },
+      appComponentTree: getSnapshot(createIntrinsicComponent('root', 'div', {})),
+      canvasNodes: defaultViewportSnapshots([D, T, P]),
+    });
+    page.appComponentTree.addChild(ComponentModel.create(saved));
+    const reloaded = page.appComponentTree.children[0] as ComponentInstance;
+    expect(reloaded.getEffect('appear', D)).toMatchObject({ kind: 'slide-left', duration: 320, distance: 24 });
+    render(<EffectsSection component={reloaded} breakpointId={D} />);
+    expect(select('Appear').value).toBe('slide-left');
+    expect(field('Duration').value).toBe('320');
+  });
+
+  it('follows undo and redo in the field, one step per edit', () => {
+    const { node, history } = setup('section', { effects: { appear: slideUp() } });
+    render(<EffectsSection component={node} breakpointId={D} />);
+    commitText('Duration', '350');
+    fireEvent.change(select('Appear'), { target: { value: 'fade' } });
+    expect(history.history.length).toBe(2);
+    act(() => history.undo());
+    expect(select('Appear').value).toBe('slide-up');
+    expect(field('Duration').value).toBe('350');
+    act(() => history.undo());
+    expect(field('Duration').value).toBe('280');
+    act(() => history.redo());
+    expect(field('Duration').value).toBe('350');
+    expect(node.getEffect('appear', D).kind).toBe('slide-up');
+  });
+
+  it('commits a typed duration to the element it was typed on when the selection moves without a blur', () => {
+    const { node: a } = setup('section', { effects: { appear: slideUp() } });
+    const { node: b } = setup('section', { effects: { appear: slideUp({ duration: 200 }) } }, true, 'other');
+    const view = render(<EffectsSection component={a} breakpointId={D} />);
+    fireEvent.change(field('Duration'), { target: { value: '333' } });
+    view.rerender(<EffectsSection component={b} breakpointId={D} />);
+    expect(a.getEffect('appear', D).duration).toBe(333);
+    expect(b.getEffect('appear', D).duration).toBe(200);
+    expect(field('Duration').value).toBe('200');
+  });
+
+  it('commits a typed duration to the breakpoint it was typed on when the frame changes without a blur', () => {
+    const { node } = setup('section', { effects: { appear: slideUp() } });
+    const view = render(<EffectsSection component={node} breakpointId={D} />);
+    fireEvent.change(field('Duration'), { target: { value: '333' } });
+    view.rerender(<EffectsSection component={node} breakpointId={T} />);
+    expect(node.getEffect('appear', D).duration).toBe(333);
+    expect(node.getEffectSource('appear', T).source.kind).toBe('inherited');
+    expect(field('Duration').value).toBe('333');
+  });
+
+  it('puts the stored duration back when the text is not a number, and recovers on the next valid entry', () => {
+    const { node } = setup('section', { effects: { appear: slideUp({ duration: 300 }) } });
+    render(<EffectsSection component={node} breakpointId={D} />);
+    commitText('Duration', 'fast');
+    expect(node.getEffect('appear', D).duration).toBe(300);
+    expect(field('Duration').value).toBe('300');
+    commitText('Duration', '220');
+    expect(node.getEffect('appear', D).duration).toBe(220);
+    expect(field('Duration').value).toBe('220');
+  });
+
+  it('writes a Tablet change as a whole-group override and leaves Desktop alone', () => {
+    const { node } = setup('section', { effects: { appear: slideUp() } });
+    render(<EffectsSection component={node} breakpointId={T} />);
+    commitText('Duration', '200');
+    expect(node.getEffect('appear', T)).toMatchObject({ kind: 'slide-up', duration: 200 });
+    expect(node.getEffect('appear', D).duration).toBe(280);
+    expect(node.getEffectSource('appear', T).source.kind).toBe('own');
   });
 });
 

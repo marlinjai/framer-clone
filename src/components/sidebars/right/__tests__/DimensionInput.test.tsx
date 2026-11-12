@@ -130,6 +130,52 @@ describe('DimensionInput commit', () => {
   });
 });
 
+describe('DimensionInput follows what the parent holds', () => {
+  /** A parent that clamps (or rounds) what it is given, so the value it holds can differ from what was typed. */
+  function Clamping({ max, onChange }: { max: number; onChange: (v: string) => void }) {
+    const [value, setValue] = React.useState(`${max}ms`);
+    return (
+      <DimensionInput
+        label="Duration"
+        units={['ms']}
+        value={value}
+        onChange={(v) => {
+          onChange(v);
+          setValue(`${Math.min(max, Math.round(parseFloat(v)))}ms`);
+        }}
+      />
+    );
+  }
+
+  it('shows the clamped value when the typed one is refused and the held value does not change', () => {
+    const onChange = vi.fn();
+    render(<Clamping max={400} onChange={onChange} />);
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '1000' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onChange).toHaveBeenCalledWith('1000ms');
+    expect(input.value).toBe('400');
+  });
+
+  it('shows the rounded value when the parent rounds a fraction to what it already holds', () => {
+    render(<Clamping max={400} onChange={() => {}} />);
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '399.6' } });
+    fireEvent.blur(input);
+    expect(input.value).toBe('400');
+  });
+
+  it('shows the held value after a stepped change the parent refused', () => {
+    function Refusing() {
+      return <DimensionInput label="Width" value="10px" onChange={() => {}} />;
+    }
+    render(<Refusing />);
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input.value).toBe('10');
+  });
+});
+
 describe('DimensionInput unit picker', () => {
   it('switches unit and keeps the number', () => {
     const { onChange } = renderInput();

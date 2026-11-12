@@ -119,6 +119,25 @@ high-frequency actions, only `transform` and `opacity` move, and everything is o
   foundation (d9353c2) adds `noIndex` to the page metadata; the site essentials branch fixes the
   test in 67df770, so it is green once both land.
 
+## Fix 2026-11-13: settings that did not stick
+
+Reported: changing the direction (kind) or the duration of an appear effect did not reliably stay,
+and the playback did not use the new duration. Reproduced in the demo editor with
+`dev-browser-auto`: the model, the Play control and the preview were correct (Play ran one Web
+Animation with the stored duration and the stored start offset), the fault was in the panel's
+number fields. `DimensionInput` kept the typed text and only re-read the held value when it
+changed, so a value the model clamped to what it already held (a duration typed as 1000 with 400
+stored; also distance, delay, step and strength at their limits, and a fraction rounded to the held
+value) stayed on screen while the stored value, the Play and the published page used the clamped
+one. Separately, a draft typed without a blur was overwritten when the selection or frame changed
+(the fields were not keyed), losing the edit silently. Fix: `DimensionInput` re-reads the held value
+after every commit; the Effects fields are keyed on element and breakpoint so an open draft is
+committed to what it was typed on (skipped when that element is gone). Tests: clamped and rounded
+values, every limit, direction plus duration plus distance in turn, save and reload snapshot,
+undo and redo, selection and frame change with a draft, a Tablet override, bad text and recovery.
+Whole-group breakpoint overrides stay as decided (a Tablet edit copies the whole appear group; the
+source dot shows it).
+
 ## Out of scope
 
 - Exit animations and re-playing on scroll back (reveals fire once by design).
