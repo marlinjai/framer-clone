@@ -84,8 +84,7 @@ describe('Books with the real contacts database', () => {
     await addLine(scope, draft.document.id, { title: 'Consulting', quantity: 1000, unitPrice: 10000 });
     const { document } = await issue(scope, draft.document.id, { actorUserId: ACTOR });
     expect(document.document.customerSnapshot).toEqual({
-      v: 2,
-      contactPerson: null,
+      v: 1,
       contactId: contact.id,
       kind: 'organization',
       name: 'Sample Customer GmbH',
