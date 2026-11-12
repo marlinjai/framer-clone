@@ -492,7 +492,7 @@ export const FRAMER_RULES: Record<RowKind, KindRules> = {
   'page-item': { table: PAGE_ITEM, fallback: () => unknown('a page-level item this mapping has not settled', 'WithWebPageInfoTrait') },
   // Lumitra FX scenes are this app's own engine: whether Framer can draw the same layered WebGL scene
   // without a code component has not been looked into, so nothing is claimed either way.
-  'fx-scene': { table: {}, fallback: () => unknown('an FX scene of this app\'s own engine, which this mapping has not settled', 'FramerPluginAPI.createCodeFile') },
+  'fx-scene': { table: {}, fallback: () => unknown('an FX scene of this app\'s own engine, which this mapping has not settled', 'ComponentNode') },
 };
 
 export function classifyFramer(kind: string, id: string): FramerVerdict {
