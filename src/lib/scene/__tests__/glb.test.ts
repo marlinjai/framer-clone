@@ -2,7 +2,7 @@
 // validation (no glTF validator, no decoding, no triangle or texture caps, no re-encode).
 
 import { describe, expect, it } from 'vitest';
-import { ALLOWED_EXTENSIONS, GLB_LIMITS, MAX_FILE_BYTES, MAX_JSON_BYTES, checkGlb, type GlbRefusalCode } from '../glb';
+import { ALLOWED_EXTENSIONS, GLB_LIMITS, MAX_FILE_BYTES, MAX_JSON_BYTES, checkGlb, duplicateKey, type GlbRefusalCode } from '../glb';
 
 const enc = new TextEncoder();
 const pad4 = (n: number) => Math.ceil(n / 4) * 4;
@@ -350,6 +350,43 @@ describe('checkGlb: review findings', () => {
     const r = checkGlb(glb(`{"asset":{"version":"2.0"},"extras":[${'{},'.repeat(900000)}{}]}`));
     expect(r.ok).toBe(true);
     expect(Date.now() - started).toBeLessThan(3000);
+  });
+});
+
+describe('duplicate JSON keys are refused (parsers disagree on which one counts)', () => {
+  const evil = '{"asset":{"version":"2.0"},"buffers":[{"byteLength":4,"uri":"https://evil.example/x.bin"}],"buffers":[]}';
+  it('refuses the first-wins versus last-wins trick: the guard would see an empty list, another reader the external address', () => {
+    expect(JSON.parse(evil).buffers).toEqual([]);
+    refuses(glb(evil), 'bad-json', /repeats the key "buffers"/);
+    refuses(enc.encode(evil), 'bad-json', /repeats the key/);
+    refuses(glb(evil.replace('"buffers":[]}', '"buffers":[{"byteLength":100}]}'), 100), 'bad-json');
+  });
+
+  it('refuses a repeat at any depth, in objects inside arrays, and under an escaped spelling of the same key', () => {
+    refuses(glb('{"asset":{"version":"2.0","version":"2.0"}}'), 'bad-json');
+    refuses(glb('{"asset":{"version":"2.0"},"nodes":[{"mesh":0,"mesh":1}]}'), 'bad-json');
+    refuses(glb('{"asset":{"version":"2.0"},"a":1,"\\u0061":2}'), 'bad-json', /repeats the key "a"/);
+    refuses(glb('{"asset":{"version":"2.0"},"__proto__":1,"__proto__":2}'), 'bad-json');
+    refuses(glb('{"asset":{"version":"2.0"},"a\\"b":1,"a\\"b":2}'), 'bad-json');
+  });
+
+  it('does not refuse the same key in different objects, or key-like text inside string values', () => {
+    accepts(glb(model({ nodes: [{ mesh: 0 }, { mesh: 0 }], extras: { text: '{"a":1,"a":2}', list: [{ k: 1 }, { k: 2 }], k: { k: { k: 1 } } } }), 100));
+  });
+
+  it('refuses a repeat after a very long run of keys quickly', () => {
+    const body = Array.from({ length: 100000 }, (_, i) => `"k${i}":0`).join(',');
+    const started = Date.now();
+    refuses(glb(`{"asset":{"version":"2.0"},"extras":{${body},"k5":1}}`), 'bad-json');
+    expect(Date.now() - started).toBeLessThan(1500);
+  });
+
+  it('duplicateKey itself: nesting, escapes, arrays of arrays, and brackets inside strings', () => {
+    expect(duplicateKey('{"a":{"a":1},"b":[{"a":1},{"a":2}]}')).toBeNull();
+    expect(duplicateKey('{"a":"}{\\"a\\":","b":"]["}')).toBeNull();
+    expect(duplicateKey('[[{"a":1}],[{"a":1}]]')).toBeNull();
+    expect(duplicateKey('{"a":[1,2,{"b":1}],"a":0}')).toBe('a');
+    expect(duplicateKey('{"x":{"y":1,"z":2,"y":3}}')).toBe('y');
   });
 });
 

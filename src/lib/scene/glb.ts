@@ -12,8 +12,11 @@
 //     geometry and textures, or check texture pixel sizes, or check the bounding box
 //     (step 5, which needs a decoder);
 //   - read accessor contents, component types or sparse payloads (only that every index points at
-//     something that exists), or tell duplicate JSON keys apart (the last wins, as in JSON.parse: a
-//     different parser reading the same file could see another one);
+//     something that exists).
+// Duplicate JSON keys are REFUSED (see duplicateKey): parsers disagree on them (JSON.parse keeps the
+// last, a streaming or first-wins reader keeps the first), so a file could show this guard an empty
+// `buffers` list and a downstream reader another with an external address. Until the upload flow is
+// proven to hand the downstream stages exactly the object this guard read, refusing them closes that gap.
 //   - re-encode anything (step 6), store anything (step 7), or enforce the byte
 //     quotas per model, scene and site;
 //   - run in a worker with a time and memory limit (it is synchronous and its own cost
@@ -423,6 +426,44 @@ function checkJson(json: Rec, bin: number | null, container: 'glb' | 'gltf', fil
   };
 }
 
+/**
+ * The first object key that appears twice in the same object, after unescaping (so "a" and
+ * "\u0061" are the same key), or null. Reads the text of JSON that already parsed, so it
+ * only has to follow strings, braces, brackets and commas. Iterative.
+ */
+export function duplicateKey(text: string): string | null {
+  const kinds: boolean[] = []; // true: object, false: array
+  const keys: (Set<string> | null)[] = [];
+  let expectKey = false;
+  const n = text.length;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 0x22) {
+      let j = i + 1;
+      let escaped = false;
+      while (j < n) {
+        const d = text.charCodeAt(j);
+        if (d === 0x5c) { escaped = true; j += 2; continue; }
+        if (d === 0x22) break;
+        j++;
+      }
+      if (expectKey && kinds[kinds.length - 1]) {
+        const raw = text.slice(i + 1, j);
+        const key = escaped ? (JSON.parse(`"${raw}"`) as string) : raw;
+        const seen = keys[keys.length - 1]!;
+        if (seen.has(key)) return key;
+        seen.add(key);
+        expectKey = false;
+      }
+      i = j;
+    } else if (c === 0x7b) { kinds.push(true); keys.push(new Set()); expectKey = true; }
+    else if (c === 0x5b) { kinds.push(false); keys.push(null); expectKey = false; }
+    else if (c === 0x7d || c === 0x5d) { kinds.pop(); keys.pop(); expectKey = false; }
+    else if (c === 0x2c && kinds[kinds.length - 1]) expectKey = true;
+  }
+  return null;
+}
+
 function parseJson(bytes: Uint8Array): Rec {
   if (bytes.length > MAX_JSON_BYTES) return refuse('too-large', `the JSON part is ${bytes.length} bytes, at most ${MAX_JSON_BYTES} are allowed`);
   let text: string;
@@ -430,6 +471,8 @@ function parseJson(bytes: Uint8Array): Rec {
   let value: unknown;
   try { value = JSON.parse(text); } catch { return refuse('bad-json', 'the JSON part does not parse'); }
   if (!isRec(value)) return refuse('bad-json', 'the JSON part must be an object');
+  const duplicate = duplicateKey(text);
+  if (duplicate !== null) return refuse('bad-json', `the JSON part repeats the key ${JSON.stringify(duplicate.slice(0, 60))}: parsers disagree on which one counts`);
   return value;
 }
 
