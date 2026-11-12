@@ -269,7 +269,8 @@ describe('an error always has a listener', () => {
       emitted.push(String(event));
       return false;
     }) as typeof socket.emit;
-    // A late destroy with an error, as the gate's zero timer or `shut()` may do after a close.
+    // A late destroy with an error, as the gate's zero timer may do after a close. (Shutting the gate
+    // afterwards does not touch this socket: it left the gate's set when it closed.)
     socket.destroy(Object.assign(new Error('late'), { code: 'CONNECTION_DESTROYED' }));
     gate.shut();
     await sleep(100);

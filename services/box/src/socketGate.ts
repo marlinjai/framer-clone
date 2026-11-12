@@ -93,10 +93,11 @@ export function createSocketGate(
       // From the moment the socket is handed out until it has closed, its errors have a listener, every
       // one of them and not only the first: an 'error' nobody hears would end the process. (At the
       // close the driver removes every listener, this one too. That is safe: a closed socket emits
-      // nothing more. The gate may still act on one after its close, when the zero timer below or
-      // `shut()` destroys a socket that something else closed first; destroying a socket that is
-      // already destroyed emits nothing. The connect timer cannot come late: it is cleared at the
-      // socket's first error or close, before the driver removes anything.)
+      // nothing more. Only one thing the gate does can come after a socket's close: the zero timer
+      // below, destroying a socket that something else closed first; and destroying a socket that is
+      // already destroyed emits nothing. `shut()` cannot: this file's close listener, attached before
+      // the driver's, takes a closed socket out of the set that `shut()` goes through. The connect
+      // timer cannot: it is cleared at the socket's first error or close.)
       socket.on('error', ended);
       socket.once('connect', () => clearTimeout(timer));
       socket.once('close', () => {
