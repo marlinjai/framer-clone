@@ -302,7 +302,7 @@ describe('the real upload and cleanup code under concurrent, jittered runs on Po
       const reencoder: ModelReencoder = { reencode: async () => ({ bytes: out, input: SMALL, output: { ...SMALL }, names: { materials: [], nodes: [] } }) };
       const blobs: ModelBlobStore = {
         put: async (k) => { await jitter(); if (!storage.has(k)) storage.files.set(`f${++counter}`, k); },
-        get: async () => null, has: async (k) => storage.has(k), delete: async () => {}, list: async () => [],
+        get: async () => null, has: async (k) => storage.has(k), list: async () => [],
       };
       const deleter: BlobDeleter = {
         snapshot: async (k) => { await jitter(); return storage.ids(k); },
