@@ -822,13 +822,16 @@ consumer, live canvas and site merge work. What that means for a deploy, and for
   `20261112000000_site_branch_merge_undo`, `20261112120000_site_branch_previews`,
   `20261112180000_site_branch_backstops`. One commerce tenant migration, `030_books_contact_person`, which runs once
   for every company's schema (`src/server/commerce/migrations/tenant/`).
-- **One prerequisite outside this app.** `@marlinjai/contacts-core` went from 0.4 to 0.5, which needs migration 0003 of
-  the shared contacts database to have run first. Verified by the Books owner and the branching owner, as reported by
-  Marlin on 2026-11-12; this worker confirmed the version change in `package.json` and the migration files, not the
-  state of the shared contacts database.
-- **Going back is not just redeploying the previous image.** The previous image cannot read an invoice issued with a
-  version 2 snapshot (an invoice with a contact person, issued after the deploy). So a rollback after such an invoice
-  exists needs the Books owner's procedure, not only the old image. Same source as above.
+- **One hard prerequisite outside this app, and an order.** `@marlinjai/contacts-core` went from 0.4 to 0.5. Its
+  `ready()` throws `ContactsLayoutError` unless migration 0003 of the shared contacts database has been applied, so
+  the new image would fail every contacts read in Books (the customer picker, issuing an invoice) until then. The
+  order is: the receipts app's pull request 253 applies 0003 (it is on hold and needs Marlin's yes), the `_migrations`
+  table of the contacts database is checked, and only then is framer-clone deployed. Stated by the Books owner on
+  2026-11-12 (the contacts plan, section 8, and its pull requests 18 and 19); this worker confirmed the version change
+  in `package.json` and the migration files, not the state of the shared contacts database.
+- **Going back is not just redeploying the previous image.** The previous image cannot read an invoice addressed to a
+  contact person: such an invoice is issued with a version 2 snapshot, every other invoice stays at version 1 (#377,
+  merged). So a rollback after such an invoice exists needs the Books owner's procedure, not only the old image.
 - **FX itself** adds no migration and no environment variable. It adds packages to the image (three.js 0.184,
   react-three-fiber, postprocessing, scene-core), and a page without an FX scene fetches none of them (tested on a
   real build).
