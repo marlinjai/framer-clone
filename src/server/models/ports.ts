@@ -2,9 +2,10 @@
 //
 // The ports of the model store (plan S2): what the upload and the serving code need from storage,
 // written as interfaces so the whole flow runs offline against the in-memory fakes in memory.ts.
-// The real adapters are GATED, not built here: a Storage Brain client (credentials, the SDK as a
-// dependency, live calls) and a Prisma repository on a `site_models` table (a migration that
-// `prisma migrate deploy` would run at the next boot). Nothing here reads an environment variable.
+// The Prisma repository (prismaModels.ts, on the `site_models` table) exists but nothing constructs it; the
+// Storage Brain adapter (credentials, the SDK as a dependency, live calls) is GATED and not built. The
+// migration is applied by the next deployment's boot (`prisma migrate deploy`) and needs its own authorization.
+// Nothing here reads an environment variable.
 
 /** Bytes by key. Keys are `served/<sha256>` (the re-encoded file) and `original/<sha256>` (kept for one later re-encode, never served). */
 export interface ModelBlobStore {
@@ -12,6 +13,8 @@ export interface ModelBlobStore {
   get(key: string): Promise<Uint8Array | null>;
   has(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
+  /** Every key under a prefix with when it was written, for the orphan sweep (collect.ts). */
+  list(prefix: string): Promise<{ key: string; createdAt: Date }[]>;
 }
 
 export interface SiteModelRecord {

@@ -189,6 +189,45 @@ describe('the quota', () => {
   });
 });
 
+describe('races', () => {
+  it('the same model uploaded many times at once is one row, one \"ok\" and the rest \"exists\"', async () => {
+    const site = await makeSite();
+    const repo = new PrismaSiteModels(prisma);
+    const r = rec(site.id);
+    const outcomes = await Promise.all(Array.from({ length: 6 }, () => repo.insertWithinQuota(r, LIMITS)));
+    expect(outcomes.filter((o) => o.ok).length).toBe(1);
+    expect(outcomes.filter((o) => !o.ok && o.reason === 'exists').length).toBe(5);
+    expect((await repo.list(site.id)).length).toBe(1);
+  });
+
+  it('parallel uploads cannot pass the originals cap either', async () => {
+    const site = await makeSite();
+    const repo = new PrismaSiteModels(prisma);
+    const limit = { servedBytes: LIMITS.servedBytes, originalBytes: 5 * MB };
+    const outcomes = await Promise.all(Array.from({ length: 8 }, () => repo.insertWithinQuota(rec(site.id, { originalBytes: 2 * MB }), limit)));
+    expect(outcomes.filter((o) => o.ok).length).toBe(2);
+    expect(outcomes.filter((o) => !o.ok && o.reason === 'originals-quota').length).toBe(6);
+  });
+
+  it('an insert racing the deletion of its site leaves no row behind, whichever wins', async () => {
+    for (let i = 0; i < 5; i++) {
+      const site = await makeSite();
+      const repo = new PrismaSiteModels(prisma);
+      await Promise.allSettled([repo.insertWithinQuota(rec(site.id), LIMITS), prisma.site.delete({ where: { id: site.id } })]);
+      expect(await prisma.siteModel.count({ where: { siteId: site.id } })).toBe(0);
+    }
+  });
+
+  it('lets the owning workspace\'s repository touch its own model', async () => {
+    const site = await makeSite();
+    const own = new PrismaSiteModels(prisma, { workspaceId: site.workspaceId });
+    const r = rec(site.id);
+    await own.insertWithinQuota(r, LIMITS);
+    await own.touch(site.id, r.sha256, new Date('2026-12-24T00:00:00Z'));
+    expect((await own.find(site.id, r.sha256))?.lastUsedAt).toEqual(new Date('2026-12-24T00:00:00Z'));
+  });
+});
+
 describe('failure paths', () => {
   it('leaves no row after a refused insert and releases the site lock for the next one', async () => {
     const site = await makeSite();
@@ -210,24 +249,26 @@ describe('the database constraints (the backstop behind the upload checks)', () 
   it('accepts a plain valid row, and refuses each bad one', async () => {
     const site = await makeSite();
     await insert(site.id, site.workspaceId, { sha256: hex('1') });
-    const bad: [string, Record<string, unknown>][] = [
-      ['an upper-case hash', { sha256: hex('A') }],
-      ['a short hash', { sha256: 'a'.repeat(63) }],
-      ['an original that is not a hash', { original_sha256: 'x' }],
-      ['an empty file', { byte_size: 0 }],
-      ['a file over 8 MB', { byte_size: 8 * MB + 1 }],
-      ['an original over 50 MB', { original_bytes: 50 * MB + 1 }],
-      ['too many triangles', { triangles: 500_001 }],
-      ['too many materials', { material_count: 65 }],
-      ['too many nodes', { node_count: 1001 }],
-      ['too many clips', { clip_count: 33 }],
-      ['too many textures', { texture_count: 17 }],
-      ['a negative count', { triangles: -1 }],
-      ['a last use before the creation', { created_at: new Date('2026-11-10T10:00:00Z'), last_used_at: new Date('2026-11-09T10:00:00Z') }],
+    const bad: [string, Record<string, unknown>, RegExp][] = [
+      ['an upper-case hash', { sha256: hex('A') }, /site_models_sha256_check/],
+      ['a short hash', { sha256: 'a'.repeat(63) }, /site_models_sha256_check/],
+      ['an original that is not a hash', { original_sha256: 'x' }, /site_models_original_sha256_check/],
+      ['an empty file', { byte_size: 0 }, /site_models_byte_size_check/],
+      ['a file over 8 MB', { byte_size: 8 * MB + 1 }, /site_models_byte_size_check/],
+      ['an original of zero bytes', { original_bytes: 0 }, /site_models_original_bytes_check/],
+      ['an original over 50 MB', { original_bytes: 50 * MB + 1 }, /site_models_original_bytes_check/],
+      ['too many triangles', { triangles: 500_001 }, /site_models_counts_check/],
+      ['too many materials', { material_count: 65 }, /site_models_counts_check/],
+      ['too many nodes', { node_count: 1001 }, /site_models_counts_check/],
+      ['too many clips', { clip_count: 33 }, /site_models_counts_check/],
+      ['too many textures', { texture_count: 17 }, /site_models_counts_check/],
+      ['a negative count', { triangles: -1 }, /site_models_counts_check/],
+      ['a last use before the creation', { created_at: new Date('2026-11-10T10:00:00Z'), last_used_at: new Date('2026-11-09T10:00:00Z') }, /site_models_dates_check/],
     ];
-    for (const [i, [what, over]] of bad.entries()) {
-      const message = await refusal(() => insert(site.id, site.workspaceId, { sha256: hex(String.fromCharCode(97 + i)), ...over }));
-      expect(message, what).toMatch(/23514|check|constraint|violat/i);
+    for (const [i, [what, over, constraint]] of bad.entries()) {
+      // A VALID hash of its own for each case, so only the field under test can be the reason for the refusal.
+      const message = await refusal(() => insert(site.id, site.workspaceId, { sha256: (i + 100).toString(16).padStart(64, '0'), ...over }));
+      expect(message, what).toMatch(constraint);
     }
   });
 
@@ -235,13 +276,17 @@ describe('the database constraints (the backstop behind the upload checks)', () 
     const site = await makeSite();
     for (const col of ['material_names', 'node_names']) {
       const message = await refusal(() => prisma.$executeRawUnsafe(`INSERT INTO public.site_models (id, site_id, workspace_id, tenant_group_id, sha256, byte_size, triangles, material_count, node_count, clip_count, original_sha256, original_bytes, uploaded_by, ${col}) VALUES ($1, $2, 'w', $3, $4, 10, 1, 1, 1, 0, $5, 10, 'u', '{"a":1}'::jsonb)`, randomUUID(), site.id, GROUP, hex('7'), hex('8')));
-      expect(message).toMatch(/23514|check/i);
+      expect(message).toMatch(/site_models_names_check/);
     }
+    const tooMany = await refusal(() => prisma.$executeRawUnsafe(`INSERT INTO public.site_models (id, site_id, workspace_id, tenant_group_id, sha256, byte_size, triangles, material_count, node_count, clip_count, original_sha256, original_bytes, uploaded_by, node_names) VALUES ($1, $2, 'w', $3, $4, 10, 1, 1, 1, 0, $5, 10, 'u', (SELECT jsonb_agg(i::text) FROM generate_series(1, 1001) i))`, randomUUID(), site.id, GROUP, hex('9'), hex('8')));
+    expect(tooMany).toMatch(/site_models_names_check/);
   });
 
   it('refuses a model for a site that does not exist and a duplicate (site, hash)', async () => {
     const site = await makeSite();
-    expect(await refusal(() => insert(randomUUID(), 'ws', { sha256: hex('f') }))).toMatch(/23503|foreign key|violat/i);
+    expect(await refusal(() => insert(randomUUID(), 'ws', { sha256: hex('f') }))).toMatch(/23503|site_models_site_id_workspace_id_fkey|foreign key/i);
+    // A workspace that is not the site's is refused by the composite key, not just by the repository.
+    expect(await refusal(() => insert(site.id, 'ws_someone_else', { sha256: hex('3') }))).toMatch(/23503|site_models_site_id_workspace_id_fkey|foreign key/i);
     await insert(site.id, site.workspaceId, { sha256: hex('2') });
     expect(await refusal(() => insert(site.id, site.workspaceId, { sha256: hex('2') }))).toMatch(/23505|unique|duplicate/i);
   });
@@ -273,11 +318,14 @@ describe('the migration on a scratch database', () => {
     await a.end();
     url = process.env.DATABASE_URL!.replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
     const s = postgres(url, { max: 1 });
-    // The one thing the migration depends on: the sites table (the real chain's, reduced to its key).
-    await s`CREATE TABLE public.sites (id text PRIMARY KEY)`;
+    // The one thing the migration depends on: the sites table (the real chain's, reduced to its keys).
+    await s`CREATE TABLE public.sites (id text PRIMARY KEY, workspace_id text NOT NULL, UNIQUE (id, workspace_id))`;
     await s`CREATE TABLE public.sentinel (id int)`;
     await s`INSERT INTO public.sentinel VALUES (1)`;
-    await s`INSERT INTO public.sites VALUES ('s1')`;
+    await s`INSERT INTO public.sites VALUES ('s1', 'w')`;
+    // Prisma's history table, with this migration's row and a neighbour's.
+    await s`CREATE TABLE public._prisma_migrations (migration_name text PRIMARY KEY)`;
+    await s`INSERT INTO public._prisma_migrations VALUES ('20261112200000_site_models'), ('20261112180000_site_branch_backstops')`;
     await s.end();
   });
   afterAll(async () => {
@@ -291,9 +339,9 @@ describe('the migration on a scratch database', () => {
   it('applies, rolls back to exactly what was there, applies again, and refuses a second apply without changing anything', async () => {
     const s = postgres(url, { max: 1, onnotice: () => undefined });
     try {
-      expect(await tables(s)).toEqual(['sentinel', 'sites']);
+      expect(await tables(s)).toEqual(['_prisma_migrations', 'sentinel', 'sites']);
       await s.file(migrationFile);
-      expect(await tables(s)).toEqual(['sentinel', 'site_models', 'sites']);
+      expect(await tables(s)).toEqual(['_prisma_migrations', 'sentinel', 'site_models', 'sites']);
       await s`INSERT INTO public.site_models (id, site_id, workspace_id, tenant_group_id, sha256, byte_size, triangles, material_count, node_count, clip_count, original_sha256, original_bytes, uploaded_by) VALUES ('m1', 's1', 'w', 't', ${hex('1')}, 10, 1, 1, 1, 0, ${hex('2')}, 10, 'u')`;
 
       // A second apply fails and the table, its row and everything else are unchanged.
@@ -302,14 +350,16 @@ describe('the migration on a scratch database', () => {
 
       // The rollback script, in one transaction as its header says, removes this migration's table and nothing else.
       await s.begin(async (tx) => { await tx.file(rollbackFile); });
-      expect(await tables(s)).toEqual(['sentinel', 'sites']);
+      expect(await tables(s)).toEqual(['_prisma_migrations', 'sentinel', 'sites']);
+      // It forgets its own history row (so a redeploy applies it again) and only that one.
+      expect((await s`SELECT migration_name FROM public._prisma_migrations`).map((r) => r.migration_name)).toEqual(['20261112180000_site_branch_backstops']);
       expect((await s`SELECT count(*)::int AS n FROM public.sites`)[0].n).toBe(1);
       expect((await s`SELECT count(*)::int AS n FROM public.sentinel`)[0].n).toBe(1);
       // And it is safe to run again.
       await s.file(rollbackFile);
 
       await s.file(migrationFile);
-      expect(await tables(s)).toEqual(['sentinel', 'site_models', 'sites']);
+      expect(await tables(s)).toEqual(['_prisma_migrations', 'sentinel', 'site_models', 'sites']);
       expect((await s`SELECT count(*)::int AS n FROM public.site_models`)[0].n).toBe(0);
     } finally { await s.file(rollbackFile); await s.end(); }
   });
@@ -321,7 +371,7 @@ describe('the migration on a scratch database', () => {
         await tx.file(migrationFile);
         await tx`SELECT 1/0`;
       })).rejects.toThrow(/division by zero/);
-      expect(await tables(s)).toEqual(['sentinel', 'sites']);
+      expect(await tables(s)).toEqual(['_prisma_migrations', 'sentinel', 'sites']);
       // A failed apply leaves a clean database that the same migration then applies to.
       await s.file(migrationFile);
       expect(await tables(s)).toContain('site_models');

@@ -70,8 +70,8 @@ export class PrismaSiteModels implements SiteModelRepository {
       const held = await tx.$queryRaw<{ total: bigint | null; same: bigint }[]>`
         SELECT COALESCE(SUM(o.original_bytes), 0) AS total,
                COUNT(*) FILTER (WHERE o.original_sha256 = ${rec.originalSha256}) AS same
-          FROM (SELECT DISTINCT ON (original_sha256) original_sha256, original_bytes
-                  FROM public.site_models WHERE site_id = ${rec.siteId}) o`;
+          FROM (SELECT original_sha256, MAX(original_bytes) AS original_bytes
+                  FROM public.site_models WHERE site_id = ${rec.siteId} GROUP BY original_sha256) o`;
       const total = Number(held[0]?.total ?? 0);
       if (Number(held[0]?.same ?? 0) === 0 && total + rec.originalBytes > limits.originalBytes) return { ok: false, reason: 'originals-quota' } as const;
 
@@ -91,7 +91,7 @@ export class PrismaSiteModels implements SiteModelRepository {
     // Never backwards, and never before the row was created (a CHECK holds it).
     const workspace = this.scope.workspaceId;
     await this.client.$executeRaw`
-      UPDATE public.site_models SET last_used_at = GREATEST(last_used_at, ${at})
+      UPDATE public.site_models SET last_used_at = GREATEST(last_used_at, (${at.toISOString()}::timestamptz AT TIME ZONE 'UTC'))
        WHERE site_id = ${siteId} AND sha256 = ${sha256} AND (${workspace}::text IS NULL OR workspace_id = ${workspace})`;
   }
 

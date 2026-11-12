@@ -9,7 +9,7 @@ import { matchesModelEtag, parseSiteModelFile, siteModelHeaders } from '@/lib/sc
 import { MemoryBlobStore, MemorySiteModels } from '../memory';
 import { DECODED_LIMITS, acceptModelUpload, decodedProblem, type UploadDeps } from '../uploadModel';
 import { serveSiteModel } from '../serveModel';
-import { planCollection } from '../collect';
+import { planCollection, planOrphanSweep, ORPHAN_GRACE_MS } from '../collect';
 import type { DecodedStats, ModelReencoder, ModelValidator } from '../ports';
 
 const MB = 1024 * 1024;
@@ -153,6 +153,8 @@ describe('the upload pipeline fails closed', () => {
     ['a bounding box over 1000 units', { boundingBox: [1001, 1, 1] }, /1000 units/],
     ['too many nodes', { nodes: 1001 }, /nodes/],
     ['too many clips', { clips: 33 }, /clips/],
+    ['too many materials', { materials: 65 }, /materials/],
+    ['too many textures', { textures: 17 }, /textures/],
     ['a size that is not finite', { boundingBox: [NaN, 1, 1] }, /finite/],
     ['a negative size', { triangles: -1 }, /finite/],
   ])('refuses on the decoded caps: %s (a measurement the decoder reports, enforced here)', async (_n, input, message) => {
@@ -379,5 +381,47 @@ describe('collection', () => {
 
   it('collects nothing from nothing', () => {
     expect(planCollection({ now, models: [], referenced: new Set(), rowsPerSha: new Map(), rowsPerOriginal: new Map() })).toEqual({ rows: [], blobs: [], originals: [] });
+  });
+});
+
+describe('orphan blobs (written before a row that never came)', () => {
+  const now = new Date('2026-12-01T12:00:00Z');
+  const ago = (ms: number) => new Date(now.getTime() - ms);
+
+  it('sweeps an unreferenced blob only after the grace period, and never a referenced or foreign key', () => {
+    const swept = planOrphanSweep({
+      now,
+      blobs: [
+        { key: 'served/orphan-old', createdAt: ago(ORPHAN_GRACE_MS + 1) },
+        { key: 'served/orphan-new', createdAt: ago(ORPHAN_GRACE_MS - 1000) },
+        { key: 'served/kept', createdAt: ago(10 * ORPHAN_GRACE_MS) },
+        { key: 'original/orphan-old', createdAt: ago(ORPHAN_GRACE_MS + 1) },
+        { key: 'original/kept', createdAt: ago(10 * ORPHAN_GRACE_MS) },
+        { key: 'other/thing', createdAt: ago(10 * ORPHAN_GRACE_MS) },
+      ],
+      referencedServed: new Set(['kept']),
+      referencedOriginals: new Set(['kept']),
+    });
+    expect(swept.sort()).toEqual(['original/orphan-old', 'served/orphan-old']);
+  });
+
+  it('lists what the store holds, with when it was written', async () => {
+    const blobs = new MemoryBlobStore();
+    await blobs.put('served/a', new Uint8Array([1]));
+    await blobs.put('original/b', new Uint8Array([1]));
+    expect((await blobs.list('served/')).map((b) => b.key)).toEqual(['served/a']);
+  });
+
+  it('a refused upload leaves its blobs for the sweep, not for an immediate delete another upload could be relying on', async () => {
+    const d = deps();
+    await d.models.insertWithinQuota(row('s1', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
+    // At quota: refused before decoding, nothing written. With room for the served file only, the originals cap refuses after the blobs are written.
+    await d.models.delete('s1', 'f'.repeat(64));
+    await d.models.insertWithinQuota(row('s1', 'e'.repeat(64), 1, { originalBytes: 200 * MB }), { servedBytes: 1e12, originalBytes: 1e12 });
+    const r = await acceptModelUpload(glb('in'), 's1', 'u', { ...d, reencoder: re });
+    expect(r).toMatchObject({ ok: false, status: 413 });
+    const orphans = planOrphanSweep({ now: new Date(Date.now() + 2 * ORPHAN_GRACE_MS), blobs: await d.blobs.list(''), referencedServed: new Set(), referencedOriginals: new Set(['o-' + 'e'.repeat(64)]) });
+    expect(orphans.length).toBe(2);
   });
 });

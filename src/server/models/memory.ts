@@ -4,10 +4,12 @@ import type { InsertOutcome, ModelBlobStore, SiteModelRecord, SiteModelRepositor
 
 export class MemoryBlobStore implements ModelBlobStore {
   readonly files = new Map<string, Uint8Array>();
-  async put(key: string, bytes: Uint8Array) { this.files.set(key, bytes.slice()); }
+  readonly written = new Map<string, Date>();
+  async put(key: string, bytes: Uint8Array) { this.files.set(key, bytes.slice()); this.written.set(key, new Date()); }
+  async list(prefix: string) { return [...this.files.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key, createdAt: this.written.get(key) ?? new Date(0) })); }
   async get(key: string) { const b = this.files.get(key); return b ? b.slice() : null; }
   async has(key: string) { return this.files.has(key); }
-  async delete(key: string) { this.files.delete(key); }
+  async delete(key: string) { this.files.delete(key); this.written.delete(key); }
 }
 
 export class MemorySiteModels implements SiteModelRepository {

@@ -446,8 +446,8 @@ separate, gated step), so older and newer code behave the same on it. **It is ap
 deployment first contains it (`prisma migrate deploy`), so any deployment from a commit at or after it carries it: it
 is not applied to production by merging, and applying it needs its own authorization.** Refresh the migration
 inventory and every gate at the exact release commit. Reversing it: `rollback.sql` beside the migration (run by hand
-in one transaction after `prisma migrate resolve --rolled-back 20261112200000_site_models`) drops only that table;
-object-storage blobs are not touched. Both directions are tested on a scratch database
+in one transaction, with no `migrate resolve`: that command refuses a migration that applied, error P3012) drops only that
+table and forgets only that migration's history row, so a redeploy applies it again; object-storage blobs are not touched. Both directions are tested on a scratch database
 (`src/server/models/__tests__/prismaModels.itest.ts`).
 **Before rolling the code back past the first of the two with open branches**, merge or
 discard them: older code does not know the column and lists each open branch as one more draft site in its company's

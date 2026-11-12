@@ -49,3 +49,31 @@ export function planCollection({ models, referenced, rowsPerSha, rowsPerOriginal
     originals: [...originals].filter(([sha, n]) => count(rowsPerOriginal, sha) - n <= 0).map(([sha]) => sha),
   };
 }
+
+/**
+ * Blobs no row refers to. An upload writes its blobs BEFORE it inserts the row, and a failed or refused insert (quota,
+ * a concurrent erasure, a database error) leaves them behind; deleting them on the spot could remove a blob another
+ * upload of the same content has just written and is about to point a row at. So they are swept by age instead: a blob
+ * nothing refers to, older than the grace period, goes. The caller passes what the repository says is referenced across
+ * ALL sites (never a page), and the executor re-checks for a row right before each delete.
+ */
+export const ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+
+export function planOrphanSweep(input: {
+  blobs: { key: string; createdAt: Date }[];
+  referencedServed: ReadonlySet<string>;
+  referencedOriginals: ReadonlySet<string>;
+  now: Date;
+  graceMs?: number;
+}): string[] {
+  const cutoff = input.now.getTime() - (input.graceMs ?? ORPHAN_GRACE_MS);
+  return input.blobs
+    .filter((b) => {
+      if (b.createdAt.getTime() > cutoff) return false;
+      if (b.key.startsWith('served/')) return !input.referencedServed.has(b.key.slice('served/'.length));
+      if (b.key.startsWith('original/')) return !input.referencedOriginals.has(b.key.slice('original/'.length));
+      // A key this store does not write is not ours to delete.
+      return false;
+    })
+    .map((b) => b.key);
+}

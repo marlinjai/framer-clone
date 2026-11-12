@@ -35,7 +35,10 @@ CREATE TABLE "public"."site_models" (
         "triangles" BETWEEN 0 AND 500000 AND "material_count" BETWEEN 0 AND 64 AND "node_count" BETWEEN 0 AND 1000
         AND "clip_count" BETWEEN 0 AND 32 AND "texture_count" BETWEEN 0 AND 16
     ),
-    CONSTRAINT "site_models_names_check" CHECK (jsonb_typeof("material_names") = 'array' AND jsonb_typeof("node_names") = 'array'),
+    CONSTRAINT "site_models_names_check" CHECK (
+        jsonb_typeof("material_names") = 'array' AND jsonb_typeof("node_names") = 'array'
+        AND jsonb_array_length("material_names") <= 64 AND jsonb_array_length("node_names") <= 1000
+    ),
     CONSTRAINT "site_models_dates_check" CHECK ("last_used_at" >= "created_at")
 );
 
@@ -54,5 +57,5 @@ CREATE INDEX "site_models_sha256_idx" ON "public"."site_models"("sha256");
 -- CreateIndex
 CREATE INDEX "site_models_original_sha256_idx" ON "public"."site_models"("original_sha256");
 
--- AddForeignKey
-ALTER TABLE "public"."site_models" ADD CONSTRAINT "site_models_site_id_fkey" FOREIGN KEY ("site_id") REFERENCES "public"."sites"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- AddForeignKey: composite, so the denormalised workspace can never disagree with the site's (sites has UNIQUE (id, workspace_id)).
+ALTER TABLE "public"."site_models" ADD CONSTRAINT "site_models_site_id_workspace_id_fkey" FOREIGN KEY ("site_id", "workspace_id") REFERENCES "public"."sites"("id", "workspace_id") ON DELETE CASCADE ON UPDATE CASCADE;

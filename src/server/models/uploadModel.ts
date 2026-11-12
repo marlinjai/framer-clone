@@ -72,6 +72,8 @@ export function decodedProblem(s: DecodedStats | undefined | null): string | nul
   if (s.maxTextureSide > DECODED_LIMITS.textureSide) return `a texture is ${s.maxTextureSide} pixels on a side, at most ${DECODED_LIMITS.textureSide} are allowed`;
   if (s.boundingBox.some((n) => n > DECODED_LIMITS.boundingBox)) return `the model is larger than ${DECODED_LIMITS.boundingBox} units on a side`;
   if (s.nodes > DECODED_LIMITS.nodes) return `the model has ${s.nodes} nodes, at most ${DECODED_LIMITS.nodes} are allowed`;
+  if (s.materials > DECODED_LIMITS.materials) return `the model has ${s.materials} materials, at most ${DECODED_LIMITS.materials} are allowed`;
+  if ((s.textures ?? 0) > DECODED_LIMITS.textures) return `the model has ${s.textures} textures, at most ${DECODED_LIMITS.textures} are allowed`;
   if (s.clips > DECODED_LIMITS.clips) return `the model has ${s.clips} animation clips, at most ${DECODED_LIMITS.clips} are allowed`;
   return null;
 }
