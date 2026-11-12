@@ -22,14 +22,18 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { BranchApiError, branchClient, type PreviewLinkJson } from '@/lib/sites/branchClient';
 
-const DATE = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
+const DAY = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
+const MOMENT = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
+/** The moment a link ends, to the minute: a link made late in the day ends at that time of its last day, not at midnight. */
+const until = (iso: string) => `${MOMENT.format(new Date(iso))} UTC`;
+const isClosed = (err: unknown) => err instanceof BranchApiError && (err.status === 410 || err.code === 'branch_closed');
 const DAYS = [1, 7, 30] as const;
 
 /** What a refusal means for the person. */
 export function sharePreviewErrorText(err: unknown): string {
   if (err instanceof BranchApiError) {
     if (err.status === 403) return 'You may not edit this site, so you cannot share or revoke its preview. Ask someone who can.';
-    if (err.status === 410 || err.code === 'branch_closed') return 'This branch is closed, so it has no preview any more.';
+    if (isClosed(err)) return 'This branch is closed, so it has no preview any more.';
     return err.message;
   }
   return 'That did not work. Nothing was changed; try again.';
@@ -38,6 +42,8 @@ export function sharePreviewErrorText(err: unknown): string {
 type Loaded =
   | { kind: 'loading' }
   | { kind: 'failed'; message: string }
+  /** The branch was merged or discarded meanwhile: it has no preview, and nothing here can change that. */
+  | { kind: 'closed' }
   | { kind: 'ready'; link: PreviewLinkJson | null; url: string | null };
 
 export default function SharePreview({
@@ -64,13 +70,19 @@ export default function SharePreview({
   const trigger = useRef<HTMLButtonElement>(null);
   const address = useRef<HTMLInputElement>(null);
 
+  // Every read and every change takes a number; an answer is used only while its number is still the latest.
+  // Otherwise a slow read from before could arrive after a link was made and wipe the address off the dialog.
+  const latest = useRef(0);
+  const reasonId = React.useId();
+
   const load = useCallback(async () => {
+    const mine = ++latest.current;
     setLoaded({ kind: 'loading' });
     try {
       const { link } = await branchClient.previewLink(mainSiteId, branchId);
-      setLoaded({ kind: 'ready', link, url: null });
+      if (mine === latest.current) setLoaded({ kind: 'ready', link, url: null });
     } catch (err) {
-      setLoaded({ kind: 'failed', message: sharePreviewErrorText(err) });
+      if (mine === latest.current) setLoaded(isClosed(err) ? { kind: 'closed' } : { kind: 'failed', message: sharePreviewErrorText(err) });
     }
   }, [mainSiteId, branchId]);
 
@@ -82,11 +94,13 @@ export default function SharePreview({
     setBusy('make');
     setError(null);
     setCopied(null);
+    const mine = ++latest.current;
     try {
       const { link } = await branchClient.makePreviewLink(mainSiteId, branchId, days);
-      setLoaded({ kind: 'ready', link, url: link.url });
+      if (mine === latest.current) setLoaded({ kind: 'ready', link, url: link.url });
     } catch (err) {
-      setError(sharePreviewErrorText(err));
+      if (isClosed(err)) setLoaded({ kind: 'closed' });
+      else setError(sharePreviewErrorText(err));
     }
     setBusy(null);
   }
@@ -94,12 +108,14 @@ export default function SharePreview({
   async function revoke() {
     setBusy('revoke');
     setError(null);
+    const mine = ++latest.current;
     try {
       await branchClient.revokePreviewLink(mainSiteId, branchId);
       setCopied(null);
-      setLoaded({ kind: 'ready', link: null, url: null });
+      if (mine === latest.current) setLoaded({ kind: 'ready', link: null, url: null });
     } catch (err) {
-      setError(sharePreviewErrorText(err));
+      if (isClosed(err)) setLoaded({ kind: 'closed' });
+      else setError(sharePreviewErrorText(err));
     }
     setBusy(null);
   }
@@ -120,16 +136,36 @@ export default function SharePreview({
 
   return (
     <>
-      <Button ref={trigger} type="button" size="sm" variant="outline" disabled={Boolean(disabledReason)} title={disabledReason} onClick={() => setShown(true)}>
+      <Button
+        ref={trigger}
+        type="button"
+        size="sm"
+        variant="outline"
+        // Not `disabled`: the button stays reachable by keyboard so the reason can be read, and does nothing.
+        aria-disabled={disabledReason ? true : undefined}
+        aria-describedby={disabledReason ? reasonId : undefined}
+        title={disabledReason}
+        className={disabledReason ? 'cursor-not-allowed opacity-50' : undefined}
+        onClick={() => {
+          if (!disabledReason) setShown(true);
+        }}
+      >
         <Link2 aria-hidden /> Share preview
       </Button>
+      {disabledReason ? (
+        <span id={reasonId} className="sr-only">
+          {disabledReason}
+        </span>
+      ) : null}
       <Dialog
         open={shown}
         onOpenChange={(next) => {
           if (busy) return;
           setShown(next);
           if (!next) {
-            // The address is not kept once the dialog closes: it cannot be shown again.
+            // The address is not kept once the dialog closes: it cannot be shown again. An answer still on its
+            // way belongs to the dialog that was closed.
+            latest.current++;
             setError(null);
             setCopied(null);
             setLoaded({ kind: 'loading' });
@@ -152,6 +188,11 @@ export default function SharePreview({
           </DialogHeader>
 
           {loaded.kind === 'loading' ? <p className="text-sm text-muted-foreground">Reading the link…</p> : null}
+          {loaded.kind === 'closed' ? (
+            <p role="alert" className="text-sm">
+              This branch was merged or discarded, so it has no preview any more. A link it had shows nothing.
+            </p>
+          ) : null}
           {loaded.kind === 'failed' ? (
             <div className="flex flex-col gap-2">
               <p role="alert" className="text-sm text-destructive">
@@ -184,7 +225,7 @@ export default function SharePreview({
                 </span>
               </div>
               <p className="text-sm text-muted-foreground">
-                It works until {DATE.format(new Date(link!.expiresAt))}. Copy it now: it is not stored and cannot be shown again
+                It works until {until(link!.expiresAt)}. Copy it now: it is not stored and cannot be shown again
                 after this dialog closes. Whoever has it can pass it on.
               </p>
             </div>
@@ -193,8 +234,8 @@ export default function SharePreview({
           {loaded.kind === 'ready' && !url && link ? (
             <p className="text-sm">
               {link.expired
-                ? `This branch had a preview link. It expired on ${DATE.format(new Date(link.expiresAt))} and shows nothing any more.`
-                : `This branch has a preview link, made on ${DATE.format(new Date(link.createdAt))}. It works until ${DATE.format(new Date(link.expiresAt))}.`}{' '}
+                ? `This branch had a preview link. It expired on ${until(link.expiresAt)} and shows nothing any more.`
+                : `This branch has a preview link, made on ${DAY.format(new Date(link.createdAt))}. It works until ${until(link.expiresAt)}.`}{' '}
               Its address is not stored, so it cannot be shown again. A new link replaces it: the old address stops working at once.
             </p>
           ) : null}

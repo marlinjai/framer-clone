@@ -29,6 +29,7 @@ import { parseComponents } from '@/lib/components/definition';
 import { parseSiteRedirects } from '@/lib/pages/redirects';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import type { PageSnapshotOut } from '@/models/PageModel';
+import { isEditorHost } from '@/lib/editorHost';
 import { PREVIEW_TOKEN_PATTERN, previewHostOf, previewTokenOfHost, type PreviewOf } from '@/lib/sites/previewHost';
 import { BranchClosedError, BranchNotFoundError, SiteNotFoundError, SiteRepositoryError } from '../errors';
 import type { PublishedSite } from '../publicResolver';
@@ -45,6 +46,17 @@ export const PREVIEW_LINK_DEFAULT_DAYS: PreviewLinkDays = 7;
 export class PreviewLinkUnavailableError extends SiteRepositoryError {
   constructor() {
     super('preview_link_unavailable', 'Public preview links are not available here: the address for published sites is not configured.', 409);
+  }
+}
+
+/** The site is not linked to a company with site branches on, so its link would show nothing. 409. */
+export class PreviewLinkNoCompanyError extends SiteRepositoryError {
+  constructor() {
+    super(
+      'preview_link_no_company',
+      'This site is not linked to its company yet, so a preview link would show nothing. Open the site itself in the editor once, then make the link.',
+      409,
+    );
   }
 }
 
@@ -98,7 +110,7 @@ function summaryOf(row: { expiresAt: Date; createdBy: string; createdAt: Date },
 async function openBranch(client: Prisma.TransactionClient | PrismaClient, scope: TenantScope, mainSiteId: string, branchId: string) {
   const main = await client.site.findFirst({
     where: { id: mainSiteId, workspaceId: scope.workspaceId, tenantGroupId: scope.tenantGroupId, branchOfSiteId: null },
-    select: { id: true },
+    select: { id: true, companyId: true },
   });
   if (!main) throw new SiteNotFoundError(mainSiteId);
   const record = await client.siteBranch.findFirst({
@@ -147,6 +159,9 @@ export class SiteBranchPreviewLinks {
       // either finishes first (then the branch is closed here) or deletes the link made here.
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainSiteId} AND workspace_id = ${scope.workspaceId} AND tenant_group_id = ${scope.tenantGroupId} FOR UPDATE`;
       const { main, record } = await openBranch(tx, scope, mainSiteId, branchId);
+      // A link is shown only for a company with site branches on (resolvePreviewLink): without a company the
+      // address would answer 404 for ever, so none is made and the person is told what to do.
+      if (!siteBranchesEnabled(main.companyId ?? record.companyId)) throw new PreviewLinkNoCompanyError();
       await tx.siteBranchPreview.deleteMany({ where: { branchId: record.id, workspaceId: scope.workspaceId } });
       const created = await tx.siteBranchPreview.create({
         data: {
@@ -154,7 +169,7 @@ export class SiteBranchPreviewLinks {
           branchId: record.id,
           workspaceId: record.workspaceId,
           tenantGroupId: record.tenantGroupId,
-          companyId: record.companyId,
+          companyId: main.companyId ?? record.companyId,
           tokenHash: previewTokenHash(token),
           expiresAt,
           createdBy: actor.id,
@@ -226,26 +241,15 @@ export async function resolvePreviewSite(
   prisma: PrismaClient = getPrismaClient(),
   now: Date = new Date(),
 ): Promise<PreviewSite | null> {
-  const token = previewTokenOfHost(host);
-  if (!token || !PREVIEW_TOKEN_PATTERN.test(token)) return null;
-  const link = await prisma.siteBranchPreview.findUnique({
-    where: { tokenHash: previewTokenHash(token) },
-    select: {
-      expiresAt: true,
-      workspaceId: true,
-      branch: { select: { id: true, siteId: true, name: true, status: true, branchSiteId: true, companyId: true } },
-    },
-  });
-  if (!link || link.expiresAt.getTime() <= now.getTime()) return null;
-  const { branch } = link;
-  if ((branch.status !== 'open' && branch.status !== 'ready') || !branch.branchSiteId) return null;
-  if (!siteBranchesEnabled(branch.companyId)) return null;
+  const link = await resolvePreviewLink(host, prisma, now);
+  if (!link) return null;
+  const branch = { id: link.branchId, siteId: link.siteId, name: link.branchName, branchSiteId: link.branchSiteId };
 
   // One snapshot, as the published resolver reads: the row and its pages never from two different saves.
   const site = await prisma.$transaction(
     (tx) =>
       tx.site.findFirst({
-        where: { id: branch.branchSiteId!, workspaceId: link.workspaceId, branchOfSiteId: branch.siteId },
+        where: { id: branch.branchSiteId, workspaceId: link.workspaceId, branchOfSiteId: branch.siteId },
         select: {
           workspaceId: true,
           tenantGroupId: true,
@@ -268,7 +272,7 @@ export async function resolvePreviewSite(
     siteId: branch.siteId,
     workspaceId: site.workspaceId,
     tenantGroupId: site.tenantGroupId,
-    companyId: site.companyId,
+    companyId: link.companyId,
     name: site.name,
     analyticsProjectId: null,
     ingestionEndpoint: null,
@@ -281,6 +285,62 @@ export async function resolvePreviewSite(
     revisionNumber: null,
     revision: `preview:${branch.id}:${site.version}:${site.erasureEpoch}`,
     preview: { branchId: branch.id, branchName: branch.name, expiresAt: link.expiresAt.toISOString() },
+  };
+}
+
+/** A live preview link and what it is of, without the branch's content. */
+export interface PreviewLinkTarget {
+  /** Main's site id: what the catalogue and the images are keyed by. */
+  siteId: string;
+  branchId: string;
+  branchSiteId: string;
+  branchName: string;
+  workspaceId: string;
+  tenantGroupId: string;
+  companyId: string | null;
+  expiresAt: Date;
+}
+
+/**
+ * The live link a request host names, or null, by one indexed read and without loading the branch: what the
+ * image route and the catalogue reads need (a page with thirty pictures asks thirty times), and the first step
+ * of {@link resolvePreviewSite}. Null for a host of another shape, the editor host (with no EDITOR_HOST, in
+ * development, every host is the editor and gets none of the preview rules of the middleware, so no preview is
+ * served there at all), an unknown token, an expired link, a closed branch, and a company with branches off.
+ */
+export async function resolvePreviewLink(
+  host: string | null | undefined,
+  prisma: PrismaClient = getPrismaClient(),
+  now: Date = new Date(),
+): Promise<PreviewLinkTarget | null> {
+  if (isEditorHost(host)) return null;
+  const token = previewTokenOfHost(host);
+  if (!token || !PREVIEW_TOKEN_PATTERN.test(token)) return null;
+  const link = await prisma.siteBranchPreview.findUnique({
+    where: { tokenHash: previewTokenHash(token) },
+    select: {
+      expiresAt: true,
+      workspaceId: true,
+      tenantGroupId: true,
+      branch: { select: { id: true, siteId: true, name: true, status: true, branchSiteId: true, companyId: true, site: { select: { companyId: true } } } },
+    },
+  });
+  if (!link || link.expiresAt.getTime() <= now.getTime()) return null;
+  const { branch } = link;
+  if ((branch.status !== 'open' && branch.status !== 'ready') || !branch.branchSiteId) return null;
+  // The branch's company as it is today: the record copies it when the branch is made, and a site stamped with
+  // its company only later would otherwise have a link that never shows anything.
+  const companyId = branch.site.companyId ?? branch.companyId;
+  if (!siteBranchesEnabled(companyId)) return null;
+  return {
+    siteId: branch.siteId,
+    branchId: branch.id,
+    branchSiteId: branch.branchSiteId,
+    branchName: branch.name,
+    workspaceId: link.workspaceId,
+    tenantGroupId: link.tenantGroupId,
+    companyId,
+    expiresAt: link.expiresAt,
   };
 }
 

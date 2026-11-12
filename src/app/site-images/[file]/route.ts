@@ -20,7 +20,7 @@
 
 import { parseSiteImageFile } from '@/lib/site/siteImages';
 import { isPreviewHost } from '@/lib/sites/previewHost';
-import { resolvePreviewSite } from '@/server/sites/branches/previewLinks';
+import { resolvePreviewLink } from '@/server/sites/branches/previewLinks';
 import { getCachedPublishedSite } from '@/server/sites/cachedResolver';
 import { matchesEtag, readSiteImage, readSiteImageType, siteImageHeaders } from '@/server/sites/siteImages';
 
@@ -50,7 +50,7 @@ function asPreview(response: Response): Response {
 export async function GET(request: Request, { params }: Ctx): Promise<Response> {
   const { file } = await params;
   const named = parseSiteImageFile(file);
-  if (!named) return notFound();
+  if (!named) return isPreviewHost(request.headers.get('host')) ? asPreview(notFound()) : notFound();
 
   // A branch's public preview shows its site's images (they belong to main), but privately: the address is a
   // secret that ends, so nothing of it may sit in a shared cache or be loaded by another origin.
@@ -59,10 +59,10 @@ export async function GET(request: Request, { params }: Ctx): Promise<Response> 
   const visibility = preview ? 'private' : 'public';
   let siteId: string | null;
   try {
-    siteId = ((preview ? await resolvePreviewSite(host) : await getCachedPublishedSite(host)))?.siteId ?? null;
+    siteId = (preview ? await resolvePreviewLink(host) : await getCachedPublishedSite(host))?.siteId ?? null;
   } catch (err) {
     console.error('site-images: could not resolve the site.', err);
-    return new Response(null, { status: 503 });
+    return preview ? asPreview(new Response(null, { status: 503 })) : new Response(null, { status: 503 });
   }
   if (!siteId) return preview ? asPreview(notFound()) : notFound();
   const headersFor = (sha: string, type: string) => siteImageHeaders(sha, type, visibility);

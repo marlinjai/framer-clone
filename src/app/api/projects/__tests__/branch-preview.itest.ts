@@ -18,7 +18,8 @@ import type { TenantScope } from '@/server/sites';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
 import { getSiteBranchRepository } from '@/server/sites/branches/repository';
 import { getSiteBranchMergeService } from '@/server/sites/branches/merge';
-import { previewTokenHash, resolvePreviewSite } from '@/server/sites/branches/previewLinks';
+import { previewTokenHash, resolvePreviewLink, resolvePreviewSite } from '@/server/sites/branches/previewLinks';
+import { resolveStorefrontCommerceForRead } from '@/server/commerce/storefrontTenant';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
 import { previewTokenOfHost } from '@/lib/sites/previewHost';
@@ -362,6 +363,55 @@ describe('bounds and isolation', () => {
     expect(await resolvePreviewSite(host)).toBeNull();
     process.env.SITE_BRANCHES_COMPANIES = us.companyId;
     expect(textOf(await resolvePreviewSite(host), 'home')).toBe('Summer bread');
+  });
+
+  it('a site not linked to its company yet gets no link that could never show anything, and one stamped later does', async () => {
+    const branchId = await newBranch();
+    // As for a site made before companies were stamped: neither the site nor the record names one.
+    await prisma.site.updateMany({ where: { OR: [{ id: us.mainId }, { id: branchId }] }, data: { companyId: null } });
+    await prisma.siteBranch.update({ where: { id: branchId }, data: { companyId: null } });
+    const refused = await make(us.mainId, branchId);
+    expect(refused.status).toBe(409);
+    const error = (await refused.json()).error;
+    expect(error.code).toBe('preview_link_no_company');
+    expect(error.message).toMatch(/Open the site itself in the editor once/);
+    expect(await prisma.siteBranchPreview.count({ where: { branchId } })).toBe(0);
+    // The site is stamped (the editor does that when it is opened); the record still holds none.
+    await prisma.site.update({ where: { id: us.mainId }, data: { companyId: us.companyId } });
+    const host = await linkHost(branchId);
+    expect((await prisma.siteBranchPreview.findUniqueOrThrow({ where: { branchId } })).companyId).toBe(us.companyId);
+    expect(await resolvePreviewLink(host)).toMatchObject({ siteId: us.mainId, branchId, companyId: us.companyId });
+    expect(textOf(await resolvePreviewSite(host), 'home')).toBe('Summer bread');
+  });
+
+  it('is served nowhere while every host counts as the editor (no editor host configured)', async () => {
+    const branchId = await newBranch();
+    const host = await linkHost(branchId);
+    delete process.env.EDITOR_HOST;
+    expect(await resolvePreviewLink(host)).toBeNull();
+    expect(await resolvePreviewSite(host)).toBeNull();
+    process.env.EDITOR_HOST = EDITOR;
+    expect(await resolvePreviewLink(host)).not.toBeNull();
+    // And never on the editor host itself, whatever it is called.
+    process.env.EDITOR_HOST = host;
+    expect(await resolvePreviewLink(host)).toBeNull();
+    process.env.EDITOR_HOST = EDITOR;
+  });
+
+  it('the catalogue reads of a preview resolve by the link alone and end with it; orders and forms never resolve', async () => {
+    const branchId = await newBranch();
+    const host = await linkHost(branchId);
+    // No commerce schema exists for this test's tenant group: the answer is "not provisioned" (404), which is
+    // past the refusal a host with no site gets (403). After the revoke it is that refusal.
+    const read = await resolveStorefrontCommerceForRead(host);
+    expect(read.ok).toBe(false);
+    if (!read.ok) expect(read.response.status).toBe(404);
+    const order = await resolveStorefrontCommerce(host);
+    if (!order.ok) expect(order.response.status).toBe(403);
+    await revoke(us.mainId, branchId);
+    const after = await resolveStorefrontCommerceForRead(host);
+    expect(after.ok).toBe(false);
+    if (!after.ok) expect(after.response.status).toBe(403);
   });
 
   it('a link row of another workspace\'s branch cannot exist, and a stored hash is a hash', async () => {

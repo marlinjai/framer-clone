@@ -418,7 +418,12 @@ ships the work-on-a-branch skill; it checks the tool list first and works on the
 `preview-<token>.PUBLIC_SITE_BASE_HOST` (production: `preview-<token>.sites.lumitra.co`), which shows the branch
 read only to anyone who has it. It needs nothing new on the server: the address is one label under the wildcard record
 and certificate that published sites already use, and no site can be given a label that starts with `preview-`.
-Without `PUBLIC_SITE_BASE_HOST` no link can be made. A link shows nothing once it is revoked or expired, once its
+**The certificate for `*.PUBLIC_SITE_BASE_HOST` must stay one wildcard certificate** (issued by DNS validation, as
+it is today): the secret of a preview is its hostname, and a certificate issued for a single preview host would
+publish that hostname in the public certificate transparency logs. Never route a preview label through a router
+that asks for its own certificate. To check: `openssl s_client -connect <any label>.sites.lumitra.co:443
+-servername <any label>.sites.lumitra.co` must show `*.sites.lumitra.co` as the name, for a label never used
+before. Without `PUBLIC_SITE_BASE_HOST` no link can be made. A link shows nothing once it is revoked or expired, once its
 branch is merged or discarded, and while `SITE_BRANCHES_COMPANIES` does not list the branch's company. Migration
 `20261112120000_site_branch_previews` is additive (one table, one unique index on `site_branches` that every row
 satisfies) and needs no reversing; older code ignores the table, so after a code rollback every preview address answers

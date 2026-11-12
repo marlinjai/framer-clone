@@ -40,7 +40,7 @@ import {
 } from '@/lib/renderer/publish/hydrateBindings';
 import { resolvePublishedSite, type PublishedSite } from '@/server/sites/publicResolver';
 import { isPreviewHost } from '@/lib/sites/previewHost';
-import { resolvePreviewSite } from '@/server/sites/branches/previewLinks';
+import { resolvePreviewLink } from '@/server/sites/branches/previewLinks';
 import {
   commerceTenantDbChecked,
   isCommerceTenantNotProvisioned,
@@ -53,10 +53,13 @@ import { isTenantSchemaError, resolveTenantGroupForSite } from './tenant';
 /** The error code every storefront route answers with when commerce is not provisioned. */
 export const COMMERCE_NOT_PROVISIONED = 'commerce_not_provisioned';
 
-export type StorefrontCommerce =
+/** What the storefront needs of the site a request names: its ids, never its content. */
+export type StorefrontSite = Pick<PublishedSite, 'siteId' | 'workspaceId' | 'tenantGroupId' | 'companyId'>;
+
+export type StorefrontCommerce<S extends StorefrontSite = PublishedSite> =
   | {
       ok: true;
-      site: PublishedSite;
+      site: S;
       tenantGroupId: TenantGroupId;
       /**
        * The company whose catalogue this site sells (company.ts companyForSite). Every catalogue read and
@@ -90,16 +93,16 @@ export async function resolveStorefrontCommerce(
  */
 export async function resolveStorefrontCommerceForRead(
   host: string | null | undefined,
-): Promise<StorefrontCommerce> {
-  return storefrontCommerceOf(isPreviewHost(host) ? await resolvePreviewSite(host) : await resolvePublishedSite(host));
+): Promise<StorefrontCommerce<StorefrontSite>> {
+  return storefrontCommerceOf(isPreviewHost(host) ? await resolvePreviewLink(host) : await resolvePublishedSite(host));
 }
 
-async function storefrontCommerceOf(site: PublishedSite | null): Promise<StorefrontCommerce> {
+async function storefrontCommerceOf<S extends StorefrontSite>(site: S | null): Promise<StorefrontCommerce<S>> {
   if (!site) {
     return { ok: false, response: jsonError('forbidden', 'not a published storefront', 403) };
   }
 
-  const notProvisioned: StorefrontCommerce = {
+  const notProvisioned: StorefrontCommerce<S> = {
     ok: false,
     response: jsonError(
       COMMERCE_NOT_PROVISIONED,

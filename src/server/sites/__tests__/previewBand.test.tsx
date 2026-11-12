@@ -15,7 +15,7 @@ describe('PreviewBand', () => {
     expect(html).toContain('data-fc-preview-band');
     expect(html).toContain('This is not the live site');
     expect(html).toContain('forms and checkout are switched off');
-    expect(html).toContain('19 November 2026');
+    expect(html).toContain('19 November 2026 at 10:00 UTC');
     expect(html).toContain('&lt;b&gt;Summer&lt;/b&gt; sale');
     expect(html).not.toContain('<b>Summer');
   });

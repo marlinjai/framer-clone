@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 const { preview, published, image } = vi.hoisted(() => ({ preview: vi.fn(), published: vi.fn(), image: vi.fn() }));
-vi.mock('@/server/sites/branches/previewLinks', () => ({ resolvePreviewSite: preview }));
+vi.mock('@/server/sites/branches/previewLinks', () => ({ resolvePreviewLink: preview }));
 vi.mock('@/server/sites/cachedResolver', () => ({ getCachedPublishedSite: published }));
 vi.mock('@/server/sites/siteImages', async (importActual) => {
   const actual = await importActual<typeof import('@/server/sites/siteImages')>();
@@ -57,5 +57,17 @@ describe('site images on a preview host', () => {
     expect(preview).not.toHaveBeenCalled();
     expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
     expect(res.headers.get('x-robots-tag')).toBeNull();
+  });
+
+  it('marks its other answers on a preview host too: a file name that is none, and a failed lookup', async () => {
+    const bad = await GET(new Request(`https://${PREVIEW}/site-images/nope.png`, { headers: { host: PREVIEW } }), { params: Promise.resolve({ file: 'nope.png' }) });
+    expect(bad.status).toBe(404);
+    expect(bad.headers.get('cache-control')).toBe('private, no-store');
+    preview.mockRejectedValue(new Error('database down'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const down = await get(PREVIEW);
+    expect(down.status).toBe(503);
+    expect(down.headers.get('cache-control')).toBe('private, no-store');
+    errors.mockRestore();
   });
 });

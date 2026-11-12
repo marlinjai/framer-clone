@@ -57,7 +57,7 @@ describe('SharePreview', () => {
     });
     expect(client.makePreviewLink).toHaveBeenCalledWith(MAIN, BRANCH, 7);
     expect((screen.getByLabelText('The address') as HTMLInputElement).value).toBe(URL_MADE);
-    expect(screen.getByText(/It works until 19 November 2026/)).toBeTruthy();
+    expect(screen.getByText(/It works until 19 November 2026 at 10:00 UTC/)).toBeTruthy();
     expect(screen.getByText(/cannot be shown again/)).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Copy the address' }));
@@ -91,7 +91,7 @@ describe('SharePreview', () => {
     client.previewLink.mockResolvedValue({ link: LINK });
     mount();
     await open();
-    expect(await screen.findByText(/made on 12 November 2026\. It works until 19 November 2026/)).toBeTruthy();
+    expect(await screen.findByText(/made on 12 November 2026\. It works until 19 November 2026 at 10:00 UTC/)).toBeTruthy();
     expect(screen.getByText(/Its address is not stored, so it cannot be shown again/)).toBeTruthy();
     expect(screen.queryByLabelText('The address')).toBeNull();
     await act(async () => {
@@ -121,7 +121,7 @@ describe('SharePreview', () => {
     client.previewLink.mockResolvedValue({ link: { ...LINK, expired: true } });
     mount();
     await open();
-    expect(await screen.findByText(/It expired on 19 November 2026 and shows nothing any more/)).toBeTruthy();
+    expect(await screen.findByText(/It expired on 19 November 2026 at 10:00 UTC and shows nothing any more/)).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Remove the expired link' }));
     });
@@ -158,7 +158,47 @@ describe('SharePreview', () => {
   it('stays off, with the reason, for someone who may not edit the site', () => {
     mount({ disabledReason: 'Only someone who may edit this site can share a preview.' });
     const button = screen.getByRole('button', { name: 'Share preview' }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.title).toMatch(/may edit this site/);
+    // Reachable by keyboard, with the reason readable to a screen reader, and it opens nothing.
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toMatch(/may edit this site/);
+    fireEvent.click(button);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(client.previewLink).not.toHaveBeenCalled();
+  });
+
+  it('a slow read from before never wipes an address just made', async () => {
+    let answerFirst!: (value: { link: null }) => void;
+    client.previewLink.mockReturnValueOnce(new Promise((resolve) => (answerFirst = resolve)));
+    mount();
+    await open();
+    // Closed while the first read is on its way, opened again, link made.
+    await act(async () => {
+      // The dialog's own corner button and the footer's are both named Close; either closes it.
+      fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]);
+    });
+    await open();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Make the link' }));
+    });
+    expect((screen.getByLabelText('The address') as HTMLInputElement).value).toBe(URL_MADE);
+    await act(async () => {
+      answerFirst({ link: null });
+    });
+    expect((screen.getByLabelText('The address') as HTMLInputElement).value).toBe(URL_MADE);
+  });
+
+  it('a branch closed meanwhile is said once, and nothing that cannot work is offered', async () => {
+    client.previewLink.mockResolvedValue({ link: LINK });
+    client.makePreviewLink.mockRejectedValueOnce(new BranchApiError('branch_closed', 'closed', 410));
+    mount();
+    await open();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Make a new link' }));
+    });
+    expect(screen.getByRole('alert').textContent).toMatch(/merged or discarded, so it has no preview any more/);
+    expect(screen.queryByRole('button', { name: /Make/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Revoke/ })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Close' }).length).toBeGreaterThan(0);
   });
 });

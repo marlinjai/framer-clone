@@ -34,7 +34,7 @@ revision holds `components` beside `pages`) is honoured here, and slice 8 of tha
 | Retention | The newest 30 revisions of a site. Pruned at publish, when the live revision is by construction the newest. Numbers are never reused |
 | Cache | The cached `PublishedSite` is built from the revision, so a miss (restart, deploy, second replica) reads the same content. Publish and rollback revalidate the subdomain and every custom host |
 | Custom domains | Nothing special: every host resolves to a site id first, then to the same revision. Domains stay live, a domain connected later serves the revision that is live |
-| Draft preview | `/projects/<id>/preview` already loads the working copy through `SiteRepository.loadProject`, behind sign-in. It stays that. No preview tokens (reversed for site branches only, 2026-11-11: a branch can have a public preview link, `docs/plans/2026-11-10-site-branches.md` decisions 72 to 79): those belonged to external frontends |
+| Draft preview | `/projects/<id>/preview` already loads the working copy through `SiteRepository.loadProject`, behind sign-in. It stays that. No preview tokens (reversed for site branches only, 2026-11-11: a branch can have a public preview link, `docs/plans/2026-11-10-site-branches.md` decisions 72 to 85): those belonged to external frontends |
 | Unpublish | Sets `draft` and keeps the pointer. The resolver requires `published`, so nothing is served |
 | Delete | `site_revisions.site_id` cascades. The pointer's foreign key is `NO ACTION`, not `SET NULL`: losing a live revision must fail loudly, never fall through to serving drafts. It is checked at the end of the statement, so the cascade from a site delete passes |
 

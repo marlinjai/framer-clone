@@ -8,6 +8,7 @@ import 'server-only';
 // the site's designed 404 page (`(site)/not-found.tsx`), so both render a page
 // exactly the same way.
 
+import { previewSafeTree } from '@/lib/renderer/server/previewSafe';
 import type { PreviewOf } from '@/lib/sites/previewHost';
 import React from 'react';
 import {
@@ -74,7 +75,7 @@ export function findNotFoundPage(site: PublishedSite) {
 /** What a form and the checkout say on a branch's public preview instead of sending anything. */
 export const PREVIEW_UNAVAILABLE = 'This is a preview: nothing is sent or ordered from it.';
 
-const PREVIEW_DATE = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
+const PREVIEW_DATE = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
 
 /**
  * The band every page of a branch's public preview carries (site branches, slice S8): it says that this is not
@@ -98,7 +99,7 @@ export function PreviewBand({ preview }: { preview: PreviewOf }): React.ReactEle
       }}
     >
       Preview of the branch “{preview.branchName}”. This is not the live site: forms and checkout are switched off. The link
-      works until {PREVIEW_DATE.format(new Date(preview.expiresAt))}.
+      works until {PREVIEW_DATE.format(new Date(preview.expiresAt))} UTC.
     </div>
   );
 }
@@ -146,12 +147,15 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
   //     A page with NO bound commerce source never touches the commerce
   //     connection at all; one that has them runs the startup backstop first and
   //     fails loudly on a misconfigured COMMERCE_APP_DATABASE_URL.
+  // A preview sends nothing and tells no other site its address: stored attributes and map frames that would
+  // are taken out before anything reads the tree (src/lib/renderer/server/previewSafe.ts).
+  const root = site.preview ? previewSafeTree(adapted.root) : adapted.root;
   const { body } = await renderPublishedPage({
-    root: adapted.root,
+    root,
     budget: adapted.budget,
     pageParams: matched.params,
     cmsRepo: getPublishedCmsRepository(site.workspaceId),
-    commerceRepo: await commerceRepoForSite(site, adapted.root),
+    commerceRepo: await commerceRepoForSite(site, root),
     analytics,
     unavailable: site.preview ? PREVIEW_UNAVAILABLE : null,
     // The base of `{{product.href}}`: the site's product page, if it has one.
@@ -170,7 +174,8 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
       language: site.siteSettings.language,
       look: siteLookFromPages(site),
       privacyHref: privacyPolicyHref(site),
-      siteHasMap: siteHoldsMap(site),
+      // No map loads on a preview, so nothing there asks for maps consent.
+      siteHasMap: site.preview ? false : siteHoldsMap(site),
     },
   });
 
