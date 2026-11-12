@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-12T03:30:01.984Z",
+  "generatedAt": "2026-11-12T05:02:46.969Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 565,
+  "durationSeconds": 597,
   "matrix": {
     "surfaces": {
       "format": {
@@ -33,8 +33,8 @@
         "total": 1845
       },
       "ai": {
-        "pass": 1438,
-        "fail": 407,
+        "pass": 1441,
+        "fail": 404,
         "notTested": 0,
         "total": 1845
       }
@@ -579,8 +579,8 @@
           "total": 3
         },
         "ai": {
-          "pass": 0,
-          "fail": 3,
+          "pass": 3,
+          "fail": 0,
           "notTested": 0,
           "total": 3
         }
@@ -5177,9 +5177,9 @@
       "page-item:theme:document-background": "pass pass pass pass theme",
       "page-item:theme:document-color": "pass pass pass pass theme",
       "page-item:theme:document-font": "pass pass pass pass theme",
-      "fx-scene:scene:hub-hero": "pass pass pass pass fx-scene",
-      "fx-scene:scene:godrays-hero": "pass pass pass pass fx-scene",
-      "fx-scene:scene:noise-gradient": "pass pass pass pass fx-scene"
+      "fx-scene:scene:hub-hero": "pass pass pass pass pass",
+      "fx-scene:scene:godrays-hero": "pass pass pass pass pass",
+      "fx-scene:scene:noise-gradient": "pass pass pass pass pass"
     }
   },
   "corpus": {
@@ -9588,16 +9588,6 @@
       "onlyGapOf": [],
       "roundTripCases": 4,
       "cost": 4
-    },
-    {
-      "id": "fx-scene",
-      "description": "An FX scene (a box that draws a Lumitra FX scene behind its content) that this surface does not handle yet. Stored, published, drawn on the canvas and edited in the properties panel; the generator comes with slice F6 of the FX plan (docs/plans/2026-11-08-lumitra-fx-in-sites.md).",
-      "matrixCells": 3,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 3
     },
     {
       "id": "renderer-drops-value",
