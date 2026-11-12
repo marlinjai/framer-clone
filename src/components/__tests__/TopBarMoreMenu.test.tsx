@@ -163,6 +163,22 @@ describe('compact top bar', () => {
     expect(dialog.textContent).toContain('Moved Header');
   });
 
+  it('the unsaved demo has nothing published, so More leaves out Published versions until it is kept', () => {
+    currentStore.editorUI.isUnsavedDemo = true;
+    const { unmount } = render(<TopBar />);
+    openMore();
+    let names = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
+    expect(names).not.toContain('Published versions');
+    expect(names).toContain('Domains');
+    unmount();
+    // Kept as a project: the item is back.
+    currentStore.editorUI.isUnsavedDemo = false;
+    render(<TopBar />);
+    openMore();
+    names = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
+    expect(names).toContain('Published versions');
+  });
+
   it('without a project the project-only actions are left out and Generate is disabled', () => {
     currentStore.editorUI.currentProject = undefined;
     render(<TopBar />);

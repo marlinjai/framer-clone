@@ -6,6 +6,7 @@
 // mocked at the client; leaving the page is mocked so nothing navigates.
 
 import React from 'react';
+import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SiteBranchProvider } from '@/contexts/SiteBranchContext';
@@ -554,13 +555,14 @@ describe('a narrow window', () => {
     );
     for (const name of ['Update', 'Review and merge', 'Share preview']) {
       const control = screen.getByRole('button', { name });
-      expect(control.querySelector('[data-fold-label]')?.className).toMatch(/\bsr-only\b/);
+      // Exact tokens: `max-lg:sr-only` (the default, visible on the wide bar) must not pass.
+      expect(control.querySelector('[data-fold-label]')).toHaveClass('sr-only');
       expect(control.className).toMatch(/\bw-8\b/);
     }
     // Review and merge stays the bar's filled (brand) button when it folds.
     expect(screen.getByRole('button', { name: 'Review and merge' }).className).toMatch(/bg-brand/);
     // The idle sentence goes with the words; the button says what it does in its description.
-    expect(screen.getByText('Bakery has changed').className).toMatch(/\bhidden\b/);
+    expect(screen.getByText('Bakery has changed')).toHaveClass('hidden');
   });
 
   it('a branch closed elsewhere keeps "What now?" whole while its sentence shortens', async () => {

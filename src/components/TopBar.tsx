@@ -275,6 +275,8 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
   const showsDark = editorUI.previewColorMode === 'dark';
   // A site branch has no domains, published versions or form submissions: they belong to main (site branches).
   const onBranch = useSiteBranch().state?.kind === 'branch';
+  // The demo at `/` has no server copy, so nothing was ever published from it.
+  const isUnsavedDemo = editorUI.isUnsavedDemo === true;
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
@@ -301,9 +303,11 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
             {compactBar && <DropdownMenuSeparator />}
             {!onBranch && (
               <>
-                <DropdownMenuItem onSelect={() => onOpen('versions')}>
-                  <Undo /> Published versions
-                </DropdownMenuItem>
+                {!isUnsavedDemo && (
+                  <DropdownMenuItem onSelect={() => onOpen('versions')}>
+                    <Undo /> Published versions
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onSelect={() => onOpen('domains')}>
                   <Globe /> Domains
                 </DropdownMenuItem>

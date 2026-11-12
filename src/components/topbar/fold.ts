@@ -118,6 +118,15 @@ export function shiftNeeds(required: ReadonlyArray<number | undefined>, at: numb
   });
 }
 
+/**
+ * The needs once what the bar holds changed while it sits at level `at`: every level below it is forgotten, since
+ * what those levels show and this one hides (the branch badge, the words of a folded control) may have changed
+ * without changing the width measured here. Each is tried again on the way up (decideFoldLevel).
+ */
+export function forgetBelow(required: ReadonlyArray<number | undefined>, at: number): (number | undefined)[] {
+  return required.map((need, level) => (level < at ? undefined : need));
+}
+
 /** Whether someone is using the bar: the focus is in it, or one of its menus or dropdowns is open. */
 function inUse(bar: HTMLElement): boolean {
   return bar.contains(document.activeElement) || bar.querySelector('[aria-expanded="true"]') !== null;
@@ -146,6 +155,8 @@ export function useTopBarFold(ref: React.RefObject<HTMLElement | null>): FoldLev
   // The level just tried on the way up without a known need: kept only if it fits with UNFOLD_SLACK to spare, like
   // an unfold from a known need, so a word that grows and shrinks again never swings the bar.
   const trying = React.useRef<FoldLevel | null>(null);
+  // What the bar holds changed (its MutationObserver) since the last measure.
+  const contentChanged = React.useRef(false);
   levelRef.current = level;
 
   const measure = React.useCallback(() => {
@@ -165,6 +176,10 @@ export function useTopBarFold(ref: React.RefObject<HTMLElement | null>): FoldLev
     if (lastMeasured.current === at && sameWidth && before !== undefined && Math.abs(need - before) > 0.5) {
       required.current = shiftNeeds(required.current, at, need - before);
     }
+    // A change of content can sit in what only the lower levels show (a branch going from "Ready for review" to
+    // "Branch" while the badge is folded away): the width here stays the same, the lower levels' needs do not.
+    if (contentChanged.current) required.current = forgetBelow(required.current, at);
+    contentChanged.current = false;
     required.current[at] = need;
     lastMeasured.current = at;
     lastWidth.current = available;
@@ -222,9 +237,11 @@ export function useTopBarFold(ref: React.RefObject<HTMLElement | null>): FoldLev
       for (const el of now) observed.add(el);
     };
     observeControls();
-    const content = new MutationObserver(() => {
+    const content = new MutationObserver((records) => {
       // What the bar holds changed (an agent began, a save failed, a branch control came): measured again at the
-      // current level, the other levels move with it (shiftNeeds).
+      // current level, the levels above move with it (shiftNeeds) and the levels below are tried again
+      // (forgetBelow). A menu opening or closing (aria-expanded) is not a change of content.
+      if (records.some((r) => r.type !== 'attributes')) contentChanged.current = true;
       observeControls();
       rerun();
     });

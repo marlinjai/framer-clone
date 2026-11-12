@@ -12,7 +12,7 @@ import TopBar from '../TopBar';
 import { SiteBranchProvider } from '@/contexts/SiteBranchContext';
 import type { EditorBranchState } from '@/lib/sites/branches';
 import { FoldLabel } from '../topbar/BarTooltip';
-import { decideFoldLevel, foldLevelFor, measureRequired, shiftNeeds, UNFOLD_SLACK, type FoldLevel } from '../topbar/fold';
+import { decideFoldLevel, foldLevelFor, forgetBelow, measureRequired, shiftNeeds, UNFOLD_SLACK, type FoldLevel } from '../topbar/fold';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('next/link', () => ({
@@ -239,6 +239,11 @@ describe('the fold decision', () => {
     expect(shiftNeeds([1661, 1300, 1169, 1024], 1, -40)).toEqual([undefined, 1260, 1129, 984]);
   });
 
+  it('forgets the needs below the level where the content changed, and keeps the rest', () => {
+    expect(forgetBelow([1661, 1300, 1169, 1024], 2)).toEqual([undefined, undefined, 1169, 1024]);
+    expect(forgetBelow([1661, 1300, 1169, 1024], 0)).toEqual([1661, 1300, 1169, 1024]);
+  });
+
   it('unfolds from a remembered need only with room to spare', () => {
     expect(decideFoldLevel(1, 1661 + UNFOLD_SLACK - 1, [1661, 1300])).toBe(1);
     expect(decideFoldLevel(1, 1661 + UNFOLD_SLACK, [1661, 1300])).toBe(0);
@@ -458,6 +463,17 @@ describe('the wide top bar, folding', () => {
     layout.extraAt = [0, 0, 0, 0];
     await contentChanges(0);
     expect(level()).toBe(0);
+  });
+
+  it('unfolds when something only the lower levels show gets shorter (the badge, folded away at level 2)', async () => {
+    // "Ready for review" is 80px wider than "Branch" in the badge, which level 2 hides: at 1340px level 1 needs
+    // 1380px with it, and 1300px once it says "Branch", though level 2 measures the same either way.
+    layout.extraAt = [80, 80, 0, 0];
+    renderBar(branch, 1340);
+    expect(level()).toBe(2);
+    layout.extraAt = [0, 0, 0, 0];
+    await contentChanges(0);
+    expect(level()).toBe(1);
   });
 
   it('does not take a window resize at the last level for a change of content, where the names truncate', () => {
