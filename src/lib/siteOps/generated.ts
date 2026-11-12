@@ -16,7 +16,9 @@
 // Unlike a batch, a generation keeps the generator's repairs: the result lists
 // every dropped or changed thing as a warning, which generatePage hands back.
 
-import { recordPatches } from 'mobx-state-tree';
+import { getSnapshot, recordPatches } from 'mobx-state-tree';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { reconcileGeneratedTokens, referencedIds, remapGeneratedIds } from '@/lib/ai/pageGen/generatedTheme';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import type { PageModelType } from '@/models/PageModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
@@ -150,7 +152,19 @@ export function applyGenerated(
   title?: string,
 ): { ok: true; pageId: string; insertedIds: string[] } | { ok: false; reason: string } {
   const keyMap = breakpointKeyMap(target.breakpoints);
-  const snapshots = result.nodes.map((n) => toEditorSnapshot(n, keyMap));
+  // The tokens the page adds are decided again against the theme as it is, as in the editor
+  // (src/lib/ai/pageGen/editorBridge.ts), and land in the same recorded write as the page.
+  const added = result.theme?.tokens ?? [];
+  const current = normalizeSiteSettings(project.siteSettings).theme;
+  const targetPage = target.pageId ? (project.pages.get(target.pageId) as PageModelType | undefined) : undefined;
+  if (target.kind !== 'newPage' && !targetPage) return { ok: false, reason: 'the page no longer exists' };
+  // Anywhere on the page: a replaced floating node lives outside the app tree.
+  const heldComponent = target.componentId && targetPage ? targetPage.findComponent(target.componentId) as ComponentInstance | undefined : undefined;
+  const held = heldComponent ? referencedIds(getSnapshot(heldComponent)) : new Set<string>();
+  const references = new Set([...referencedIds(result.nodes)].filter((id) => !held.has(id)));
+  const reconciled = reconcileGeneratedTokens(current, added, references);
+  if (!reconciled.ok) return { ok: false, reason: reconciled.reason };
+  const snapshots = remapGeneratedIds(result.nodes.map((n) => toEditorSnapshot(n, keyMap)), reconciled.idMap);
   const insertedIds = snapshots.map((s) => s.id as string);
   const recorder = recordPatches(project);
   let pageId: string;
@@ -171,6 +185,14 @@ export function applyGenerated(
       return { ok: false, reason: applied && !applied.ok ? applied.reason : 'the page no longer exists' };
     }
     pageId = page.id;
+  }
+  if (added.length > 0) {
+    const written = project.updateTheme(reconciled.theme);
+    if (!written.ok) {
+      recorder.stop();
+      recorder.undo();
+      return { ok: false, reason: written.errors[0] };
+    }
   }
   const page = project.pages.get(pageId) as PageModelType;
   const problem = projectGateProblem(project, insertedIds.map((nodeId) => ({ page, nodeId })));

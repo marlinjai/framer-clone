@@ -257,3 +257,11 @@ describe('pending run (resume after the tab was reloaded)', () => {
     expect(loadPendingRun('p1')).toBeUndefined();
   });
 });
+
+describe('flowReducer, tokens kept by an undo', () => {
+  it('remembers the theme tokens an undo left in place, and none when it took them all', () => {
+    const s = { phase: 'applied', inputs: {}, requestKey: 'k1', record: { kind: 'newPage', generationId: 'g', pageId: 'p' }, nodeCount: 1, warnings: [], undone: false } as never;
+    expect(flowReducer(s, { type: 'undone', keptTokens: ['Crust'] })).toMatchObject({ undone: true, keptTokens: ['Crust'] });
+    expect(flowReducer(s, { type: 'undone', keptTokens: [] })).not.toHaveProperty('keptTokens');
+  });
+});

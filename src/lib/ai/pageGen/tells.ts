@@ -103,6 +103,9 @@
 //                      forbidden tag and there is no icon preset. The only way
 //                      in is an img whose src points at an icon set (lucide,
 //                      heroicons, feather, tabler, phosphor), which is flagged.
+//   low-contrast       (./tokenTells.ts, not scored by the design tells) Text on a surface
+//                      where one of the two is a site token, under 4.5:1 (3:1 for large
+//                      text) in a scheme the site can show.
 //   placeholder-demo [11] A box standing in for a product shot: a gradient
 //                      background with no text and no image in it, sized like
 //                      media (aspectRatio, or a px height / minHeight of 120
@@ -137,7 +140,10 @@ export type TellId =
   // Page essentials (./essentials.ts): not design tells, but they share the
   // finding shape and the single repair round.
   | 'hero-cta'
-  | 'alt-text';
+  | 'alt-text'
+  // Site tokens (./tokenTells.ts): a text colour and a surface, one of them a token, that
+  // read badly in a scheme the site can show.
+  | 'low-contrast';
 
 export interface TellFinding {
   tell: TellId;

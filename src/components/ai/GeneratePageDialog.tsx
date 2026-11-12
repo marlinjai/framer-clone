@@ -445,7 +445,7 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
         editorUI.setCurrentPage(fallback);
       }
     });
-    dispatch(outcome.ok ? { type: 'undone' } : { type: 'undoFailed', reason: outcome.reason });
+    dispatch(outcome.ok ? { type: 'undone', keptTokens: outcome.value.kept } : { type: 'undoFailed', reason: outcome.reason });
   };
 
   const running = state.phase === 'running';
@@ -479,9 +479,15 @@ export const GeneratePageDialog = observer(function GeneratePageDialog({
             <div className="grid gap-3" role="status" aria-live="polite">
               <p className="text-sm">
                 {state.undone
-                  ? 'The generation was undone.'
+                  ? `The generation was undone.${
+                      state.keptTokens ? ` ${state.keptTokens.join(', ')} stays in the site theme: it is used elsewhere or was changed since.` : ''
+                    }`
                   : `Added ${state.nodeCount} ${state.nodeCount === 1 ? 'component' : 'components'}${
                       state.record.kind === 'newPage' ? ' on a new page' : ''
+                    }${
+                      state.record.addedTokens?.length
+                        ? ` and ${state.record.addedTokens.length} site ${state.record.addedTokens.length === 1 ? 'colour or font' : 'colours and fonts'} (${state.record.addedTokens.map((t) => t.name).join(', ')}) to the theme`
+                        : ''
                     }.`}
                 {!state.undone && <GeneratedSaveNote projectId={project?.id} demo={editorUI.isUnsavedDemo} />}
               </p>

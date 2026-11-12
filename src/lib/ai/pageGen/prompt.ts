@@ -13,7 +13,9 @@ import { STICKY_CTA_PROMPT } from './promptSections/stickyCta';
 import { MAP_EMBED_PROMPT } from './promptSections/mapEmbed';
 import { BASE_KEY, type BreakpointKey } from './schema';
 import type { PageGenTarget } from './protocol';
-import { siteContextText, type SiteContext } from './promptSections/siteContext';
+import { siteContextText, themeContextText, type SiteContext } from './promptSections/siteContext';
+import { MAX_GENERATED_TOKENS } from './generatedTheme';
+import type { ThemeMode } from '@/lib/site/theme';
 import { PLAN_SECTION_KINDS } from '@/lib/projects/liveEvents';
 import { OUTLINE_MAX_ENTRIES } from './outline';
 import { legalLinksText } from './promptSections/legalLinks';
@@ -158,7 +160,7 @@ export function emitPageTool(): BetaTool {
   return {
     name: EMIT_TOOL_NAME,
     description:
-      'Emit the generated components. Call exactly once with every node. Write "outline" first (one short entry per top-level node, in order), then the rest. Nodes follow the output format in the system prompt.',
+      'Emit the generated components. Call exactly once with every node. Write "outline" first (one short entry per top-level node, in order), then "theme" when you add tokens, then the rest. Nodes follow the output format in the system prompt.',
     input_schema: {
       type: 'object',
       properties: {
@@ -174,6 +176,29 @@ export function emitPageTool(): BetaTool {
               kind: { type: 'string', enum: [...PLAN_SECTION_KINDS], description: 'Its rough shape; generic when none fits.' },
             },
             required: ['title', 'kind'],
+          },
+        },
+        theme: {
+          type: 'object',
+          description:
+            'Only when the page needs tokens the site does not have: the colours and fonts to ADD to the site theme, at most 12, each used by a node. Write it before the nodes. It never edits an existing token.',
+          properties: {
+            tokens: {
+              type: 'array',
+              maxItems: MAX_GENERATED_TOKENS,
+              items: {
+                type: 'object',
+                properties: {
+                  ref: { type: 'string', description: 'Your local name: "new-1", "new-2". Refer to it as var(--fc-t-new-1).' },
+                  name: { type: 'string', description: 'The label the owner sees, such as "Accent", at most 40 characters.' },
+                  kind: { type: 'string', enum: ['color', 'font'] },
+                  light: { type: 'string', description: 'A colour: its value, such as "#b4532a".' },
+                  dark: { type: 'string', description: 'A colour: its value on a dark system, only when the site follows the system setting.' },
+                  family: { type: 'string', description: 'A font: a library family id or "system".' },
+                },
+                required: ['ref', 'name', 'kind'],
+              },
+            },
           },
         },
         title: { type: 'string', description: 'Page title (new pages only).' },
@@ -203,8 +228,8 @@ export function emitPageTool(): BetaTool {
 }
 
 /** The cached system prefix: instructions plus the registry-generated docs. */
-export function stableSystemText(): string {
-  return `${INSTRUCTIONS}\n\n${buildSchemaDocs()}\n\n${FORMS_PROMPT}\n\n${STICKY_CTA_PROMPT}\n\n${MAP_EMBED_PROMPT}`;
+export function stableSystemText(mode?: ThemeMode): string {
+  return `${INSTRUCTIONS}\n\n${buildSchemaDocs(mode)}\n\n${FORMS_PROMPT}\n\n${STICKY_CTA_PROMPT}\n\n${MAP_EMBED_PROMPT}`;
 }
 
 export interface RequestContextInput {
@@ -244,6 +269,7 @@ export function requestContextText(input: RequestContextInput): string {
     );
   }
   if (input.siteContext) lines.push('', siteContextText(input.siteContext));
+  if (input.siteContext) lines.push('', themeContextText(input.siteContext.theme, input.target.kind === 'newPage'));
   if (input.siteContext?.legalLinks?.length) lines.push('', legalLinksText(input.siteContext.legalLinks));
   return lines.join('\n');
 }

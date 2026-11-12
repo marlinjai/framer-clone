@@ -26,6 +26,9 @@ import type { PageGenModel, PageGenRequest, PageGenResultPayload } from './proto
 import { siteContextFromSettings } from './promptSections/siteContext';
 import { closedAncestorOf } from './promptSections/behaviour';
 import { holdsFxScene } from '@/lib/fxScene/marker';
+import { getSnapshot } from 'mobx-state-tree';
+import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { reconcileGeneratedTokens, referencedIds, remapGeneratedIds } from './generatedTheme';
 
 export type TargetKind = 'newPage' | 'replace' | 'insert';
 
@@ -199,7 +202,22 @@ export interface AppliedGeneration {
   selectId?: string;
 }
 
-/** Apply a validated result to the CAPTURED target. Never touches anything else. */
+/** The token ids the captured target holds now: a replace echoes them back, and they stay allowed. */
+function heldTokenIds(project: ProjectModelType, target: CapturedTarget): Set<string> {
+  if (target.kind === 'newPage' || !target.componentId) return new Set();
+  const page = project.getPage(target.pageId);
+  const component = page ? (page.findComponent(target.componentId) as ComponentInstance | undefined) : undefined;
+  return component ? referencedIds(getSnapshot(component)) : new Set();
+}
+
+/**
+ * Apply a validated result to the CAPTURED target. Never touches anything else.
+ *
+ * The tokens a generation adds to the site's theme are decided again here, against the theme as
+ * it is now, because the model took minutes and the theme may have moved: a name the site now
+ * holds with other values refuses the whole apply (`reconcileGeneratedTokens`), and the page and
+ * its tokens land as one project action, so one undo step.
+ */
 export function applyResult(
   project: ProjectModelType,
   target: CapturedTarget,
@@ -207,40 +225,60 @@ export function applyResult(
   fallbackTitle?: string,
 ): ApplyOutcome<AppliedGeneration> {
   const keyMap = breakpointKeyMap(target.breakpoints);
-  const snapshots = result.nodes.map(n => toEditorSnapshot(n, keyMap));
+  const added = result.theme?.tokens ?? [];
+  const current = normalizeSiteSettings(project.siteSettings).theme;
+  // Every reference the nodes make that the site already held when it was asked: one removed
+  // since would paint nothing, so the apply is refused. Ids the target already carried (and
+  // that already dangled there) are the owner's own and stay as they were.
+  const held = heldTokenIds(project, target);
+  const references = new Set([...referencedIds(result.nodes)].filter((id) => !held.has(id)));
+  const reconciled = reconcileGeneratedTokens(current, added, references);
+  if (!reconciled.ok) return { ok: false, reason: reconciled.reason };
+  const snapshots = remapGeneratedIds(result.nodes.map(n => toEditorSnapshot(n, keyMap)), reconciled.idMap);
+  const withTokens = (value: AppliedGeneration): AppliedGeneration =>
+    reconciled.added.length > 0 ? { ...value, record: { ...value.record, addedTokens: reconciled.added } } : value;
+  const theme = added.length > 0 ? reconciled.theme : undefined;
   if (target.kind === 'newPage') {
-    const page = project.addGeneratedPage({
-      title: fallbackTitle?.trim() || result.title || 'Generated page',
-      description: result.description,
-      sections: snapshots,
-      viewports: target.viewports,
+    return project.applyGenerationWithTheme(theme, () => {
+      const page = project.addGeneratedPage({
+        title: fallbackTitle?.trim() || result.title || 'Generated page',
+        description: result.description,
+        sections: snapshots,
+        viewports: target.viewports,
+      });
+      return {
+        ok: true as const,
+        value: withTokens({
+          record: { kind: 'newPage', generationId: result.generationId, pageId: page.id, previousPageId: target.pageId },
+          pageId: page.id,
+          selectId: snapshots[0]?.id as string | undefined,
+        }),
+      };
     });
-    return {
-      ok: true,
-      value: {
-        record: { kind: 'newPage', generationId: result.generationId, pageId: page.id, previousPageId: target.pageId },
-        pageId: page.id,
-        selectId: snapshots[0]?.id as string | undefined,
-      },
-    };
   }
   const page = project.getPage(target.pageId);
   if (!page) return { ok: false, reason: 'The page this was generated for no longer exists.' };
   if (!target.componentId) return { ok: false, reason: 'No component was selected.' };
-  const outcome = page.applyGeneratedNodes(target.kind, target.componentId, snapshots, result.generationId);
-  if (!outcome.ok) return outcome;
-  return { ok: true, value: { record: outcome.value, pageId: page.id, selectId: snapshots[0]?.id as string | undefined } };
+  const componentId = target.componentId;
+  return project.applyGenerationWithTheme(theme, () => {
+    const outcome = page.applyGeneratedNodes(target.kind as 'replace' | 'insert', componentId, snapshots, result.generationId);
+    if (!outcome.ok) return outcome;
+    return { ok: true as const, value: withTokens({ record: outcome.value, pageId: page.id, selectId: snapshots[0]?.id as string | undefined }) };
+  });
 }
 
 /**
  * Reverse one applied generation (the dialog's Undo). Refuses with a reason
- * instead of guessing when the editor changed underneath it.
+ * instead of guessing when the editor changed underneath it. The tokens the generation added
+ * leave with it, in the same action, each only while nothing uses it and it is unchanged;
+ * `kept` names the ones that stayed.
  */
 export function undoGeneration(
   project: ProjectModelType,
   record: GenerationUndoRecord,
   onPageRemoved?: (fallbackPageId: string | undefined) => void,
-): ApplyOutcome<null> {
+): ApplyOutcome<{ kept: string[] }> {
+  const added = record.addedTokens ?? [];
   if (record.kind === 'newPage') {
     if (!project.getPage(record.pageId)) return { ok: false, reason: 'The generated page was already removed.' };
     if (project.pages.size <= 1) return { ok: false, reason: 'A project needs at least one page.' };
@@ -248,11 +286,13 @@ export function undoGeneration(
       record.previousPageId && project.getPage(record.previousPageId)
         ? record.previousPageId
         : project.pagesArray.find(p => p.id !== record.pageId)?.id;
-    onPageRemoved?.(fallback);
-    project.removePage(record.pageId);
-    return { ok: true, value: null };
+    return project.revertGenerationWithTheme(added, () => {
+      onPageRemoved?.(fallback);
+      project.removePage(record.pageId);
+      return { ok: true as const, value: null };
+    });
   }
   const page = project.getPage(record.pageId);
   if (!page) return { ok: false, reason: 'The page was removed.' };
-  return page.revertGeneration(record);
+  return project.revertGenerationWithTheme(added, () => page.revertGeneration(record));
 }

@@ -60,7 +60,10 @@ import {
 } from './stockImages';
 import { FOCAL_MODEL, detectFocalPoints } from './focalPoints';
 import { detectEssentials, fillMissingAlt, type EssentialsOptions } from './essentials';
-import { siteAddressOf, type SiteContext } from './promptSections/siteContext';
+import { siteAddressOf, themeFromContext, type SiteContext } from './promptSections/siteContext';
+import { referencedIds } from './generatedTheme';
+import { detectTokenTells, mergedTheme, resolvedViews } from './tokenTells';
+import type { SiteTheme } from '@/lib/site/theme';
 
 /**
  * Output ceiling per attempt. A 200-node page is roughly 15k tokens of JSON,
@@ -219,7 +222,7 @@ export async function runPageGeneration(
     const breakpoints: BreakpointKey[] = deriveBreakpointKeys(input.breakpoints);
 
     const system = buildSystemPrompt([
-      { type: 'text', text: stableSystemText(), cache: true },
+      { type: 'text', text: stableSystemText(input.siteContext?.theme?.mode), cache: true },
       {
         type: 'text',
         text: requestContextText({
@@ -254,6 +257,10 @@ export async function runPageGeneration(
     const heldAddresses = addressesHeldBy(input.target.kind === 'newPage' ? null : input.target.context);
     // A Google map shows the business address of the Site settings, or is dropped.
     const mapAddress = input.siteContext ? siteAddressOf(input.siteContext) : null;
+    // What a style value may refer to: the theme the request carried, and the ids the target
+    // already holds (a replace echoes them back, deleted or not).
+    const theme = themeFromContext(input.siteContext?.theme);
+    const heldTokenIds = input.target.kind === 'newPage' ? new Set<string>() : referencedIds(input.target.context);
     // Where an inserted or replacing result stands: no preset under a button, link or the like.
     const closedAncestor = input.target.kind === 'newPage' ? undefined : input.target.closedAncestor;
     // A page draws one FX scene: none is generated into a page that keeps one.
@@ -292,7 +299,8 @@ export async function runPageGeneration(
               { section: context.onSection, outline: context.onOutline },
               requestId,
               attempt,
-              { breakpoints, allowStickyCta: false, heldAddresses, mapAddress, closedAncestor, pageHasFxScene },
+              // The preview cannot see the tokens a generation proposes, so an unknown reference is dropped there, never refused.
+              { breakpoints, allowStickyCta: false, heldAddresses, mapAddress, closedAncestor, pageHasFxScene, theme, heldTokenIds, themeStrict: false },
             )
           : undefined;
       stream.on('inputJson', (partialJson: string) => {
@@ -383,9 +391,11 @@ export async function runPageGeneration(
           mapAddress,
           closedAncestor,
           pageHasFxScene,
+          theme,
+          heldTokenIds,
         });
         if (outcome.ok) {
-          const screened = screenTells(outcome.result, breakpoints, essentials);
+          const screened = screenTells(outcome.result, breakpoints, essentials, mergedTheme(theme, outcome.result.theme?.tokens));
           if (screened.remaining.length === 0 || usage.attempts >= MAX_ATTEMPTS) {
             return done(await deliver(screened, attempt, []));
           }
@@ -525,21 +535,43 @@ function screenTells(
   result: GenerationResult,
   breakpoints: BreakpointKey[],
   essentials: EssentialsOptions,
+  theme: SiteTheme,
 ): ScreenedGeneration {
   const opts = {
     photoNodeIds: new Set(result.imageRequests.map((r) => r.nodeId)),
     breakpointKeys: breakpoints.map((b) => b.key),
   };
   const fixed = autoFixTells({ title: result.title, description: result.description, nodes: result.nodes }, opts);
-  const remaining = [
+  // The colour tells read values, and a `var(--fc-t-...)` is no colour: read the page once per
+  // scheme the site can show with its references resolved (./tokenTells.ts). The tree that is
+  // applied, and the fixes above, keep the references.
+  const tokenFindings = resolvedViews(fixed.tree, theme).flatMap((view) =>
+    detectTells(view.tree, opts).filter((f) => !f.autoFixable),
+  );
+  const found = [
     ...fixed.findings,
     ...detectTells(fixed.tree, opts).filter((f) => !f.autoFixable),
+    ...tokenFindings,
+    ...detectTokenTells(fixed.tree, theme, opts.breakpointKeys),
     ...detectEssentials(fixed.tree, essentials),
   ];
+  const seen = new Set<string>();
+  const remaining = found.filter((f) => {
+    const key = `${f.tell}|${f.path}|${f.detail}`;
+    return seen.has(key) ? false : (seen.add(key), true);
+  });
   const nodes = fixed.tree.nodes;
+  // A fix may have removed the last use of a proposed token (an emoji-only child, say): only
+  // tokens the screened page still paints with go on to the site.
+  const stillUsed = referencedIds(nodes);
+  const keptTokens = result.theme?.tokens.filter((token) => stillUsed.has(token.id));
+  const keptTheme = result.theme && keptTokens && keptTokens.length > 0 ? { ...result.theme, tokens: keptTokens } : undefined;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { theme: proposedTheme, ...withoutTheme } = result;
   return {
     result: {
-      ...result,
+      ...withoutTheme,
+      ...(keptTheme ? { theme: keptTheme } : {}),
       ...(fixed.tree.title !== undefined ? { title: fixed.tree.title } : {}),
       ...(fixed.tree.description !== undefined ? { description: fixed.tree.description } : {}),
       nodes,

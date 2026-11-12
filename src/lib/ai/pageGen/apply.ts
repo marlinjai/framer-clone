@@ -13,6 +13,7 @@ import type { ComponentSnapshotIn } from '@/models/ComponentModel';
 import { isRuleList } from '@/lib/rules/rules';
 import { BASE_KEY, deriveBreakpointKeys, type BreakpointInput } from './schema';
 import type { GeneratedNodeSnapshot } from './validate';
+import type { ThemeToken } from '@/lib/site/theme';
 
 /** A breakpoint as the editor has it: the input the route saw, plus its real id. */
 export interface PageBreakpoint extends BreakpointInput {
@@ -86,8 +87,14 @@ export const GENERATED_PAGE_ROOT_STYLE: Readonly<Record<string, string>> = {
   fontFamily: 'system-ui, sans-serif',
 };
 
-/** Everything needed to reverse one applied generation (kept by the dialog). */
-export type GenerationUndoRecord =
+/**
+ * Everything needed to reverse one applied generation (kept by the dialog). `addedTokens` is
+ * what the generation put in the site's theme, as it was put there: the revert removes a
+ * token only while it is still unused and still holds those values.
+ */
+export type GenerationUndoRecord = GenerationUndoRecordBase & { addedTokens?: ThemeToken[] };
+
+type GenerationUndoRecordBase =
   | { kind: 'newPage'; generationId: string; pageId: string; previousPageId?: string }
   | {
       kind: 'insert';

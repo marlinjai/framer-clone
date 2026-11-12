@@ -57,6 +57,8 @@ export type FlowState =
       images?: StockImageSummary;
       undone: boolean;
       undoError?: string;
+      /** After an undo: the theme tokens the generation added that stayed, because they are used elsewhere or were changed. */
+      keptTokens?: string[];
     };
 
 export type FlowAction =
@@ -76,7 +78,7 @@ export type FlowAction =
     }
   | { type: 'failed'; requestKey: string; error: FlowError }
   | { type: 'cancel' }
-  | { type: 'undone' }
+  | { type: 'undone'; keptTokens?: string[] }
   | { type: 'undoFailed'; reason: string }
   | { type: 'reset'; inputs: FlowInputs };
 
@@ -139,7 +141,7 @@ export function flowReducer(state: FlowState, action: FlowAction): FlowState {
       return { phase: 'editing', inputs: state.inputs };
     case 'undone':
       if (state.phase !== 'applied') return state;
-      return { ...state, undone: true, undoError: undefined };
+      return { ...state, undone: true, undoError: undefined, ...(action.keptTokens && action.keptTokens.length > 0 ? { keptTokens: action.keptTokens } : {}) };
     case 'undoFailed':
       if (state.phase !== 'applied') return state;
       return { ...state, undoError: action.reason };
