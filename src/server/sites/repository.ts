@@ -132,6 +132,17 @@ async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+/** The uploaded images a save names: in the settings, as a page's sharing image, in an FX scene on a page or in a component. */
+function namedImagesOf(persisted: PersistedSite): ReturnType<typeof namedSiteImages> {
+  return namedSiteImages(persisted.siteSettings, [
+    ...persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
+    ...persisted.pages.flatMap((p) => fxSiteImagePaths(p.snapshot)),
+    // Reusable component definitions hold nodes too. A save that sends none
+    // leaves the stored ones as they are, checked when they were saved.
+    ...fxSiteImagePaths(persisted.components),
+  ]);
+}
+
 /**
  * The tenant scope every repository call is bound to. Resolved by the caller
  * from the verified session (the workspace the request acts in, and that
@@ -594,19 +605,24 @@ export class SiteRepository {
     assertScope(scope);
     const persisted: PersistedSite = projectToPersisted(project);
 
-    // SERIALIZABLE: the redirect list is read, changed and written back, so
-    // two overlapping saves of one site must not each write a list missing
-    // the other's entry. Postgres aborts one of them (P2034) instead; it is
-    // retried a few times, then surfaces loudly as a failed save.
+    // The save locks THE SITE and runs at the default (read committed) level, as publishProject does. The
+    // redirect list is read, changed and written back, so two saves of one site must not interleave: the site's
+    // lock makes the second wait for the first and then read what it wrote. SERIALIZABLE used to carry this, and
+    // it also aborted saves of DIFFERENT sites against each other (Postgres' predicate locks coarsen to pages, so
+    // two unrelated saves touching the same index page conflicted, and four immediate retries could all lose;
+    // docs/plans/2026-11-12-save-serializable-contention.md). The version lock, the slug rules, the redirects
+    // and the image check all read after the lock is taken, so each statement sees everything committed before.
+    // Still retried: a deadlock (P2034) or a first save of one id that two creators race on (P2002).
     const write = await withSerializationRetry(() => this.prisma.$transaction(
       async (tx) => {
         if (options.signal?.aborted) throw new SaveAbortedError();
+        await this.lockSiteForSave(tx, scope, persisted);
         const written = await this.writeWorkingCopy(tx, scope, persisted, options);
         // Thrown inside the transaction, so an abort that came while it waited rolls the write back.
         if (options.signal?.aborted) throw new SaveAbortedError();
         return written;
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...PROJECT_WRITE_TRANSACTION },
+      PROJECT_WRITE_TRANSACTION,
     ));
     if (write.wrote && options.beforeAnnounce) {
       try {
@@ -620,10 +636,35 @@ export class SiteRepository {
   }
 
   /**
+   * The locks a save takes before it reads anything, in this order:
+   *
+   *  1. A transaction advisory lock on the site id, so two creators of one id queue even though there is no row
+   *     to lock yet (the second then finds the first's site and is refused by the version lock).
+   *  2. For a branch that names an uploaded image (an image is its main site's): the main site's row, FOR SHARE.
+   *     Deleting an image takes main's row FOR UPDATE (siteImages.ts), so a delete and this save cannot overlap:
+   *     the delete then sees this branch's pages, or this save then finds the image gone. Shared, so branch saves
+   *     do not wait for one another here. Main is always taken before the branch, the order of the branch merge
+   *     (lockPair) and of an erase of personal data, so no two writers wait for each other in a circle.
+   *  3. The site's own row FOR UPDATE, as publish takes it: every other writer of this site's row waits.
+   *
+   * A site in another workspace matches no row here; writeWorkingCopy refuses it as before.
+   */
+  private async lockSiteForSave(tx: Prisma.TransactionClient, scope: TenantScope, persisted: PersistedSite): Promise<void> {
+    const siteId = persisted.siteId;
+    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_save:${siteId}`}))`;
+    if (namedImagesOf(persisted).size > 0) {
+      const own = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`SELECT branch_of_site_id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId}`;
+      const mainId = own[0]?.branch_of_site_id;
+      if (mainId) await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
+    }
+    await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
+  }
+
+  /**
    * The working-copy write inside the caller's transaction, for a site branch's update and merge
    * (src/server/sites/branches/merge.ts), which lock main and the branch first and write the record in the same
-   * transaction. The caller runs it SERIALIZABLE, as saveProject does, and announces with `announceWrite` after
-   * the commit.
+   * transaction. The caller holds the site's lock (main's and the branch's, in that order) and announces with
+   * `announceWrite` after the commit.
    */
   writeWorkingCopyIn(
     tx: Prisma.TransactionClient,
@@ -687,7 +728,7 @@ export class SiteRepository {
     // must reload, never "save over"): an existing site is only written by a
     // caller that names the version it was based on, and only while that is
     // still the stored one. Below, the UPDATE repeats the comparison in its
-    // WHERE, so the check holds even without the isolation level around it.
+    // WHERE, so the check holds even where the row lock is not held (a branch's update and merge).
     // The stored key counts only while the write it names is still the latest:
     // the key is bound to the version it wrote. A writer that does not know the
     // key (an older container during a rolling deploy) moves the version
@@ -748,17 +789,12 @@ export class SiteRepository {
     // The same holds for an image an FX scene shows, on a page or in a component
     // definition (src/lib/fxScene/fxScene.ts): its island would draw nothing for a
     // path this site does not store.
-    const named = namedSiteImages(persisted.siteSettings, [
-      ...persisted.pages.map((p) => (p.snapshot as { metadata?: { ogImage?: unknown } }).metadata?.ogImage),
-      ...persisted.pages.flatMap((p) => fxSiteImagePaths(p.snapshot)),
-      // Reusable component definitions hold nodes too. A save that sends none
-      // leaves the stored ones as they are, checked when they were saved.
-      ...fxSiteImagePaths(persisted.components),
-    ]);
+    const named = namedImagesOf(persisted);
     if (named.size > 0) {
       // A branch's images are its main site's (stored once there, usable by every branch). An image delete scans
-      // every branch's pages and runs serializable like this save, so a delete and a branch save naming the same
-      // image cannot both commit: one is refused, as for main.
+      // every branch's pages under main's row lock, which a branch save naming an image holds shared (see
+      // lockSiteForSave), so a delete and a branch save naming the same image cannot both commit: one is refused,
+      // as for main.
       const stored = await tx.siteImage.findMany({
         where: { siteId: existing?.branchOfSiteId ?? persisted.siteId, sha256: { in: [...named.keys()] } },
         select: { sha256: true },
@@ -828,9 +864,9 @@ export class SiteRepository {
 
     if (options.mustExist) {
       // UPDATE, never INSERT: a delete that committed after the read above
-      // leaves zero rows here, so the site is NOT re-created. (The
-      // transaction is SERIALIZABLE besides: a save and a delete that
-      // overlap cannot both commit; the retried one then sees the outcome.)
+      // leaves zero rows here, so the site is NOT re-created. (A save holds the
+      // site's row lock, and a delete takes it too, so they do not overlap: the
+      // later one sees the other's outcome.)
       const updated = await tx.site.updateMany({
         where: { id: persisted.siteId, workspaceId: scope.workspaceId, version: existing?.version },
         data: updateData,
