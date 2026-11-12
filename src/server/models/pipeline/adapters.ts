@@ -5,7 +5,7 @@
 // and enabled (a gated, separate step), the upload stays fail-closed.
 
 import { DECODED_LIMITS } from '../uploadModel';
-import { DecodedStats, ModelReencoder, ModelValidator } from '../ports';
+import type { DecodedStats, ModelReencoder, ModelValidator } from '../ports';
 import { runInWorker, type RunOptions } from './run';
 
 export function khronosValidator(options: RunOptions = {}): ModelValidator {
