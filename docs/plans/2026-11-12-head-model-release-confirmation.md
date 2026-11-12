@@ -40,11 +40,11 @@ lands, no head item is written into any page, so the only thing a visitor could 
 ## To repeat at the exact release commit (read-only)
 
 1. `git diff --stat 7b32ea16 <release> -- prisma src/app/api package.json pnpm-lock.yaml`: name anything under these paths that belongs to head items (expected: none from 385).
-2. Whether 390 (H2) and the Head panel (H3) are in the release; if they are, this note is not enough and they need their own confirmation, including the held crawler-metadata question and the unresolved save-contention decision (coordinator inbox entry `20261112-062705-site-head-model`).
+2. Whether 390 (H2) and the Head panel (H3) are in the release; if they are, this note is not enough and they need their own confirmation, including the held crawler-metadata question; the save-contention fix (pull request 403) is a separate change with its own entry (the decision, inbox entry `20261112-062705-site-head-model`, is resolved).
 3. Re-run the two checks of item 1 above (the metadata objects and the raw head of a real build) at the release commit, and say what differs.
 4. Name who is the owner then.
 5. Read-only, on production data: confirm no stored page snapshot holds a non-default `metadata.ogType` (anything but `website`) or a non-empty `metadata.head`.
 
 | Release commit | Read on | Read by | Result |
 |---|---|---|---|
-| (not yet requested) | | | |
+| `b1e19a32aa00d49dd122e31b99a5ff2ef5d286fd` (tag `release/sites-2026-11-12`; production runs it since 2026-11-12 12:05 UTC, per the branching owner) | 2026-11-12 | `site-head-model` (Claude session, pane `w5:pH`) | **Confirmed for pull request 385 only.** Item 1: 385 itself touches nothing under `prisma/`, `src/app/api`, `package.json` or the lockfile. Item 2: 385 (`7a6ae2ba`) is an ancestor of the release; 390 (H2), the Head panel (H3) and 403 (save locking) are not in it, and none of the head files changed after 385. Item 3, the metadata half: the metadata objects over about 110 combinations at the release commit are byte-identical to the pre-385 base; the raw head of a real build was **not** re-run at this commit. Item 4: owner of record Marlin. Item 5: **not read by me**, I have no production access and read none; on 385 alone nothing writes a non-default `ogType` or a `head` list. What production showed afterwards, as reported by the branching owner and not checked by me: the fingerprint over all sites, versions and published revisions is identical before and after the deploy, and the published landing page's visible text is identical to the copy saved before. Read-only, and still not a deployment authorization. |
