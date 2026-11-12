@@ -421,7 +421,83 @@ describe('store failures', () => {
       }
     }, 15_000);
 
-    it('a pool that was thrown away opens no more connections, whatever its driver retries', async () => {
+    it('the pause doubles from its first length and stops growing at its longest', async () => {
+      let accepted = 0;
+      const server = createServer((socket) => {
+        accepted += 1;
+        socket.on('error', () => {});
+        socket.destroy();
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as { port: number }).port;
+      // Pauses of 40, 80, 160, 160, ... milliseconds, with a call every 5 milliseconds for 1.5 seconds.
+      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500, { firstMs: 40, maxMs: 160 });
+      const calls = setInterval(() => void Promise.resolve().then(() => pool.ping()).catch(() => {}), 5);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      } finally {
+        clearInterval(calls);
+        pool.destroy();
+        await new Promise((resolve) => server.close(resolve));
+      }
+      // About ten connections. A pause stuck at its first length would give more than thirty, one
+      // that never stopped doubling five or six.
+      expect(accepted).toBeGreaterThanOrEqual(8);
+      expect(accepted).toBeLessThanOrEqual(16);
+    });
+
+    it('an address nothing can be connected to fails as a connection failure and ends no process', async () => {
+      // Port 0 cannot be connected to: the socket's own error must have a listener.
+      const store = createPostgresStore('postgres://box_reader@127.0.0.1:0/app', { queryTimeoutMs: 1000 });
+      try {
+        const failure = await store.ping().then(() => null, (error: unknown) => error);
+        expect(storeFailureOf(failure)).toBe('connect');
+      } finally {
+        await store.close().catch(() => {});
+      }
+    });
+
+    it('with one connection open, a pause does not refuse calls', async () => {
+      // The first connection is let in and then says nothing; every later one is hung up on.
+      let accepted = 0;
+      const held: Socket[] = [];
+      const server = createServer((socket) => {
+        accepted += 1;
+        socket.on('error', () => {});
+        if (accepted === 1) {
+          held.push(socket);
+          socket.once('data', () => socket.write(Buffer.from([0x52, 0, 0, 0, 8, 0, 0, 0, 0, 0x5a, 0, 0, 0, 5, 0x49])));
+          socket.resume();
+        } else {
+          socket.destroy();
+        }
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as { port: number }).port;
+      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500, { firstMs: 2000, maxMs: 2000 });
+      const outcome = (ms: number) =>
+        Promise.race([
+          Promise.resolve().then(() => pool.ping()).then(() => 'answered', (error: { code?: string }) => error.code ?? 'failed'),
+          new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), ms)),
+        ]);
+      try {
+        // Two calls at once: the second makes the driver open a second connection, which is hung up
+        // on, so a pause of two seconds begins while the first connection stays open.
+        const firstTwo = [outcome(400), outcome(400)];
+        await Promise.all(firstTwo);
+        expect(accepted).toBeGreaterThanOrEqual(2);
+        // A call now is not refused for the pause: it goes to the connection that is open.
+        expect(await outcome(300)).not.toBe('CONNECTION_PAUSED');
+      } finally {
+        pool.destroy();
+        for (const socket of held) socket.destroy();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
+    // That a pool which was thrown away opens no socket at all is held by the two 'goes silent' tests
+    // above, which fail without that guard. This one shows the driver itself stops.
+    it('a pool that was thrown away stops retrying', async () => {
       let accepted = 0;
       const server = createServer((socket) => {
         accepted += 1;
@@ -449,7 +525,10 @@ describe('store failures', () => {
       // 192.0.2.1 is a documentation address: nothing answers, so the connection never opens.
       const store = createPostgresStore('postgres://box_reader@192.0.2.1:5432/app', { queryTimeoutMs: 1500, connectTimeoutMs: 200 });
       try {
+        const started = Date.now();
         const failure = await store.ping().then(() => null, (error: unknown) => error);
+        // The box's own timer, in milliseconds: the driver's, in whole seconds, would take a second.
+        expect(Date.now() - started).toBeLessThan(700);
         expect(['timeout', 'connect']).toContain(storeFailureOf(failure));
         expect(failure).not.toMatchObject({ code: 'BOX_TIMEOUT' });
       } finally {

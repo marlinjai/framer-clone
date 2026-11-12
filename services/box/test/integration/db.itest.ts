@@ -269,6 +269,33 @@ describe('the handler on a real database', () => {
     }
   });
 
+  it('opens its second connection again after the database ended it, while the first stays in use', async () => {
+    const twoStore = createPostgresStore(pg.readerUrl);
+    const sessions = () => Number(pg.sql("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'framer-clone-box' AND usename = 'box_reader';").trim());
+    const pair = () => Promise.all([twoStore.find(SITE_A, HASH), twoStore.find(SITE_B, HASH)].map((call) => call.then(() => 'ok', () => 'failed')));
+    try {
+      // Two calls at once open both connections of this store; the shared store may hold idle ones too.
+      const others = sessions();
+      expect(await pair()).toEqual(['ok', 'ok']);
+      expect(sessions()).toBe(others + 2);
+      // The database ends the newer one within a second of its opening, as a killed backend would.
+      pg.sql(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'framer-clone-box' AND usename = 'box_reader' ORDER BY backend_start DESC LIMIT 1;`);
+      // Pairs of calls for six seconds: on a real database failures stop within the first seconds and
+      // the second connection is back. (That a pause cannot keep itself going is held by the unit
+      // suite, which fails without that rule; this test passes either way and shows the recovery.)
+      const results: string[][] = [];
+      for (let i = 0; i < 30; i++) {
+        results.push(await pair());
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      const lateFailures = results.slice(15).flat().filter((result) => result === 'failed').length;
+      expect(lateFailures).toBe(0);
+      expect(sessions()).toBe(others + 2);
+    } finally {
+      await twoStore.close().catch(() => {});
+    }
+  });
+
   it('answers 503 while the database is away and serves again when it is back', async () => {
     const handle = createBoxHandler({ config, store, killSwitchOn: () => false, cacheTtlMs: 0 });
     const get = (url: string, headers = FRAME) => handle({ method: 'GET', url, headers, remoteAddress: '203.0.113.7' });
