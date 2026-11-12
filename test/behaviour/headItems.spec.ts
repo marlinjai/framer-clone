@@ -356,6 +356,7 @@ describe.each(ENGINES)('a page holding every allowed item, in %s', (_name, engin
   it('the detector sees a request to another host (canary)', async () => {
     const { origin: base } = await publish([{ slug: '' }], { siteName: 'Bakery' });
     const requestsBefore = other.requests.length;
+    const connectionsBefore = other.connections;
     const page = await browser.newPage();
     try {
       await page.goto(`${base}/`);
@@ -369,6 +370,6 @@ describe.each(ENGINES)('a page holding every allowed item, in %s', (_name, engin
     } finally {
       await page.close();
     }
-    expect(other.requests.length - requestsBefore + other.connections).toBeGreaterThan(0);
+    expect(other.requests.length - requestsBefore + (other.connections - connectionsBefore)).toBeGreaterThan(0);
   });
 });

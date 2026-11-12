@@ -8,8 +8,9 @@ vi.mock('server-only', () => ({}));
 
 const { publishedHead } = await import('../renderSitePage');
 
+let counter = 0;
 const site = (head: unknown[], preview = false) =>
-  ({ siteSettings: { head }, ...(preview ? { preview: { label: 'x' } } : {}) }) as unknown as PublishedSite;
+  ({ siteId: `site-${counter++}`, siteSettings: { head }, ...(preview ? { preview: { label: 'x' } } : {}) }) as unknown as PublishedSite;
 const meta = (name: string, content: string) => ({ kind: 'meta', name, content });
 
 afterEach(() => vi.restoreAllMocks());
@@ -28,6 +29,23 @@ describe('publishedHead', () => {
     expect(warn).toHaveBeenCalledTimes(2);
     expect(String(warn.mock.calls[0][0])).toMatch(/site item 0 left out \(refused\)/);
     expect(String(warn.mock.calls[1][0])).toMatch(/page item 1 left out \(refused\)/);
+  });
+
+  it('tells each problem once per site, not once per visit', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const same = site([meta('viewport', 'x')]);
+    for (let i = 0; i < 5; i += 1) publishedHead(same, []);
+    expect(warn).toHaveBeenCalledTimes(1);
+    publishedHead(site([meta('viewport', 'x')]), []);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('logs a hostile stored name as one short escaped line', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    publishedHead(site([{ kind: 'meta', name: `x\n[site head] ERROR forged ${'a'.repeat(10_000)}`, content: 'v' }]), []);
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).not.toContain('\n');
+    expect(line.length).toBeLessThan(400);
   });
 
   it('carries nothing on a branch preview, and logs nothing', () => {
