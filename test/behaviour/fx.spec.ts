@@ -7,7 +7,7 @@
 // React, in both engines, with a real WebGL context. No engine is skipped: a
 // browser without WebGL here fails the test.
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -899,13 +899,28 @@ describe.each(ENGINES)('in %s', (name, engine) => {
 // and a phone width, with and without reduced motion, and the two-address comparison. Here the addresses are
 // this build's; after a deploy they are a sites.lumitra.co test page and, for the comparison, lumitra.co.
 describe('the deploy proof command', () => {
+  /** Run the command to its end without holding this worker still (two browsers and twenty page loads take a while). */
+  const runProof = (args: string[], timeoutMs = 280_000): Promise<{ status: number | null; stdout: string; stderr: string }> =>
+    new Promise((resolve, reject) => {
+      const child = spawn('pnpm', ['exec', 'tsx', 'test/fx-proof/run.ts', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+      const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.on('close', (status) => {
+        clearTimeout(timer);
+        resolve({ status, stdout, stderr });
+      });
+    });
+
   it('reads every address in both engines, finds nothing wrong, and writes its readings and pictures', async () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-proof-'));
-    const run = spawnSync(
-      'pnpm',
-      ['exec', 'tsx', 'test/fx-proof/run.ts', '--fx', `${origin}/fx-frame`, '--plain', `${origin}/fx-none`, '--compare', `${origin}/fx-frame`, '--out', out],
-      { encoding: 'utf8', timeout: 280_000 },
-    );
+    const run = await runProof(['--fx', `${origin}/fx-frame`, '--plain', `${origin}/fx-none`, '--compare', `${origin}/fx-frame`, '--out', out]);
     expect(run.status, run.stderr.slice(-2000)).toBe(0);
     const report = JSON.parse(fs.readFileSync(path.join(out, 'proof.json'), 'utf8')) as {
       readings: { engine: string; width: string; page: string; reducedMotion: boolean; problems: string[] }[];
@@ -921,17 +936,28 @@ describe('the deploy proof command', () => {
     fs.rmSync(out, { recursive: true, force: true });
   }, 300_000);
 
-  it('says how it is used, and fails, when it is given no addresses', () => {
-    const run = spawnSync('pnpm', ['exec', 'tsx', 'test/fx-proof/run.ts'], { encoding: 'utf8', timeout: 60_000 });
+  it('says how it is used, and fails, when it is given no addresses', async () => {
+    const run = await runProof([], 60_000);
     expect(run.status).toBe(2);
     expect(run.stderr).toMatch(/usage: tsx test\/fx-proof\/run\.ts --fx/);
-  });
+  }, 90_000);
 
-  it('fails, naming what is wrong, when the page with a scene is not one', () => {
+  it('fails, naming what is wrong, when the page with a scene is not one', async () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-proof-'));
-    const run = spawnSync('pnpm', ['exec', 'tsx', 'test/fx-proof/run.ts', '--fx', `${origin}/fx-none`, '--plain', `${origin}/fx-none`, '--out', out], { encoding: 'utf8', timeout: 280_000 });
+    const run = await runProof(['--fx', `${origin}/fx-none`, '--plain', `${origin}/fx-none`, '--out', out]);
     expect(run.status).toBe(1);
     expect(run.stdout).toMatch(/has no FX scene box/);
+    fs.rmSync(out, { recursive: true, force: true });
+  }, 300_000);
+
+  it('a comparison of a scene whose calm state is the box background says so at once, with the way on', async () => {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-proof-'));
+    const started = Date.now();
+    const run = await runProof(['--fx', `${origin}/fx-immediate`, '--plain', `${origin}/fx-none`, '--compare', `${origin}/fx-immediate`, '--out', out]);
+    expect(run.status).toBe(1);
+    expect(run.stdout).toMatch(/draws nothing under reduced motion.*calm: \\"frame\\"/);
+    // Named at once on each of the four comparisons, not after four timeouts of 45 seconds.
+    expect(Date.now() - started).toBeLessThan(150_000);
     fs.rmSync(out, { recursive: true, force: true });
   }, 300_000);
 });

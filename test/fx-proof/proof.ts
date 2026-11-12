@@ -252,7 +252,25 @@ async function pictureOf(browser: Browser, side: ComparisonSide, options: Compar
     await page.addInitScript(STOP_THE_CLOCK);
     await page.goto(side.url, { waitUntil: 'load', timeout: 60_000 });
     const canvas = page.locator(side.canvas ?? 'canvas').first();
-    await canvas.waitFor({ state: 'attached', timeout: options.timeoutMs ?? 45_000 });
+    // The comparison asks for reduced motion, so a scene must draw its still frame there. One whose calm
+    // state is the box background draws nothing, on purpose: say that, instead of waiting out a timeout.
+    const deadline = Date.now() + (options.timeoutMs ?? 45_000);
+    for (;;) {
+      if ((await canvas.count()) > 0) break;
+      const states = await page.evaluate(() => [...document.querySelectorAll('[data-fx="scene"]')].map((box) => box.getAttribute('data-fc-fx-state')));
+      if (states[0] === 'calm') {
+        throw new Error(
+          `the FX scene at ${side.url} draws nothing under reduced motion (its calm state is the box background), so there is no picture to compare: set the scene's "With reduced motion" to "One still frame of the scene" (calm: "frame") and publish again`,
+        );
+      }
+      if (states[0] === 'off') throw new Error(`the FX scene at ${side.url} is off (no WebGL, or the scene could not be drawn), so there is no picture to compare`);
+      if (Date.now() > deadline) {
+        throw new Error(
+          `no canvas appeared at ${side.url} under reduced motion: the page may show a still background instead of its scene there, and then the two can only be compared by looking (the side by side recording)`,
+        );
+      }
+      await page.waitForTimeout(250);
+    }
     await canvas.evaluate((element) => {
       // Only the canvas is left to see: hidden content keeps its place, so nothing moves.
       const style = document.createElement('style');

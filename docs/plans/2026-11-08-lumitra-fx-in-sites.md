@@ -895,7 +895,8 @@ running the command did.
 1. The deploy itself, with its gates, as recorded above under "What a deploy of main would ship". Not this slice's to
    start.
 2. **Production write:** a test site on a `sites.lumitra.co` address with two pages: one with an FX scene box (the
-   default preset, a heading over it) and one without. Built through the agent endpoint with the company key
+   default preset, a heading over it, and "With reduced motion" set to one still frame, `calm: "frame"`, so that the
+   reduced motion readings and a later comparison have a picture) and one without. Built through the agent endpoint with the company key
    (`insertNodes` with preset `fxScene`), or in the editor.
 3. **Production write, needs a person's approval** (agent plugin plan, decision 6): publishing that test site.
 4. Read only: `pnpm tsx test/fx-proof/run.ts --fx <the page with the scene> --plain <the page without>`. The readings
@@ -904,7 +905,9 @@ running the command did.
 5. Read only: the page looked at beside lumitra.co at a desktop and a phone width through `dev-browser`, screenshots
    into this log.
 6. F8, once the FX hero is in the new lumitra.co site (the dogfood work's draft, with its owner): the same command with
-   `--compare https://lumitra.co/` at a window width where both hero boxes have the same size.
+   `--compare https://lumitra.co/` at a window width where both hero boxes have the same size. The hero's scene must
+   have `calm: "frame"` for this: the comparison asks for reduced motion, and a scene whose calm state is the box
+   background draws nothing there (the command says so instead of waiting).
 
 What stays unknown until then, and cannot be learned offline:
 
