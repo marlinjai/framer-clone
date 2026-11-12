@@ -34,6 +34,7 @@ export interface ProjectSubmissionsResult {
 
 export async function deleteProjectSubmissions(
   tenantGroupId: string,
+  workspaceId: string,
   siteId: string,
   options: { attempts?: number; pauseMs?: number; now?: () => Date } = {},
 ): Promise<ProjectSubmissionsResult> {
@@ -48,7 +49,9 @@ export async function deleteProjectSubmissions(
   }
   for (let attempt = 1; ; attempt += 1) {
     try {
-      return { deleted: await deleteSiteSubmissions(db, { tenantId: tenantGroupId, siteId }), pending: false };
+      // The workspace the delete was made from, as the purge job also filters: the project belonged to it, so nothing of another
+      // workspace's is ever this delete's to remove.
+      return { deleted: await deleteSiteSubmissions(db, { tenantId: tenantGroupId, siteId, workspaceId }), pending: false };
     } catch (err) {
       if (!(err instanceof FormBusyError)) throw err;
       if (attempt >= attempts) {

@@ -66,7 +66,6 @@ describe('DeleteProjectDialog', () => {
       ok: false,
       gone: true,
       deletedWithWarning: true,
-      submissionsNotRemoved: true,
       message: 'The project was deleted, but its form submissions could not be removed and no automatic removal could be arranged. Contact support to have them removed.',
     });
     const onDeleted = open();
@@ -76,7 +75,18 @@ describe('DeleteProjectDialog', () => {
     // Closing removes the card, and the status line says what is true: deleted, but the submissions are not removed.
     fireEvent.click(screen.getByRole('button', { name: /close|ok|done|got it/i }));
     await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
-    expect(onDeleted.mock.calls[0][0]).toMatch(/Its form submissions could not be removed: contact support and quote the project id s1\./);
+    // Announced in the server's own words, identical to what the dialog showed.
+    expect(onDeleted.mock.calls[0][0]).toBe('The project was deleted, but its form submissions could not be removed and no automatic removal could be arranged. Contact support to have them removed.');
+  });
+
+  it('a cache warning with a pending removal is announced in the server\'s own words too', async () => {
+    const message = 'The project was deleted, but its published pages may still be served from cache until the next deploy. Its form submissions are still being removed in the background. This has no guaranteed time, and nothing more is needed. If you need them removed by a certain time, contact support and quote the project id s1.';
+    deleteProject.mockResolvedValue({ ok: false, gone: true, deletedWithWarning: true, formSubmissionsPending: true, message });
+    const onDeleted = open();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete project' }));
+    expect(await screen.findByText(message)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith(message));
   });
 
   it('a delete refused before anything changed keeps the dialog open with a try-again message and no "deleted" announcement', async () => {

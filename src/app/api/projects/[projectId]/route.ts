@@ -263,7 +263,7 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   let submissionsDeleted = 0;
   let submissionsUnscheduled = false;
   try {
-    const result = await deleteProjectSubmissions(scope.tenantGroupId, projectId);
+    const result = await deleteProjectSubmissions(scope.tenantGroupId, scope.workspaceId, projectId);
     submissionsDeleted = result.deleted;
     submissionsPending = result.pending;
   } catch (err) {

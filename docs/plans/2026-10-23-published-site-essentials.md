@@ -351,7 +351,7 @@ each reversible (say so if you disagree):
    the site and workspace ids. The job purges only once the site row is really gone (a refused or never-committed delete, or a crash
    right after the intent, ends as a no-op), deletes only rows of its own tenant group, site and workspace, retries on any failure
    and a busy email row without ever giving up, and a project recreated afterwards is a new site id it never touches. The immediate
-   cleanup after the delete stays, and waits briefly for an email in flight. What the owner is told is exact: removed now (a plain
+   cleanup after the delete stays (filtered by the same workspace as the job), and waits briefly for an email in flight. What the owner is told is exact: removed now (a plain
    success), removal pending (a success that says the submissions are still being removed with no guaranteed time and nothing more is
    needed, naming the one next step for an owner who needs them gone by a date: support, quoting the project id; only when the
    job's existence is confirmed. The job is first due ten minutes after the delete began and then retries 1, 5, 15 and 60 minutes and

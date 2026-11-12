@@ -44,9 +44,9 @@ vi.mock('@/server/sites/cachedResolver', () => ({
 // The form submissions live in the company's tenant schema (another
 // connection): the route deletes them after the site commit.
 type Cleanup = { deleted: number; pending: boolean };
-const deleteProjectSubmissions = vi.fn<(tenantGroupId: string, siteId: string) => Promise<Cleanup>>(async () => ({ deleted: 0, pending: false }));
+const deleteProjectSubmissions = vi.fn<(tenantGroupId: string, workspaceId: string, siteId: string) => Promise<Cleanup>>(async () => ({ deleted: 0, pending: false }));
 vi.mock('@/server/forms/projectDelete', () => ({
-  deleteProjectSubmissions: (tenantGroupId: string, siteId: string) => deleteProjectSubmissions(tenantGroupId, siteId),
+  deleteProjectSubmissions: (tenantGroupId: string, workspaceId: string, siteId: string) => deleteProjectSubmissions(tenantGroupId, workspaceId, siteId),
 }));
 
 // The durable cleanup intent, written before the site row is deleted (src/server/forms/purge.ts).
@@ -326,7 +326,7 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     const res = await del('site_pub', { confirmName: 'Bakery' });
     expect(res.status).toBe(200);
     expect(deleteProjectSubmissions).toHaveBeenCalledTimes(1);
-    expect(deleteProjectSubmissions).toHaveBeenCalledWith('tg_lumitra', 'site_pub');
+    expect(deleteProjectSubmissions).toHaveBeenCalledWith('tg_lumitra', 'ws_marlin', 'site_pub');
   });
 
   it('writes the durable purge BEFORE the site row goes, for this workspace and project only', async () => {

@@ -28,6 +28,7 @@ import { runJobNow } from '@/server/commerce/jobs/run';
 import { JobRefused } from '@/server/commerce/jobs/types';
 import { PURGE_DELAY_MS, STUCK_PURGE_ATTEMPTS, countStuckPurges, purgeSiteSubmissions, scheduleProjectSubmissionsPurge } from '../purge';
 import { insertFormSubmission } from '../repository';
+import { deleteProjectSubmissions } from '../projectDelete';
 
 let fx: StorefrontFixtures;
 let appBase: Kysely<CommerceDB>;
@@ -223,6 +224,16 @@ describe('scope: tenant group, site and workspace', () => {
     await deleteSiteRow(siteA); // A's owner deletes it for real
     expect(await runJobs(later())).toEqual(['done']);
     expect((await rowsOf(schema, siteA.siteId)).map((r) => r.id)).toEqual([mine]);
+  });
+
+  it('the immediate cleanup after a delete is scoped to the same workspace: a delete made from another workspace removes nothing of this one', async () => {
+    const mine = await submit(appDb, tgId, siteA);
+    // The caller names another workspace's id for site A: nothing matches.
+    expect(await deleteProjectSubmissions(tgId, siteB.workspaceId, siteA.siteId, { attempts: 1, pauseMs: 0 })).toEqual({ deleted: 0, pending: false });
+    expect((await rowsOf(schema, siteA.siteId)).map((r) => r.id)).toEqual([mine]);
+    // The workspace the project belonged to removes it.
+    expect(await deleteProjectSubmissions(tgId, siteA.workspaceId, siteA.siteId, { attempts: 1, pauseMs: 0 })).toEqual({ deleted: 1, pending: false });
+    expect(await rowsOf(schema, siteA.siteId)).toHaveLength(0);
   });
 
   it('refuses a job of another tenant than the group it runs in', async () => {

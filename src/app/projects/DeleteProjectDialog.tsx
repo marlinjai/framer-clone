@@ -102,8 +102,10 @@ export default function DeleteProjectDialog({
     if (result.gone) {
       setGoneNotice({
         message: result.message,
+        // A deleted project with a warning (cache, pending or unremoved submissions) is announced in the server's own words, the
+        // same text the dialog shows, so what a screen reader hears and what is on screen cannot differ.
         announcement: result.deletedWithWarning
-          ? `Deleted the project ${shownName}.${result.formSubmissionsPending ? ` Its form submissions are still being removed in the background, with no guaranteed time. If you need them removed by a certain time, contact support and quote the project id ${siteId}.` : ''}${result.submissionsNotRemoved ? ` Its form submissions could not be removed: contact support and quote the project id ${siteId}.` : ''}`
+          ? result.message
           : `The project ${shownName} is no longer in this company.`,
       });
       return;

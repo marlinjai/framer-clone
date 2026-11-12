@@ -40,7 +40,7 @@ describe('deleteProject', () => {
   it('submissions not removed and nothing scheduled: the project IS deleted, support is the next step, and it never says "could not delete"', async () => {
     answer(500, { error: { code: 'delete_submissions_failed', message: 'The project was deleted, but its form submissions could not be removed and no automatic removal could be arranged. Contact support to have them removed.' } });
     const result = await deleteProject('s');
-    expect(result).toMatchObject({ ok: false, gone: true, deletedWithWarning: true, submissionsNotRemoved: true });
+    expect(result).toMatchObject({ ok: false, gone: true, deletedWithWarning: true });
     expect((result as { message: string }).message).toMatch(/Contact support/);
     expect((result as { message: string }).message).not.toMatch(/^Could not delete/);
   });
