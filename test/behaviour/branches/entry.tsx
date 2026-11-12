@@ -7,10 +7,12 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import EditorApp from '@/components/EditorApp';
+import { useStore as editorStore } from '@/hooks/useStore';
 import { SiteBranchProvider } from '@/contexts/SiteBranchContext';
 import type { EditorBranchState } from '@/lib/sites/branches';
 
-const state = (window as unknown as { __BRANCH_STATE__?: EditorBranchState | null }).__BRANCH_STATE__ ?? null;
+const probe = window as unknown as { __BRANCH_STATE__?: EditorBranchState | null; __STORED_SITE__?: boolean };
+const state = probe.__BRANCH_STATE__ ?? null;
 const root = document.getElementById('root');
 if (!root) throw new Error('the probe page has no #root');
 flushSync(() =>
@@ -20,3 +22,7 @@ flushSync(() =>
     </SiteBranchProvider>,
   ),
 );
+// The editor opens here on its demo, whose status reads "Demo, not saved" with a "Keep as project" button: far
+// wider than "Saved", and a state no branch can be in (a branch is a stored site). A proof that measures the
+// top bar asks for the status of a stored site instead.
+if (probe.__STORED_SITE__) editorStore().editorUI.consumeDemo();

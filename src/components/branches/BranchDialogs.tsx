@@ -59,9 +59,16 @@ function NameField({ id, value, onChange, error, describedBy }: { id: string; va
  * How many branches a site may have open, and how many it has, said before the person types a name. `count` is
  * undefined while it is not known: the limit alone is said then.
  */
-export function branchLimitText(siteName: string, count: number | undefined): { text: string; reached: boolean } {
+export function branchLimitText(siteName: string, count: number | undefined, current = true): { text: string; reached: boolean } {
   const max = MAX_OPEN_BRANCHES_PER_SITE;
   if (count === undefined) return { text: `A site can have up to ${max} open branches at a time.`, reached: false };
+  // A count from when the editor was opened may be out of date: it is said as that, and turns nothing off.
+  if (count >= max && !current) {
+    return {
+      text: `${siteName} had ${max} open branches when this page was opened, the most a site can have. If one was merged or discarded since, a new one can be made.`,
+      reached: true,
+    };
+  }
   if (count >= max) {
     return {
       text: `${siteName} already has ${max} open branches, the most a site can have. Merge or discard one of them, then make a new one.`,
@@ -102,7 +109,7 @@ export function NewBranchDialog({ open, onOpenChange, mainSiteId, fromSiteId, si
       setBranchId(uuidv4());
     }
   }, [open]);
-  const limit = branchLimitText(siteName, openBranches);
+  const limit = branchLimitText(siteName, openBranches, openBranchesAreCurrent);
   const full = limit.reached && openBranchesAreCurrent;
 
   async function submit(e: React.FormEvent) {

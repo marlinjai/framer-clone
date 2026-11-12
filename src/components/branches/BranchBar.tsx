@@ -61,6 +61,50 @@ export function BranchBadge({ className = '' }: { className?: string }) {
   );
 }
 
+/** Up to this many characters a sentence is never cut, so it is not made pressable. */
+const BAR_MESSAGE_ALWAYS_WHOLE = 60;
+
+/**
+ * A sentence in the top bar, where room is short: up to three lines, and a press shows all of it in a panel
+ * under the bar. The cut text was whole only in a tooltip and to a screen reader, so someone reading a
+ * refusal on a touch screen or with the keyboard could not get to its end. Escape or a second press closes it.
+ */
+export function BarMessage({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  // A short sentence ("Updated from Bakery.") fits its three lines at any width: plain text, nothing to press.
+  if (text.length <= BAR_MESSAGE_ALWAYS_WHOLE) return <span className="line-clamp-3">{text}</span>;
+  return (
+    <span className="relative block min-w-0">
+      <button
+        type="button"
+        aria-expanded={open}
+        title={open ? undefined : text}
+        data-bar-message=""
+        className="block w-full min-w-0 rounded text-left line-clamp-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setOpen((v) => !v)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape' || !open) return;
+          e.stopPropagation();
+          setOpen(false);
+        }}
+      >
+        {text}
+      </button>
+      {open ? (
+        // Unread by a screen reader: the button above already holds the same words in full.
+        <span
+          aria-hidden="true"
+          data-bar-message-full=""
+          className="absolute right-0 top-full z-[95] mt-1 block w-[min(24rem,calc(100vw-1rem))] rounded-md border border-border bg-popover p-2 text-xs leading-snug text-popover-foreground shadow-md"
+        >
+          {text}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /** "Main has changed" with Update: brings main's changes into the branch. */
 export function MainChangedNote({ className = '' }: { className?: string }) {
   const { state, refresh } = useSiteBranch();
@@ -71,9 +115,7 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
   if (state?.kind !== 'branch' || !state.branch.mainMoved || !isOpenBranchStatus(state.branch.status)) {
     return message ? (
       <span role="status" className={`min-w-0 max-w-[22rem] text-xs leading-tight text-muted-foreground ${className}`}>
-        <span title={message} className="line-clamp-3">
-          {message}
-        </span>
+        <BarMessage text={message} />
       </span>
     ) : null;
   }
@@ -112,8 +154,8 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
       <div role="status" className={`flex min-w-0 items-center gap-2 text-xs ${className}`}>
         {/* Only the idle label gives way on a narrow window; a result or a refusal is always shown, on up to
             three lines where there is little room (its full text stays in the page for a screen reader). */}
-        <span title={message ?? undefined} className={`min-w-0 max-w-[22rem] leading-tight text-muted-foreground line-clamp-3 ${message ? '' : 'max-[1799px]:hidden'}`}>
-          {message ?? `${mainName} has changed`}
+        <span className={`min-w-0 max-w-[22rem] leading-tight text-muted-foreground ${message ? '' : 'max-2xl:hidden'}`}>
+          {message ? <BarMessage text={message} /> : `${mainName} has changed`}
         </span>
         {conflicts ? (
           <Button
@@ -132,7 +174,7 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
         {/* The label folds into the icon on a narrow window; the name and the description stay for a screen reader. */}
         <Button size="sm" variant="outline" className="shrink-0" onClick={update} disabled={busy} aria-describedby={hintId} title={hint}>
           <RefreshCw aria-hidden className={busy ? 'animate-spin motion-reduce:animate-none' : undefined} />{' '}
-          <span className="max-[1799px]:sr-only">{busy ? 'Updating…' : 'Update'}</span>
+          <span className="max-2xl:sr-only">{busy ? 'Updating…' : 'Update'}</span>
         </Button>
       </div>
       {/* Outside the status: inside it, every new message would read the hint out again. */}
@@ -227,8 +269,8 @@ export const UpdateUndoneNote = observer(function UpdateUndoneNote({ className =
   const canRedo = history.canRedo && history.history[history.undoIdx]?.id === history.undoneUpdateId;
   return (
     <div role="alert" className={`flex min-w-0 items-center gap-2 text-xs text-destructive ${className}`}>
-      <span className="min-w-0 max-w-[26rem] leading-tight line-clamp-3">
-        You undid the changes brought in from {state.mainName}. Merging this branch now would take them out of {state.mainName} too.
+      <span className="min-w-0 max-w-[26rem] leading-tight">
+        <BarMessage text={`You undid the changes brought in from ${state.mainName}. Merging this branch now would take them out of ${state.mainName} too.`} />
       </span>
       {canRedo ? (
         <Button size="sm" variant="outline" className="shrink-0" onClick={() => history.redo()}>
@@ -280,9 +322,7 @@ export function ReviewAndMergeButton() {
     <>
       {message ? (
         <span role="alert" className="mr-2 min-w-0 max-w-[20rem] text-xs leading-tight text-destructive">
-          <span title={message} className="line-clamp-3">
-            {message}
-          </span>
+          <BarMessage text={message} />
         </span>
       ) : null}
       <Button
@@ -294,7 +334,7 @@ export function ReviewAndMergeButton() {
         aria-describedby={hintId}
         title={hint}
       >
-        <GitMerge aria-hidden /> <span className="max-[1799px]:sr-only">{busy ? 'Opening…' : 'Review and merge'}</span>
+        <GitMerge aria-hidden /> <span className="max-lg:sr-only">{busy ? 'Opening…' : 'Review and merge'}</span>
       </Button>
       <span id={hintId} className="sr-only">
         {hint}

@@ -149,25 +149,9 @@ for (const [engine, type] of ENGINES) {
       await page.close();
     });
 
-    // The whole-feature review asked whether the top bar holds on a branch when the window is narrow: a branch
-    // adds a badge, a switcher with the branch's name, Update, Share preview and Review and merge to it.
-    it.each([
-      { name: 'a very wide window', width: 1920 },
-      { name: 'a wide window', width: 1536 },
-      { name: 'a laptop', width: 1280 },
-      { name: 'a small laptop', width: 1024 },
-      { name: 'a tablet', width: 768 },
-      { name: 'a phone', width: 390 },
-    ])('on $name the top bar of a branch behind main keeps every control inside the window and none over another', async ({ width }) => {
-      const state = onBranch({ mainMoved: true, name: 'Spring sale with the new pricing page and the long name of it' });
-      const { page, crashes } = await openEditor(browser, bundle, { viewport: { width, height: 800 } }, async (p) => {
-        await p.addInitScript((s) => {
-          (window as unknown as { __BRANCH_STATE__: unknown }).__BRANCH_STATE__ = s;
-        }, state);
-      });
-      page.setDefaultTimeout(5000);
-      await page.getByRole('button', { name: /Review and merge/ }).waitFor();
-      const seen = await page.evaluate(() => {
+    /** Where the top bar's controls are: any outside the window, over one another, or not pressable. */
+    const barGeometry = (page: Page) =>
+      page.evaluate(() => {
         const bar = document.querySelector('[data-editor-topbar]')!;
         const name = (el: Element) => (el.getAttribute('aria-label') ?? el.textContent ?? '').trim().slice(0, 40);
         const controls = [...bar.querySelectorAll('button, a')]
@@ -202,6 +186,26 @@ for (const [engine, type] of ENGINES) {
           barBottom: bar.getBoundingClientRect().bottom,
         };
       });
+
+    // The whole-feature review asked whether the top bar holds on a branch when the window is narrow: a branch
+    // adds a badge, a switcher with the branch's name, Update, Share preview and Review and merge to it.
+    it.each([
+      { name: 'a very wide window', width: 1920 },
+      { name: 'a wide window', width: 1536 },
+      { name: 'a laptop', width: 1280 },
+      { name: 'a small laptop', width: 1024 },
+      { name: 'a tablet', width: 768 },
+      { name: 'a phone', width: 390 },
+    ])('on $name the top bar of a branch behind main keeps every control inside the window and none over another', async ({ width }) => {
+      const state = onBranch({ mainMoved: true, name: 'Spring sale with the new pricing page and the long name of it' });
+      const { page, crashes } = await openEditor(browser, bundle, { viewport: { width, height: 800 } }, async (p) => {
+        await p.addInitScript((s) => {
+          Object.assign(window, { __BRANCH_STATE__: s, __STORED_SITE__: true });
+        }, state);
+      });
+      page.setDefaultTimeout(5000);
+      await page.getByRole('button', { name: /Review and merge/ }).waitFor();
+      const seen = await barGeometry(page);
       expect(seen.outside, `outside the window at ${width}px`).toEqual([]);
       expect(seen.over, `over one another at ${width}px`).toEqual([]);
       expect(seen.covered, `covered at ${width}px`).toEqual([]);
@@ -211,6 +215,30 @@ for (const [engine, type] of ENGINES) {
       expect(seen.names.some((n) => /^Update/.test(n))).toBe(true);
       expect(seen.names.some((n) => /^Branch Spring sale/.test(n))).toBe(true);
       expect(seen.names.some((n) => /Back to projects/.test(n))).toBe(true);
+      expect(crashes).toEqual([]);
+      await page.close();
+    });
+
+    // The floor that keeps the back link pressable is the bar's own, so a site that is not a branch gets it too.
+    it.each([
+      { name: 'a small laptop', width: 1024 },
+      { name: 'a tablet', width: 768 },
+      { name: 'a phone', width: 390 },
+    ])('on $name the top bar of a site itself keeps every control inside the window and none over another', async ({ width }) => {
+      const { page, crashes } = await openEditor(browser, bundle, { viewport: { width, height: 800 } }, async (p) => {
+        await p.addInitScript((s) => {
+          Object.assign(window, { __BRANCH_STATE__: s, __STORED_SITE__: true });
+        }, onMain);
+      });
+      page.setDefaultTimeout(5000);
+      await page.getByRole('button', { name: 'Publish', exact: true }).waitFor();
+      const seen = await barGeometry(page);
+      expect(seen.outside, `outside the window at ${width}px`).toEqual([]);
+      expect(seen.over, `over one another at ${width}px`).toEqual([]);
+      expect(seen.covered, `covered at ${width}px`).toEqual([]);
+      expect(seen.scrolls).toBe(false);
+      expect(seen.names.some((n) => /Back to projects/.test(n))).toBe(true);
+      expect(seen.names.some((n) => /^Main\. Switch branch/.test(n))).toBe(true);
       expect(crashes).toEqual([]);
       await page.close();
     });

@@ -378,7 +378,7 @@ const TopBar = observer(() => {
           taking what is left (its title and the branch name truncate) instead of its full width. */}
       <div
         className={`flex min-w-[7.5rem] flex-1 items-center gap-1 px-2 sm:gap-2 lg:min-w-[200px] lg:px-6 ${
-          onBranch ? 'min-[1800px]:flex-none min-[1800px]:shrink-0' : 'lg:flex-none lg:shrink-0'
+          onBranch ? '2xl:flex-none 2xl:shrink-0' : 'lg:flex-none lg:shrink-0'
         }`}
       >
         <Link
@@ -393,12 +393,12 @@ const TopBar = observer(() => {
         <BranchSwitcher />
         {/* On a branch the bar holds more, so the badge and the page name wait for a very wide window: the
             switcher beside them already names the branch, and the sidebar the page. */}
-        <BranchBadge className="max-[1799px]:hidden" />
+        <BranchBadge className="max-2xl:hidden" />
         {currentPage && (
           <>
-            <span className={`text-muted-foreground ${onBranch ? 'max-[1799px]:hidden' : 'max-md:hidden'}`}>/</span>
+            <span className={`text-muted-foreground ${onBranch ? 'max-2xl:hidden' : 'max-md:hidden'}`}>/</span>
             <div
-              className={`text-sm text-muted-foreground truncate max-w-[160px] ${onBranch ? 'max-[1799px]:hidden' : 'max-md:hidden'}`}
+              className={`text-sm text-muted-foreground truncate max-w-[160px] ${onBranch ? 'max-2xl:hidden' : 'max-md:hidden'}`}
               title={currentPage.metadata.title}
             >
               {currentPage.metadata.title}
@@ -410,7 +410,7 @@ const TopBar = observer(() => {
       {/* Middle: reserved for tool-category tabs (Insert / Layout / Text /
           Vector / CMS) in a future iteration. Left empty rather than with
           placeholder boxes so the bar reads as intentional, not unfinished. */}
-      <div className={`flex-1 ${onBranch ? 'max-[1799px]:hidden' : 'max-lg:hidden'}`} />
+      <div className={`flex-1 ${onBranch ? 'max-2xl:hidden' : 'max-lg:hidden'}`} />
 
       {/* Light and Dark for a site that follows each visitor's system: which one the
           canvas and the preview show. Nothing is saved. The compact bar has it in More. */}

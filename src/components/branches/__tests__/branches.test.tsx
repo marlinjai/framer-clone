@@ -35,7 +35,7 @@ vi.mock('../leave', () => leave);
 vi.mock('@/hooks/useStore', () => ({ useStore: () => ({ editorUI: { currentProject: null, currentPage: null } }) }));
 
 import BranchSwitcher, { recentlyMerged } from '../BranchSwitcher';
-import { BranchBadge, BranchClosedElsewhere, MainChangedNote, ReviewAndMergeButton, SharePreviewButton } from '../BranchBar';
+import { BarMessage, BranchBadge, BranchClosedElsewhere, MainChangedNote, ReviewAndMergeButton, SharePreviewButton } from '../BranchBar';
 import { branchLimitText, discardText } from '../BranchDialogs';
 import ClosedBranch, { closedBranchText } from '@/app/projects/ClosedBranch';
 import UndoMerge, { undoErrorText } from '../UndoMerge';
@@ -454,7 +454,7 @@ describe('the new branch dialog', () => {
     openMenu(/switch branch/i);
     await screen.findByText('listing the branches failed, try again');
     fireEvent.click(screen.getByRole('menuitem', { name: /new branch/i }));
-    expect(await screen.findByText(/Bakery already has 10 open branches/)).toBeTruthy();
+    expect(await screen.findByText(/Bakery had 10 open branches when this page was opened/)).toBeTruthy();
     const create = screen.getByRole('button', { name: 'Create branch' });
     expect(create.getAttribute('aria-disabled')).toBeNull();
     fireEvent.change(screen.getByLabelText('Branch name'), { target: { value: 'One more' } });
@@ -488,6 +488,40 @@ describe('explanations a keyboard and a touch screen reach', () => {
   });
 });
 
+describe('a sentence cut short in the top bar', () => {
+  it('opens in full under the bar on a press, by pointer or keyboard, and closes on a second press, Escape or leaving', () => {
+    const text = 'Bakery changed in a way this branch cannot take in by itself: three questions need an answer on the review page first.';
+    render(<BarMessage text={text} />);
+    const cut = screen.getByRole('button', { name: text });
+    expect(cut.className).toMatch(/line-clamp-3/);
+    expect(cut.getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelector('[data-bar-message-full]')).toBeNull();
+    fireEvent.click(cut);
+    expect(cut.getAttribute('aria-expanded')).toBe('true');
+    const full = document.querySelector('[data-bar-message-full]')!;
+    expect(full.textContent).toBe(text);
+    expect(full.className).not.toMatch(/line-clamp/);
+    // The words are in the button already: the panel is not read a second time.
+    expect(full.getAttribute('aria-hidden')).toBe('true');
+    fireEvent.keyDown(cut, { key: 'Escape' });
+    expect(document.querySelector('[data-bar-message-full]')).toBeNull();
+    fireEvent.click(cut);
+    fireEvent.click(cut);
+    expect(document.querySelector('[data-bar-message-full]')).toBeNull();
+    fireEvent.click(cut);
+    fireEvent.blur(cut);
+    expect(document.querySelector('[data-bar-message-full]')).toBeNull();
+  });
+
+  it('a count of open branches from when the page was opened is said as that, never as how it is now', () => {
+    expect(branchLimitText('Bakery', 10, false).text).toBe(
+      'Bakery had 10 open branches when this page was opened, the most a site can have. If one was merged or discarded since, a new one can be made.',
+    );
+    expect(branchLimitText('Bakery', 10, true).text).toMatch(/already has 10 open branches/);
+    expect(branchLimitText('Bakery', 3, false).text).toBe('3 of 10 branches are open on Bakery.');
+  });
+});
+
 describe('a narrow window', () => {
   it('folds the labels into their icons with the names kept, shortens the sentences, and never shrinks a button', () => {
     render(
@@ -500,7 +534,8 @@ describe('a narrow window', () => {
       const control = screen.getByRole('button', { name });
       expect(control.className).toMatch(/\bshrink-0\b/);
       // Until a very wide window: the layout itself is proven in real browsers (test/behaviour/branches.spec.ts).
-      expect(control.querySelector('span')?.className).toMatch(/max-\[1799px\]:sr-only/);
+      // The primary action keeps its words on a laptop; the other two wait for a wide window.
+      expect(control.querySelector('span')?.className).toMatch(name === 'Review and merge' ? /max-lg:sr-only/ : /max-2xl:sr-only/);
     }
     // The switcher's name gives way first; the full name is in its accessible name and in the menu.
     const trigger = screen.getByRole('button', { name: 'Branch Spring sale. Switch branch' });

@@ -153,7 +153,7 @@ export default function SharePreview({
           if (!disabledReason) setShown(true);
         }}
       >
-        <Link2 aria-hidden /> <span className={compact ? 'max-[1799px]:sr-only' : undefined}>Share preview</span>
+        <Link2 aria-hidden /> <span className={compact ? 'max-2xl:sr-only' : undefined}>Share preview</span>
       </Button>
       {disabledReason ? (
         <span id={reasonId} className="sr-only">

@@ -26,7 +26,7 @@ import {
 import { useSiteBranch } from '@/contexts/SiteBranchContext';
 import type { BranchSummaryJson } from '@/lib/sites/branches';
 import { BranchApiError, branchClient } from '@/lib/sites/branchClient';
-import { branchExplanation } from './BranchBar';
+import { BarMessage, branchExplanation } from './BranchBar';
 import { DiscardBranchDialog, NewBranchDialog, RenameBranchDialog } from './BranchDialogs';
 import { UndoMergeDialog } from './UndoMerge';
 import { openSite, savedBeforeLeaving } from './leave';
@@ -242,11 +242,7 @@ export default function BranchSwitcher({ className = '' }: { className?: string 
       <span role="status" aria-live="polite" className={notice ? 'min-w-0 max-w-[22rem] shrink text-xs leading-tight text-muted-foreground' : 'sr-only'}>
         {/* Up to three lines where there is little room. The pointer's tooltip repeats the text; it sits on the
             inner element, since on the status itself it would become its name. */}
-        {notice ? (
-          <span title={notice} className="line-clamp-3">
-            {notice}
-          </span>
-        ) : null}
+        {notice ? <BarMessage text={notice} /> : null}
       </span>
       <NewBranchDialog
         open={dialog === 'new'}
