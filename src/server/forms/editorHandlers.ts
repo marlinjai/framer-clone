@@ -20,6 +20,7 @@ import { z } from 'zod';
 
 import { jsonError } from '@/lib/api/respond';
 import { submissionsToCsv } from '@/lib/forms/csv';
+import { resendFormNotification } from './notify';
 import type { EditorFormsContext, EditorFormsScope } from './editorScope';
 import {
   deleteFormSubmission,
@@ -48,6 +49,7 @@ function submissionView(s: FormSubmission) {
     fields: s.fields,
     readAt: s.readAt ? s.readAt.toISOString() : null,
     createdAt: s.createdAt.toISOString(),
+    notification: s.notification,
   };
 }
 
@@ -152,6 +154,32 @@ export async function handleDeleteSubmission(
     return Response.json({ id: submissionId, deleted: true }, { headers: NO_STORE });
   } catch (err) {
     return failure('deleting a submission', projectId, err);
+  }
+}
+
+/** POST .../submissions/<id>/resend: send the owner's email about a failed or never-sent submission again. */
+export async function handleResendNotification(
+  req: Request,
+  projectId: string,
+  submissionId: string,
+  deps: EditorFormsDeps,
+): Promise<Response> {
+  const ctx = await deps.resolve(req, projectId);
+  if (!ctx.ok) return ctx.response;
+  try {
+    const result = await resendFormNotification(
+      ctx.scope.db,
+      { tenantGroupId: ctx.scope.tenantGroupId, siteId: ctx.scope.siteId, submissionId },
+      new Date(),
+    );
+    if (result === 'not_found') return jsonError('not_found', 'no such submission', 404);
+    if (result === 'not_resendable') return jsonError('not_resendable', 'this email was sent, is waiting to be sent, or has nobody to send to', 409);
+    if (result === 'not_connected') {
+      return jsonError('mail_not_connected', 'connect Lumitra Mail on the payments page first, then send this again', 409);
+    }
+    return Response.json({ id: submissionId, queued: true }, { headers: NO_STORE });
+  } catch (err) {
+    return failure('sending a notification again', projectId, err);
   }
 }
 

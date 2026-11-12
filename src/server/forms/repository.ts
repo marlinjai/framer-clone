@@ -54,6 +54,15 @@ export interface FormSubmission {
   fields: StoredField[];
   readAt: Date | null;
   createdAt: Date;
+  /** The owner's email about it (src/server/forms/notify.ts); null for a submission that has none (an older one). */
+  notification: FormNotificationView | null;
+}
+
+export interface FormNotificationView {
+  status: 'pending' | 'sent' | 'blocked' | 'failed' | 'skipped';
+  /** Why it failed, or why it was skipped (`not_connected`, `no_recipient`); null otherwise. */
+  reason: string | null;
+  recipient: string | null;
 }
 
 const storedFieldSchema = z.object({
@@ -97,7 +106,24 @@ function toSubmission(row: Row): FormSubmission {
     fields: parseFields(row.fields),
     readAt: row.read_at,
     createdAt: row.created_at,
+    notification: null,
   };
+}
+
+/** The emails of these submissions, one query, the same tenant group. */
+async function withNotifications(db: Kysely<CommerceDB>, tenantId: string, submissions: FormSubmission[]): Promise<FormSubmission[]> {
+  if (submissions.length === 0) return submissions;
+  const rows = await db
+    .selectFrom('form_notification')
+    .select(['submission_id', 'status', 'last_error', 'recipient'])
+    .where('tenant_id', '=', tenantId)
+    .where('submission_id', 'in', submissions.map((s) => s.id))
+    .execute();
+  const byId = new Map(rows.map((r) => [r.submission_id, r]));
+  return submissions.map((s) => {
+    const n = byId.get(s.id);
+    return n ? { ...s, notification: { status: n.status, reason: n.last_error, recipient: n.recipient } } : s;
+  });
 }
 
 const COLUMNS = ['id', 'site_id', 'page_id', 'page_path', 'form_id', 'form_name', 'fields', 'read_at', 'created_at'] as const;
@@ -182,7 +208,8 @@ export async function listFormSubmissions(
     .orderBy('id', 'desc')
     .limit(limit + 1)
     .execute()) as Row[];
-  return { submissions: rows.slice(0, limit).map(toSubmission), hasMore: rows.length > limit };
+  const submissions = await withNotifications(db, ref.tenantId, rows.slice(0, limit).map(toSubmission));
+  return { submissions, hasMore: rows.length > limit };
 }
 
 /** Every submission of a site (optionally one form), newest first, for the CSV export. Bounded. */

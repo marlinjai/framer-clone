@@ -274,8 +274,10 @@ export default function ReceiptEmailCard() {
       ) : null}
 
       <p className="mt-4 text-xs text-muted-foreground">
-        Connecting installs two mail templates in the workspace (the order confirmation and the notice when a late
-        payment had to be refunded), in German and English, and gives the shop a key that can only send.
+        Connecting installs three mail templates in the workspace (the order confirmation, the notice when a late
+        payment had to be refunded, and the notice to you about a new form submission), in German and English, and
+        gives the shop a key that can only send. The same connection emails you about new form submissions on your
+        sites.
       </p>
     </section>
   );

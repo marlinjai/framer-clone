@@ -130,7 +130,7 @@ describe('the Form section', () => {
     render(<FormSection component={form} />);
     expect(screen.getByText(/consent checkbox/)).toBeTruthy();
     expect(screen.getByText(/no submit button/)).toBeTruthy();
-    expect(screen.getByText(/Email notifications are not available yet/)).toBeTruthy();
+    expect(screen.getByText(/emailed to the address above/)).toBeTruthy();
   });
 
   it('edits the submit button sending label; its own label lives in the Text section', () => {
