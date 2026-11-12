@@ -268,24 +268,31 @@ for (const [engine, type] of ENGINES) {
     // Seen on production on 2026-11-12 at 1680px: the agent's note was drawn over the save status, and both were
     // unreadable. The agent chip has a slot of its own now and the bar folds its other controls first
     // (docs/plans/2026-11-12-top-bar-fold.md): at every width the two sit side by side, apart.
+    // The names of the bar in the screenshot, so the page name is long enough to matter.
+    const NAMES = { site: 'Lumitra (new landing page)', page: 'Services: KI-Automatisierung für den Mittelstand' };
     it.each([
-      { name: 'a large desktop', width: 1680, branch: true },
-      { name: 'a desktop', width: 1440, branch: true },
-      { name: 'a laptop', width: 1280, branch: true },
-      { name: 'a small laptop', width: 1024, branch: true },
-      { name: 'a tablet', width: 768, branch: true },
-      { name: 'a phone', width: 390, branch: true },
-      { name: 'a laptop, on main', width: 1280, branch: false },
-      { name: 'a small laptop, on main', width: 1024, branch: false },
-    ])('on $name, while an agent edits, the save status and the agent chip never overlap and nothing is over another', async ({ width, branch }) => {
-      const state = branch ? onBranch({ mainMoved: true, name: 'Test new design' }) : onMain;
+      // `fold`: the level the bar of the screenshot settles on in desktop Chrome, as the plan measured it
+      // (docs/plans/2026-11-12-top-bar-fold.md). Each browser's text has its own width, so the proof checks that
+      // the level is the fewest folds that fit by the needs the bar measured, not the number itself.
+      { name: 'a large desktop', width: 1680, branch: true, fold: 0 },
+      { name: 'a desktop', width: 1440, branch: true, fold: 1 },
+      { name: 'a laptop', width: 1280, branch: true, fold: 2 },
+      { name: 'a small laptop', width: 1024, branch: true, fold: 3 },
+      { name: 'a tablet', width: 768, branch: true, fold: 0 },
+      { name: 'a phone', width: 390, branch: true, fold: 0 },
+      { name: 'a laptop, on main', width: 1280, branch: false, fold: 2 },
+      { name: 'a small laptop, on main', width: 1024, branch: false, fold: 3 },
+    ])('on $name, while an agent edits, the save status and the agent chip never overlap and nothing is over another', async ({ width, branch, fold }) => {
+      const state = branch ? onBranch({ name: 'Test new design' }) : onMain;
       const { page, crashes } = await openEditor(browser, bundle, { viewport: { width, height: 800 } }, async (p) => {
-        await p.addInitScript((s) => {
-          Object.assign(window, { __BRANCH_STATE__: s, __STORED_SITE__: true, __AGENT_ACTIVE__: 'lumitra-sites-agent-mcp' });
-        }, state);
+        await p.addInitScript(([s, names]) => {
+          Object.assign(window, { __BRANCH_STATE__: s, __STORED_SITE__: true, __AGENT_ACTIVE__: 'lumitra-sites-agent-mcp', __NAMES__: names });
+        }, [state, NAMES] as const);
       });
       page.setDefaultTimeout(5000);
       await page.locator('[data-editor-topbar] [data-agent-editing-note]').first().waitFor({ state: 'attached' });
+      // The fold measures again when the web fonts arrive (they widen the words); then a frame for it to settle.
+      await page.evaluate(() => document.fonts.ready.then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
       const seen = await statusAndChip(page);
       expect(seen.status, `the save status shows at ${width}px`).not.toBeNull();
       expect(seen.chip, `the agent chip shows at ${width}px`).not.toBeNull();
@@ -304,6 +311,39 @@ for (const [engine, type] of ENGINES) {
         for (const n of ['Undo', 'Redo', 'Preview']) expect(geometry.names, `${n} at ${width}px`).toContain(n);
       }
       expect(geometry.names.some((n) => (branch ? /Review and merge/ : /^Publish/).test(n))).toBe(true);
+      if (width >= 1024) {
+        const level = Number(seen.fold);
+        const needs = JSON.parse((await page.locator('[data-editor-topbar]').getAttribute('data-fold-needs')) ?? '[]') as (number | null)[];
+        const room = await page.evaluate(() => document.querySelector('[data-editor-topbar]')!.clientWidth);
+        // The level it shows fits (or is the last), and the one before it does not fit with the slack to spare.
+        if (level < 3) expect(needs[level], `level ${level} fits at ${width}px: ${JSON.stringify(needs)}`).toBeLessThanOrEqual(room);
+        if (level > 0 && needs[level - 1] !== null) expect(needs[level - 1]! + 16, `level ${level - 1} does not fit at ${width}px: ${JSON.stringify(needs)}`).toBeGreaterThan(room);
+        // As the plan measured it in desktop Chrome, give or take one level for another browser's text widths.
+        expect(Math.abs(level - fold), `fold level at ${width}px`).toBeLessThanOrEqual(1);
+      }
+      expect(crashes).toEqual([]);
+      await page.close();
+    });
+
+    // The unsaved demo at `/` (no server copy): its status "Demo, not saved" with "Keep as project" is far wider
+    // than "Saved", and at the narrow end of the wide bar its button used to lie over Publish, Domains and Site
+    // settings. The bar folds for it now like for anything else it holds.
+    it.each([
+      { name: 'a small laptop', width: 1024 },
+      { name: 'a laptop', width: 1280 },
+    ])('on $name the top bar of the unsaved demo keeps every control inside the window and none over another', async ({ width }) => {
+      const { page, crashes } = await openEditor(browser, bundle, { viewport: { width, height: 800 } }, async (p) => {
+        await p.addInitScript((s) => {
+          Object.assign(window, { __BRANCH_STATE__: s });
+        }, onMain);
+      });
+      page.setDefaultTimeout(5000);
+      await page.getByRole('button', { name: /Keep as project/ }).waitFor();
+      const seen = await barGeometry(page);
+      expect(seen.outside, `outside the window at ${width}px`).toEqual([]);
+      expect(seen.over, `over one another at ${width}px`).toEqual([]);
+      expect(seen.covered, `covered at ${width}px`).toEqual([]);
+      expect(seen.scrolls).toBe(false);
       expect(crashes).toEqual([]);
       await page.close();
     });
@@ -332,7 +372,6 @@ for (const [engine, type] of ENGINES) {
       await page.setViewportSize({ width: 1920, height: 800 });
       await page.waitForFunction(() => new Promise((r) => requestAnimationFrame(() => r(true))));
       expect(Number(await page.locator('[data-editor-topbar]').getAttribute('data-fold'))).toBe(levels[0]);
-      console.log(`fold levels at 1920, 1680, 1440, 1280, 1024: ${levels.join(', ')}`);
       expect(crashes).toEqual([]);
       await page.close();
     });

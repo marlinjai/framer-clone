@@ -342,7 +342,8 @@ export function ReviewAndMergeButton({ iconOnly = false }: { iconOnly?: boolean 
           <BarMessage text={message} />
         </span>
       ) : null}
-      <BarTooltip text={hint}>
+      {/* The tooltip names the action (the folded button is only its icon); the hint stays its description. */}
+      <BarTooltip text={`Review and merge into ${mainName}`}>
         <Button
           variant="brand"
           size="sm"

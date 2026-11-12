@@ -7,12 +7,12 @@
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TopBar from '../TopBar';
 import { SiteBranchProvider } from '@/contexts/SiteBranchContext';
 import type { EditorBranchState } from '@/lib/sites/branches';
 import { FoldLabel } from '../topbar/BarTooltip';
-import { decideFoldLevel, foldLevelFor, type FoldLevel } from '../topbar/fold';
+import { decideFoldLevel, foldLevelFor, measureRequired, shiftNeeds, UNFOLD_SLACK, type FoldLevel } from '../topbar/fold';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('next/link', () => ({
@@ -88,13 +88,22 @@ const BRANCH_NEEDS = [1661, 1300, 1169, 1024];
 const MAIN_NEEDS = [1420, 1296, 1232, 1012];
 
 // The layout jsdom lacks: the bar is `width` wide; its content needs NEEDS[level] at the level it shows now
-// (its data-fold), and overflows when that is more than the width.
-const layout = { width: 1680, needs: BRANCH_NEEDS };
+// (its data-fold), plus `extra` for content that is the same at every level (a longer status word, an agent
+// chip), and overflows when that is more than the width. A box is drawn unless it or an ancestor is `hidden`
+// (the wide bar's undo cluster, `hidden lg:flex`, shows from 1024px up).
+const layout = { width: 1680, needs: BRANCH_NEEDS, extra: 0 };
+const isHiddenBox = (el: Element): boolean => {
+  for (let at: Element | null = el; at; at = at.parentElement) {
+    if (at.classList.contains('hidden') && !at.classList.contains('lg:flex')) return true;
+  }
+  return false;
+};
 const resizeCallbacks: Array<() => void> = [];
 let realResizeObserver: typeof ResizeObserver;
 beforeEach(() => {
   layout.width = 1680;
   layout.needs = BRANCH_NEEDS;
+  layout.extra = 0;
   resizeCallbacks.length = 0;
   realResizeObserver = globalThis.ResizeObserver;
   globalThis.ResizeObserver = class {
@@ -110,7 +119,18 @@ beforeEach(() => {
   });
   vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
     if (!this.hasAttribute('data-editor-topbar')) return 0;
-    return Math.max(layout.width, layout.needs[Number(this.getAttribute('data-fold'))]);
+    return Math.max(layout.width, layout.needs[Number(this.getAttribute('data-fold'))] + layout.extra);
+  });
+  // The free gap in the middle holds what the content leaves of the bar's width.
+  const realRect = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (!this.hasAttribute('data-fold-gap')) return realRect.call(this);
+    const bar = this.closest('[data-editor-topbar]')!;
+    const room = layout.width - layout.needs[Number(bar.getAttribute('data-fold'))] - layout.extra;
+    return new DOMRect(0, 0, Math.max(0, room), 64);
+  });
+  vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(function (this: Element) {
+    return (isHiddenBox(this) ? [] : [new DOMRect(0, 0, 10, 10)]) as unknown as DOMRectList;
   });
   currentStore = {
     editorUI: {
@@ -148,13 +168,20 @@ const resizeTo = (width: number) => {
   layout.width = width;
   act(() => resizeCallbacks.forEach((cb) => cb()));
 };
-const words = (name: string) => screen.getByRole('button', { name, exact: true }).querySelector('[data-fold-label]');
-/** The nearest box the fold hides `el` in (a plain `hidden`; `hidden lg:flex` is the wide bar's undo cluster, shown from 1024px up). */
+const words = (name: string) => screen.getByRole('button', { name }).querySelector('[data-fold-label]');
+/** The nearest box the fold hides `el` in (see isHiddenBox). */
 const foldedBox = (el: Element): Element | null => {
   for (let at: Element | null = el; at; at = at.parentElement) {
     if (at.classList.contains('hidden') && !at.classList.contains('lg:flex')) return at;
   }
   return null;
+};
+/** What the bar holds changes by `px` at every level (its text changes, so its MutationObserver hears it). */
+const contentChanges = async (px: number) => {
+  layout.extra += px;
+  await act(async () => {
+    screen.getByTestId('save-status').textContent = `Saved ${layout.extra}`;
+  });
 };
 const moreButton = () => screen.getByRole('button', { name: 'More actions' });
 
@@ -185,6 +212,25 @@ describe('the fold decision', () => {
       at = next;
     }
     expect(at).toBe(expected);
+  });
+
+  it('measures what the content needs as its scroll width less the free gap in the middle', () => {
+    const bar = document.createElement('header');
+    const gap = document.createElement('div');
+    gap.setAttribute('data-fold-gap', '');
+    bar.append(gap);
+    vi.spyOn(bar, 'scrollWidth', 'get').mockReturnValue(1680);
+    vi.spyOn(gap, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 212, 64));
+    expect(measureRequired(bar)).toBe(1468);
+  });
+
+  it('moves every remembered need with a change measured at one level', () => {
+    expect(shiftNeeds([1661, 1300, undefined, 1024], 40)).toEqual([1701, 1340, undefined, 1064]);
+  });
+
+  it('unfolds from a remembered need only with room to spare', () => {
+    expect(decideFoldLevel(1, 1661 + UNFOLD_SLACK - 1, [1661, 1300])).toBe(1);
+    expect(decideFoldLevel(1, 1661 + UNFOLD_SLACK, [1661, 1300])).toBe(0);
   });
 
   it('unfolds when the window widens, trying the level before once, and never swings between two', () => {
@@ -231,7 +277,7 @@ describe('the wide top bar, folding', () => {
       if (expected >= 3) expect(trigger).toHaveClass('hidden');
       else expect(trigger).not.toHaveClass('hidden');
     }
-    const historyButton = screen.getByRole('button', { name: /^History, step/ });
+    const historyButton = screen.getByRole('button', { name: /^History \d+\/\d+$/ });
     // The history menu's own box, inside the wrapper that hides it at the last fold.
     expect(foldedBox(historyButton)).toBe(expected >= 3 ? historyButton.parentElement?.parentElement : null);
     expect(moreButton().className.includes('lg:hidden')).toBe(expected < 3);
@@ -300,13 +346,96 @@ describe('the wide top bar, folding', () => {
     renderBar(branch, 1024);
     expect(screen.getByRole('link', { name: 'Back to projects' })).toBeInTheDocument();
     for (const name of ['Generate', 'Polish', 'Share preview', 'Review and merge', 'Preview', 'More actions', 'Undo', 'Redo']) {
-      expect(screen.getByRole('button', { name, exact: true }), name).toBeInTheDocument();
+      expect(screen.getByRole('button', { name }), name).toBeInTheDocument();
     }
     // The agent chip (the wide bar's words and the compact bar's dot) has the same name on both bars, and its full
     // sentence is its description (and its tooltip on hover and focus).
     const chips = screen.getAllByRole('button', { name: 'Agent editing' });
     expect(chips).toHaveLength(2);
     for (const chip of chips) expect(chip).toHaveAccessibleDescription('lumitra-sites-agent-mcp is editing this site');
-    expect(chips[0]).toHaveAccessibleDescription('lumitra-sites-agent-mcp is editing this site');
+    // History's name holds the count it shows (label in name, for a speech user).
+    expect(screen.getByRole('button', { name: 'History 1/1' })).toBeInTheDocument();
+  });
+
+  it('does not swing when a word of the bar changes width at a width where it just fits', async () => {
+    // 1680px leaves 19px over level 0's need; the status's word growing by 12px still fits, by 30px does not.
+    renderBar(branch, 1680);
+    expect(level()).toBe(0);
+    await contentChanges(12);
+    expect(level()).toBe(0);
+    await contentChanges(18);
+    expect(level()).toBe(1);
+    // Back to the shorter word: level 0 fits again by 19px, which is more than the slack, so the bar unfolds once.
+    await contentChanges(-30);
+    expect(level()).toBe(0);
+    // A word 10px longer than that, then back: within the slack, the bar folds once and stays folded.
+    await contentChanges(25);
+    expect(level()).toBe(1);
+    await contentChanges(-20);
+    expect(level()).toBe(1);
+  });
+
+  it('folds when content arrives after the bar was laid out (an agent starts)', async () => {
+    renderBar(branch, 1440);
+    expect(level()).toBe(1);
+    await contentChanges(200);
+    expect(level()).toBe(2);
+  });
+
+  it('stays at level 0 under 1024px, where the compact bar applies', () => {
+    const real = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query === '(max-width: 1023.98px)', media: query, addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof window.matchMedia;
+    try {
+      renderBar(branch, 800);
+      expect(level()).toBe(0);
+    } finally {
+      window.matchMedia = real;
+    }
+  });
+
+  it('moves the focus to More when a fold hides the control that had it', async () => {
+    renderBar(branch, 1280);
+    expect(level()).toBe(2);
+    const theme = screen.getByRole('button', { name: 'Theme' });
+    act(() => theme.focus());
+    await contentChanges(200);
+    expect(level()).toBe(3);
+    expect(document.activeElement).toBe(moreButton());
+  });
+
+  it('never unfolds while the focus is in the bar, and does once it leaves', async () => {
+    renderBar(branch, 1280);
+    await contentChanges(200);
+    expect(level()).toBe(3);
+    act(() => moreButton().focus());
+    await contentChanges(-200);
+    expect(level()).toBe(3);
+    act(() => moreButton().blur());
+    await waitFor(() => expect(level()).toBe(2));
+  });
+
+  it('on main at the last fold, More holds the published versions, domains, settings, theme, forms and history', () => {
+    layout.needs = MAIN_NEEDS;
+    renderBar(main, 1024);
+    expect(level()).toBe(3);
+    act(() => {
+      fireEvent.keyDown(moreButton(), { key: 'Enter' });
+    });
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem').map((el) => el.textContent?.trim());
+    expect(items).toEqual(['Published versions', 'Domains', 'Site settings', 'Theme', 'Form submissions', expect.stringMatching(/^History/)]);
+  });
+
+  it('Escape closes More and gives the focus back to it', async () => {
+    renderBar(branch, 1024);
+    act(() => moreButton().focus());
+    act(() => {
+      fireEvent.keyDown(moreButton(), { key: 'Enter' });
+    });
+    const menu = screen.getByRole('menu');
+    act(() => {
+      fireEvent.keyDown(menu, { key: 'Escape' });
+    });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(document.activeElement).toBe(moreButton());
   });
 });

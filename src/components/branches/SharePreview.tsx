@@ -141,33 +141,33 @@ export default function SharePreview({
   const link = loaded.kind === 'ready' ? loaded.link : null;
   const url = loaded.kind === 'ready' ? loaded.url : null;
 
+  const shareButton = (
+    <Button
+      ref={trigger}
+      type="button"
+      size="sm"
+      variant="outline"
+      // Not `disabled`: the button stays reachable by keyboard so the reason can be read, and does nothing.
+      aria-disabled={disabledReason ? true : undefined}
+      // Only with a reason: an `aria-describedby` of undefined would replace the tooltip's own description.
+      {...(disabledReason ? { 'aria-describedby': reasonId } : {})}
+      title={compact ? undefined : disabledReason}
+      className={`${disabledReason ? 'cursor-not-allowed opacity-50' : ''} ${iconOnly ? ICON_ONLY : ''}`}
+      onClick={() => {
+        if (!disabledReason) setShown(true);
+      }}
+    >
+      <Link2 aria-hidden />
+      <span data-fold-label="" className={iconOnly ? 'sr-only' : compact ? 'max-lg:sr-only' : undefined}>
+        Share preview
+      </span>
+    </Button>
+  );
+  // In the top bar the label can fold away: a tooltip that hover and focus open says what it does.
+
   return (
     <>
-      {(() => {
-        const button = (
-          <Button
-            ref={trigger}
-            type="button"
-            size="sm"
-            variant="outline"
-            // Not `disabled`: the button stays reachable by keyboard so the reason can be read, and does nothing.
-            aria-disabled={disabledReason ? true : undefined}
-            aria-describedby={disabledReason ? reasonId : undefined}
-            title={compact ? undefined : disabledReason}
-            className={`${disabledReason ? 'cursor-not-allowed opacity-50' : ''} ${iconOnly ? ICON_ONLY : ''}`}
-            onClick={() => {
-              if (!disabledReason) setShown(true);
-            }}
-          >
-            <Link2 aria-hidden />
-            <span data-fold-label="" className={iconOnly ? 'sr-only' : compact ? 'max-lg:sr-only' : undefined}>
-              Share preview
-            </span>
-          </Button>
-        );
-        // In the top bar the label can fold away: a tooltip that hover and focus open says what it does.
-        return compact ? <BarTooltip text={disabledReason ?? 'Share a preview link of this branch'}>{button}</BarTooltip> : button;
-      })()}
+      {compact ? <BarTooltip text={disabledReason ?? 'Share a preview link of this branch'}>{shareButton}</BarTooltip> : shareButton}
       {disabledReason ? (
         <span id={reasonId} className="sr-only">
           {disabledReason}

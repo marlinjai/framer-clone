@@ -9,17 +9,21 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 
 import { cn } from "@/lib/utils"
 
+const InProvider = React.createContext(false)
+
+/** Shares the hover delay among the tooltips inside it: from one to the next, the next shows at once. */
 function TooltipProvider({ delayDuration = 300, ...props }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
-  return <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} {...props} />
+  return (
+    <InProvider.Provider value={true}>
+      <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} {...props} />
+    </InProvider.Provider>
+  )
 }
 
-/** One tooltip. It carries its own provider, so it works wherever it is placed. */
+/** One tooltip. Outside a TooltipProvider it brings its own, so it works wherever it is placed. */
 function Tooltip(props: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return (
-    <TooltipProvider>
-      <TooltipPrimitive.Root data-slot="tooltip" {...props} />
-    </TooltipProvider>
-  )
+  const root = <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+  return React.useContext(InProvider) ? root : <TooltipProvider>{root}</TooltipProvider>
 }
 
 function TooltipTrigger(props: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {

@@ -452,14 +452,17 @@ export const PolishPageButton = observer(function PolishPageButton({
   const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
   return (
     <>
-      <BarTooltip text="Measure the page layout and let AI fix clipped text, overflow and contrast">
+      <BarTooltip text={editorUI.currentPage ? 'Measure the page layout and let AI fix clipped text, overflow and contrast' : 'Open a page to polish its layout with AI'}>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className={`mr-2 shrink-0 ${iconOnly ? ICON_ONLY : ''} ${triggerClassName}`}
-          onClick={() => setOpen(true)}
-          disabled={!editorUI.currentPage}
+          className={`mr-2 shrink-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${iconOnly ? ICON_ONLY : ''} ${triggerClassName}`}
+          // Not `disabled`: a disabled button gets no hover or focus, so its tooltip could not say why it is off.
+          aria-disabled={editorUI.currentPage ? undefined : true}
+          onClick={() => {
+            if (editorUI.currentPage) setOpen(true);
+          }}
         >
           <Wand size={16} aria-hidden />
           <FoldLabel folded={iconOnly}>Polish</FoldLabel>

@@ -277,10 +277,13 @@ describe('the top bar\'s editing note', () => {
     const at = () => new Date().toISOString();
     act(() => presence().applyActivity({ callId: 'r1', agentId: 'a1', label: 'Claude', tool: 'get_page', phase: 'start', at: at() }));
     expect(document.querySelector('[data-agent-editing-note]')).toHaveTextContent('Claude is reading this site');
+    // The visible words follow too, not only the sentence for a screen reader.
+    expect(screen.getByRole('button', { name: 'Agent reading' })).toBeInTheDocument();
     act(() => presence().applyActivity({ callId: 'w1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'start', at: at() }));
     act(() => presence().applyActivity({ callId: 'w1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'end', outcome: 'ok', changes: 4, at: at() }));
     act(() => presence().applyActivity({ callId: 'r2', agentId: 'a1', label: 'Claude', tool: 'get_page', phase: 'start', at: at() }));
     expect(document.querySelector('[data-agent-editing-note]')).toHaveTextContent('Claude is editing this site');
+    expect(screen.getByRole('button', { name: 'Agent editing' })).toHaveTextContent(/^Agent editing/);
   });
 });
 

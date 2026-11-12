@@ -9,7 +9,8 @@
 // (truncating; the page name is hidden), the save status, Preview, Publish and a More
 // menu that holds Generate, Polish, Domains, Site settings, Form submissions
 // and History. Undo and redo stay reachable in the bottom bar on every size.
-// The switch between the two is CSS only (`lg:`), so the bar is right from the first paint.
+// Which controls each bar shows is CSS (`lg:`), so the bar is right from the first paint; only the More menu's
+// list, read when it opens, asks the same media query in script.
 //
 // From 1024px up the bar folds by what it holds (docs/plans/2026-11-12-top-bar-fold.md,
 // src/components/topbar/fold.ts): first the words of Generate, Polish, Share
@@ -27,7 +28,8 @@
 
 import React from 'react';
 import { useIsPhone, useMediaQuery } from '@/hooks/use-mobile';
-import { useTopBarFold, type FoldLevel } from '@/components/topbar/fold';
+import { MORE_TRIGGER_ATTR, useTopBarFold, type FoldLevel } from '@/components/topbar/fold';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { BarTooltip } from '@/components/topbar/BarTooltip';
 import { COMPACT_TOP_BAR_QUERY } from '@/components/TopBarStatus';
 import { hapticsEnabled, hapticsSupported, onHapticsPreferenceChange, setHapticsEnabled } from '@/lib/haptics';
@@ -170,10 +172,15 @@ HistoryList.displayName = 'HistoryList';
 // --- HistoryMenu -----------------------------------------------------------
 // Chevron dropdown beside Undo/Redo on the wide bar. Closes on outside click /
 // Escape. Kept local so we don't pull in a popover library for one use-site.
-const HistoryMenu = observer(() => {
+// `folded`: the bar moved History into its More menu; an open dropdown closes with it.
+const HistoryMenu = observer(({ folded = false }: { folded?: boolean }) => {
   const history = getHistoryStore();
   const [open, setOpen] = React.useState(false);
   const rootRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (folded) setOpen(false);
+  }, [folded]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -200,12 +207,14 @@ const HistoryMenu = observer(() => {
         type="button"
         onClick={() => setOpen(v => !v)}
         title="History"
-        aria-label={`History, step ${history.undoIdx} of ${history.history.length}`}
+        // The visible count is part of the name (a speech user says what they see).
+        aria-label={`History ${history.undoIdx}/${history.history.length}`}
         aria-expanded={open}
         className={`flex items-center gap-1.5 px-2 h-8 rounded text-sm text-foreground hover:bg-accent ${open ? 'bg-muted' : ''}`}
       >
         <HistoryIcon size={16} />
-        <span className="text-xs text-muted-foreground">
+        {/* Fixed-width digits: the count growing on an edit moves the bar by one digit at most, within the fold's slack. */}
+        <span className="text-xs text-muted-foreground tabular-nums">
           {history.undoIdx}/{history.history.length}
         </span>
       </button>
@@ -251,7 +260,7 @@ function useHapticsPreference(): [supported: boolean, enabled: boolean] {
 // into it (Generate and Polish stay in the bar as icons there).
 const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclude<TopBarDialog, null>) => void; className?: string }) => {
   const { editorUI } = useStore();
-  // Read when the menu opens: the compact bar's menu holds everything, the wide bar's only what folded.
+  // The compact bar's menu holds everything, the wide bar's only what folded into it.
   const compactBar = useMediaQuery(COMPACT_TOP_BAR_QUERY);
   const hasProject = !!editorUI.currentProject;
   const hasPage = !!editorUI.currentPage;
@@ -269,6 +278,7 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
+        {...{ [MORE_TRIGGER_ATTR]: '' }}
         aria-label="More actions"
         title="More actions"
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand data-[state=open]:bg-muted ${className}`}
@@ -393,6 +403,8 @@ const TopBar = observer(() => {
   const secondary = inMore ? 'hidden' : wideOnly;
 
   return (
+    // One provider for the bar's tooltips: moving from one to the next shows it without the delay again.
+    <TooltipProvider>
     <header
       ref={barRef}
       data-editor-ui="true"
@@ -553,7 +565,7 @@ const TopBar = observer(() => {
           <Redo2 size={16} aria-hidden />
         </button>
         <div className={inMore ? 'hidden' : undefined}>
-          <HistoryMenu />
+          <HistoryMenu folded={inMore} />
         </div>
       </div>
 
@@ -572,6 +584,7 @@ const TopBar = observer(() => {
         </Dialog>
       )}
     </header>
+    </TooltipProvider>
   );
 });
 

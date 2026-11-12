@@ -160,7 +160,13 @@ const SaveStatus = observer(() => {
           </button>
         ) : (
           // A problem appearing fades in once; the ordinary words just change.
-          <span key={failed ? 'failed' : 'ok'} className={`whitespace-nowrap ${failed ? FADE : 'max-sm:sr-only'}`}>
+          // The top bar's fold counts the widest ordinary word for this one (data-fold-reserve), so the bar does
+          // not fold and unfold as Saved and Unsaved changes take turns (docs/plans/2026-11-12-top-bar-fold.md).
+          <span
+            key={failed ? 'failed' : 'ok'}
+            data-fold-reserve={failed ? undefined : 'Unsaved changes'}
+            className={`whitespace-nowrap ${failed ? FADE : 'max-sm:sr-only'}`}
+          >
             {label}
           </span>
         )}

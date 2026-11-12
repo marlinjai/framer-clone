@@ -740,14 +740,17 @@ export const GeneratePageButton = observer(function GeneratePageButton({
   }, [projectId]);
   return (
     <>
-      <BarTooltip text="Generate a page or section with AI">
+      <BarTooltip text={editorUI.currentProject ? 'Generate a page or section with AI' : 'Open a project to generate a page or section'}>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className={`mr-2 shrink-0 ${iconOnly ? ICON_ONLY : ''} ${triggerClassName}`}
-          onClick={() => setOpen(true)}
-          disabled={!editorUI.currentProject}
+          className={`mr-2 shrink-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${iconOnly ? ICON_ONLY : ''} ${triggerClassName}`}
+          // Not `disabled`: a disabled button gets no hover or focus, so its tooltip could not say why it is off.
+          aria-disabled={editorUI.currentProject ? undefined : true}
+          onClick={() => {
+            if (editorUI.currentProject) setOpen(true);
+          }}
         >
           <Sparkles size={16} aria-hidden />
           <FoldLabel folded={iconOnly}>Generate</FoldLabel>
