@@ -247,7 +247,10 @@ describe('an error always has a listener', () => {
     expect(socket.destroyed).toBe(true);
   });
 
-  it('has its listener while the socket is open, and a closed socket stripped of every listener, as the driver leaves it, raises nothing', async () => {
+  // The second half of this test is about Node, not about the gate: it shows the fact the gate's
+  // comment relies on (destroying a socket that has already closed emits nothing), so that a change
+  // in that fact would be noticed here.
+  it('has its listener while the socket is open; and destroying a closed socket, stripped of every listener as the driver leaves it, emits nothing', async () => {
     const server = await listener((socket) => socket.resume());
     const gate = gateTo(server.port);
     const socket = gate.open();
@@ -260,10 +263,17 @@ describe('an error always has a listener', () => {
     // What the driver does at every close: it removes every listener, the gate's too.
     socket.removeAllListeners();
     expect(socket.listenerCount('error')).toBe(0);
-    // Nothing the gate or anyone does to the closed socket now raises an error nobody hears.
-    expect(() => socket.destroy(Object.assign(new Error('late'), { code: 'CONNECTION_DESTROYED' }))).not.toThrow();
+    // Everything the socket would emit from now on is recorded and not passed on.
+    const emitted: string[] = [];
+    socket.emit = ((event: string | symbol) => {
+      emitted.push(String(event));
+      return false;
+    }) as typeof socket.emit;
+    // A late destroy with an error, as the gate's zero timer or `shut()` may do after a close.
+    socket.destroy(Object.assign(new Error('late'), { code: 'CONNECTION_DESTROYED' }));
     gate.shut();
-    await sleep(50);
+    await sleep(100);
+    expect(emitted).toEqual([]);
   });
 });
 

@@ -205,9 +205,12 @@ describe('the image', () => {
     expect(seconds).toBeLessThan(25);
     expect(refused.length).toBeGreaterThanOrEqual(90 - 60 - Math.floor(seconds) - 1);
     expect(refused.length).toBeGreaterThan(0);
-    // Every one of the refusals, whenever it came, is a refusal in full: status, policy, no cookie.
-    for (const response of refused) expectRefusal(response, 429);
-    expect(refused[0]!.headers['retry-after']).toBe('60');
+    // Every one of the refusals, whenever it came, is a refusal in full: status, policy, no cookie,
+    // and when to come back.
+    for (const response of refused) {
+      expectRefusal(response, 429);
+      expect(response.headers['retry-after']).toBe('60');
+    }
   });
 
   it('says at start how many proxies it believes, and logs no path, no whole address and no secret', async () => {
