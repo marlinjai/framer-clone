@@ -423,8 +423,8 @@ const PageModel = PageWithComponents
         (self.metadata as unknown as Record<string, unknown>)[key] = value;
       }
     }
-    return { headDropped };
     self.updatedAt = new Date();
+    return { headDropped };
   },
 
   // Set the URL slug. Caller is responsible for the slug rules and collision

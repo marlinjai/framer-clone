@@ -4,7 +4,7 @@
 // the shared document) and re-entry (the caps, a dialog save that must not erase the site's
 // items, a forged item, a failed write that changes nothing).
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
 import ProjectModel from '../ProjectModel';
 import HistoryStore from '@/stores/HistoryStore';
@@ -131,6 +131,19 @@ describe('the site home: updateSiteHead', () => {
 });
 
 describe('the page home: metadata.head and ogType', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('every metadata update, head or not, moves the page\'s updatedAt (the sitemap lastmod reads it)', () => {
+    const { home } = setup();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2030, 0, 1));
+    home.updateMetadata({ title: 'New title' });
+    expect(home.updatedAt.getTime()).toBe(new Date(2030, 0, 1).getTime());
+    vi.setSystemTime(new Date(2031, 0, 1));
+    home.updateMetadata({ head: [meta('author')] });
+    expect(home.updatedAt.getTime()).toBe(new Date(2031, 0, 1).getTime());
+  });
+
   it('a new page has an empty head and the website type', () => {
     const { home } = setup();
     expect(home.metadata.head).toEqual([]);

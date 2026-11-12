@@ -254,6 +254,9 @@ export function isHeadHref(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > HEAD_LIMITS.href) return false;
   if (value !== value.trim() || /[\u0000- \u007f\\]/.test(value)) return false;
   if (value.startsWith('/')) return !value.startsWith('//');
+  // `https:example.com` and `https:/example.com` parse to a host in `new URL` but a browser reads
+  // them as a relative path on an https page, so the text itself must carry `https://` and a host.
+  if (!/^https:\/\/[^/?#\\]/.test(value) || /[^\u0021-\u007e]/.test(value)) return false;
   try {
     const url = new URL(value);
     return url.protocol === 'https:' && url.hostname !== '' && url.username === '' && url.password === '';

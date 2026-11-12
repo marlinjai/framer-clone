@@ -218,6 +218,11 @@ describe('isHeadHref', () => {
     'https://exa mple.com',
     'https:\\\\evil.test',
     'ftp://example.com',
+    'https:example.com',
+    'https:/example.com',
+    'https:///example.com',
+    'https://ex\u200bample.com',
+    'https://exämple.com',
   ])('refuses %j', (v) => {
     expect(isHeadHref(v)).toBe(false);
   });
