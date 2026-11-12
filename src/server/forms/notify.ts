@@ -354,7 +354,8 @@ export async function resendFormNotification(
   return db.transaction().execute(async (trx): Promise<ResendResult> => {
     // The row's lock is held by an attempt while it sends: wait for it (it ends sent, or failed and then a new round is
     // safe), but only briefly; the owner is told to try again.
-    await sql.raw(`SET LOCAL lock_timeout = '${Math.max(1, Math.trunc(options.lockWaitMs ?? RESEND_LOCK_WAIT_MS))}ms'`).execute(trx);
+    const waitMs = Math.max(1, Math.trunc(options.lockWaitMs ?? RESEND_LOCK_WAIT_MS));
+    await sql`SELECT set_config('lock_timeout', ${`${waitMs}ms`}, true)`.execute(trx);
     let row;
     try {
       row = await trx
