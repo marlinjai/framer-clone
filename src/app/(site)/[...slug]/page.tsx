@@ -40,7 +40,7 @@ import { getPrimaryHostForRequest, resolveSiteForRequest } from '@/server/sites/
 import { isNotFoundPage, renderSitePage } from '@/server/sites/renderSitePage';
 import { adaptedPage } from '@/lib/components/expandedPages';
 import { effectiveSiteName } from '@/lib/site/siteSettings';
-import { buildBusinessJsonLd, pageMetadata, pagePath } from '@/lib/site/publishedHead';
+import { buildBusinessJsonLd, pageMetadata, pagePath, previewMetadata } from '@/lib/site/publishedHead';
 
 // SSR-on-request: never statically cached, always hydrated fresh. Node runtime
 // (Prisma is server-only and not edge-safe).
@@ -102,13 +102,15 @@ export async function generateMetadata({ params }: SitePageProps): Promise<Metad
   // metadata then comes from the (site) layout like every 404.
   if (isNotFoundPage(site, matched.page.pageId)) return {};
   const adapted = adaptedPage(site, matched.page);
-  return pageMetadata({
+  const metadata = pageMetadata({
     page: adapted.metadata,
     settings: site.siteSettings,
     siteName: effectiveSiteName(site.siteSettings, site.name),
     primaryHost: await getPrimaryHostForRequest(),
     path: pagePath(matched.page.slug, matched.params),
   });
+  // A branch's public preview: never indexed, and no canonical or sharing address (previewMetadata).
+  return site.preview ? previewMetadata(metadata) : metadata;
 }
 
 export default async function SitePage({ params, searchParams }: SitePageProps) {

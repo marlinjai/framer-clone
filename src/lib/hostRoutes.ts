@@ -56,9 +56,9 @@ export const HOST_ROUTES: readonly HostRoute[] = [
 
   // What a published page calls.
   { route: '/api/forms/submit', published: ['POST'], why: 'a published form posts here (src/lib/forms/sendForm.ts)' },
-  { route: '/api/commerce/products', published: ['GET'], why: 'the storefront islands read the catalog' },
-  { route: '/api/commerce/products/[handle]', published: ['GET'], why: 'the storefront islands read one product' },
-  { route: '/api/commerce/inventory', published: ['GET'], why: 'the storefront islands read availability' },
+  { route: '/api/commerce/products', published: ['GET'], preview: true, why: 'the storefront islands read the catalog; a preview reads its site\'s catalogue too' },
+  { route: '/api/commerce/products/[handle]', published: ['GET'], preview: true, why: 'the storefront islands read one product; a preview reads its site\'s catalogue too' },
+  { route: '/api/commerce/inventory', published: ['GET'], preview: true, why: 'the storefront islands read availability; a preview reads its site\'s catalogue too' },
   { route: '/api/commerce/orders', published: ['POST'], why: 'the checkout island places the order (CheckoutButton.tsx)' },
   { route: '/api/commerce/orders/[orderId]/pay', published: ['POST'], why: 'the checkout pays the order (storefrontGateway.ts)' },
   { route: '/api/csp-report', published: ['POST'], why: 'the report-only policy of a published page reports to its own host' },

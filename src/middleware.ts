@@ -254,23 +254,30 @@ function withPreviewHeaders(response: NextResponse | Response): NextResponse | R
 }
 
 /**
- * A preview host: the site pages as a read, and nothing else. Not a published
- * host, so the published allowlist does not apply: no form submit, no order,
- * no payment, no report, no API of any kind, no server action. The page
+ * A preview host: the site pages and the catalogue reads their shop parts
+ * make, as reads, and nothing else. Not a published host, so the published
+ * allowlist does not apply: no form submit, no order, no payment, no report,
+ * no other API, no server action, and no method but GET and HEAD. The page
  * decides whether the link exists (a database read the edge cannot make) and
  * answers 404 when it does not.
  */
 function routePreview(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   const routePath = pathname === '/' ? `/${HOME_REWRITE_SENTINEL}` : pathname;
-  const normalized = normalizedPath(routePath);
+  const isApi = isUnder(normalizedPath(routePath), '/api');
   const allowed =
     !request.headers.has('next-action') &&
-    !isUnder(normalized, '/api') &&
     isEditorPlanePath(routePath) === null &&
-    previewHostAllows(routePath, request.method);
+    previewHostAllows(routePath, request.method) &&
+    // An `/api` path must name a preview API route (the catalogue reads), never fall through to the site pages.
+    (!isApi || (routeFor(routePath)?.route.startsWith('/api/') ?? false));
   if (!allowed) {
-    return new NextResponse('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    if (isApi) return NextResponse.json({ error: { code: 'not_found', message: 'not found' } }, { status: 404 });
+    // Said in words too: a form posted without JavaScript lands here.
+    return new NextResponse('Not found. This is a preview: nothing can be sent from it.', {
+      status: 404,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+    });
   }
   // No cookie travels on: a preview reads nothing from the visitor, and the
   // apex session the browser still sends must never reach a handler here.

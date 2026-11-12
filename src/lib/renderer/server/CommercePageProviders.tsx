@@ -18,7 +18,8 @@
 import React from 'react';
 import { CommerceDataSourceContext } from '@/lib/commerce/context';
 import { getSharedHttpCommerceDataSource } from '@/lib/commerce/httpCommerceDataSource';
-import { CartProvider } from '@/lib/commerce/cart';
+import { CartProvider, CheckoutUnavailableContext } from '@/lib/commerce/cart';
+import { FormUnavailableContext } from '@/lib/forms/unavailable';
 import { shopLocaleOf } from '@/lib/commerce/parts';
 import { ShopLocaleContext } from '@/lib/commerce/shopRuntime';
 
@@ -26,13 +27,22 @@ export interface CommercePageProvidersProps {
   children: React.ReactNode;
   /** The site language: the shop controls speak it (their fixed notices and default texts). */
   language?: string;
+  /**
+   * Set on a branch's public preview: the sentence a form and the checkout show instead of sending anything.
+   * The preview host refuses every post as well (src/middleware.ts); this is what the visitor is told.
+   */
+  unavailable?: string | null;
 }
 
-export default function CommercePageProviders({ children, language }: CommercePageProvidersProps) {
+export default function CommercePageProviders({ children, language, unavailable = null }: CommercePageProvidersProps) {
   return (
     <CommerceDataSourceContext.Provider value={getSharedHttpCommerceDataSource()}>
       <ShopLocaleContext.Provider value={shopLocaleOf(language)}>
-        <CartProvider>{children}</CartProvider>
+        <CheckoutUnavailableContext.Provider value={unavailable}>
+          <FormUnavailableContext.Provider value={unavailable}>
+            <CartProvider>{children}</CartProvider>
+          </FormUnavailableContext.Provider>
+        </CheckoutUnavailableContext.Provider>
       </ShopLocaleContext.Provider>
     </CommerceDataSourceContext.Provider>
   );

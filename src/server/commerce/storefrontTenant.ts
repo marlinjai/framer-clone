@@ -39,6 +39,8 @@ import {
   type ComponentNode,
 } from '@/lib/renderer/publish/hydrateBindings';
 import { resolvePublishedSite, type PublishedSite } from '@/server/sites/publicResolver';
+import { isPreviewHost } from '@/lib/sites/previewHost';
+import { resolvePreviewSite } from '@/server/sites/branches/previewLinks';
 import {
   commerceTenantDbChecked,
   isCommerceTenantNotProvisioned,
@@ -77,7 +79,22 @@ export type StorefrontCommerce =
 export async function resolveStorefrontCommerce(
   host: string | null | undefined,
 ): Promise<StorefrontCommerce> {
-  const site = await resolvePublishedSite(host);
+  return storefrontCommerceOf(await resolvePublishedSite(host));
+}
+
+/**
+ * The same, for the three catalogue READS only (products, one product, availability): a branch's public
+ * preview (src/server/sites/branches/previewLinks.ts) reads the catalogue of its site as the live site would,
+ * so the shop parts of a previewed page fill in. Never for an order, a payment or a form: those resolve with
+ * resolveStorefrontCommerce, which knows no preview host, and the middleware refuses every post there.
+ */
+export async function resolveStorefrontCommerceForRead(
+  host: string | null | undefined,
+): Promise<StorefrontCommerce> {
+  return storefrontCommerceOf(isPreviewHost(host) ? await resolvePreviewSite(host) : await resolvePublishedSite(host));
+}
+
+async function storefrontCommerceOf(site: PublishedSite | null): Promise<StorefrontCommerce> {
   if (!site) {
     return { ok: false, response: jsonError('forbidden', 'not a published storefront', 403) };
   }

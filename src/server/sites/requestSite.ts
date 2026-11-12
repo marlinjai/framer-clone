@@ -51,6 +51,9 @@ export const getPrimaryHostForRequest = cache(async (): Promise<string | null> =
   const site = await resolveSiteForRequest();
   if (!site) return null;
   const requestHost = normalizeRequestHost(await getRequestHost());
+  // A preview carries main's site id (previewLinks.ts): its primary host would be the LIVE site's address,
+  // and every absolute address on the page would point there. A preview's only host is its own.
+  if (site.preview) return requestHost;
   return loadSitePrimaryHost(getPrismaClient(), site.siteId, requestHost);
 });
 
