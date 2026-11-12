@@ -19,7 +19,7 @@ export function khronosValidator(options: RunOptions = {}): ModelValidator {
 export function safeReencoder(options: RunOptions = {}): ModelReencoder {
   return {
     async reencode(bytes) {
-      return runInWorker<{ bytes: Uint8Array; input: DecodedStats; output: DecodedStats }>('reencode', bytes, DECODED_LIMITS, options);
+      return runInWorker<{ bytes: Uint8Array; input: DecodedStats; output: DecodedStats; names: { materials: string[]; nodes: string[] } }>('reencode', bytes, DECODED_LIMITS, options);
     },
   };
 }

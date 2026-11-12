@@ -549,6 +549,10 @@ Production still runs `7b32ea16` (last deploy 2026-11-09). B5 (#364) is in main 
 main, so B5 ships together with everything in the inventory of `docs/plans/2026-11-10-site-branches.md` section 12, whose
 order and gates apply (contacts database first, then the deploy, then switches). This section covers only B5.
 
+- **Refresh at the release commit.** This inventory is as of `380da6c1`. Every deploy carries the migrations of the exact
+  commit it is built from (boot runs `prisma migrate deploy`), so the migration list and gates must be re-read there. Known to
+  come: `20261112200000_site_models` (#394, additive, one table, applied only by a deploy and needing its own authorization;
+  rollback in `deploy/README.md`).
 - **No migration, no new variable.** B5 touches no migration (the commerce tenant migrations since the last deploy are only
   `030_books_contact_person`, the Books contact person). `shop_mail.attempts` and `next_attempt_at` stay unwritten until B9.
   It needs the variables the old runtime used (Lumitra Mail platform config, `COMMERCE_APP_DATABASE_URL`).

@@ -9,7 +9,7 @@ import { matchesModelEtag, parseSiteModelFile, siteModelHeaders } from '@/lib/sc
 import { MemoryBlobStore, MemorySiteModels } from '../memory';
 import { DECODED_LIMITS, acceptModelUpload, decodedProblem, type UploadDeps } from '../uploadModel';
 import { serveSiteModel } from '../serveModel';
-import { planCollection } from '../collect';
+import { planCollection, planOrphanSweep, ORPHAN_GRACE_MS } from '../collect';
 import type { DecodedStats, ModelReencoder, ModelValidator } from '../ports';
 
 const MB = 1024 * 1024;
@@ -30,15 +30,15 @@ function glb(tag: string, bin = 8): Uint8Array {
 }
 
 const row = (siteId: string, sha256: string, bytes: number, extra: Record<string, unknown> = {}) => ({
-  siteId, sha256, bytes, triangles: 1, materials: 1, nodes: 1, clips: 0, extensions: [], uploaderId: 'u',
+  siteId, sha256, bytes, triangles: 1, materials: 1, nodes: 1, clips: 0, textures: 0, extensions: [], materialNames: [], nodeNames: [], uploaderId: 'u',
   createdAt: new Date(), lastUsedAt: new Date(), originalSha256: `o-${sha256}`, originalBytes: 1, ...extra,
 });
 
-const SMALL: DecodedStats = { triangles: 1000, maxTextureSide: 1024, boundingBox: [4, 2, 8], materials: 2, nodes: 5, clips: 0 };
+const SMALL: DecodedStats = { triangles: 1000, maxTextureSide: 1024, boundingBox: [4, 2, 8], materials: 2, nodes: 5, clips: 0, textures: 0 };
 const okValidator: ModelValidator = { validate: async () => ({ ok: true }) };
 /** A re-encoder that returns a fixed output, measuring whatever it is told to. */
 const reencoder = (output: Uint8Array, input: Partial<DecodedStats> = {}, out: Partial<DecodedStats> = {}): ModelReencoder => ({
-  reencode: async () => ({ bytes: output, input: { ...SMALL, ...input }, output: { ...SMALL, maxTextureSide: 1024, ...out } }),
+  reencode: async () => ({ bytes: output, input: { ...SMALL, ...input }, output: { ...SMALL, maxTextureSide: 1024, ...out }, names: { materials: ['paint', 'glass'], nodes: ['root'] } }),
 });
 const deps = (extra: Partial<UploadDeps> = {}): UploadDeps & { blobs: MemoryBlobStore; models: MemorySiteModels } => ({
   blobs: new MemoryBlobStore(), models: new MemorySiteModels(), validator: okValidator, reencoder: reencoder(glb('out')), ...extra,
@@ -110,7 +110,7 @@ describe('the upload pipeline fails closed', () => {
     expect(d.blobs.files.size).toBe(2);
     expect([...d.blobs.files.keys()].some((k) => k.startsWith('served/'))).toBe(true);
     expect([...d.blobs.files.keys()].some((k) => k.startsWith('original/'))).toBe(true);
-    expect((await d.models.list('s1'))[0]).toMatchObject({ siteId: 's1', uploaderId: 'u1', triangles: 1000 });
+    expect((await d.models.list('s1'))[0]).toMatchObject({ siteId: 's1', uploaderId: 'u1', triangles: 1000, materialNames: ['paint', 'glass'], nodeNames: ['root'], textures: 0 });
   });
 
   it('is idempotent: the same result stored twice is one row and says so', async () => {
@@ -153,6 +153,8 @@ describe('the upload pipeline fails closed', () => {
     ['a bounding box over 1000 units', { boundingBox: [1001, 1, 1] }, /1000 units/],
     ['too many nodes', { nodes: 1001 }, /nodes/],
     ['too many clips', { clips: 33 }, /clips/],
+    ['too many materials', { materials: 65 }, /materials/],
+    ['too many textures', { textures: 17 }, /textures/],
     ['a size that is not finite', { boundingBox: [NaN, 1, 1] }, /finite/],
     ['a negative size', { triangles: -1 }, /finite/],
   ])('refuses on the decoded caps: %s (a measurement the decoder reports, enforced here)', async (_n, input, message) => {
@@ -229,7 +231,7 @@ describe('the upload pipeline fails closed', () => {
     await d.models.insertWithinQuota(row('s1', '1'.repeat(64), 199 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
     const outputs = [glb('a', 600 * 1024), glb('b', 600 * 1024), glb('c', 600 * 1024)];
     let i = 0;
-    const re: ModelReencoder = { reencode: async () => ({ bytes: outputs[i++ % 3], input: SMALL, output: SMALL }) };
+    const re: ModelReencoder = { reencode: async () => ({ bytes: outputs[i++ % 3], input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
     const results = await Promise.all([0, 1, 2].map((n) => acceptModelUpload(glb(`in${n}`), 's1', 'u', { ...d, reencoder: re })));
     expect(results.filter((r) => r.ok).length).toBe(1);
     expect(await d.models.totalBytes('s1')).toBeLessThanOrEqual(200 * MB);
@@ -263,9 +265,9 @@ describe('the upload pipeline fails closed', () => {
     ['no bounding box', { ...SMALL, boundingBox: undefined }], ['a short bounding box', { ...SMALL, boundingBox: [1, 1] }],
     ['a non-array bounding box', { ...SMALL, boundingBox: 5 }], ['NaN materials', { ...SMALL, materials: NaN }], ['no stats at all', undefined],
   ])('refuses malformed measurements cleanly: %s', async (_n, bad) => {
-    const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: bad as never, output: SMALL }) };
+    const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: bad as never, output: SMALL, names: { materials: [], nodes: [] } }) };
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', deps({ reencoder: re })))).toMatchObject({ status: 413 });
-    const re2: ModelReencoder = { reencode: async () => ({ bytes: undefined as never, input: SMALL, output: SMALL }) };
+    const re2: ModelReencoder = { reencode: async () => ({ bytes: undefined as never, input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', deps({ reencoder: re2 })))).toMatchObject({ status: 500 });
   });
 });
@@ -379,5 +381,47 @@ describe('collection', () => {
 
   it('collects nothing from nothing', () => {
     expect(planCollection({ now, models: [], referenced: new Set(), rowsPerSha: new Map(), rowsPerOriginal: new Map() })).toEqual({ rows: [], blobs: [], originals: [] });
+  });
+});
+
+describe('orphan blobs (written before a row that never came)', () => {
+  const now = new Date('2026-12-01T12:00:00Z');
+  const ago = (ms: number) => new Date(now.getTime() - ms);
+
+  it('sweeps an unreferenced blob only after the grace period, and never a referenced or foreign key', () => {
+    const swept = planOrphanSweep({
+      now,
+      blobs: [
+        { key: 'served/orphan-old', createdAt: ago(ORPHAN_GRACE_MS + 1) },
+        { key: 'served/orphan-new', createdAt: ago(ORPHAN_GRACE_MS - 1000) },
+        { key: 'served/kept', createdAt: ago(10 * ORPHAN_GRACE_MS) },
+        { key: 'original/orphan-old', createdAt: ago(ORPHAN_GRACE_MS + 1) },
+        { key: 'original/kept', createdAt: ago(10 * ORPHAN_GRACE_MS) },
+        { key: 'other/thing', createdAt: ago(10 * ORPHAN_GRACE_MS) },
+      ],
+      referencedServed: new Set(['kept']),
+      referencedOriginals: new Set(['kept']),
+    });
+    expect(swept.sort()).toEqual(['original/orphan-old', 'served/orphan-old']);
+  });
+
+  it('lists what the store holds, with when it was written', async () => {
+    const blobs = new MemoryBlobStore();
+    await blobs.put('served/a', new Uint8Array([1]));
+    await blobs.put('original/b', new Uint8Array([1]));
+    expect((await blobs.list('served/')).map((b) => b.key)).toEqual(['served/a']);
+  });
+
+  it('a refused upload leaves its blobs for the sweep, not for an immediate delete another upload could be relying on', async () => {
+    const d = deps();
+    await d.models.insertWithinQuota(row('s1', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
+    const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
+    // At quota: refused before decoding, nothing written. With room for the served file only, the originals cap refuses after the blobs are written.
+    await d.models.delete('s1', 'f'.repeat(64));
+    await d.models.insertWithinQuota(row('s1', 'e'.repeat(64), 1, { originalBytes: 200 * MB }), { servedBytes: 1e12, originalBytes: 1e12 });
+    const r = await acceptModelUpload(glb('in'), 's1', 'u', { ...d, reencoder: re });
+    expect(r).toMatchObject({ ok: false, status: 413 });
+    const orphans = planOrphanSweep({ now: new Date(Date.now() + 2 * ORPHAN_GRACE_MS), blobs: await d.blobs.list(''), referencedServed: new Set(), referencedOriginals: new Set(['o-' + 'e'.repeat(64)]) });
+    expect(orphans.length).toBe(2);
   });
 });

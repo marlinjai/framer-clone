@@ -2,9 +2,10 @@
 //
 // The ports of the model store (plan S2): what the upload and the serving code need from storage,
 // written as interfaces so the whole flow runs offline against the in-memory fakes in memory.ts.
-// The real adapters are GATED, not built here: a Storage Brain client (credentials, the SDK as a
-// dependency, live calls) and a Prisma repository on a `site_models` table (a migration that
-// `prisma migrate deploy` would run at the next boot). Nothing here reads an environment variable.
+// The Prisma repository (prismaModels.ts, on the `site_models` table) exists but nothing constructs it; the
+// Storage Brain adapter (credentials, the SDK as a dependency, live calls) is GATED and not built. The
+// migration is applied by the next deployment's boot (`prisma migrate deploy`) and needs its own authorization.
+// Nothing here reads an environment variable.
 
 /** Bytes by key. Keys are `served/<sha256>` (the re-encoded file) and `original/<sha256>` (kept for one later re-encode, never served). */
 export interface ModelBlobStore {
@@ -12,6 +13,8 @@ export interface ModelBlobStore {
   get(key: string): Promise<Uint8Array | null>;
   has(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
+  /** Every key under a prefix with when it was written, for the orphan sweep (collect.ts). */
+  list(prefix: string): Promise<{ key: string; createdAt: Date }[]>;
 }
 
 export interface SiteModelRecord {
@@ -23,7 +26,11 @@ export interface SiteModelRecord {
   materials: number;
   nodes: number;
   clips: number;
+  textures: number;
   extensions: string[];
+  /** The material and node names the role panel lists (bounded by the structure caps, each at most 80 characters). */
+  materialNames: string[];
+  nodeNames: string[];
   uploaderId: string;
   createdAt: Date;
   /** Set whenever the same model is uploaded or chosen again, so collection counts age from the last use. */
@@ -60,6 +67,7 @@ export interface DecodedStats {
   materials: number;
   nodes: number;
   clips: number;
+  textures: number;
 }
 
 /** Thrown by a re-encoder for a model it refuses on purpose (too large once decoded, not decodable). The upload answers with its status and message. */
@@ -77,5 +85,5 @@ export interface ModelValidator {
 
 /** Steps 5 and 6: decode, measure, dedupe, resize textures, compress with meshopt. Gated: glTF-Transform is not added here. */
 export interface ModelReencoder {
-  reencode(bytes: Uint8Array): Promise<{ bytes: Uint8Array; input: DecodedStats; output: DecodedStats }>;
+  reencode(bytes: Uint8Array): Promise<{ bytes: Uint8Array; input: DecodedStats; output: DecodedStats; names: { materials: string[]; nodes: string[] } }>;
 }

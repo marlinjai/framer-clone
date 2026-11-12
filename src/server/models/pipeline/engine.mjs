@@ -176,6 +176,7 @@ async function measure(doc, limits) {
     materials: doc.getRoot().listMaterials().length,
     nodes: doc.getRoot().listNodes().length,
     clips: doc.getRoot().listAnimations().length,
+    textures: doc.getRoot().listTextures().length,
   };
 }
 
@@ -242,7 +243,13 @@ export async function reencodeModel(bytes, limits) {
   try { readBack = await gltf.readBinary(out); }
   catch { throw new ModelRefusal('reencode-failed', 'the optimised model could not be read back', 500); }
   const output = await measure(readBack, { ...limits, textureSide: limits.outputTextureSide });
-  return { bytes: out, input, output };
+  // The names the role panel lists, from the written output: bounded in count (by the caps already enforced) and in length.
+  const clean = (name) => String(name ?? '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80);
+  const names = {
+    materials: readBack.getRoot().listMaterials().map((m) => clean(m.getName())),
+    nodes: readBack.getRoot().listNodes().map((n) => clean(n.getName())),
+  };
+  return { bytes: out, input, output, names };
 }
 
 export { Document };

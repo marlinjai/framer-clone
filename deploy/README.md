@@ -438,6 +438,17 @@ review) adds a second foreign key and a trigger on `site_branches` and one store
 needs Postgres 15 or later (the foreign key clears one column of two on delete), is additive, and older code ignores
 all three. Prisma's schema does not name the second key or the generated column: both exist in the database only, so a
 schema comparison (`prisma migrate diff`) reports them as differences that are meant to be there.
+
+Migration `20261112200000_site_models` (the 3D model store, plan `docs/plans/2026-11-02-3d-scene-primitive.md`, slice S2)
+is additive: one new table, `site_models`, with its constraints and a cascading foreign key to `sites`, and no existing
+row or table touched. Nothing reads or writes it until the model upload and serving routes exist and are enabled (a
+separate, gated step), so older and newer code behave the same on it. **It is applied by the boot of whichever
+deployment first contains it (`prisma migrate deploy`), so any deployment from a commit at or after it carries it: it
+is not applied to production by merging, and applying it needs its own authorization.** Refresh the migration
+inventory and every gate at the exact release commit. Reversing it: `rollback.sql` beside the migration (run by hand
+in one transaction, with no `migrate resolve`: that command refuses a migration that applied, error P3012) drops only that
+table and forgets only that migration's history row, so a redeploy applies it again; object-storage blobs are not touched. Both directions are tested on a scratch database
+(`src/server/models/__tests__/prismaModels.itest.ts`).
 **Before rolling the code back past the first of the two with open branches**, merge or
 discard them: older code does not know the column and lists each open branch as one more draft site in its company's
 dashboard. It cannot publish one or give it a domain (a `CHECK` constraint and a trigger refuse that whatever code
@@ -482,7 +493,9 @@ once its partial effect has been undone by hand; until then every later deploy r
 
 The same shape applies to any additive migration of this file's family (`site_branches` and its follow-ups): leave the new
 tables and columns in place on a code rollback; a destructive removal is a separate, explicitly authorized step that also
-deletes the migration's `_prisma_migrations` row in the same transaction.
+deletes the migration's `_prisma_migrations` row in the same transaction. `site_models` carries that as a script,
+`prisma/migrations/20261112200000_site_models/rollback.sql` (run by hand in one transaction; leaving the empty table in place
+is the default).
 
 ## Erasing personal data: one container only
 
