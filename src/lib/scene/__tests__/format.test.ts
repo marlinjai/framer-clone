@@ -63,6 +63,7 @@ describe('parseScene: a valid scene', () => {
       lights: 'rim',
       background: { fade: ['#000', '#112233'] },
       effects: [{ id: 'dirt', preset: 'dirt-wash', on: 'paint', params: { strength: 0.8, start: 0.1, end: 0.6 } }],
+      camera: { keys: [{ at: 0, position: [0, 2, 6], target: [0, 1, 0] }] },
       timeline: { drive: { still: true }, tracks: [], markers: [{ at: 0.8, emit: 'shine' }] },
       orbit: true,
       calm: 'poster',
@@ -217,7 +218,7 @@ describe('parseScene: refusals', () => {
   it('refuses orbit on anything but a still scene', () => {
     expect(refusal(mutate((s) => { s.orbit = true; }))).toMatch(/orbit: is for a still scene only/);
     expect(ok(mutate((s) => { s.orbit = false; })).scene.orbit).toBe(false);
-    expect(ok(mutate((s) => { s.timeline.drive = { still: true }; s.timeline.tracks = []; s.orbit = true; })).scene.orbit).toBe(true);
+    expect(ok(mutate((s) => { s.camera.keys = [s.camera.keys[0]]; s.timeline.drive = { still: true }; s.timeline.tracks = []; s.orbit = true; })).scene.orbit).toBe(true);
   });
 
   it('refuses marker names that could address something else than a custom event', () => {
@@ -287,7 +288,42 @@ describe('parseScene: anchors', () => {
     s.camera.keys[1].at = { anchor: 'a', extra: 1 };
     expect(refusal(s)).toMatch(/not part of the 3D scene format/);
     s.camera.keys[1].at = { anchor: '' };
-    expect(refusal(s)).toMatch(/anchor: must not be empty/);
+    expect(refusal(s)).toMatch(/anchor: must be a node id/);
+  });
+});
+
+describe('parseScene: review findings', () => {
+  it('refuses, never throws, on inherited names as effect parameters', () => {
+    for (const name of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+      expect(() => parseScene(mutate((s) => { s.effects = [{ id: 'e', preset: 'dust', on: 'paint', params: { [name]: 1 } }]; }))).not.toThrow();
+    }
+    expect(ok(mutate((s) => { s.effects = [{ id: 'e', preset: 'dust', on: 'paint', params: { constructor: 1 } }]; })).scene.effects?.[0].params).toEqual({ constructor: 1 });
+  });
+
+  it('clamps a track value by what the track drives', () => {
+    const track = (target: string, value: number) => ok(mutate((s) => { s.effects = [{ id: 'e', preset: 'mist', on: 'paint' }]; s.timeline.tracks = [{ target, keys: [{ at: 0, value }] }]; })).scene.timeline.tracks[0].keys[0].value;
+    expect(track('light:key.intensity', 99)).toBe(3);
+    expect(track('effect:e.amount', 500)).toBe(1);
+    expect(track('effect:e.start', -2)).toBe(0);
+    expect(track('model:truck.scale', 0)).toBe(0.001);
+    expect(track('model:truck.x', -5000)).toBe(-1000);
+  });
+
+  it('refuses a track whose every key lost its node', () => {
+    const s = mutate((x) => { x.timeline.tracks = [{ target: 'model:truck.x', keys: [{ at: { anchor: 'gone' }, value: 1 }] }]; });
+    expect(refusal(s, { anchors: new Set() })).toMatch(/track needs at least one key/);
+  });
+
+  it('refuses motion in a still scene', () => {
+    expect(refusal(mutate((s) => { s.timeline = { drive: { still: true }, tracks: [] }; }))).toMatch(/one camera key/);
+    expect(refusal(mutate((s) => { s.camera.keys = [s.camera.keys[0]]; s.timeline = { drive: { still: true }, tracks: valid().timeline.tracks }; }))).toMatch(/no tracks/);
+  });
+
+  it('refuses a node, section or state id that could break out of a selector', () => {
+    const bad = 'a"]);alert(1);//';
+    expect(refusal(mutate((s) => { s.camera.keys[1].at = { anchor: bad }; }))).toMatch(/anchor: must be a node id/);
+    expect(refusal(mutate((s) => { s.timeline.drive = { scroll: { section: bad } }; }))).toMatch(/section: must be a node id/);
+    expect(refusal(mutate((s) => { s.timeline.drive = { state: { id: 'a b' } }; s.timeline.tracks = []; }))).toMatch(/state\.id: must be a node id/);
   });
 });
 

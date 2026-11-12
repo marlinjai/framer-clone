@@ -176,6 +176,8 @@ export const SCENE_LIMITS = {
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
+/** A page node or section id, or a state id: no quotes, brackets or spaces, so it can never break out of a selector. */
+const NODE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
 const MARKER_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const COLOUR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -244,6 +246,12 @@ class Reader {
     return v;
   }
 
+  /** A page node id, section id or state id. */
+  nodeId(v: unknown, path: string): string | undefined {
+    if (typeof v !== 'string' || !NODE_ID.test(v)) return this.fail(path, 'must be a node id of letters, digits, hyphen, underscore, dot and colon (at most 80)');
+    return v;
+  }
+
   /** Free text of bounded length without control characters. */
   text(v: unknown, path: string, max: number, nonEmpty = true): string | undefined {
     if (typeof v !== 'string') return this.fail(path, 'must be text');
@@ -287,7 +295,7 @@ class Reader {
     if (isRec(v)) {
       const o = this.obj(v, path, ['anchor']);
       if (!o) return undefined;
-      const anchor = this.text(o.anchor, `${path}.anchor`, SCENE_LIMITS.nameLength);
+      const anchor = this.nodeId(o.anchor, `${path}.anchor`);
       if (anchor === undefined) return undefined;
       if (this.known.anchors && !this.known.anchors.has(anchor)) {
         this.warn(path, `the node ${JSON.stringify(anchor)} is not on the page, so this key is dropped`);
@@ -455,7 +463,7 @@ function readDrive(r: Reader, v: unknown): TimelineDrive | undefined {
   if (set.length !== 1) return r.fail('scene.timeline.drive', 'must hold exactly one of scroll, time, state or still');
   if (o.scroll !== undefined) {
     const s = r.obj(o.scroll, 'scene.timeline.drive.scroll', ['section']);
-    const section = s && r.text(s.section, 'scene.timeline.drive.scroll.section', SCENE_LIMITS.nameLength);
+    const section = s && r.nodeId(s.section, 'scene.timeline.drive.scroll.section');
     return section === undefined ? undefined : { scroll: { section } };
   }
   if (o.time !== undefined) {
@@ -465,7 +473,7 @@ function readDrive(r: Reader, v: unknown): TimelineDrive | undefined {
   }
   if (o.state !== undefined) {
     const s = r.obj(o.state, 'scene.timeline.drive.state', ['id']);
-    const id = s && r.text(s.id, 'scene.timeline.drive.state.id', SCENE_LIMITS.nameLength);
+    const id = s && r.nodeId(s.id, 'scene.timeline.drive.state.id');
     return id === undefined ? undefined : { state: { id } };
   }
   return o.still === true ? { still: true } : r.fail('scene.timeline.drive.still', 'must be true');
@@ -490,6 +498,15 @@ function readTarget(r: Reader, v: unknown, path: string, modelIds: ReadonlySet<s
   return text;
 }
 
+/** The range a track's value is clamped to, by what it drives. */
+function valueRange(target: string): readonly [number, number] {
+  const c = SCENE_LIMITS.coordinate;
+  if (/^light:[A-Za-z0-9_-]+\.intensity$/.test(target)) return SCENE_LIMITS.intensity;
+  if (/^effect:[A-Za-z0-9_-]+\.(amount|start|end)$/.test(target)) return [0, 1];
+  if (/^model:[A-Za-z0-9_-]+\.scale$/.test(target)) return SCENE_LIMITS.scale;
+  return [-c, c];
+}
+
 function readTimeline(r: Reader, v: unknown, modelIds: ReadonlySet<string>, effectIds: ReadonlySet<string>): Timeline | undefined {
   const o = r.obj(v, 'scene.timeline', ['drive', 'tracks', 'markers']);
   if (!o) return undefined;
@@ -509,11 +526,12 @@ function readTimeline(r: Reader, v: unknown, modelIds: ReadonlySet<string>, effe
       const k = r.obj(kr, kp, ['at', 'value']);
       if (!k) return;
       const at = r.at(k.at, `${kp}.at`);
-      const value = r.num(k.value, `${kp}.value`, [-SCENE_LIMITS.coordinate, SCENE_LIMITS.coordinate]);
+      const value = r.num(k.value, `${kp}.value`, valueRange(typeof t.target === 'string' ? t.target : ''));
       if (at === undefined || at === 'dropped' || value === undefined) return;
       keys.push({ at, value });
     });
     checkOrder(r, keys, `${path}.keys`);
+    if (rawKeys && keys.length === 0 && rawKeys.length > 0) r.fail(`${path}.keys`, 'every key was pinned to a node that is not on the page; the track needs at least one key');
     if (target !== undefined && (t.ease === undefined || ease !== undefined)) tracks.push({ target, keys, ...(ease ? { ease } : {}) });
   });
   let markers: TimelineMarker[] | undefined;
@@ -534,10 +552,10 @@ function readTimeline(r: Reader, v: unknown, modelIds: ReadonlySet<string>, effe
 }
 
 /** Parameters clamp by name where the plan names a range, else to the coordinate range. */
-const PARAM_RANGES: Readonly<Record<string, readonly [number, number]>> = {
+const PARAM_RANGES: ReadonlyMap<string, readonly [number, number]> = new Map<string, readonly [number, number]>(Object.entries({
   amount: [0, 1], strength: [0, 1], density: [0, 1], start: [0, 1], end: [0, 1],
   speed: [0, 2], intensity: [0, 3], clearcoat: [0, 1],
-};
+} as Record<string, readonly [number, number]>));
 
 function readEffects(r: Reader, v: unknown, modelIds: ReadonlySet<string>): EffectInstance[] | undefined {
   const items = r.list(v, 'scene.effects', SCENE_LIMITS.effects);
@@ -564,7 +582,7 @@ function readEffects(r: Reader, v: unknown, modelIds: ReadonlySet<string>): Effe
         params = {};
         for (const [name, value] of Object.entries(o.params)) {
           if (!/^[a-zA-Z][a-zA-Z0-9]{0,31}$/.test(name)) { r.fail(`${path}.params.${name}`, 'is not a parameter name'); continue; }
-          const n = r.num(value, `${path}.params.${name}`, PARAM_RANGES[name] ?? [-SCENE_LIMITS.coordinate, SCENE_LIMITS.coordinate]);
+          const n = r.num(value, `${path}.params.${name}`, PARAM_RANGES.get(name) ?? [-SCENE_LIMITS.coordinate, SCENE_LIMITS.coordinate]);
           if (n !== undefined) params[name] = n;
         }
       }
@@ -624,6 +642,11 @@ export function parseScene(input: unknown, known: SceneKnown = {}): SceneParse {
     if (typeof o.orbit !== 'boolean') r.fail('scene.orbit', 'must be true or false');
     else if (o.orbit && timeline && !('still' in timeline.drive)) r.fail('scene.orbit', 'is for a still scene only: dragging and scrolling fight for the same gesture');
     else orbit = o.orbit;
+  }
+
+  if (timeline && 'still' in timeline.drive && !r.errors.length) {
+    if (camera && camera.keys.length > 1) r.fail('scene.camera.keys', 'a still scene has one camera key, no motion');
+    if (timeline.tracks.length > 0) r.fail('scene.timeline.tracks', 'a still scene has no tracks, no motion');
   }
 
   if (r.errors.length || !poster || !models || !environment || !camera || !timeline) {
