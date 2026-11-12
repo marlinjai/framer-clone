@@ -173,13 +173,14 @@ describe('checkGlb: extensions', () => {
 });
 
 describe('checkGlb: counts', () => {
-  const list = (n: number) => Array.from({ length: n }, () => ({}));
+  const filler: Record<string, unknown> = { meshes: { primitives: [] }, animations: { channels: [], samplers: [] } };
+  const list = (n: number, key = '') => Array.from({ length: n }, () => ({ ...((filler[key] as object) ?? {}) }));
   it.each<[string, number]>([
     ['meshes', GLB_LIMITS.meshes], ['materials', GLB_LIMITS.materials], ['textures', GLB_LIMITS.textures],
     ['animations', GLB_LIMITS.animations], ['nodes', GLB_LIMITS.nodes],
   ])('refuses more than %s allows, and accepts exactly the cap', (key, cap) => {
-    accepts(glb(model({ [key]: list(cap) }), 100));
-    refuses(glb(model({ [key]: list(cap + 1) }), 100), 'too-many', new RegExp(`${key} has ${cap + 1}`));
+    accepts(glb(model({ [key]: list(cap, key) }), 100));
+    refuses(glb(model({ [key]: list(cap + 1, key) }), 100), 'too-many', new RegExp(`${key} has ${cap + 1}`));
   });
 
   it('refuses too many images and too many bones in one skin', () => {
@@ -238,6 +239,117 @@ describe('checkGlb: buffers', () => {
     refuses(glb(model({ bufferViews: [{ buffer: 0, byteOffset: 2 ** 53, byteLength: 1 }] }), 100), 'bad-structure');
     refuses(glb(model({ bufferViews: [{ buffer: 0, byteLength: 0.5 }] }), 100), 'bad-structure');
     refuses(glb(model({ bufferViews: [{ buffer: 0, byteOffset: Number.MAX_SAFE_INTEGER, byteLength: Number.MAX_SAFE_INTEGER }] }), 100), 'bad-buffer');
+  });
+});
+
+describe('checkGlb: review findings', () => {
+  const B64 = (mime: string) => `data:${mime};base64,AAAA`;
+  const glbWith = (extra: Record<string, unknown>) => glb(model(extra), 100);
+
+  it('allows only image types for an image and buffer types for a buffer data address', () => {
+    refuses(glbWith({ images: [{ uri: B64('image/svg+xml') }] }), 'external-reference', /not an allowed type/);
+    refuses(glbWith({ images: [{ uri: B64('text/html') }] }), 'external-reference');
+    refuses(glbWith({ buffers: [{ byteLength: 3, uri: B64('text/html') }], bufferViews: [] }), 'external-reference', /not an allowed type/);
+    refuses(glbWith({ buffers: [{ byteLength: 3, uri: B64('image/png') }], bufferViews: [] }), 'external-reference');
+    for (const m of ['image/png', 'image/jpeg', 'image/webp']) accepts(glbWith({ images: [{ uri: B64(m) }] }));
+    refuses(glbWith({ images: [{ bufferView: 0, mimeType: 'image/svg+xml' }] }), 'bad-structure', /mimeType/);
+    accepts(glbWith({ images: [{ bufferView: 0, mimeType: 'image/png' }] }));
+  });
+
+  it('refuses base64 a strict decoder would refuse, and empty data', () => {
+    refuses(glbWith({ images: [{ uri: 'data:image/png;base64,AAAAA' }] }), 'external-reference', /base64/);
+    refuses(glbWith({ images: [{ uri: 'data:image/png;base64,' }] }), 'external-reference', /base64/);
+  });
+
+  it('refuses a zero-length buffer or bufferView, and an image with both a uri and a view', () => {
+    refuses(glbWith({ buffers: [{ byteLength: 0 }], bufferViews: [] }), 'bad-buffer', /at least 1/);
+    refuses(glbWith({ bufferViews: [{ buffer: 0, byteLength: 0 }] }), 'bad-buffer', /at least 1/);
+    refuses(glbWith({ images: [{ uri: B64('image/png'), bufferView: 0 }] }), 'bad-structure', /both/);
+  });
+
+  it('accepts a meshopt fallback buffer with no data, and checks the compressed view against its buffer', () => {
+    const buffers = [{ byteLength: 100 }, { byteLength: 5000, extensions: { EXT_meshopt_compression: { fallback: true } } }];
+    const s = accepts(glbWith({
+      extensionsUsed: ['EXT_meshopt_compression'], extensionsRequired: ['EXT_meshopt_compression'], buffers,
+      bufferViews: [{ buffer: 1, byteLength: 5000, extensions: { EXT_meshopt_compression: { buffer: 0, byteOffset: 0, byteLength: 80, byteStride: 12, mode: 'ATTRIBUTES', count: 10 } } }],
+    }));
+    expect(s.bufferBytes).toBe(100);
+    refuses(glbWith({
+      extensionsUsed: ['EXT_meshopt_compression'], buffers,
+      bufferViews: [{ buffer: 1, byteLength: 5000, extensions: { EXT_meshopt_compression: { buffer: 0, byteOffset: 90, byteLength: 80 } } }],
+    }), 'bad-buffer', /past the end/);
+    // Without the flag a uri-less second buffer is still refused.
+    refuses(glbWith({ buffers: [{ byteLength: 100 }, { byteLength: 5 }], bufferViews: [] }), 'bad-buffer', /only the first/);
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['node mesh', { nodes: [{ mesh: 99 }] }],
+    ['node skin', { nodes: [{ skin: 7 }] }],
+    ['scene node', { scenes: [{ nodes: [500] }] }],
+    ['default scene', { scene: 4 }],
+    ['skin joint', { skins: [{ joints: [9999] }] }],
+    ['skin joint negative', { skins: [{ joints: [-1] }] }],
+    ['texture source', { textures: [{ source: 50 }] }],
+    ['texture sampler', { textures: [{ source: 0, sampler: 50 }], images: [{ bufferView: 0 }] }],
+    ['accessor view', { accessors: [{ bufferView: 77, count: 1 }] }],
+    ['accessor count', { accessors: [{ bufferView: 0, count: 1e15 + 0.5 }] }],
+    ['sparse view', { accessors: [{ count: 1, sparse: { indices: { bufferView: 9 }, values: { bufferView: 0 } } }] }],
+    ['primitive attribute', { meshes: [{ primitives: [{ attributes: { POSITION: 3 } }] }] }],
+    ['primitive material', { meshes: [{ primitives: [{ attributes: {}, material: 3 }] }] }],
+    ['material texture', { materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 9 } } }] }],
+    ['extension material texture', { materials: [{ extensions: { KHR_materials_clearcoat: { clearcoatTexture: { index: 9 } } } }] }],
+    ['draco view', { meshes: [{ primitives: [{ attributes: {}, extensions: { KHR_draco_mesh_compression: { bufferView: 9, attributes: {} } } }] }] }],
+    ['variant material', { meshes: [{ primitives: [{ attributes: {}, extensions: { KHR_materials_variants: { mappings: [{ material: 9, variants: [0] }] } } }] }] }],
+    ['animation sampler', { animations: [{ channels: [{ sampler: 9, target: { node: 0, path: 'translation' } }], samplers: [] }] }],
+    ['animation node', { animations: [{ channels: [{ sampler: 0, target: { node: 1e9, path: 'translation' } }], samplers: [{ input: 0, output: 0 }] }], accessors: [{ count: 1 }] }],
+    ['animation accessor', { animations: [{ channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }], samplers: [{ input: 5, output: 5 }] }] }],
+  ])('refuses a dangling index: %s', (_name, extra) => {
+    const needsExt = JSON.stringify(extra).includes('KHR_') ? { extensionsUsed: [...ALLOWED_EXTENSIONS] } : {};
+    refuses(glbWith({ ...needsExt, ...extra }), 'bad-structure', /does not exist|whole number|must be/);
+  });
+
+  it('accepts a coherent model that uses every kind of reference', () => {
+    accepts(glbWith({
+      scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, skin: 0, children: [1] }, {}],
+      skins: [{ joints: [1], skeleton: 0, inverseBindMatrices: 0 }],
+      accessors: [{ bufferView: 0, count: 3 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 0, material: 0, targets: [{ POSITION: 0 }] }] }],
+      images: [{ bufferView: 0 }], samplers: [{}], textures: [{ source: 0, sampler: 0 }],
+      materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+      animations: [{ channels: [{ sampler: 0, target: { node: 1, path: 'translation' } }], samplers: [{ input: 0, output: 0 }] }],
+    }));
+  });
+
+  it('caps primitives per mesh, in total, morph targets, samplers and animation channels', () => {
+    const prim = { attributes: {} };
+    refuses(glbWith({ meshes: [{ primitives: Array.from({ length: 65 }, () => prim) }] }), 'too-many', /65 primitives/);
+    refuses(glbWith({ meshes: Array.from({ length: 17 }, () => ({ primitives: Array.from({ length: 64 }, () => prim) })) }), 'too-many', /more than 1024 primitives/);
+    refuses(glbWith({ meshes: [{ primitives: [{ attributes: {}, targets: Array.from({ length: 65 }, () => ({})) }] }] }), 'too-many', /morph targets/);
+    refuses(glbWith({ samplers: Array.from({ length: 257 }, () => ({})) }), 'too-many');
+    refuses(glbWith({ animations: [{ channels: [], samplers: Array.from({ length: 1025 }, () => ({})) }] }), 'too-many', /channels or samplers/);
+  });
+
+  it('refuses a byte order mark in the GLB JSON chunk', () => {
+    refuses(glb('\uFEFF{"asset":{"version":"2.0"}}'), 'bad-json');
+  });
+
+  it('does not take an extensions key inside extras for an extension block', () => {
+    accepts(glbWith({ extras: { extensions: { anything: 1 } }, nodes: [{ mesh: 0, extras: { extensions: { x: 1 } } }] }));
+    refuses(glbWith({ nodes: [{ mesh: 0, extensions: { x: 1 } }] }), 'extension');
+  });
+
+  it('refuses a long list of extension names early and cheaply', () => {
+    const many = Object.fromEntries(Array.from({ length: 100000 }, (_, i) => [`EVIL_${i}`, {}]));
+    const started = Date.now();
+    refuses(glbWith({ nodes: [{ mesh: 0, extensions: many }] }), 'extension');
+    expect(Date.now() - started).toBeLessThan(1500);
+  });
+
+  it('keeps its own cost small on a large array of small objects', () => {
+    const started = Date.now();
+    const r = checkGlb(glb(`{"asset":{"version":"2.0"},"extras":[${'{},'.repeat(900000)}{}]}`));
+    expect(r.ok).toBe(true);
+    expect(Date.now() - started).toBeLessThan(3000);
   });
 });
 

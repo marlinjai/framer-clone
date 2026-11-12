@@ -11,6 +11,9 @@
 //   - decode Draco or meshopt data, or count triangles, or bound the decoded size of
 //     geometry and textures, or check texture pixel sizes, or check the bounding box
 //     (step 5, which needs a decoder);
+//   - read accessor contents, component types or sparse payloads (only that every index points at
+//     something that exists), or tell duplicate JSON keys apart (the last wins, as in JSON.parse: a
+//     different parser reading the same file could see another one);
 //   - re-encode anything (step 6), store anything (step 7), or enforce the byte
 //     quotas per model, scene and site;
 //   - run in a worker with a time and memory limit (it is synchronous and its own cost
@@ -48,6 +51,12 @@ export const GLB_LIMITS = {
   bufferViews: 8192,
   buffers: 16,
   jsonDepth: 64,
+  primitivesPerMesh: 64,
+  primitives: 1024,
+  morphTargets: 64,
+  samplers: 256,
+  channelsPerAnimation: 1024,
+  extensionNames: 64,
 } as const;
 
 export interface GlbSummary {
@@ -80,9 +89,13 @@ const isRec = (v: unknown): v is Rec => !!v && typeof v === 'object' && !Array.i
 const own = (o: Rec, k: string): unknown => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
 
 /** A `data:` address carrying base64 inside the file; anything else reaches out. */
-const DATA_URI = /^data:[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(?:;[A-Za-z0-9=._-]+)*;base64,([A-Za-z0-9+/]*={0,2})$/;
+const DATA_URI = /^data:([A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+)(?:;[A-Za-z0-9=._-]+)*;base64,([A-Za-z0-9+/]*={0,2})$/;
+const BUFFER_TYPES: readonly string[] = ['application/octet-stream', 'application/gltf-buffer'];
+const IMAGE_TYPES: readonly string[] = ['image/png', 'image/jpeg', 'image/webp'];
 
 function base64Bytes(b64: string): number {
+  // A strict decoder (atob) refuses a length that is not a multiple of 4; so does this.
+  if (b64.length === 0 || b64.length % 4 !== 0) return refuse('external-reference', 'an embedded data address is not valid base64');
   const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
   return Math.floor((b64.length * 3) / 4) - pad;
 }
@@ -107,19 +120,31 @@ function listOf(json: Rec, key: string, max: number): unknown[] {
  * Iterative, so depth costs no stack.
  */
 function walk(root: unknown, used: Set<string>): void {
-  const stack: { v: unknown; d: number }[] = [{ v: root, d: 0 }];
-  while (stack.length) {
-    const { v, d } = stack.pop()!;
-    if (typeof v === 'number') {
-      if (!Number.isFinite(v)) refuse('bad-structure', 'a number in the file is not finite');
-      continue;
-    }
-    if (!v || typeof v !== 'object') continue;
+  // Parallel stacks, and only objects and arrays are pushed: a primitive is checked where it is found.
+  const values: unknown[] = [root];
+  const depths: number[] = [0];
+  const inExtras: boolean[] = [false];
+  while (values.length) {
+    const v = values.pop();
+    const d = depths.pop()!;
+    const extras = inExtras.pop()!;
     if (d > GLB_LIMITS.jsonDepth) refuse('too-deep', `the JSON nests deeper than ${GLB_LIMITS.jsonDepth} levels`);
-    if (Array.isArray(v)) { for (const x of v) stack.push({ v: x, d: d + 1 }); continue; }
-    for (const [k, x] of Object.entries(v)) {
-      if (k === 'extensions' && isRec(x)) for (const name of Object.keys(x)) used.add(name);
-      stack.push({ v: x, d: d + 1 });
+    const push = (x: unknown, ex: boolean) => {
+      if (typeof x === 'number') { if (!Number.isFinite(x)) refuse('bad-structure', 'a number in the file is not finite'); return; }
+      if (x && typeof x === 'object') { values.push(x); depths.push(d + 1); inExtras.push(ex); }
+    };
+    if (Array.isArray(v)) { for (const x of v) push(x, extras); continue; }
+    for (const k in v as Rec) {
+      if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+      const x = (v as Rec)[k];
+      // `extras` is application data: an `extensions` key inside it is not an extension block.
+      if (k === 'extensions' && !extras && isRec(x)) {
+        for (const name of Object.keys(x)) {
+          if (!ALLOWED_EXTENSIONS.includes(name)) refuse('extension', `the extension ${JSON.stringify(name.slice(0, 80))} is not allowed`);
+          used.add(name);
+        }
+      }
+      push(x, extras || k === 'extras');
     }
   }
 }
@@ -132,6 +157,7 @@ function checkExtensions(json: Rec, found: Set<string>): string[] {
     if (!Array.isArray(list) || list.length > 64 || !list.every((x) => typeof x === 'string')) refuse('bad-structure', `${key} must be a short list of names`);
     for (const name of list as string[]) declared.add(name);
   }
+  if (declared.size > GLB_LIMITS.extensionNames) refuse('bad-structure', 'too many extension names');
   for (const name of [...declared, ...found]) {
     if (!ALLOWED_EXTENSIONS.includes(name)) refuse('extension', `the extension ${JSON.stringify(name.slice(0, 80))} is not allowed`);
   }
@@ -139,12 +165,13 @@ function checkExtensions(json: Rec, found: Set<string>): string[] {
 }
 
 /** An external address is anything but absent or a base64 `data:` address inside the file. Returns the embedded byte count. */
-function embedded(uri: unknown, what: string): number | null {
+function embedded(uri: unknown, what: string, types: readonly string[]): number | null {
   if (uri === undefined) return null;
   if (typeof uri !== 'string') return refuse('bad-structure', `${what}.uri must be text`);
   const m = DATA_URI.exec(uri);
   if (!m) return refuse('external-reference', `${what}.uri reaches outside the file; only an absent uri or a base64 data address inside the file is allowed`);
-  return base64Bytes(m[1]);
+  if (!types.includes(m[1].toLowerCase())) return refuse('external-reference', `${what}.uri carries ${m[1].slice(0, 60)}, which is not an allowed type (${types.join(', ')})`);
+  return base64Bytes(m[2]);
 }
 
 /** Node graph: valid indexes, a forest (one parent each), no cycle, depth within the cap. */
@@ -176,6 +203,132 @@ function checkNodes(nodes: unknown[]): void {
   }
 }
 
+
+interface Lists {
+  nodes: unknown[]; meshes: unknown[]; materials: unknown[]; textures: unknown[]; images: unknown[]; skins: unknown[];
+  views: unknown[]; scenes: unknown[]; accessors: unknown[]; samplers: unknown[]; animations: unknown[];
+}
+
+/**
+ * Every index a later consumer would trust, checked against the list it names, and the
+ * counts inside lists (primitives, morph targets, animation channels). It does not read
+ * accessor contents or check component types: that is the validator's job (S2 step 2).
+ */
+function checkReferences(json: Rec, l: Lists): void {
+  const idx = (v: unknown, max: number, what: string): void => {
+    if (whole(v, what) >= max) refuse('bad-structure', `${what} names something that does not exist`);
+  };
+  const optIdx = (o: Rec, key: string, max: number, what: string): void => { if (own(o, key) !== undefined) idx(own(o, key), max, `${what}.${key}`); };
+  const rec = (v: unknown, what: string): Rec => (isRec(v) ? v : refuse('bad-structure', `${what} must be an object`));
+
+  const sceneIndex = own(json, 'scene');
+  if (sceneIndex !== undefined) idx(sceneIndex, l.scenes.length, 'scene');
+  l.scenes.forEach((s, i) => {
+    const nodes = own(rec(s, `scenes[${i}]`), 'nodes');
+    if (nodes === undefined) return;
+    if (!Array.isArray(nodes) || nodes.length > l.nodes.length) return refuse('bad-structure', `scenes[${i}].nodes must be a list of node indexes`);
+    nodes.forEach((n) => idx(n, l.nodes.length, `scenes[${i}].nodes`));
+  });
+  l.nodes.forEach((n, i) => {
+    const o = n as Rec;
+    optIdx(o, 'mesh', l.meshes.length, `nodes[${i}]`);
+    optIdx(o, 'skin', l.skins.length, `nodes[${i}]`);
+    optIdx(o, 'camera', listOf(json, 'cameras', GLB_LIMITS.nodes).length, `nodes[${i}]`);
+  });
+  l.skins.forEach((s, i) => {
+    const o = s as Rec;
+    (own(o, 'joints') as unknown[]).forEach((j) => idx(j, l.nodes.length, `skins[${i}].joints`));
+    optIdx(o, 'skeleton', l.nodes.length, `skins[${i}]`);
+    optIdx(o, 'inverseBindMatrices', l.accessors.length, `skins[${i}]`);
+  });
+  l.textures.forEach((t, i) => {
+    const o = rec(t, `textures[${i}]`);
+    optIdx(o, 'source', l.images.length, `textures[${i}]`);
+    optIdx(o, 'sampler', l.samplers.length, `textures[${i}]`);
+  });
+  l.accessors.forEach((a, i) => {
+    const o = rec(a, `accessors[${i}]`);
+    optIdx(o, 'bufferView', l.views.length, `accessors[${i}]`);
+    whole(own(o, 'count'), `accessors[${i}].count`);
+    const sparse = own(o, 'sparse');
+    if (isRec(sparse)) for (const part of ['indices', 'values']) {
+      const p = own(sparse, part);
+      if (!isRec(p)) refuse('bad-structure', `accessors[${i}].sparse.${part} must be an object`);
+      else idx(own(p, 'bufferView'), l.views.length, `accessors[${i}].sparse.${part}.bufferView`);
+    }
+  });
+
+  let primitives = 0;
+  l.meshes.forEach((m, i) => {
+    const list = own(rec(m, `meshes[${i}]`), 'primitives');
+    if (!Array.isArray(list)) return refuse('bad-structure', `meshes[${i}].primitives must be a list`);
+    if (list.length > GLB_LIMITS.primitivesPerMesh) refuse('too-many', `meshes[${i}] has ${list.length} primitives, at most ${GLB_LIMITS.primitivesPerMesh} are allowed`);
+    primitives += list.length;
+    if (primitives > GLB_LIMITS.primitives) refuse('too-many', `the model has more than ${GLB_LIMITS.primitives} primitives`);
+    list.forEach((pr, j) => {
+      const p = rec(pr, `meshes[${i}].primitives[${j}]`);
+      const what = `meshes[${i}].primitives[${j}]`;
+      const attrs = own(p, 'attributes');
+      if (isRec(attrs)) for (const k of Object.keys(attrs)) idx(attrs[k], l.accessors.length, `${what}.attributes.${k}`);
+      optIdx(p, 'indices', l.accessors.length, what);
+      optIdx(p, 'material', l.materials.length, what);
+      const targets = own(p, 'targets');
+      if (targets !== undefined) {
+        if (!Array.isArray(targets)) return refuse('bad-structure', `${what}.targets must be a list`);
+        if (targets.length > GLB_LIMITS.morphTargets) refuse('too-many', `${what} has ${targets.length} morph targets, at most ${GLB_LIMITS.morphTargets} are allowed`);
+        targets.forEach((t, k) => { if (isRec(t)) for (const key of Object.keys(t)) idx(t[key], l.accessors.length, `${what}.targets[${k}].${key}`); });
+      }
+      const ext = isRec(own(p, 'extensions')) ? (own(p, 'extensions') as Rec) : {};
+      const draco = own(ext, 'KHR_draco_mesh_compression');
+      if (isRec(draco)) {
+        idx(own(draco, 'bufferView'), l.views.length, `${what}.KHR_draco_mesh_compression.bufferView`);
+        const da = own(draco, 'attributes');
+        if (isRec(da)) for (const k of Object.keys(da)) whole(da[k], `${what}.KHR_draco_mesh_compression.attributes.${k}`);
+      }
+      const variants = own(ext, 'KHR_materials_variants');
+      if (isRec(variants) && Array.isArray(own(variants, 'mappings'))) {
+        (own(variants, 'mappings') as unknown[]).forEach((mp) => { if (isRec(mp)) optIdx(mp, 'material', l.materials.length, `${what}.KHR_materials_variants.mappings`); });
+      }
+    });
+  });
+
+  // A texture index anywhere under a material (`baseColorTexture`, `clearcoatTexture` in an extension, ...).
+  const texKey = /Texture$/;
+  l.materials.forEach((m, i) => {
+    const stack: unknown[] = [rec(m, `materials[${i}]`)];
+    let budget = 10000;
+    while (stack.length && budget-- > 0) {
+      const v = stack.pop();
+      if (Array.isArray(v)) { for (const x of v) if (x && typeof x === 'object') stack.push(x); continue; }
+      for (const k of Object.keys(v as Rec)) {
+        const x = (v as Rec)[k];
+        if (k === 'extras') continue;
+        if (texKey.test(k) && isRec(x)) idx(own(x, 'index'), l.textures.length, `materials[${i}].${k}.index`);
+        else if (x && typeof x === 'object') stack.push(x);
+      }
+    }
+  });
+
+  l.animations.forEach((an, i) => {
+    const o = rec(an, `animations[${i}]`);
+    const chans = own(o, 'channels');
+    const samps = own(o, 'samplers');
+    if (!Array.isArray(chans) || !Array.isArray(samps)) return refuse('bad-structure', `animations[${i}] needs channels and samplers lists`);
+    if (chans.length > GLB_LIMITS.channelsPerAnimation || samps.length > GLB_LIMITS.channelsPerAnimation) refuse('too-many', `animations[${i}] has more than ${GLB_LIMITS.channelsPerAnimation} channels or samplers`);
+    chans.forEach((c) => {
+      const ch = rec(c, `animations[${i}].channels[]`);
+      idx(own(ch, 'sampler'), samps.length, `animations[${i}].channels[].sampler`);
+      const target = own(ch, 'target');
+      if (isRec(target)) optIdx(target, 'node', l.nodes.length, `animations[${i}].channels[].target`);
+    });
+    samps.forEach((sm) => {
+      const sp = rec(sm, `animations[${i}].samplers[]`);
+      idx(own(sp, 'input'), l.accessors.length, `animations[${i}].samplers[].input`);
+      idx(own(sp, 'output'), l.accessors.length, `animations[${i}].samplers[].output`);
+    });
+  });
+}
+
 function checkJson(json: Rec, bin: number | null, container: 'glb' | 'gltf', fileBytes: number, jsonBytes: number): GlbSummary {
   const asset = own(json, 'asset');
   const version = isRec(asset) ? own(asset, 'version') : undefined;
@@ -192,8 +345,9 @@ function checkJson(json: Rec, bin: number | null, container: 'glb' | 'gltf', fil
   const images = listOf(json, 'images', GLB_LIMITS.images);
   const animations = listOf(json, 'animations', GLB_LIMITS.animations);
   const skins = listOf(json, 'skins', GLB_LIMITS.nodes);
-  listOf(json, 'scenes', GLB_LIMITS.scenes);
-  listOf(json, 'accessors', GLB_LIMITS.accessors);
+  const scenes = listOf(json, 'scenes', GLB_LIMITS.scenes);
+  const accessors = listOf(json, 'accessors', GLB_LIMITS.accessors);
+  const samplers = listOf(json, 'samplers', GLB_LIMITS.samplers);
   const views = listOf(json, 'bufferViews', GLB_LIMITS.bufferViews);
   const buffers = listOf(json, 'buffers', GLB_LIMITS.buffers);
 
@@ -206,12 +360,21 @@ function checkJson(json: Rec, bin: number | null, container: 'glb' | 'gltf', fil
   });
   checkNodes(nodes);
 
-  // Buffers: the first may be the GLB's BIN chunk (no uri); every other one must be embedded.
+  // Buffers: the first may be the GLB's BIN chunk (no uri); every other one must be embedded,
+  // except a meshopt fallback buffer, which is declared and never stored.
   const sizes: number[] = [];
+  let stored = 0;
   buffers.forEach((b, i) => {
     if (!isRec(b)) return refuse('bad-structure', `buffers[${i}] must be an object`);
     const declared = whole(own(b, 'byteLength'), `buffers[${i}].byteLength`);
-    const data = embedded(own(b, 'uri'), `buffers[${i}]`);
+    if (declared < 1) return refuse('bad-buffer', `buffers[${i}].byteLength must be at least 1`);
+    const data = embedded(own(b, 'uri'), `buffers[${i}]`, BUFFER_TYPES);
+    const ext = isRec(own(b, 'extensions')) ? own(own(b, 'extensions') as Rec, 'EXT_meshopt_compression') : undefined;
+    const fallback = isRec(ext) && own(ext, 'fallback') === true;
+    if (data === null && fallback) {
+      sizes.push(declared);
+      return;
+    }
     if (data === null) {
       if (container !== 'glb' || i !== 0) return refuse('bad-buffer', `buffers[${i}] has no uri: only the first buffer of a GLB can be the binary chunk`);
       if (bin === null) return refuse('bad-buffer', 'buffers[0] needs the GLB binary chunk, which is missing');
@@ -219,30 +382,42 @@ function checkJson(json: Rec, bin: number | null, container: 'glb' | 'gltf', fil
     } else if (data < declared) {
       return refuse('bad-buffer', `buffers[${i}] embeds ${data} bytes but declares ${declared}`);
     }
+    stored += declared;
     sizes.push(declared);
   });
   if (bin !== null && (buffers.length === 0 || own(buffers[0] as Rec, 'uri') !== undefined)) refuse('bad-buffer', 'the GLB has a binary chunk that no buffer uses');
 
+  const inBuffer = (buffer: unknown, offset: unknown, length: unknown, what: string): void => {
+    const bi = whole(buffer, `${what}.buffer`);
+    if (bi >= sizes.length) return refuse('bad-structure', `${what} names a buffer that does not exist`);
+    const o = offset === undefined ? 0 : whole(offset, `${what}.byteOffset`);
+    const l = whole(length, `${what}.byteLength`);
+    if (l < 1) return refuse('bad-buffer', `${what}.byteLength must be at least 1`);
+    if (o + l > sizes[bi]) return refuse('bad-buffer', `${what} runs past the end of its buffer`);
+  };
   views.forEach((v, i) => {
     if (!isRec(v)) return refuse('bad-structure', `bufferViews[${i}] must be an object`);
-    const buffer = whole(own(v, 'buffer'), `bufferViews[${i}].buffer`);
-    if (buffer >= sizes.length) return refuse('bad-structure', `bufferViews[${i}] names a buffer that does not exist`);
-    const offset = own(v, 'byteOffset') === undefined ? 0 : whole(own(v, 'byteOffset'), `bufferViews[${i}].byteOffset`);
-    const length = whole(own(v, 'byteLength'), `bufferViews[${i}].byteLength`);
-    if (offset + length > sizes[buffer]) refuse('bad-buffer', `bufferViews[${i}] runs past the end of its buffer`);
+    inBuffer(own(v, 'buffer'), own(v, 'byteOffset'), own(v, 'byteLength'), `bufferViews[${i}]`);
+    const ext = isRec(own(v, 'extensions')) ? own(own(v, 'extensions') as Rec, 'EXT_meshopt_compression') : undefined;
+    if (isRec(ext)) inBuffer(own(ext, 'buffer'), own(ext, 'byteOffset'), own(ext, 'byteLength'), `bufferViews[${i}].EXT_meshopt_compression`);
   });
 
   images.forEach((img, i) => {
     if (!isRec(img)) return refuse('bad-structure', `images[${i}] must be an object`);
-    const data = embedded(own(img, 'uri'), `images[${i}]`);
+    const data = embedded(own(img, 'uri'), `images[${i}]`, IMAGE_TYPES);
     const view = own(img, 'bufferView');
     if (data === null && view === undefined) refuse('bad-structure', `images[${i}] has neither a bufferView nor an embedded uri`);
+    if (data !== null && view !== undefined) refuse('bad-structure', `images[${i}] has both a uri and a bufferView`);
     if (view !== undefined && whole(view, `images[${i}].bufferView`) >= views.length) refuse('bad-structure', `images[${i}] names a bufferView that does not exist`);
+    const mime = own(img, 'mimeType');
+    if (mime !== undefined && (typeof mime !== 'string' || !IMAGE_TYPES.includes(mime.toLowerCase()))) refuse('bad-structure', `images[${i}].mimeType must be one of ${IMAGE_TYPES.join(', ')}`);
   });
+
+  checkReferences(json, { nodes, meshes, materials, textures, images, skins, views, scenes, accessors, samplers, animations });
 
   return {
     container, fileBytes, jsonBytes,
-    bufferBytes: sizes.reduce((a, b) => a + b, 0),
+    bufferBytes: stored,
     counts: { nodes: nodes.length, meshes: meshes.length, materials: materials.length, textures: textures.length, images: images.length, animations: animations.length, bones },
     extensionsUsed,
   };
@@ -251,7 +426,7 @@ function checkJson(json: Rec, bin: number | null, container: 'glb' | 'gltf', fil
 function parseJson(bytes: Uint8Array): Rec {
   if (bytes.length > MAX_JSON_BYTES) return refuse('too-large', `the JSON part is ${bytes.length} bytes, at most ${MAX_JSON_BYTES} are allowed`);
   let text: string;
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { return refuse('bad-json', 'the JSON part is not valid UTF-8'); }
+  try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return refuse('bad-json', 'the JSON part is not valid UTF-8'); }
   let value: unknown;
   try { value = JSON.parse(text); } catch { return refuse('bad-json', 'the JSON part does not parse'); }
   if (!isRec(value)) return refuse('bad-json', 'the JSON part must be an object');
