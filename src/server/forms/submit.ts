@@ -44,10 +44,11 @@ import 'server-only';
 //     query threaded through the published renderer.
 //
 // Storage: one row in the company's `form_submission` table, no IP address
-// (src/server/commerce/migrations/tenant/017_form_submissions.ts). No email is
-// sent: the app has no mail transport yet (no Lumitra Mail client, Resend or
-// SMTP module exists in this repository), so the owner reads submissions in the
-// editor's "Form submissions" view.
+// (src/server/commerce/migrations/tenant/017_form_submissions.ts), and in the
+// same transaction the owner's notification (src/server/forms/notify.ts): a row,
+// and a Lumitra Mail job when the company is connected. A failed email never
+// loses the submission; the owner also reads submissions, with each email's
+// status, in the editor's "Form submissions" view.
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
@@ -57,10 +58,12 @@ import type { CommerceDB } from '@/server/commerce/db-types';
 import type { PublishedSite } from '@/server/sites/publicResolver';
 import { boundedText } from '@/server/books/http/boundedBody';
 import { jsonError } from '@/lib/api/respond';
+import { companyForSite } from '@/server/commerce/company';
 import { adaptedPage, siteFormIds } from '@/lib/components/expandedPages';
 import {
   FORM_LIMITS,
   TRANSPORT_FIELDS,
+  cleanNotifyEmail,
   collectFormFields,
   findFormNode,
   readFormSettings,
@@ -383,6 +386,20 @@ export async function handleFormSubmit(req: Request, deps: SubmitDeps): Promise<
   }
 
   const submissionId = parsed.submissionId ?? deps.newId();
+  // The owner's notice: decided here from the PUBLISHED form and site, never from the request. Whatever fails
+  // here costs the notice, never the submission (it is stored below regardless).
+  let notification: NewFormSubmission['notification'];
+  try {
+    const companyId = await companyForSite(db, site);
+    if (companyId) {
+      const recipient = settings.notifyEmail || cleanNotifyEmail(site.siteSettings.business.email) || null;
+      notification = { companyId, recipient, at: new Date(now) };
+    } else {
+      deps.log('warn', `[forms] site ${site.siteId}: no company is known for the site, no notification email for submission ${submissionId}`);
+    }
+  } catch (err) {
+    deps.log('error', `[forms] site ${site.siteId}: resolving the company for a notification email failed`, err);
+  }
   try {
     const stored = await deps.store(db, {
       id: submissionId,
@@ -394,6 +411,7 @@ export async function handleFormSubmit(req: Request, deps: SubmitDeps): Promise<
       formId: located.form.id ?? parsed.formId,
       formName: settings.name,
       fields: toStoredFields(fields, check.values),
+      ...(notification ? { notification } : {}),
     });
     if (!stored) deps.log('info', `[forms] site ${site.siteId}: submission ${submissionId} was sent again, kept the first`);
   } catch (err) {

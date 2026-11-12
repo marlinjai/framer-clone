@@ -9,6 +9,7 @@ import 'server-only';
 import type { Kysely } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
+import { deliverFormNotification } from '@/server/forms/notify';
 import { deliverShopMail, type OutboxDeps } from '../mail/outbox';
 import { outboxDeps } from '../mail/runtime';
 import { paymentDeps } from '../payment/deps';
@@ -88,7 +89,10 @@ function jobPayments(
 /** The buyer's letters for one job: bound to its company, on the worker's clock. */
 function jobMail(group: JobTenantGroup, tenantId: string, now: () => Date, wiring: NonNullable<JobRunOptions['mailDeps']>): JobMail {
   const deps = { ...wiring(group), now };
-  return { deliver: (orderId, kind) => deliverShopMail(deps, tenantId, orderId, kind) };
+  return {
+    deliver: (orderId, kind) => deliverShopMail(deps, tenantId, orderId, kind),
+    deliverFormNotification: (submissionId) => deliverFormNotification(deps, tenantId, submissionId),
+  };
 }
 
 /** The handler's end, before it is written. */

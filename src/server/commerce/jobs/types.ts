@@ -165,6 +165,8 @@ export interface JobPayments {
  */
 export interface JobMail {
   deliver(orderId: string, kind: ShopMailKind): Promise<'sent' | 'blocked' | 'none'>;
+  /** The site owner's notice about a form submission (src/server/forms/notify.ts). */
+  deliverFormNotification(submissionId: string): Promise<'sent' | 'blocked' | 'none'>;
 }
 
 export interface JobContext<P> {

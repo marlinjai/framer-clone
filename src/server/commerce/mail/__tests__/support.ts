@@ -1,7 +1,7 @@
 // Test support for the shop mail: re-exports of the pure helpers (their modules are server-only, mocked in the
 // tests), and a fake Lumitra Mail that records every call and can be told to fail.
 import { MailRefused, MailRetryLater, type Letter, type LumitraMail, type MailSender, type MailWorkspace } from '../lumitraMail';
-import type { ShopMailKind } from '../templates';
+import type { MailKind } from '../templates';
 
 export { callKey } from '../lumitraMail';
 
@@ -65,7 +65,7 @@ export function fakeMail(opts: { workspaces: MailWorkspace[]; senders?: Record<s
     },
     async installTemplates(apiKey) {
       step('installTemplates', [apiKey]);
-      return { order_confirmation: 'tpl-confirmation', late_refund: 'tpl-refund' } as Record<ShopMailKind, string>;
+      return { order_confirmation: 'tpl-confirmation', late_refund: 'tpl-refund', form_notification: 'tpl-form' } as Record<MailKind, string>;
     },
     async send(apiKey, letter) {
       step('send', [apiKey, letter]);

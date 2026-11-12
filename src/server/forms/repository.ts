@@ -28,6 +28,7 @@ import type { CommerceDB } from '@/server/commerce/db-types';
 import { toJsonb } from '@/server/books/snapshots';
 import type { StoredField } from '@/lib/forms/validation';
 import { FIELD_TYPES } from '@/lib/forms/definition';
+import { writeFormNotification, type NewFormNotification } from './notify';
 
 export interface NewFormSubmission {
   id: string;
@@ -39,6 +40,8 @@ export interface NewFormSubmission {
   formId: string;
   formName: string;
   fields: StoredField[];
+  /** The owner's notification email, written in the same transaction; absent when the company is unknown. */
+  notification?: NewFormNotification;
 }
 
 export interface FormSubmission {
@@ -135,7 +138,10 @@ export async function insertFormSubmission(
       })
       .onConflict((oc) => oc.column('id').doNothing())
       .executeTakeFirst();
-    return Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
+    const inserted = Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
+    // Only for a row this call wrote: the island's repeat of a lost answer must not write a second notice.
+    if (inserted && row.notification) await writeFormNotification(tx, row.tenantId, row.id, row.notification);
+    return inserted;
   });
 }
 

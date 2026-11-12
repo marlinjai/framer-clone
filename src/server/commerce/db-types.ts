@@ -732,6 +732,27 @@ export interface FormSubmissionTable {
 }
 
 /**
+ * 031_form_notification: the outbox of the email that tells the site owner about a submission, one row per
+ * submission (its primary key), deleted with it (ON DELETE CASCADE). `letter` is emptied once settled.
+ */
+export interface FormNotificationTable {
+  submission_id: string;
+  /** The tenant GROUP, as in `form_submission`. */
+  tenant_id: string;
+  /** The company: the `shop_mail_connection` key and the job's tenant. */
+  company_id: string;
+  recipient: string | null;
+  status: Generated<'pending' | 'sent' | 'blocked' | 'failed' | 'skipped'>;
+  round: Generated<number>;
+  round_started_at: Generated<Timestamp>;
+  last_error: string | null;
+  mailing_id: string | null;
+  letter: ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
+/**
  * 020_catalogue_company: an image of the catalogue (bytes beside the documents, one per company and hash).
  */
 export interface CatalogImageTable {
@@ -940,6 +961,7 @@ export interface CommerceDB {
   books_asset: BooksAssetTable;
   books_product: BooksProductTable;
   form_submission: FormSubmissionTable;
+  form_notification: FormNotificationTable;
   catalog_image: CatalogImageTable;
   product_image: ProductImageTable;
   collection: CollectionTable;
