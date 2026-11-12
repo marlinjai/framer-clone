@@ -206,7 +206,7 @@ export interface AppliedGeneration {
 function heldTokenIds(project: ProjectModelType, target: CapturedTarget): Set<string> {
   if (target.kind === 'newPage' || !target.componentId) return new Set();
   const page = project.getPage(target.pageId);
-  const component = page ? findInPage(page, target.componentId) : undefined;
+  const component = page ? (page.findComponent(target.componentId) as ComponentInstance | undefined) : undefined;
   return component ? referencedIds(getSnapshot(component)) : new Set();
 }
 

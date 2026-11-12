@@ -194,26 +194,42 @@ describe('tokens a generation adds', () => {
 });
 
 describe('what the review of this slice found', () => {
-  it('drops a token reference in an attribute: a style is where one is judged', () => {
-    const out = run({ nodes: [{ type: 'svg', label: 'Icon', children: [{ type: 'path', props: { d: 'M0 0h1', fill: `var(--fc-t-${ACCENT})` } }] }] });
-    if (!out.ok) throw new Error(out.errors.join('; '));
-    expect(JSON.stringify(out.result.nodes)).not.toContain('--fc-t-');
-    expect(out.result.warnings.join()).toMatch(/not in an attribute/);
+  it('refuses a token reference in an attribute, since a silent drop would ship the default paint; the preview only warns', () => {
+    const raw = { nodes: [{ type: 'svg', label: 'Icon', children: [{ type: 'path', props: { d: 'M0 0h1', fill: `var(--fc-t-${ACCENT})` } }] }] };
+    expect(errorsOf(run(raw)).join()).toMatch(/not in an attribute/);
+    const preview = run(raw, { themeStrict: false });
+    if (!preview.ok) throw new Error(preview.errors.join('; '));
+    expect(JSON.stringify(preview.result.nodes)).not.toContain('--fc-t-');
+    expect(preview.result.warnings.join()).toMatch(/not in an attribute/);
   });
 
-  it('does not count a token whose value is dropped later as used', () => {
+  it('adds no token whose only use was dropped later (a rule past the cap)', () => {
+    const rules = Array.from({ length: 25 }, (_, i) => ({ id: `r${i}`, selector: '&:hover', at: ['@media (hover: hover)'], style: { color: i === 24 ? 'var(--fc-t-new-1)' : '#111111' } }));
     const out = run({
       theme: { tokens: [{ ref: 'new-1', name: 'Crust', kind: 'color', light: '#eee' }] },
-      nodes: [{ type: 'div', label: 'A', props: { style: { font: 'var(--fc-t-new-1)', color: '#111' }, children: 'x' } }],
+      nodes: [{ type: 'a', label: 'A', props: { href: '#x', children: 'x', rules } }],
     });
     if (!out.ok) throw new Error(out.errors.join('; '));
+    expect(JSON.stringify(out.result.nodes)).not.toContain('new-1');
     expect(out.result.theme).toBeUndefined();
     expect(out.result.warnings.join()).toMatch(/"Crust" is used by no node/);
   });
 
+  it('keeps a colour token to colour properties', () => {
+    expect(errorsOf(run(page({ width: ref(ACCENT) }))).join()).toMatch(/colour property/);
+    expect(run(page({ borderTop: `1px solid ${ref(ACCENT)}`, boxShadow: `0 0 4px ${ref(ACCENT)}`, fill: ref(ACCENT), '--brand': ref(ACCENT) })).ok).toBe(true);
+  });
+
   it('refuses a token that paints nothing', () => {
     const broken: SiteTheme = { ...THEME, tokens: [...THEME.tokens, { id: 'br0k3n01', name: 'Broken', kind: 'color', light: 'nonsense', broken: true }] };
-    expect(errorsOf(run(page({ color: ref('br0k3n01') }), { theme: broken })).join()).toMatch(/no readable value/);
+    const refused = errorsOf(run(page({ color: ref('br0k3n01') }), { theme: broken })).join();
+    expect(refused).toMatch(/no readable value/);
+    expect(refused).not.toContain('Broken');
+    // A token the target already holds renders as it did, so a replace may echo it back.
+    expect(run(page({ color: ref('br0k3n01') }), { theme: broken, heldTokenIds: new Set(['br0k3n01']) }).ok).toBe(true);
+    // A bad dark value alone leaves the light one showing everywhere: usable.
+    const darkBad: SiteTheme = { ...THEME, tokens: [...THEME.tokens, { id: 'dk0bad01', name: 'DarkBad', kind: 'color', light: '#111111', dark: 'bogus' }] };
+    expect(run(page({ color: ref('dk0bad01') }), { theme: darkBad }).ok).toBe(true);
   });
 });
 
@@ -224,7 +240,7 @@ describe('a proposal against a token with no readable value', () => {
       { theme: { tokens: [{ ref: 'new-1', name: 'crust', kind: 'color', light: '#eee' }] }, nodes: [{ type: 'div', label: 'A', props: { style: { color: 'var(--fc-t-new-1)' }, children: 'x' } }] },
       { theme: broken },
     );
-    expect(errorsOf(out).join()).toMatch(/cannot be read, so it cannot be used or reused/);
+    expect(errorsOf(out).join()).toMatch(/taken by a colour the site cannot read/);
   });
 
   it('keeps a model-written name and an owner name out of the message as plain text', () => {

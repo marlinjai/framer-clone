@@ -32,6 +32,7 @@ import {
   type ThemeMode,
   type ThemeToken,
   colorReadability,
+  isThemeFontFamily,
   parseTokenReference,
 } from '@/lib/site/theme';
 import { MAX_GENERATED_TOKENS } from '../generatedTheme';
@@ -154,9 +155,10 @@ export function themeContextOf(theme: SiteTheme | undefined): { theme?: SiteCont
   // Bounded like the wire shape (a name is cut on whole characters, the list at the site's cap), so a
   // stored oddity from an older build can never make the whole request fail validation.
   for (const token of liveTokens(theme).slice(0, THEME_LIMITS.liveTokens)) {
-    const name = Array.from(token.name).slice(0, THEME_LIMITS.name).join('');
+    // UTF-16 units, as the wire shape counts, without splitting a pair.
+    const name = token.name.slice(0, THEME_LIMITS.name).replace(/[\ud800-\udbff]$/, '');
     if (token.kind === 'font') {
-      tokens.push({ id: token.id, name, kind: 'font', family: token.family });
+      tokens.push({ id: token.id, name, kind: 'font', family: isThemeFontFamily(token.family) ? token.family : 'system' });
       continue;
     }
     const state = colorReadability(token);

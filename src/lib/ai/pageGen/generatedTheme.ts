@@ -24,6 +24,7 @@ import {
   addColorToken,
   addFontToken,
   findToken,
+  colorReadability,
   liveTokens,
   normalizeTheme,
   parseColorValue,
@@ -161,7 +162,7 @@ export type AdoptOutcome = ({ ok: true } & AdoptedTokens) | { ok: false; errors:
 
 /** A name as it may stand in a message sent back to the model: owner and model text, so no control, format or line-separator character, no quote that could close the message's own quoting, and no angle bracket. Cut on whole characters. */
 export const plainName = (name: string): string =>
-  Array.from(name.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}"<>]/gu, ' ').replace(/\s+/g, ' ').trim()).slice(0, 40).join('');
+  Array.from(name.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}"<>]/gu, ' ').replace(/\s+/g, ' ').trim()).slice(0, 40).join('').trim();
 
 const KIND_WORD: Record<TokenKind, string> = { color: 'colour', font: 'font' };
 
@@ -188,14 +189,14 @@ export function adoptProposedTokens(theme: SiteTheme, proposed: readonly Propose
       const light = parseColorValue(token.light);
       const dark = token.dark === undefined ? undefined : parseColorValue(token.dark);
       if (same && same.kind === 'color' && same.broken) {
-        errors.push(`${label}: the site has a colour called "${plainName(same.name)}" whose value cannot be read, so it cannot be used or reused. Pick another name.`);
+        errors.push(`${label}: that name is taken by a colour the site cannot read, which is not in the list. Choose a different name for this role.`);
         continue;
       }
       if (same && same.kind === 'color') {
         if (light !== null && dark !== null && sameColor(same, light, dark)) {
           idByRef.set(token.ref, same.id);
         } else {
-          errors.push(`${label}: the site already has a colour called "${plainName(same.name)}", var(--fc-t-${same.id}), with other values. Use it, or pick another name; a generation never changes an existing token.`);
+          errors.push(`${label}: the site already has a colour called "${plainName(same.name)}", var(--fc-t-${same.id}), with other values. Do not add it: use var(--fc-t-${same.id}) as listed. Add a new token only for a role the site has no token for, and name it for that role; a generation never changes an existing token.`);
         }
         continue;
       }
@@ -210,7 +211,7 @@ export function adoptProposedTokens(theme: SiteTheme, proposed: readonly Propose
     } else {
       if (same && same.kind === 'font') {
         if (same.family === token.family) idByRef.set(token.ref, same.id);
-        else errors.push(`${label}: the site already has a font called "${plainName(same.name)}", var(--fc-t-${same.id}), with another family. Use it, or pick another name; a generation never changes an existing token.`);
+        else errors.push(`${label}: the site already has a font called "${plainName(same.name)}", var(--fc-t-${same.id}), with another family. Do not add it: use var(--fc-t-${same.id}) as listed. Add a new token only for a role the site has no token for, and name it for that role; a generation never changes an existing token.`);
         continue;
       }
       const edit = addFontToken(working, { name: token.name, family: token.family ?? '' }, random);
@@ -283,6 +284,19 @@ export interface ReferenceVerdict {
   used: string[];
 }
 
+/**
+ * A property that holds a colour, alone or inside its value: `*Color`, the background, border,
+ * outline, shadow and decoration families, SVG paint, filters and masks, and any custom property
+ * (a value may be read where it is used). Anything else cannot use a colour token.
+ */
+export function isColourSlot(property: string): boolean {
+  return (
+    property.startsWith('--') ||
+    /color$/i.test(property) ||
+    /^(background|border|outline|boxShadow|textShadow|textDecoration|textEmphasis|columnRule|fill|stroke|filter|backdropFilter|mask|scrollbar|listStyle|caret|accent)/.test(property)
+  );
+}
+
 /** Judge one style value for the property it stands on. Pure: the caller decides error or warning. */
 export function judgeReferences(property: string, value: string, ctx: ReferenceContext): ReferenceVerdict {
   if (!PLATFORM_TEXT.test(value)) return { value, used: [] };
@@ -304,8 +318,12 @@ export function judgeReferences(property: string, value: string, ctx: ReferenceC
       if (ctx.held.has(id)) continue;
       return fail(`var(--fc-t-${id}) is not a token of this site: use one from the site's list`);
     }
-    if (token.kind === 'color' && token.broken) {
-      return fail(`"${plainName(token.name)}" has no readable value, so it paints nothing: use another token`);
+    // A token the target already holds is the owner's and renders as it did, so it stays. One the
+    // generation adds is judged: a colour none of whose values reads paints nothing (a bad dark
+    // value alone is fine: the light one shows in both schemes). No name here, so a token the model
+    // was never shown cannot be learned through a refusal.
+    if (token.kind === 'color' && !ctx.held.has(id) && (colorReadability(token) === 'unreadable' || colorReadability(token) === 'light-unreadable')) {
+      return fail(`var(--fc-t-${id}) has no readable value, so it paints nothing: use another token from the site's list`);
     }
     if (token.deleted && !ctx.held.has(id)) {
       return fail(`"${plainName(token.name)}" was deleted from the site: use a token that is still there`);
@@ -316,6 +334,10 @@ export function judgeReferences(property: string, value: string, ctx: ReferenceC
     if (token.kind === 'color' && isFontProperty) {
       return fail(`"${plainName(token.name)}" is a colour: fontFamily takes a font token`);
     }
+  }
+  if (!isFontProperty && !isColourSlot(property) && scan.ids.length + scan.locals.length > 0) {
+    const colourTokens = [...scan.ids, ...scan.locals.map((l) => ctx.idByRef.get(l) as string)].some((id) => findToken(ctx.theme, id)?.kind === 'color');
+    if (colourTokens) return fail(`a colour token goes on a colour property (color, backgroundColor, a border, a shadow, fill...), not on ${property}`);
   }
   if (isFontProperty && !scan.whole) {
     return fail('a font token is the whole fontFamily value, with no other family beside it');
@@ -372,7 +394,7 @@ export function reconcileGeneratedTokens(
       if (!identical) {
         return {
           ok: false,
-          reason: `The site now has a ${KIND_WORD[token.kind]} called "${plainName(same.name)}" with other values than the one this page was written with. Nothing was changed; generate it again.`,
+          reason: `The site now has a ${KIND_WORD[token.kind]} called "${plainName(same.name)}" with other values than the one this page was written with. Nothing was changed. Rename or remove that token in the Theme panel, or generate again: the page will then use it.`,
         };
       }
       idMap.set(token.id, same.id);

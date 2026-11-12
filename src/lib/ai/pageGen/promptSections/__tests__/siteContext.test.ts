@@ -148,4 +148,19 @@ describe('the site theme in the context', () => {
     const ctx = { siteName: 'x', language: 'en', legalName: '', street: '', postalCode: '', city: '', country: '', phone: '', email: '', openingHours: [] };
     expect(SiteContextSchema.safeParse({ ...ctx, theme: sent }).success).toBe(true);
   });
+
+  it('counts the wire bound in UTF-16 units and sends only a family a font token can hold', () => {
+    const t = {
+      tokens: [
+        { id: 'emoji001', name: '\u{1F600}'.repeat(21), kind: 'color' as const, light: '#111111' },
+        { id: 'fam00001', name: 'Odd', kind: 'font' as const, family: 'x'.repeat(150) },
+      ],
+      document: {},
+    };
+    const sent = themeContextOf(t).theme!;
+    expect(sent.tokens[0].name.length).toBeLessThanOrEqual(40);
+    expect(sent.tokens[1]).toMatchObject({ family: 'system' });
+    const ctx = { siteName: 'x', language: 'en', legalName: '', street: '', postalCode: '', city: '', country: '', phone: '', email: '', openingHours: [] };
+    expect(SiteContextSchema.safeParse({ ...ctx, theme: sent }).success).toBe(true);
+  });
 });

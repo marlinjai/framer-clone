@@ -126,6 +126,7 @@ import {
   judgeReferences,
   parseProposedTokens,
   plainName,
+  referencedIds,
   type ReferenceContext,
 } from './generatedTheme';
 import {
@@ -1098,7 +1099,9 @@ class Validator {
     }
     // A token reference belongs in a style, where it is judged and its local name rewritten.
     if (/--fc-t-/i.test(text)) {
-      this.warn(path, `${key} dropped: a site token goes in a style value, not in an attribute`);
+      // Strict: a silent drop would ship the shape with its default paint. The preview only warns.
+      if (this.references.strict) this.fail(path, `${key}: a site token goes in a style value, not in an attribute`);
+      else this.warn(path, `${key} dropped: a site token goes in a style value, not in an attribute`);
       return;
     }
     const problem = attributeProblem(type, name, text, namespace);
@@ -2395,9 +2398,11 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   if (v.errors.length > 0) return { ok: false, errors: v.errors, warnings: v.warnings };
 
   // A token no node uses is not added: a palette fills with tokens nothing refers to.
-  const keptTokens = proposedAdded.filter((token) => v.usedTokens.has(token.id));
+  // Counted from what is left (a rule over a cap or a dropped parent takes its references with it).
+  const stillUsed = referencedIds(nodes);
+  const keptTokens = proposedAdded.filter((token) => stillUsed.has(token.id));
   for (const token of proposedAdded) {
-    if (!v.usedTokens.has(token.id)) v.warnings.push(`theme.tokens: "${plainName(token.name)}" is used by no node, not added`);
+    if (!stillUsed.has(token.id)) v.warnings.push(`theme.tokens: "${plainName(token.name)}" is used by no node, not added`);
   }
 
   const title = typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim().slice(0, 120) : undefined;
