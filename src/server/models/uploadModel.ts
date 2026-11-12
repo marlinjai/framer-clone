@@ -22,7 +22,7 @@
 
 import { MAX_FILE_BYTES, checkGlb } from '@/lib/scene/glb';
 import { MODEL_QUOTAS, checkModelQuota } from '@/lib/scene/modelQuota';
-import type { DecodedStats, InsertOutcome, ModelBlobStore, ModelReencoder, ModelValidator, SiteModelRecord, SiteModelRepository } from './ports';
+import { ModelRefusalError, type DecodedStats, type InsertOutcome, type ModelBlobStore, type ModelReencoder, type ModelValidator, type SiteModelRecord, type SiteModelRepository } from './ports';
 
 /** Step 5's decoded caps (plan). */
 export const DECODED_LIMITS = {
@@ -33,6 +33,9 @@ export const DECODED_LIMITS = {
   clips: 32,
   /** What the re-encoder promises to write. */
   outputTextureSide: 2048,
+  /** Not in the plan: bounds the decoder's own work (total decoded accessor bytes, total texture pixels) so a small file cannot declare a huge one. */
+  decodedBytes: 128 * 1024 * 1024,
+  totalTexturePixels: 40_000_000,
 } as const;
 
 export interface UploadDeps {
@@ -91,7 +94,9 @@ export async function acceptModelUpload(input: Uint8Array, siteId: string, uploa
   if (!validated.ok) return fail(422, 'invalid-model', `This model is not a valid glTF file: ${validated.message}`);
 
   let encoded: Awaited<ReturnType<ModelReencoder['reencode']>>;
-  try { encoded = await deps.reencoder.reencode(input); } catch (err) { logFailure('re-encoder', siteId, err); return fail(500, 'reencode-failed', 'The model could not be optimised. Try again, or export it differently.'); }
+  try { encoded = await deps.reencoder.reencode(input); } catch (err) {
+    if (err instanceof ModelRefusalError) return fail(err.status, err.code, `This model cannot be used: ${err.message}.`);
+    logFailure('re-encoder', siteId, err); return fail(500, 'reencode-failed', 'The model could not be optimised. Try again, or export it differently.'); }
 
   if (!encoded || !(encoded.bytes instanceof Uint8Array || ArrayBuffer.isView(encoded.bytes))) return fail(500, 'reencode-failed', 'The optimised model is missing.');
   const inputProblem = decodedProblem(encoded.input);
