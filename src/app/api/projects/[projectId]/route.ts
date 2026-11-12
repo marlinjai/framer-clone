@@ -181,9 +181,15 @@ function invalidateDeletedHosts(deleted: DeletedSite): string[] {
   return failed;
 }
 
-/** What an owner is told while the form submissions of a deleted project are still being removed. */
-const FORM_SUBMISSIONS_PENDING_NOTE =
-  'Its form submissions are still being removed in the background and will be gone within a few minutes. Nothing more is needed.';
+/**
+ * What an owner is told while the form submissions of a deleted project are still being removed. No time is promised: the
+ * background job is first due ten minutes after the delete began and retries (1, 5, 15, 60 minutes, then every six hours) for
+ * as long as it takes, and it never gives up; operators are alerted when it keeps failing (`purgesStuck`). The next step is
+ * only for the owner who needs the data gone by a certain time: support, with the project's id.
+ */
+function formSubmissionsPendingNote(projectId: string): string {
+  return `Its form submissions are still being removed in the background. This has no guaranteed time, and nothing more is needed. If you need them removed by a certain time, contact support and quote the project id ${projectId}.`;
+}
 
 async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   // Deleting takes a site offline and releases its domains: on top of
@@ -275,14 +281,14 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   if (submissionsUnscheduled) {
     return jsonError(
       'delete_submissions_failed',
-      'The project was deleted, but its form submissions could not be removed and no automatic removal could be arranged. Contact support to have them removed.',
+      `The project was deleted, but its form submissions could not be removed and no automatic removal could be arranged. Contact support and quote the project id ${projectId} to have them removed.${failed.length > 0 ? ' Its published pages may also still be served from cache until the next deploy.' : ''}`,
       500,
     );
   }
   if (failed.length > 0) {
     return jsonError(
       'delete_cache_failed',
-      `The project was deleted, but its published pages may still be served from cache until the next deploy.${submissionsPending ? ` ${FORM_SUBMISSIONS_PENDING_NOTE}` : ''}`,
+      `The project was deleted, but its published pages may still be served from cache until the next deploy.${submissionsPending ? ` ${formSubmissionsPendingNote(projectId)}` : ''}`,
       500,
       submissionsPending ? { formSubmissionsPending: true } : undefined,
     );
@@ -298,7 +304,7 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
       subdomain: deleted.subdomain,
       releasedHostnames: deleted.hostnames,
       // Only when rows may remain: the removal of the project's form submissions is still running in the background.
-      ...(submissionsPending ? { formSubmissionsPending: true, message: FORM_SUBMISSIONS_PENDING_NOTE } : {}),
+      ...(submissionsPending ? { formSubmissionsPending: true, message: formSubmissionsPendingNote(projectId) } : {}),
     },
     { headers: { 'cache-control': 'no-store' } },
   );

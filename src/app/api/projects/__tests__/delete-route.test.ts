@@ -393,7 +393,11 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     const body = await res.json();
     expect(body).toMatchObject({ deleted: true, formSubmissionsPending: true });
     expect(body.message).toMatch(/still being removed in the background/);
-    expect(body.message).not.toMatch(/contact support/i);
+    // No time is promised, and the one next step (for an owner who needs it by a date) quotes the project id.
+    expect(body.message).toMatch(/no guaranteed time/);
+    expect(body.message).not.toMatch(/minutes|hours|soon|shortly/i);
+    expect(body.message).toMatch(/contact support and quote the project id site_pub/);
+    expect(body.message).toMatch(/nothing more is needed/);
     expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
     warn.mockRestore();
   });
@@ -425,9 +429,28 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     const error = (await res.json()).error;
     expect(error.code).toBe('delete_submissions_failed');
     expect(error.message).toMatch(/could not be removed and no automatic removal could be arranged/);
-    expect(error.message).toMatch(/Contact support/);
+    expect(error.message).toMatch(/Contact support and quote the project id site_pub/);
+    expect(error.message).not.toMatch(/cache/);
     expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
     expect(revalidateSiteCache).toHaveBeenCalledWith('bakery0label');
+    errorSpy.mockRestore();
+  });
+
+  it('the support case together with a cache warning says both', async () => {
+    scheduleProjectSubmissionsPurge.mockImplementation(async () => false);
+    deleteProjectSubmissions.mockImplementation(async () => {
+      throw new Error('tenant schema unreachable');
+    });
+    revalidateSiteCache.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(500);
+    const error = (await res.json()).error;
+    expect(error.code).toBe('delete_submissions_failed');
+    expect(error.message).toMatch(/Contact support/);
+    expect(error.message).toMatch(/still be served from cache/);
     errorSpy.mockRestore();
   });
 
@@ -467,6 +490,8 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     expect(error.code).toBe('delete_cache_failed');
     expect(error.message).toMatch(/cache/);
     expect(error.message).toMatch(/still being removed in the background/);
+    expect(error.message).toMatch(/no guaranteed time/);
+    expect(error.message).not.toMatch(/minutes|soon|shortly/i);
     expect(error.formSubmissionsPending).toBe(true);
     errorSpy.mockRestore();
     warn.mockRestore();

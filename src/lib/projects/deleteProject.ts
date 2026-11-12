@@ -20,6 +20,8 @@ export type DeleteResult =
       deletedWithWarning?: boolean;
       /** The project is deleted and its form submissions are still being removed in the background. */
       formSubmissionsPending?: boolean;
+      /** The project is deleted, but its form submissions are NOT removed and nothing is scheduled to remove them. */
+      submissionsNotRemoved?: boolean;
     };
 
 export async function deleteProject(projectId: string, confirmName?: string): Promise<DeleteResult> {
@@ -84,6 +86,7 @@ export async function deleteProject(projectId: string, confirmName?: string): Pr
         ok: false,
         gone: true,
         deletedWithWarning: true,
+        submissionsNotRemoved: true,
         message: serverMessage ?? 'The project was deleted, but its form submissions could not be removed. Contact support to have them removed.',
       };
     case 'forbidden':

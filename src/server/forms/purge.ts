@@ -6,7 +6,7 @@ import 'server-only';
 // notification emails"). The site row (Prisma, `public`) and its submissions (the tenant schema) are two connections, so no
 // transaction covers both, and a crash or a failure between the two used to leave visitors' words behind with nothing to
 // remove them. The fix is a write-ahead intent: BEFORE the site row is deleted, a `form_purge` job is written in the tenant
-// schema (`scheduleProjectSubmissionsPurge`), due a few minutes later. It survives a crash, a restart and any failure of the
+// schema (`scheduleProjectSubmissionsPurge`), due ten minutes later. It survives a crash, a restart and any failure of the
 // immediate cleanup, retries without ever giving up, and removes the submissions only when the site row is really gone, so a
 // delete that was refused or never committed costs nothing (the job ends as a no-op).
 //

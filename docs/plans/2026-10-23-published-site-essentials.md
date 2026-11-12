@@ -352,8 +352,10 @@ each reversible (say so if you disagree):
    right after the intent, ends as a no-op), deletes only rows of its own tenant group, site and workspace, retries on any failure
    and a busy email row without ever giving up, and a project recreated afterwards is a new site id it never touches. The immediate
    cleanup after the delete stays, and waits briefly for an email in flight. What the owner is told is exact: removed now (a plain
-   success), removal pending (a success that says the submissions are still being removed and nothing more is needed, only when the
-   job's existence is confirmed), or, only when no job could be arranged, "deleted, but its form submissions could not be removed,
+   success), removal pending (a success that says the submissions are still being removed with no guaranteed time and nothing more is
+   needed, naming the one next step for an owner who needs them gone by a date: support, quoting the project id; only when the
+   job's existence is confirmed. The job is first due ten minutes after the delete began and then retries 1, 5, 15 and 60 minutes and
+   every six hours with no end, so no time is promised), or, only when no job could be arranged, "deleted, but its form submissions could not be removed,
    contact support". A delete whose job could not be written is refused before anything changes ("nothing was deleted, try again").
    A purge that keeps failing never dies, so the watchdog counts it (`purgesStuck`, five failures or more).
 9. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then

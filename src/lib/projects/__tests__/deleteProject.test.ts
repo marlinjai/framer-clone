@@ -17,7 +17,7 @@ describe('deleteProject', () => {
   });
 
   it('a success while the form submissions are still being removed says so', async () => {
-    answer(200, { siteId: 's', deleted: true, formSubmissionsPending: true, message: 'Its form submissions are still being removed in the background and will be gone within a few minutes. Nothing more is needed.' });
+    answer(200, { siteId: 's', deleted: true, formSubmissionsPending: true, message: 'Its form submissions are still being removed in the background. This has no guaranteed time, and nothing more is needed.' });
     expect(await deleteProject('s')).toEqual({ ok: true, formSubmissionsPending: true });
   });
 
@@ -36,7 +36,7 @@ describe('deleteProject', () => {
   it('submissions not removed and nothing scheduled: the project IS deleted, support is the next step, and it never says "could not delete"', async () => {
     answer(500, { error: { code: 'delete_submissions_failed', message: 'The project was deleted, but its form submissions could not be removed and no automatic removal could be arranged. Contact support to have them removed.' } });
     const result = await deleteProject('s');
-    expect(result).toMatchObject({ ok: false, gone: true, deletedWithWarning: true });
+    expect(result).toMatchObject({ ok: false, gone: true, deletedWithWarning: true, submissionsNotRemoved: true });
     expect((result as { message: string }).message).toMatch(/Contact support/);
     expect((result as { message: string }).message).not.toMatch(/^Could not delete/);
   });

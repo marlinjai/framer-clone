@@ -47,6 +47,8 @@ describe('DeleteProjectDialog', () => {
     const said = onDeleted.mock.calls[0][0] as string;
     expect(said).toMatch(/Deleted the project Bakery\./);
     expect(said).toMatch(/still being removed in the background/);
+    expect(said).toMatch(/no guaranteed time/);
+    expect(said).not.toMatch(/minutes|soon|shortly/i);
   });
 
   it('a deleted project whose submissions are not removed shows the support message and removes the card only when closed', async () => {
@@ -54,12 +56,17 @@ describe('DeleteProjectDialog', () => {
       ok: false,
       gone: true,
       deletedWithWarning: true,
+      submissionsNotRemoved: true,
       message: 'The project was deleted, but its form submissions could not be removed and no automatic removal could be arranged. Contact support to have them removed.',
     });
     const onDeleted = open();
     fireEvent.click(screen.getByRole('button', { name: 'Delete project' }));
     expect(await screen.findByText(/Contact support to have them removed/)).toBeTruthy();
     expect(onDeleted).not.toHaveBeenCalled();
+    // Closing removes the card, and the status line says what is true: deleted, but the submissions are not removed.
+    fireEvent.click(screen.getByRole('button', { name: /close|ok|done|got it/i }));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+    expect(onDeleted.mock.calls[0][0]).toMatch(/Its form submissions could not be removed: contact support\./);
   });
 
   it('a delete refused before anything changed keeps the dialog open with a try-again message and no "deleted" announcement', async () => {
