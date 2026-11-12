@@ -28,6 +28,8 @@ import {
   type ResolvedAnalytics,
 } from '@/lib/renderer/server/renderPublishedPage';
 import { jsonLdScriptText } from '@/lib/site/publishedHead';
+import { resolveHead, type HeadResolution } from '@/lib/site/headItems';
+import { HeadItemTags } from '@/components/site/HeadItemTags';
 import { siteLookFromPages } from '@/lib/site/notFoundDefault';
 import { findLegalPage, legalLanguage } from '@/lib/legal/legalPages';
 import { productPagePath } from '@/lib/pages/slug';
@@ -134,6 +136,22 @@ export function PreviewBand({ preview, language = 'en' }: { preview: PreviewOf; 
   );
 }
 
+/**
+ * The head items a published page carries: the site's and the page's own, merged (resolveHead),
+ * each one checked again here because a page is opaque JSON to the save route. A refused or
+ * over-cap item renders nothing and is logged, so the owner's check before publishing (slice H3)
+ * and the server log agree. A preview carries none: its address is a secret that expires, and an
+ * alternate or identity link would point a crawler from it to the live site as if it were this.
+ */
+export function publishedHead(site: PublishedSite, pageHead: unknown): HeadResolution {
+  if (site.preview) return { items: [], problems: [] };
+  const resolution = resolveHead(site.siteSettings.head, pageHead);
+  for (const problem of resolution.problems) {
+    console.warn(`[site head] ${problem.home} item ${problem.index} left out (${problem.reason}): ${problem.message}`);
+  }
+  return resolution;
+}
+
 export interface RenderSitePageInput {
   site: PublishedSite;
   matched: MatchedPage;
@@ -211,6 +229,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
 
   return (
     <>
+      <HeadItemTags items={publishedHead(site, adapted.metadata.head).items} />
       {jsonLd && !site.preview ? (
         // schema.org data for search engines; `<` is escaped (jsonLdScriptText).
         <script
