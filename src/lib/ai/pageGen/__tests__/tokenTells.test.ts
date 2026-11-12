@@ -90,9 +90,38 @@ describe('detectTokenTells', () => {
     expect(detectTokenTells(large, grey, ['desktop'])).toEqual([]);
   });
 
-  it('reads the desktop value of a responsive map', () => {
+  it('reads every breakpoint: a mobile-only override that breaks the pair is found', () => {
     const page = tree(node('Hero', { backgroundColor: ref(PAPER) }, [node('Copy', { color: { desktop: ref(INK), mobile: ref(PAPER) } }, [], 'x')]));
-    expect(detectTokenTells(page, theme('light'), ['desktop', 'mobile'])).toEqual([]);
+    const found = detectTokenTells(page, theme('light'), ['desktop', 'mobile']);
+    expect(found).toHaveLength(1);
+    expect(found[0].detail).toContain('mobile breakpoint');
+    expect(detectTokenTells(page, theme('light'), ['desktop'])).toEqual([]);
+  });
+
+  it('a mobile-only colour is not borrowed for desktop: the ancestor colour applies there', () => {
+    const page = tree(node('Hero', { backgroundColor: ref(PAPER), color: ref(INK) }, [node('Copy', { color: { mobile: ref(PAPER) } }, [], 'x')]));
+    expect(detectTokenTells(page, theme('light'), ['desktop'])).toEqual([]);
+  });
+
+  it('reads the background shorthand', () => {
+    const page = tree(node('Hero', { background: ref(PAPER) }, [node('Copy', { color: ref(PAPER) }, [], 'x')]));
+    expect(detectTokenTells(page, theme('light'), ['desktop'])).toHaveLength(1);
+    const photo = tree(node('Hero', { background: ref(PAPER) }, [node('Photo', { background: 'url(a.jpg) center', }, [node('Copy', { color: ref(PAPER) }, [], 'x')])]));
+    expect(detectTokenTells(photo, theme('light'), ['desktop'])).toEqual([]);
+  });
+
+  it('starts from the document defaults: white text on the document surface is found', () => {
+    const withDocument = { ...theme('light'), document: { backgroundColor: ref(PAPER) } };
+    const page = tree(node('Copy', { color: ref(PAPER) }, [], 'x'));
+    expect(detectTokenTells(page, withDocument, ['desktop'])).toHaveLength(1);
+  });
+
+  it('a dark rule that sets the text to the background is found in dark mode', () => {
+    const copy = node('Copy', { color: ref(INK) }, [], 'x');
+    copy.props.rules = [{ id: 'd', selector: '&', at: ['@media (prefers-color-scheme: dark)'], style: { color: ref(PAPER) } }];
+    const page = tree(node('Hero', { backgroundColor: ref(PAPER) }, [copy]));
+    const dark = { ...theme('system') };
+    expect(detectTokenTells(page, dark, ['desktop']).length).toBeGreaterThan(0);
   });
 
   it('a site with no token reference costs nothing and finds nothing', () => {

@@ -457,9 +457,23 @@ describe('a generation that adds site tokens', () => {
 
   it('a replace that echoes a reference the target already held applies even when that token is long gone', () => {
     const container = tree().children[0] as ComponentInstance;
-    container.setProps({ title: ref('lost0001') });
+    container.updateResponsiveStyle('color', ref('lost0001'));
     const target = captureTarget('replace', page, container);
     const payload = themedResult({ nodes: [{ type: 'div', label: 'A', props: { style: { color: ref('lost0001') }, children: 'x' } }] }, target, { heldTokenIds: new Set(['lost0001']) });
+    expect(applyResult(project, target, payload).ok).toBe(true);
+  });
+
+  it('a reference spelled in the target\'s text does not hold a token: a style using it is refused', () => {
+    const container = tree().children[0] as ComponentInstance;
+    container.setProps({ title: ref('lost0001') });
+    const target = captureTarget('replace', page, container);
+    // Neither the editor nor the server counts the text as a hold, so the generation is refused up front.
+    expect(() => themedResult({ nodes: [{ type: 'div', label: 'A', props: { style: { color: ref('lost0001') }, children: 'x' } }] }, target)).toThrow();
+  });
+
+  it('a page whose copy spells a token reference is not refused for it', () => {
+    const target = captureTarget('newPage', page, undefined);
+    const payload = themedResult({ nodes: [{ type: 'div', label: 'A', props: { children: ref('nope1234') } }] }, target);
     expect(applyResult(project, target, payload).ok).toBe(true);
   });
 

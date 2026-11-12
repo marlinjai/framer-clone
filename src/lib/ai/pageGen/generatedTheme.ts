@@ -449,9 +449,23 @@ export function remapGeneratedIds<T>(value: T, idMap: ReadonlyMap<string, string
   return walk(value) as T;
 }
 
-/** Every token id a value refers to (a snapshot, a list of nodes), through the theme's own scan. */
+/**
+ * Every value stored under a `style` key, at any depth: a node's own style, and the style of
+ * each of its rules and keyframe blocks. Text in other props (a title, a label, a link) is not
+ * a style and never counts as one.
+ */
+export function styleValues(value: unknown): unknown[] {
+  if (!value || typeof value !== 'object') return [];
+  if (Array.isArray(value)) return value.flatMap(styleValues);
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, v]) => (key === 'style' ? [v] : styleValues(v)));
+}
+
+/**
+ * Every token id a snapshot or a list of nodes paints with, through the theme's own scan, read
+ * from style values only: copy that happens to spell `var(--fc-t-...)` is text, not a use.
+ */
 export function referencedIds(value: unknown): Set<string> {
-  return new Set(tokenUsage(value).keys());
+  return new Set(tokenUsage(styleValues(value)).keys());
 }
 
 /** True when `family` is something a font token may hold (re-exported so callers need one import). */

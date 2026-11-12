@@ -1403,7 +1403,7 @@ export const ProjectModel = types
       for (const token of added) {
         const now = settings.theme.tokens.find((t) => t.id === token.id);
         if (!now) continue;
-        if ((used.get(token.id) ?? 0) > 0 || !sameToken(now, token)) kept.push(token.name);
+        if ((used.get(token.id) ?? 0) > 0 || !sameToken(now, token)) kept.push(now.name);
         else gone.add(token.id);
       }
       if (gone.size > 0) {

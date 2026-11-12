@@ -561,9 +561,17 @@ function screenTells(
     return seen.has(key) ? false : (seen.add(key), true);
   });
   const nodes = fixed.tree.nodes;
+  // A fix may have removed the last use of a proposed token (an emoji-only child, say): only
+  // tokens the screened page still paints with go on to the site.
+  const stillUsed = referencedIds(nodes);
+  const keptTokens = result.theme?.tokens.filter((token) => stillUsed.has(token.id));
+  const keptTheme = result.theme && keptTokens && keptTokens.length > 0 ? { ...result.theme, tokens: keptTokens } : undefined;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { theme: proposedTheme, ...withoutTheme } = result;
   return {
     result: {
-      ...result,
+      ...withoutTheme,
+      ...(keptTheme ? { theme: keptTheme } : {}),
       ...(fixed.tree.title !== undefined ? { title: fixed.tree.title } : {}),
       ...(fixed.tree.description !== undefined ? { description: fixed.tree.description } : {}),
       nodes,
