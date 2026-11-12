@@ -1,249 +1,362 @@
-import { createServer, type Server, type Socket } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
-import { createSocketGate, type SocketGate } from '../src/socketGate';
+import { EventEmitter } from 'node:events';
+import type { Socket } from 'node:net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSocketGate, DID_NOT_LAST_MS, type SocketGate } from '../src/socketGate';
 
-// The rules of socketGate.ts, each by itself, against plain listeners on 127.0.0.1. No database
-// driver is involved, so nothing here depends on its timing.
+// The rules of socketGate.ts about time, with a clock the test moves and sockets the test drives.
+// Nothing here waits on the machine: there is no network, no real timer and no real clock, so every
+// length is asserted exactly and every boundary is stood on, not near.
+//
+// (The same rules against real sockets and real listeners, with no tight timing, are in
+// socketGate.real.test.ts.)
 
-const servers: Server[] = [];
-const gates: SocketGate[] = [];
-afterEach(async () => {
-  for (const gate of gates.splice(0)) gate.shut();
-  for (const server of servers.splice(0)) await new Promise((resolve) => server.close(resolve));
-});
+/** A socket the test drives: it records what the gate does to it and emits what the test tells it to. */
+class FakeSocket extends EventEmitter {
+  destroyed = false;
+  connectCalls: unknown[] = [];
+  destroyedWith: { code?: string } | undefined | null = null;
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  connect(options: unknown): this {
+    this.connectCalls.push(options);
+    return this;
+  }
 
-/** A listener; `onConnection` decides what becomes of each connection. Counts what it accepted. */
-async function listener(onConnection: (socket: Socket, n: number) => void) {
-  const state = { accepted: 0, port: 0 };
-  const server = createServer((socket) => {
-    state.accepted += 1;
-    socket.on('error', () => {});
-    onConnection(socket, state.accepted);
+  destroy(error?: { code?: string }): this {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.destroyedWith = error;
+    if (error) this.emit('error', error);
+    this.emit('close');
+    return this;
+  }
+
+  /** The connection is open. */
+  opens(): void {
+    this.emit('connect');
+  }
+
+  /** The other side refuses or resets: an error, then the close. */
+  failsWith(code: string): void {
+    this.destroyed = true;
+    this.emit('error', Object.assign(new Error(code), { code }));
+    this.emit('close');
+  }
+
+  /** The other side hangs up without an error. */
+  hangsUp(): void {
+    this.destroyed = true;
+    this.emit('close');
+  }
+}
+
+let clock = 0;
+let made: FakeSocket[] = [];
+let gate: SocketGate;
+
+/** Moves the clock and the timers together. */
+function pass(ms: number): void {
+  clock += ms;
+  vi.advanceTimersByTime(ms);
+}
+
+function newGate(connectTimeoutMs = 2000, pauses = { firstMs: 200, maxMs: 2000 }): SocketGate {
+  gate = createSocketGate({ host: 'db.internal', port: 5432 }, connectTimeoutMs, pauses, {
+    now: () => clock,
+    newSocket: () => {
+      const socket = new FakeSocket();
+      made.push(socket);
+      return socket as unknown as Socket;
+    },
   });
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  state.port = (server.address() as { port: number }).port;
-  return state;
-}
-
-/** A port nothing listens on. */
-async function closedPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const port = (server.address() as { port: number }).port;
-  await new Promise((resolve) => server.close(resolve));
-  return port;
-}
-
-function gateTo(port: number, connectTimeoutMs = 500, pauses = { firstMs: 200, maxMs: 2000 }, host = '127.0.0.1'): SocketGate {
-  const gate = createSocketGate({ host, port }, connectTimeoutMs, pauses);
-  gates.push(gate);
   return gate;
 }
 
-interface Ending {
-  connected: boolean;
-  errorCode: string | null;
-  closed: boolean;
-  afterMs: number;
-  /** How much pause was left at the moment the socket reported its error. */
-  pauseLeftAtError: number | null;
+/** Asks the gate for a socket and returns the fake behind it. */
+function open(): FakeSocket {
+  gate.open();
+  return made[made.length - 1]!;
 }
 
-/** Waits for a socket's end, or gives up after `ms` (then `closed` is false). */
-function endingOf(socket: Socket, gate: SocketGate, ms = 1500): Promise<Ending> {
-  const started = performance.now();
-  const ending: Ending = { connected: false, errorCode: null, closed: false, afterMs: 0, pauseLeftAtError: null };
-  return new Promise((resolve) => {
-    const done = () => {
-      ending.afterMs = performance.now() - started;
-      resolve(ending);
-    };
-    const giveUp = setTimeout(done, ms);
-    socket.once('connect', () => (ending.connected = true));
-    // Attached after the gate's own listener, as the driver's is.
-    socket.on('error', (error: { code?: string }) => {
-      if (ending.errorCode === null) {
-        ending.errorCode = error.code ?? 'no code';
-        ending.pauseLeftAtError = gate.pauseLeftMs();
-      }
-    });
-    socket.once('close', () => {
-      ending.closed = true;
-      clearTimeout(giveUp);
-      done();
-    });
-  });
+/** A connection that is tried, opens, and is hung up on `afterMs` later. */
+function shortLived(afterMs = 10): FakeSocket {
+  const socket = open();
+  socket.opens();
+  pass(afterMs);
+  socket.hangsUp();
+  return socket;
 }
 
-describe('rule 1 and 2: a connection that did not last is followed by a pause', () => {
-  it('opens a connection to a listener that is well, and starts no pause when it closes after a second', async () => {
-    const server = await listener((socket) => socket.resume());
-    const gate = gateTo(server.port);
-    const socket = gate.open();
-    const ending = endingOf(socket, gate, 3000);
-    await sleep(1100);
-    expect(server.accepted).toBe(1);
-    expect(gate.pauseLeftMs()).toBe(0);
-    // Still open, long after the time it was given to connect: that timer ended when it connected.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  clock = 1_000_000;
+  made = [];
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('rule 1: a socket is always handed out, and opened to the one host', () => {
+  it('connects the socket to the host and port it was given, once', () => {
+    newGate();
+    const socket = open();
+    expect(socket.connectCalls).toEqual([{ host: 'db.internal', port: 5432 }]);
     expect(socket.destroyed).toBe(false);
-    socket.destroy();
-    expect((await ending).connected).toBe(true);
-    expect((await ending).errorCode).toBeNull();
+    expect(gate.pauseLeftMs()).toBe(0);
+  });
+});
+
+describe('rule 2: a connection that did not last is followed by a pause', () => {
+  it('starts the first pause, of exactly its first length, when a connection is hung up on', () => {
+    newGate();
+    shortLived(10);
+    expect(gate.pauseLeftMs()).toBe(200);
+    pass(199);
+    expect(gate.pauseLeftMs()).toBe(1);
+    pass(1);
     expect(gate.pauseLeftMs()).toBe(0);
   });
 
-  it('starts a pause when the listener hangs up, and opens nothing during it', async () => {
-    const server = await listener((socket) => socket.destroy());
-    const gate = gateTo(server.port);
-    await endingOf(gate.open(), gate);
-    expect(gate.pauseLeftMs()).toBeGreaterThan(100);
-    expect(gate.pauseLeftMs()).toBeLessThanOrEqual(200);
-    // Five sockets asked for during the pause: none reaches the listener.
-    const during = await Promise.all(Array.from({ length: 5 }, () => endingOf(gate.open(), gate)));
-    expect(server.accepted).toBe(1);
-    expect(during.every((ending) => !ending.connected)).toBe(true);
-    // After the pause a connection is opened again.
-    await sleep(250);
-    expect(gate.pauseLeftMs()).toBe(0);
-    await endingOf(gate.open(), gate);
-    expect(server.accepted).toBe(2);
+  it('starts it for a refused connection too', () => {
+    newGate();
+    open().failsWith('ECONNREFUSED');
+    expect(gate.pauseLeftMs()).toBe(200);
   });
 
-  it('doubles the pause each time and stops at the longest', async () => {
-    const port = await closedPort();
-    const gate = gateTo(port, 500, { firstMs: 40, maxMs: 160 });
+  it('starts none when the connection lasted a second, and one when it lasted a millisecond less', () => {
+    newGate();
+    shortLived(DID_NOT_LAST_MS);
+    expect(gate.pauseLeftMs()).toBe(0);
+    shortLived(DID_NOT_LAST_MS - 1);
+    expect(gate.pauseLeftMs()).toBe(200);
+  });
+
+  it('doubles the pause each time and stops at the longest', () => {
+    newGate();
     const lengths: number[] = [];
-    for (let i = 0; i < 5; i++) {
-      await endingOf(gate.open(), gate);
+    for (let i = 0; i < 7; i++) {
+      shortLived(5);
       lengths.push(gate.pauseLeftMs());
-      await sleep(gate.pauseLeftMs() + 5);
+      // To exactly the end of the pause, where the next connection may be tried.
+      pass(gate.pauseLeftMs());
     }
-    // 40, 80, 160, 160, 160 (a few milliseconds are gone by the time each is read).
-    const expected = [40, 80, 160, 160, 160];
-    lengths.forEach((length, i) => {
-      expect(length, `pause ${i + 1}`).toBeGreaterThan(expected[i]! - 15);
-      expect(length, `pause ${i + 1}`).toBeLessThanOrEqual(expected[i]!);
-    });
+    expect(lengths).toEqual([200, 400, 800, 1600, 2000, 2000, 2000]);
+  });
+
+  it('starts short again after a connection that lasted', () => {
+    newGate();
+    for (let i = 0; i < 4; i++) {
+      shortLived(5);
+      pass(gate.pauseLeftMs());
+    }
+    shortLived(DID_NOT_LAST_MS);
+    expect(gate.pauseLeftMs()).toBe(0);
+    shortLived(5);
+    expect(gate.pauseLeftMs()).toBe(200);
+  });
+
+  it('opens nothing during a pause', () => {
+    newGate();
+    shortLived();
+    for (let i = 0; i < 5; i++) {
+      const socket = open();
+      expect(socket.connectCalls).toEqual([]);
+      pass(1);
+    }
+    expect(made.filter((socket) => socket.connectCalls.length > 0)).toHaveLength(1);
+  });
+});
+
+describe('the end of a pause', () => {
+  it('a socket asked for one millisecond before the end is not opened; at the end it is', () => {
+    newGate();
+    shortLived();
+    pass(199);
+    expect(open().connectCalls).toEqual([]);
+    pass(1);
+    expect(gate.pauseLeftMs()).toBe(0);
+    expect(open().connectCalls).toHaveLength(1);
+  });
+
+  // The case an earlier test of real time stumbled into once in many runs: it asked whether a pause
+  // was running, and by the time it asked for a socket the pause was over.
+  it('a socket asked for at the end is a real attempt: if it does not last either, the pause that follows is the doubled one', () => {
+    newGate();
+    shortLived();
+    pass(200);
+    const second = open();
+    expect(second.connectCalls).toHaveLength(1);
+    second.opens();
+    pass(3);
+    second.hangsUp();
+    expect(gate.pauseLeftMs()).toBe(400);
   });
 });
 
 describe('rule 3: a socket that was not opened', () => {
-  it('is closed a moment later, with an error that says why, and is never connected', async () => {
-    const server = await listener((socket) => socket.destroy());
-    const gate = gateTo(server.port);
-    await endingOf(gate.open(), gate);
-    const unopened = await endingOf(gate.open(), gate, 1000);
-    expect(unopened.closed).toBe(true);
-    expect(unopened.afterMs).toBeLessThan(100);
-    expect(unopened.errorCode).toBe('CONNECTION_PAUSED');
-    expect(unopened.connected).toBe(false);
-    expect(server.accepted).toBe(1);
-    // It did not end the pause either: the next one asked for is not opened as well.
-    expect(gate.pauseLeftMs()).toBeGreaterThan(50);
-    expect((await endingOf(gate.open(), gate, 1000)).errorCode).toBe('CONNECTION_PAUSED');
-    expect(server.accepted).toBe(1);
-  });
-
-  it('is still open when the function returns, so whoever takes it can attach listeners first', async () => {
-    const server = await listener((socket) => socket.destroy());
-    const gate = gateTo(server.port);
-    await endingOf(gate.open(), gate);
-    const socket = gate.open();
+  it('is handed out open, and closed a moment later with an error that says why', () => {
+    newGate();
+    shortLived();
+    const socket = open();
+    // Still open when the gate returns it, so whoever takes it can attach its listeners first.
     expect(socket.destroyed).toBe(false);
-    expect((await endingOf(socket, gate)).closed).toBe(true);
+    const heard: string[] = [];
+    socket.on('error', (error: { code?: string }) => heard.push(`error ${error.code}`));
+    socket.on('close', () => heard.push('close'));
+    pass(0);
+    expect(socket.destroyed).toBe(true);
+    expect(heard).toEqual(['error CONNECTION_PAUSED', 'close']);
+    expect(socket.connectCalls).toEqual([]);
   });
 
-  it('neither starts nor lengthens the pause, however many are asked for', async () => {
-    const server = await listener((socket) => socket.destroy());
-    const gate = gateTo(server.port);
-    await endingOf(gate.open(), gate);
-    const started = performance.now();
-    const left = gate.pauseLeftMs();
-    // Sockets asked for all through the pause.
-    while (gate.pauseLeftMs() > 0 && performance.now() - started < 1000) {
-      await endingOf(gate.open(), gate);
+  it('neither starts, lengthens nor ends the pause, however many are asked for', () => {
+    newGate();
+    shortLived();
+    expect(gate.pauseLeftMs()).toBe(200);
+    for (let i = 0; i < 50; i++) {
+      open();
+      // Their closing, a timer tick later, changes nothing either.
+      pass(0);
+      expect(gate.pauseLeftMs()).toBe(200);
     }
-    // The pause ended when it was due: within its 200 ms, not pushed out by the sockets asked for.
-    expect(performance.now() - started).toBeLessThan(left + 60);
+    pass(150);
+    for (let i = 0; i < 50; i++) {
+      open();
+      pass(0);
+      expect(gate.pauseLeftMs()).toBe(50);
+    }
+    // The pause ends when it was due, and the pause after the next failure is the second, not a later one.
+    pass(50);
     expect(gate.pauseLeftMs()).toBe(0);
-    await endingOf(gate.open(), gate);
-    expect(server.accepted).toBe(2);
+    shortLived();
+    expect(gate.pauseLeftMs()).toBe(400);
+  });
+
+  it('its own error, when it is closed, does not count as a failed connection', () => {
+    newGate();
+    shortLived();
+    pass(120);
+    open();
+    pass(0);
+    expect(gate.pauseLeftMs()).toBe(80);
   });
 });
 
 describe('rule 4: the pause is in place when the socket reports its error', () => {
-  it('for a refused connection', async () => {
-    const gate = gateTo(await closedPort());
-    const ending = await endingOf(gate.open(), gate);
-    expect(ending.errorCode).toBe('ECONNREFUSED');
-    expect(ending.pauseLeftAtError).toBeGreaterThan(100);
+  it('a listener attached after the gate\'s own sees the whole pause at the error, and the close after it changes nothing', () => {
+    newGate();
+    const socket = open();
+    let leftAtError = -1;
+    let leftAtClose = -1;
+    socket.on('error', () => (leftAtError = gate.pauseLeftMs()));
+    socket.on('close', () => (leftAtClose = gate.pauseLeftMs()));
+    // The error, 30 ms of something else, then the close.
+    socket.destroyed = true;
+    socket.emit('error', Object.assign(new Error('refused'), { code: 'ECONNREFUSED' }));
+    pass(30);
+    socket.emit('close');
+    expect(leftAtError).toBe(200);
+    // Counted once: the close did not start the pause again.
+    expect(leftAtClose).toBe(170);
   });
 });
 
 describe('rule 5: a connection that does not open in time', () => {
-  it('is closed with a timeout error after the time it was given, and starts a pause', async () => {
-    // 192.0.2.1 is a documentation address: nothing answers, so the connection never opens.
-    const gate = gateTo(5432, 150, { firstMs: 200, maxMs: 2000 }, '192.0.2.1');
-    const ending = await endingOf(gate.open(), gate, 3000);
-    expect(ending.closed).toBe(true);
-    expect(ending.errorCode).toBe('CONNECT_TIMEOUT');
-    expect(ending.afterMs).toBeGreaterThanOrEqual(140);
-    expect(ending.afterMs).toBeLessThan(600);
-    expect(gate.pauseLeftMs()).toBeGreaterThan(0);
+  it('is closed with a timeout error exactly when its time is up, and starts a pause', () => {
+    newGate(2000);
+    const socket = open();
+    pass(1999);
+    expect(socket.destroyed).toBe(false);
+    pass(1);
+    expect(socket.destroyed).toBe(true);
+    expect(socket.destroyedWith).toMatchObject({ code: 'CONNECT_TIMEOUT' });
+    // It took two seconds, which is not "did not last" (under one second): no pause follows. The next
+    // test gives it less than a second.
+    expect(gate.pauseLeftMs()).toBe(0);
+  });
+
+  it('with less than a second to connect, the timeout is followed by a pause', () => {
+    newGate(300);
+    const socket = open();
+    pass(300);
+    expect(socket.destroyedWith).toMatchObject({ code: 'CONNECT_TIMEOUT' });
+    expect(gate.pauseLeftMs()).toBe(200);
+  });
+
+  it('is left alone once it has opened: the timer ended with the connect', () => {
+    newGate(2000);
+    const socket = open();
+    pass(1500);
+    socket.opens();
+    pass(60_000);
+    expect(socket.destroyed).toBe(false);
   });
 });
 
 describe('an error always has a listener', () => {
-  it('a socket whose error nobody else listens to ends no process', async () => {
-    // Port 0 cannot be connected to. Nothing but the gate listens to this socket's error.
-    const gate = gateTo(0);
-    const socket = gate.open();
-    await new Promise((resolve) => socket.once('close', resolve));
-    expect(socket.destroyed).toBe(true);
+  it('a socket whose error nobody else listens to raises nothing', () => {
+    newGate();
+    const socket = open();
+    // An emitter throws when an 'error' has no listener.
+    expect(() => socket.failsWith('EADDRNOTAVAIL')).not.toThrow();
   });
 
-  it('still has one after every other listener was removed, as the driver does at a close', async () => {
-    const server = await listener((socket) => socket.resume());
-    const gate = gateTo(server.port);
-    const socket = gate.open();
-    await new Promise((resolve) => socket.once('connect', resolve));
-    expect(socket.listenerCount('error')).toBe(1);
+  it('also for a socket that was not opened, when it is closed with its error', () => {
+    newGate();
+    shortLived();
+    open();
+    expect(() => pass(0)).not.toThrow();
   });
 });
 
 describe('rule 6: shutting the gate', () => {
-  it('closes every open socket for real and opens no more, with an error that says so', async () => {
-    const server = await listener((socket) => socket.resume());
-    const gate = gateTo(server.port);
-    const open = [gate.open(), gate.open()];
-    await Promise.all(open.map((socket) => new Promise((resolve) => socket.once('connect', resolve))));
-    await sleep(30);
-    expect(server.accepted).toBe(2);
+  it('closes every socket it handed out, connected or still connecting, without an error', () => {
+    newGate();
+    const connected = open();
+    connected.opens();
+    const connecting = open();
     gate.shut();
-    await sleep(50);
-    expect(open.every((socket) => socket.destroyed)).toBe(true);
-    // Asked again after it was shut: a socket that is never connected.
-    const after = await endingOf(gate.open(), gate, 1000);
-    expect(after.closed).toBe(true);
-    expect(after.errorCode).toBe('CONNECTION_DESTROYED');
-    expect(after.connected).toBe(false);
-    await sleep(100);
-    expect(server.accepted).toBe(2);
-    // And shutting starts no pause.
+    expect(connected.destroyed).toBe(true);
+    expect(connecting.destroyed).toBe(true);
+    expect(connected.destroyedWith).toBeUndefined();
+    expect(connecting.destroyedWith).toBeUndefined();
+  });
+
+  it('opens no more: a socket asked for afterwards is closed a moment later with an error that says so', () => {
+    newGate();
+    gate.shut();
+    const socket = open();
+    expect(socket.destroyed).toBe(false);
+    pass(0);
+    expect(socket.destroyedWith).toMatchObject({ code: 'CONNECTION_DESTROYED' });
+    expect(socket.connectCalls).toEqual([]);
+    // Not after any wait either.
+    pass(60_000);
+    expect(made.every((made) => made.connectCalls.length === 0)).toBe(true);
+  });
+
+  it('starts no pause, by its own closing or by a socket that ends afterwards', () => {
+    newGate();
+    const socket = open();
+    socket.opens();
+    pass(5);
+    gate.shut();
+    expect(gate.pauseLeftMs()).toBe(0);
+    const late = open();
+    pass(0);
+    expect(late.destroyed).toBe(true);
     expect(gate.pauseLeftMs()).toBe(0);
   });
 
-  it('closes a socket that was still connecting', async () => {
-    const gate = gateTo(5432, 5000, { firstMs: 200, maxMs: 2000 }, '192.0.2.1');
-    const socket = gate.open();
-    const ending = endingOf(socket, gate, 2000);
-    await sleep(50);
+  it('no longer holds on to a socket that has closed', () => {
+    newGate();
+    const socket = open();
+    socket.opens();
+    pass(DID_NOT_LAST_MS);
+    socket.hangsUp();
+    // Shutting now has nothing to close: the closed socket is not destroyed a second time.
+    socket.destroyed = false;
     gate.shut();
-    expect((await ending).closed).toBe(true);
-    expect((await ending).afterMs).toBeLessThan(500);
-    expect(gate.pauseLeftMs()).toBe(0);
+    expect(socket.destroyed).toBe(false);
   });
 });

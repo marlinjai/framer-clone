@@ -337,6 +337,17 @@ describe('rate limits', () => {
     expect((await get(`/box/${SITE_A}/${HASH}`)).status).toBe(200);
   });
 
+  it('gives the allowance back one request a second: none after 999 ms, exactly one after 1000 ms', async () => {
+    for (const [waitMs, expected] of [[999, [429, 429]], [1000, [200, 429]]] as const) {
+      const { store, clock, get } = setup();
+      store.put(SITE_A, HASH);
+      for (let i = 0; i < 60; i++) expect((await get(`/box/${SITE_A}/${HASH}`)).status).toBe(200);
+      expect((await get(`/box/${SITE_A}/${HASH}`)).status).toBe(429);
+      clock.now += waitMs;
+      expect([(await get(`/box/${SITE_A}/${HASH}`)).status, (await get(`/box/${SITE_A}/${HASH}`)).status]).toEqual(expected);
+    }
+  });
+
   it('answers 429 past 600 requests a minute for one address, whatever it asks for', async () => {
     const { store, get } = setup();
     for (let i = 0; i < 600; i++) await get(`/box/${SITE_A}/${String(i % 10).repeat(64)}`);

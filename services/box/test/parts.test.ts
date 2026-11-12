@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LookupCache } from '../src/cache';
 import { clientAddressOf, parseAddress, parseCidr, type Cidr } from '../src/clientAddress';
 import { ConfigError, isKillSwitchOn, readConfig } from '../src/config';
@@ -389,7 +389,7 @@ describe('store failures', () => {
       }
     });
 
-    it('after a connection that did not last, new calls fail at once and open nothing until the pause is over', async () => {
+    it('after a connection that did not last, new calls fail at once and open nothing while the pause runs', async () => {
       let accepted = 0;
       const server = createServer((socket) => {
         accepted += 1;
@@ -398,53 +398,29 @@ describe('store failures', () => {
       });
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
       const port = (server.address() as { port: number }).port;
-      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500);
+      // A pause of a minute, so that it cannot run out during the test whatever the machine is doing.
+      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500, { firstMs: 60_000, maxMs: 60_000 });
       const outcome = () => Promise.resolve().then(() => pool.ping()).then(() => 'answered', (error: { code?: string }) => error.code);
       try {
         expect(await outcome()).not.toBe('answered');
-        // Straight after a connection that did not last (a moment for its close to be noticed, well
-        // inside the first pause of 100 milliseconds): five calls at once.
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        // A moment for the close of that connection to be noticed, then five calls at once.
+        await new Promise((resolve) => setTimeout(resolve, 50));
         const before = accepted;
         const started = Date.now();
         const results = await Promise.all([outcome(), outcome(), outcome(), outcome(), outcome()]);
-        expect(Date.now() - started).toBeLessThan(60);
+        // Refused by the box itself, without waiting for anything: far from the minute of the pause
+        // and from the seconds a call would otherwise wait.
         expect(results).toEqual(Array.from({ length: 5 }, () => 'CONNECTION_PAUSED'));
+        expect(Date.now() - started).toBeLessThan(2000);
         expect(accepted).toBe(before);
-        // And once the pause is over, a call opens a connection again.
-        await new Promise((resolve) => setTimeout(resolve, 2200));
-        await outcome();
-        expect(accepted).toBeGreaterThan(before);
       } finally {
         pool.destroy();
         await new Promise((resolve) => server.close(resolve));
       }
     }, 15_000);
 
-    it('the pause doubles from its first length and stops growing at its longest', async () => {
-      let accepted = 0;
-      const server = createServer((socket) => {
-        accepted += 1;
-        socket.on('error', () => {});
-        socket.destroy();
-      });
-      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-      const port = (server.address() as { port: number }).port;
-      // Pauses of 40, 80, 160, 160, ... milliseconds, with a call every 5 milliseconds for 1.5 seconds.
-      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500, { firstMs: 40, maxMs: 160 });
-      const calls = setInterval(() => void Promise.resolve().then(() => pool.ping()).catch(() => {}), 5);
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-      } finally {
-        clearInterval(calls);
-        pool.destroy();
-        await new Promise((resolve) => server.close(resolve));
-      }
-      // About ten connections. A pause stuck at its first length would give more than thirty, one
-      // that never stopped doubling five or six.
-      expect(accepted).toBeGreaterThanOrEqual(8);
-      expect(accepted).toBeLessThanOrEqual(16);
-    });
+    // How long a pause is, how it doubles and where it stops is held exactly, with a clock the test
+    // moves, in test/socketGate.test.ts. Here only what the store does with it.
 
     it('an address nothing can be connected to fails as a connection failure and ends no process', async () => {
       // Port 0 cannot be connected to: the socket's own error must have a listener.
@@ -532,24 +508,26 @@ describe('store failures', () => {
         }
       });
 
-      it('after one hang-up the call fails quickly, and the next connection is opened when the first pause is over, not later', async () => {
+      it('after one hang-up the call is told so, and the next connection is opened when the first pause is over, not later', { timeout: 20_000 }, async () => {
         // The first connection is hung up on; every later one is answered.
         const database = await fakeDatabase((n) => (n === 1 ? 'hang up' : 'answer'));
-        const pool = openPostgresPool(database.target, 500, { firstMs: 300, maxMs: 2000 });
+        // A first pause of three seconds: a pause started a second time would last six.
+        const pool = openPostgresPool(database.target, 500, { firstMs: 3000, maxMs: 60_000 });
         try {
           const started = Date.now();
-          // The call that met the hang-up is told so, quickly: the driver tries it again on a socket
-          // the box does not open (the pause has begun), and that socket is closed with an error.
-          const first = await outcomeOf(pool, 1000);
+          // The call that met the hang-up is told so, and not left waiting: the driver tries it again
+          // on a socket the box does not open (the pause has begun), and that socket is closed with
+          // an error. Left alone it would wait for ever; this gives up asking after two seconds.
+          const first = await outcomeOf(pool, 2000);
           expect(first).not.toBe('answered');
           expect(first).not.toBe('still waiting');
-          expect(Date.now() - started).toBeLessThan(250);
           // Inside the pause nothing is opened.
           expect(await outcomeOf(pool)).toBe('CONNECTION_PAUSED');
           expect(database.state.accepted).toBe(1);
-          // 400 ms after the hang-up: past the first pause of 300 ms, well before the 600 ms a pause
-          // started a second time would last. The database is asked again, and answers.
-          await new Promise((resolve) => setTimeout(resolve, 400 - (Date.now() - started)));
+          // Four seconds after the start: a second past the first pause, two before the end of a pause
+          // that had been started twice. The database is asked again, and answers.
+          await new Promise((resolve) => setTimeout(resolve, Math.max(0, 4000 - (Date.now() - started))));
+          expect(Date.now() - started).toBeLessThan(5500);
           expect(await outcomeOf(pool)).toBe('answered');
           expect(database.state.accepted).toBe(2);
           // And it stays well: many calls, all answered, no further connection.
@@ -562,19 +540,24 @@ describe('store failures', () => {
         }
       });
 
-      it('recovers from a database that hangs up several times and then answers', async () => {
+      it('recovers from a database that hangs up several times and then answers', { timeout: 30_000 }, async () => {
         const database = await fakeDatabase((n) => (n <= 3 ? 'hang up' : 'answer'));
         const pool = openPostgresPool(database.target, 500, { firstMs: 30, maxMs: 120 });
         try {
+          // Calls until forty in a row were answered, however long the machine takes over each (with
+          // a limit far beyond what the three pauses of 30, 60 and 120 ms add up to).
           const results: string[] = [];
+          let inARow = 0;
           const started = Date.now();
-          while (Date.now() - started < 1500) {
-            results.push(await outcomeOf(pool));
+          while (inARow < 40 && Date.now() - started < 20_000) {
+            const result = await outcomeOf(pool);
+            results.push(result);
+            inARow = result === 'answered' ? inARow + 1 : 0;
             await new Promise((resolve) => setTimeout(resolve, 10));
           }
           // It came back by itself, stayed back, and nothing was left waiting.
+          expect(inARow).toBe(40);
           expect(results).not.toContain('still waiting');
-          expect(results.slice(-30).every((result) => result === 'answered')).toBe(true);
           expect(database.state.accepted).toBe(4);
         } finally {
           pool.destroy();
@@ -611,7 +594,8 @@ describe('store failures', () => {
       }
       expect(codes).not.toContain('still waiting');
       expect(codes).not.toContain('answered');
-      expect(longest).toBeLessThan(300);
+      // With the driver's own wait left on, the fifth attempt alone would wait 1.2 seconds and more.
+      expect(longest).toBeLessThan(1000);
     }, 15_000);
 
     // That a pool which was thrown away opens no socket at all is held by the two 'goes silent' tests
@@ -675,6 +659,79 @@ describe('store failures', () => {
       };
       return { made, open };
     }
+
+    // The call timeout itself, with timers the test moves: no real waiting, and a call that is not
+    // given up on shows as a failed expectation at once, never as a test that runs out of time.
+    describe('the time a call is given', () => {
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      /** Starts a call and reports, at any moment, whether and how it has ended. */
+      const watch = (call: Promise<unknown>) => {
+        const state: { ended: string | null } = { ended: null };
+        call.then(
+          () => (state.ended = 'answered'),
+          (error: { code?: string }) => (state.ended = error.code ?? 'failed'),
+        );
+        return state;
+      };
+
+      it('a call to a database that never answers is given up on exactly when its three seconds are up', async () => {
+        const { open } = fakePools(() => never());
+        const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 3000, open });
+        const find = watch(store.find(SITE, 'a'));
+        await vi.advanceTimersByTimeAsync(2999);
+        expect(find.ended).toBeNull();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(find.ended).toBe('BOX_TIMEOUT');
+      });
+
+      it('the health check is given up on in the same way', async () => {
+        const made: BoxPool[] = [];
+        const open = (): BoxPool => {
+          const pool: BoxPool = { find: () => never(), ping: () => never(), end: async () => {}, destroy: () => {} };
+          made.push(pool);
+          return pool;
+        };
+        const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 3000, open });
+        const ping = watch(store.ping());
+        await vi.advanceTimersByTimeAsync(2999);
+        expect(ping.ended).toBeNull();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(ping.ended).toBe('BOX_TIMEOUT');
+      });
+
+      it('every one of many calls to a silent database is given up on, none is left waiting', async () => {
+        const { open } = fakePools(() => never());
+        const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 3000, open });
+        const calls = Array.from({ length: 30 }, (_, i) => watch(store.find(SITE, `h${i}`)));
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(calls.map((call) => call.ended)).toEqual(Array.from({ length: 30 }, () => 'BOX_TIMEOUT'));
+      });
+
+      it('an answer one millisecond before the time is up is the answer, and leaves no timer behind', async () => {
+        const { open } = fakePools(() => later(2999, null));
+        const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 3000, open });
+        const find = watch(store.find(SITE, 'a'));
+        await vi.advanceTimersByTimeAsync(2999);
+        expect(find.ended).toBe('answered');
+        expect(vi.getTimerCount()).toBe(0);
+      });
+
+      it('an answer that comes after the time is up does not undo the giving up', async () => {
+        const { open } = fakePools(() => later(3001, null));
+        const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 3000, open });
+        const find = watch(store.find(SITE, 'a'));
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(find.ended).toBe('BOX_TIMEOUT');
+        await vi.advanceTimersByTimeAsync(10);
+        expect(find.ended).toBe('BOX_TIMEOUT');
+      });
+    });
 
     it('keeps a pool that is busy but answering: one slow call does not fail the others', async () => {
       // 'slow' never comes back; 'quick' answers after 100 ms, while the slow one is waiting.

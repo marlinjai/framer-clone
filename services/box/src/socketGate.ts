@@ -39,12 +39,33 @@ export interface SocketGate {
   shut(): void;
 }
 
+/**
+ * What the gate takes from outside: the time, and a new unconnected socket. The defaults are the real
+ * ones. Tests give their own, so that every rule about time is checked with a clock the test moves
+ * and a socket the test drives, and nothing waits on the machine.
+ */
+export interface SocketGateDeps {
+  now: () => number;
+  newSocket: () => Socket;
+}
+
+const REAL_DEPS: SocketGateDeps = { now: () => performance.now(), newSocket: () => new Socket() };
+
+/** A connection that ends sooner than this after it was tried "did not last". */
+export const DID_NOT_LAST_MS = 1000;
+
 /** An error as the store classifies it: by its code. */
 function failure(message: string, code: string): Error {
   return Object.assign(new Error(message), { code });
 }
 
-export function createSocketGate(target: { host: string; port: number }, connectTimeoutMs: number, pauses: OpenPauses = DEFAULT_PAUSES): SocketGate {
+export function createSocketGate(
+  target: { host: string; port: number },
+  connectTimeoutMs: number,
+  pauses: OpenPauses = DEFAULT_PAUSES,
+  deps: SocketGateDeps = REAL_DEPS,
+): SocketGate {
+  const { now, newSocket } = deps;
   const sockets = new Set<Socket>();
   let isShut = false;
   let pauseMs = 0;
@@ -52,7 +73,7 @@ export function createSocketGate(target: { host: string; port: number }, connect
 
   return {
     open() {
-      const socket = new Socket();
+      const socket = newSocket();
       sockets.add(socket);
       // When this socket began to connect, or null when it never did.
       let openedAt: number | null = null;
@@ -65,9 +86,9 @@ export function createSocketGate(target: { host: string; port: number }, connect
         clearTimeout(timer);
         // Rule 3: a socket that was never opened says nothing about the database.
         if (isShut || openedAt === null) return;
-        const now = performance.now();
-        pauseMs = now - openedAt < 1000 ? Math.min(pauses.maxMs, Math.max(pauses.firstMs, pauseMs * 2)) : 0;
-        nextOpenAt = now + pauseMs;
+        const at = now();
+        pauseMs = at - openedAt < DID_NOT_LAST_MS ? Math.min(pauses.maxMs, Math.max(pauses.firstMs, pauseMs * 2)) : 0;
+        nextOpenAt = at + pauseMs;
       };
       // An error always has a listener, whatever else listens or stops listening: an 'error' nobody
       // hears would end the process.
@@ -78,7 +99,7 @@ export function createSocketGate(target: { host: string; port: number }, connect
         ended();
       });
 
-      if (isShut || performance.now() < nextOpenAt) {
+      if (isShut || now() < nextOpenAt) {
         // Rule 3. Closed a moment later, not now, so that whoever takes the socket can attach its
         // listeners first and hears the end; and with an error, because a close without one reads as
         // "try again at once".
@@ -87,7 +108,7 @@ export function createSocketGate(target: { host: string; port: number }, connect
         return socket;
       }
 
-      openedAt = performance.now();
+      openedAt = now();
       // Rule 5.
       timer = setTimeout(() => socket.destroy(failure('the connection did not open in time', 'CONNECT_TIMEOUT')), connectTimeoutMs);
       // What is written before the connection is open waits for it.
@@ -96,7 +117,7 @@ export function createSocketGate(target: { host: string; port: number }, connect
     },
 
     pauseLeftMs() {
-      return Math.max(0, nextOpenAt - performance.now());
+      return Math.max(0, nextOpenAt - now());
     },
 
     shut() {
