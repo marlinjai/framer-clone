@@ -84,7 +84,9 @@
  *       entries (FX_PUBLIC_ENTRIES: `@/lib/fx` and the render-free
  *       `@/lib/fx/format`), never through another file inside it.
  * Both rules read every static import, re-export, dynamic import() and
- * require() with a literal specifier; see scanFxBoundary.
+ * require() with a literal specifier; see scanFxBoundary. They also run over
+ * `test` (FX_ONLY_ROOTS), where a file may import the engine's test scenes
+ * (FX_FIXTURES_DIR) and nothing else from inside it.
  *
  * A deliberate hazard FIXTURE (a test proving that an unqualified fragment
  * leaks) may opt out of one line with a `tenant-db-guard-disable-next-line`
@@ -144,6 +146,20 @@ export const FX_DIR = 'src/lib/fx';
  *    server, a panel or a validator.
  */
 export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`];
+
+/**
+ * Roots scanned for the FX rules ONLY, beside DEFAULT_ROOTS: the browser suites and
+ * the score under `test` draw FX scenes too, and must reach the engine as the app
+ * does. The tenant rules do not apply there (integration tests hold raw SQL on purpose).
+ */
+export const FX_ONLY_ROOTS = ['test'];
+
+/**
+ * The engine's test scenes (the lumitra.co hub hero and lumitra-web's own scenes,
+ * copied unchanged). Test data, not engine code: a file under `test` may import
+ * them directly, since the engine's public entries export no fixtures.
+ */
+export const FX_FIXTURES_DIR = `${FX_DIR}/__tests__/fixtures`;
 
 /** The entry that loads the renderer (three.js): see FX_PUBLIC_ENTRIES. */
 export const FX_RENDER_ENTRY = `${FX_DIR}/index`;
@@ -564,6 +580,7 @@ export function scanFxBoundary(file) {
         violations.push({ rule: 'FX1', line, message: `the FX engine (${FX_DIR}) imports nothing from the rest of the repository, found "${specifier}"` });
       }
     } else if (target !== null && isInsideFx(target) && !isFxPublicEntry(target)) {
+      if (rel.startsWith('test/') && target.startsWith(`${FX_FIXTURES_DIR}/`)) continue;
       violations.push({ rule: 'FX2', line, message: `import the FX engine through "@/lib/fx" or "@/lib/fx/format" only, not "${specifier}"` });
     }
   }
@@ -637,6 +654,11 @@ if (isMain) {
   const knownTables = readKnownTenantTables();
   const files = collectFiles(targets);
   const violations = scanFiles(files, { knownTables });
+  // With no arguments, also the FX rules over the test roots.
+  const fxOnlyFiles = args.length > 0 ? [] : collectFiles(FX_ONLY_ROOTS);
+  for (const file of fxOnlyFiles) {
+    for (const v of scanFxBoundary({ path: file, code: stripComments(readFileSync(file, 'utf8')) })) violations.push({ ...v, path: file });
+  }
   if (violations.length > 0) {
     for (const v of violations) {
       process.stderr.write(`[${v.rule}] ${toPosix(relative(REPO_ROOT, v.path))}:${v.line} ${v.message}\n`);
@@ -645,6 +667,6 @@ if (isMain) {
     process.exit(1);
   }
   process.stdout.write(
-    `guards: clean (${files.length} files, ${knownTables.length} tenant tables, rules G1 to G5, FX1 and FX2)\n`,
+    `guards: clean (${files.length} files, ${knownTables.length} tenant tables, rules G1 to G5, FX1 and FX2; ${fxOnlyFiles.length} test files, FX1 and FX2)\n`,
   );
 }

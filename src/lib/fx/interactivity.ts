@@ -218,6 +218,21 @@ export function useInteractivity(): InteractivityTarget {
 }
 
 /**
+ * The pointer's place in the window, x and y from -1 to 1 with y up, as a
+ * stable object a layer reads on each frame. The window's listeners run while
+ * a layer that calls this is mounted.
+ *
+ * Layers used to read react-three-fiber's `state.pointer` for this, which is
+ * fed by pointer events on the canvas. The canvas takes no pointer events (a
+ * scene is a background and must not swallow clicks), so that value never
+ * moves; the window's does.
+ */
+export function useWindowPointer(): Readonly<{ x: number; y: number }> {
+  useEffect(() => bus.acquire(), []);
+  return bus.read().pointer;
+}
+
+/**
  * Convenience: pull the layer's `interactivity` spec or the default, memoized
  * so a per-frame call doesn't allocate.
  */

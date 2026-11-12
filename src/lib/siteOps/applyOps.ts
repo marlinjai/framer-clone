@@ -51,7 +51,7 @@ import { keyedBreakpoints, type KeyedBreakpoint } from './breakpoints';
 import { foreignContentOf, renderGateProblem, type GateNode } from './gate';
 import { countLinksToPage } from './pageLinks';
 import { MAX_BATCH_OPS, OperationSchema, type Operation, type RejectedOperation } from './types';
-import { FX_ATTR, FX_PROP } from '@/lib/fxScene/marker';
+import { FX_ATTR, isFxSceneProp } from '@/lib/fxScene/marker';
 
 /** The prefix of a reference to something an earlier operation created. */
 export const REF_PREFIX = 'ref:';
@@ -62,9 +62,9 @@ const SHAPE_KEEPING_WARNING = 'node had text and children, text moved into a lea
 /** Props setProps leaves to their own operations (or to nobody). */
 const PROPS_NOT_SET_HERE: ReadonlySet<string> = new Set([
   'style', 'children', 'rules', 'behaviour', 'effects', 'query', 'bindings', 'instance', 'component',
-  // An FX scene (src/lib/fxScene) is stored only after its own check;
-  // its marker makes a box an FX scene, so neither is set as a loose prop.
-  FX_PROP, FX_ATTR,
+  // The marker of an FX scene box (src/lib/fxScene) makes a box an FX scene; the scene
+  // itself is refused per node below, where an SVG gradient's `fx` is told apart.
+  FX_ATTR,
   // A shop part's role is the platform's (src/lib/commerce/parts.ts): set by the
   // control, never added, changed or removed by hand.
   SHOP_PART_ATTR,
@@ -618,7 +618,8 @@ export async function applyOperations(
         const setting: Record<string, unknown> = {};
         const removing: string[] = [];
         for (const [key, value] of Object.entries(op.props)) {
-          if (PROPS_NOT_SET_HERE.has(key)) throw new OpRefused(`${key} is not set through setProps`);
+          // An FX scene is stored only after its own check, never as a loose prop.
+          if (PROPS_NOT_SET_HERE.has(key) || isFxSceneProp(key, node.type)) throw new OpRefused(`${key} is not set through setProps`);
           if (value === null) removing.push(key);
           else setting[key] = value;
         }

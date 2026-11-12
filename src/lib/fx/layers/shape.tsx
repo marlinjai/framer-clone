@@ -156,6 +156,11 @@ const SHAPE_FRAG = /* glsl */ `
     float edge = max(uSoftness, 0.001);
     float cov = 1.0 - smoothstep(0.0, edge, d);
     gl_FragColor = vec4(uColor, cov * uOpacity);
+    // To the output colour space. Without this a scene with no post pass was
+    // drawn too dark: the composer converts at its end, a layer drawn straight
+    // to the screen converted nothing. Into the composer's buffer this is the
+    // identity, so a scene with a post pass is drawn exactly as before.
+    #include <colorspace_fragment>
   }
 `;
 

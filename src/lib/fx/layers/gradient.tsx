@@ -100,6 +100,11 @@ const GRADIENT_FRAG = /* glsl */ `
     vec2 pd = vec2(cos(t * 0.29 + 0.9) * 0.45, sin(t * 0.33 + 3.3) * 0.45) * uScale + uMouse * 0.05;
     vec3 col = mixFour(p, uColorA, pa, uColorB, pb, uColorC, pc, uColorD, pd, uFalloff);
     gl_FragColor = vec4(col, uOpacity);
+    // To the output colour space. Without this a scene with no post pass was
+    // drawn too dark: the composer converts at its end, a layer drawn straight
+    // to the screen converted nothing. Into the composer's buffer this is the
+    // identity, so a scene with a post pass is drawn exactly as before.
+    #include <colorspace_fragment>
   }
 `;
 

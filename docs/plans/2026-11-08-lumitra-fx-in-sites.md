@@ -554,3 +554,72 @@ marks; the bundle budget; flash safety.
 For F4: `fx.spec.ts` reads its scenes from files inside the engine, and the guard does not scan `test/` yet. The F4
 harness lives there too, so F4 extends the guard's roots and gives tests a public way to the fixtures.
 
+Landed as pull request #369 on 2026-11-11. The unattended fixer of the merge driver added two things on CodeRabbit's
+findings before it merged: an image layer asks for a frame when its picture arrives (under reduced motion the canvas
+draws on demand), and the island runs again when the reduced motion preference changes on an open page. Both got
+their browser tests in F4.
+
+### F4 `fx-visual-oracle` (2026-11-11)
+
+**Result: this app draws the lumitra.co hub hero, `godrays-hero` and `noise-gradient` pixel for pixel as the engine
+does in lumitra-web.** In Chromium and in WebKit, 0 of 518,400 pixels differ at all (the plan allowed 0.5 percent
+differing by more than 2 in a channel).
+
+What it builds:
+
+- **The reference:** `test/fx-oracle/lumitra-web-fx-8a77254.tar.gz`, the engine's source at the lumitra-web commit it
+  was copied from (`git archive` of `packages/fx/src`, 50 KB, checksum checked before use). An archive and not a
+  folder, so the frozen copy is never typechecked, linted or mistaken for this app's code. The test unpacks it,
+  bundles it with esbuild and mounts it on a blank page.
+- **`test/behaviour/fxOracle.spec.ts`** (18 tests, a real production build, both browsers): each scene drawn by the
+  published page's island and by the reference, compared pixel by pixel. It can fail: each side reproduces itself
+  exactly from a fresh page, one changed colour on either side is far over the tolerance, and the grain is really in
+  the picture (it changes 46.5 percent of the pixels on both sides).
+- **Score rows:** a new row kind "FX scene promises" with one row per reference scene
+  (`test/score/fx.score.ts`, `test/score/data/fx-scenes.json`). Format and renderer pass and are held by the floor;
+  canvas, panel and AI fail under the new gap `fx-scene` until F5 and F6.
+- **The guard covers `test/`** for the two FX rules (not the tenant SQL rules): tests reach the engine through its
+  public entries, with one exception, the engine's own test scenes.
+
+Decided in F4, say so if you disagree:
+
+- **Vendored, so it runs in CI.** framer-clone's CI cannot read the private lumitra-web repository, and a comparison
+  that only runs on one machine protects nothing. The archive can be deleted with the test once lumitra.co runs on
+  Sites and lumitra-web is retired.
+- **leva and drei are replaced by stand-ins when the reference is bundled.** This app does not carry them; leva's
+  panel is hidden without `?tune=1`, and drei's monitor would drop passes at moments no test controls. Neither draws a
+  pixel. The reference runs on this app's React; lumitra.co itself, on its own Next and React, is F8's comparison.
+- **The frame compared is the reduced motion frame with the page's clock stopped at zero.** Every layer pins its time
+  there, and the one pass that reads a clock, the grain, is seeded with the time the composer has counted: with no
+  time passing the seed is the same on both sides, so the grain is the same pattern, and still grain. This is the
+  plan's "inject a fixed seed". It also makes the result independent of how many frames each side draws (the reference
+  every frame, this app on demand). Animated frames are not compared; F8 records them side by side.
+
+Found and fixed in the engine:
+
+- **A scene without a post pass was drawn too dark.** The composer converts to the screen's colour space at its end; a
+  layer drawn straight to the screen converted nothing. An uploaded picture of colour (30, 200, 90) came out as
+  (3, 147, 26) with no post pass and correct with one. The four content shaders now convert at their end, which is the
+  identity into the composer's buffer, so every scene with a post pass, all reference scenes among them, is drawn
+  exactly as before (the oracle still reads 0 differing pixels). lumitra-web's copy has the defect; no scene it
+  shipped is without a post pass.
+
+Two regressions of this plan's own earlier slices, found in F4 and fixed here:
+
+- **The prop name `fx` collided with a real attribute (from F2, on main for a few hours).** `fx` is also the focal
+  point of an SVG `radialGradient`. F2 kept the name off every element, so published gradients lost that attribute.
+  The project's score caught it: its run on main turned red after #369 (`svg-attribute:radialGradient.fx`, renderer),
+  and the local run for this slice named the row. `fx` is now the scene prop everywhere except on a `radialGradient`,
+  where it is the attribute (`isFxSceneProp`), on every path: both renderers, `applyFx`, bindings, the Custom section,
+  site operations and their render gate, each with a test. The plan's prop name `fx` is kept. It never reached
+  production: deploys are started by hand, and the last one (2026-11-09) is older than F2.
+- **Layers that follow the pointer stopped following it (from F3).** F3 made the canvas take no pointer events, and
+  the text parallax, the noise field and the distortion read the pointer from the canvas. They now read it from the
+  window (`useWindowPointer`), as the layers with pointer settings always did. A browser test moves the mouse and
+  measures the headline moving, and the box still gets the click.
+
+Tests added for F3's late additions (`test/behaviour/fx.spec.ts`, now 70 tests): an image layer draws a picture really
+uploaded to the site, fetched once from the site's own image route, in its own colours with and without a post pass,
+and under reduced motion; a scene follows the reduced motion preference when it changes on an open page, in both calm
+states.
+

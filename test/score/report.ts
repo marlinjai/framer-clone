@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { componentEntries, dataVersions, pageItemEntries, scoredEntries } from './lib/universe';
+import { componentEntries, dataVersions, fxSceneEntries, pageItemEntries, scoredEntries } from './lib/universe';
 import { floorDrops, floorProblems, raiseFloor, serializeFloor, type Floor } from './lib/floor';
 import { REPORT_DIR, readOut } from './lib/io';
 import { UNCAPTURED_PAGES, type UncapturedPage } from './busbasis/pages';
@@ -258,6 +258,15 @@ export function buildScore(durationSeconds?: number): Score {
     const key = rowKey(entry.kind, entry.id);
     for (const surface of SURFACES) {
       results[surface][key] = pageItemResults[surface]?.[key] ?? { status: 'fail', gap: 'theme', note: 'not built yet' };
+    }
+  }
+
+  // An FX scene promise nothing has measured fails (fx.score.ts measures the format and the renderer).
+  const fxSceneResults = readOut<Partial<Record<Surface, SurfaceResults>>>('fx-scenes');
+  for (const entry of fxSceneEntries()) {
+    const key = rowKey(entry.kind, entry.id);
+    for (const surface of SURFACES) {
+      results[surface][key] = fxSceneResults[surface]?.[key] ?? { status: 'fail', gap: 'fx-scene', note: 'not built yet' };
     }
   }
 
@@ -572,6 +581,7 @@ export function renderReport(score: Score): string {
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium. The page around it is real: the sheet of a production build (`test/score/data/published-base.css`, refreshed by `pnpm score:refresh-base`), and the mounted editor sits on the same sheet. Its utilities also follow classes in `test` and `docs`, which the deployed image does not scan, so it can hold a few the live sheet lacks.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
     '- **Page-level items:** a site theme has rows (`test/score/pageItems.score.ts`): format, published in Chromium, and the canvas on the mounted editor, its theme set through the project and measured on the frame, with what lies outside the frames checked unchanged. The panel column is the real Theme panel and the node sections in jsdom (`pageItems.panel.jsdom.score.tsx`). The preview and the AI (slice T5) are not measured, and neither is WebKit on the canvas. Head tags and page-wide scripts have no rows yet, and script and style elements are excluded with a reason.',
+    '- **FX scenes:** three reference scenes have rows (`test/score/fx.score.ts`). The renderer column compares pixels with Lumitra FX as lumitra-web runs it, at the reduced motion frame with the clock stopped, in Chromium, with the engine mounted as the published island mounts it but bundled by esbuild; the island itself, a real build and WebKit are in `test/behaviour/fx.spec.ts` and `fxOracle.spec.ts`. Animated frames are not compared.',
     '- **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.',
     '- **React import beyond static JSX and Tailwind.** Props as inputs, `cva` tables, entries, hooks, Radix and the AI rebuild step of the plan are not built, so the real components read "not imported", honestly. The import score runs in Chromium only, on the default frames, and with no dark mode state.',
   );

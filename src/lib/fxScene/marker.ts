@@ -10,8 +10,22 @@
 /** The marker prop (and DOM attribute) of an FX scene box. */
 export const FX_ATTR = 'data-fx';
 export const FX_MARKER = 'scene';
-/** The prop that holds the stored scene. Never a DOM attribute. */
+/** The prop that holds the stored scene. Never a DOM attribute (but see isFxSceneProp). */
 export const FX_PROP = 'fx';
+
+/**
+ * Whether `name` on a node of this tag is the FX scene prop.
+ *
+ * `fx` is also a real attribute, on exactly one element: the focal point of an SVG
+ * `radialGradient`. There it is that attribute and nothing else, and everywhere
+ * else it is scene data. Every place that keeps `fx` off the page, out of the
+ * Custom section, out of bindings or out of site operations asks this, so a
+ * gradient keeps its focal point. (The first version asked only for the name, and
+ * the score caught the gradients losing theirs.)
+ */
+export function isFxSceneProp(name: string, type: unknown): boolean {
+  return name === FX_PROP && !(typeof type === 'string' && type.toLowerCase() === 'radialgradient');
+}
 
 /**
  * True when the node is an FX scene box. The marker counts on a `div` only: on

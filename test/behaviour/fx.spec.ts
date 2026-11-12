@@ -11,11 +11,16 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { chromium, webkit, type Browser, type BrowserContext, type BrowserContextOptions, type BrowserType, type Page } from 'playwright';
 import { PNG } from 'pngjs';
 import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';
-import bokehFocuspull from '@/lib/fx/presets/preset-bokeh-focuspull.json';
-import godraysHero from '@/lib/fx/presets/preset-godrays-hero.json';
+import { PRESETS, serializeScene } from '@/lib/fx/format';
+import { png } from '@/lib/images/__tests__/fixtures';
 import { FX_ATTR, FX_MARKER, FX_PROP } from '@/lib/fxScene/marker';
 import { node, type StoredNode } from './pages';
-import { publishPages } from './site';
+import { publishPages, publishPagesWithImages } from './site';
+
+/** A preset as it is stored: the values `serializeScene` writes. */
+const preset = (id: string) => serializeScene(PRESETS.find((p) => p.id === id)!.load());
+const godraysHero = preset('godrays-hero');
+const bokehFocuspull = preset('bokeh-focuspull');
 
 const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
 
@@ -123,6 +128,8 @@ const FX_PAGES: Readonly<Record<string, () => StoredNode>> = {
   'fx-refused': () => fxBox('hero', { version: 9 }),
   // The fastest, highest-contrast scenes the format lets anyone store (see "flash safety" below).
   ...Object.fromEntries(FASTEST.map(([slug, kind, scale]) => [slug, () => fxBox('hero', { scene: fastestScene(kind, scale) })])),
+  // A scene whose headline follows the pointer, with motion allowed.
+  'fx-godrays': () => fxBox('hero', { scene: godraysHero }),
   // Scenes with an intro (a text reveal, a focus pull), held still for reduced motion.
   'fx-frame-godrays': () => fxBox('hero', { scene: godraysHero, calm: 'frame' }),
   'fx-frame-bokeh': () => fxBox('hero', { scene: bokehFocuspull, calm: 'frame' }),
@@ -147,10 +154,37 @@ const FX_BUDGET_BYTES = 371_000;
 /** Only in the engine's chunks: three.js's renderer class name survives minification as a string. */
 const ENGINE_MARK = 'WebGLRenderer';
 
+/** A scene that is one picture: an image layer at full opacity, filling the box. */
+const pictureScene = (src: string) => ({
+  version: 1,
+  id: 'picture',
+  size: { mode: 'fill' },
+  background: '#000000',
+  fps: 60,
+  dpr: [1, 1],
+  layers: [{ id: 'picture', type: 'image', name: 'Picture', visible: true, blend: 'normal', params: { src, fit: 'cover', opacity: 1, displace: 0, scale: 1 } }],
+});
+
+/** The uploaded picture: one flat green no other page here shows. */
+const GREEN = { r: 30, g: 200, b: 90 };
+
 let origin: string;
+/** A second site, which stores an uploaded picture its FX scenes show. */
+let pictureOrigin: string;
+let picturePath: string;
 
 beforeAll(async () => {
   origin = await publishPages(process.env.BEHAVIOUR_PORT!, { pages: FX_PAGES });
+  pictureOrigin = await publishPagesWithImages(process.env.BEHAVIOUR_PORT!, { green: png(640, 360, [GREEN.r, GREEN.g, GREEN.b]) }, (paths) => {
+    picturePath = paths.green;
+    return {
+      'fx-picture': () => fxBox('hero', { scene: pictureScene(paths.green) }),
+      'fx-picture-frame': () => fxBox('hero', { scene: pictureScene(paths.green), calm: 'frame' }),
+      // The same picture under a post pass that moves nothing, so the scene is drawn through the composer:
+      // with and without a post pass a scene must come out in the same colours.
+      'fx-picture-post': () => fxBox('hero', { scene: { ...pictureScene(paths.green), layers: [...pictureScene(paths.green).layers, { id: 'pass', type: 'chromaticAberration', name: 'Pass', visible: true, blend: 'normal', params: { offset: [0, 0] } }] } }),
+    };
+  });
 });
 
 const sameColour = (a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }, tolerance = 6): boolean =>
@@ -406,6 +440,126 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     expect(settled).toBeGreaterThan(0);
     await page.waitForTimeout(1500);
     expect(await clears()).toBe(settled);
+  });
+
+  it('follows the pointer although the canvas takes no pointer: the headline shifts with the mouse', async () => {
+    await page.goto(`${origin}/fx-godrays`);
+    await waitForState('live');
+    // The layer alone: the box's own heading and block are hidden, so what is bright is the scene's headline.
+    await page.addStyleTag({ content: '[data-t="hero-title"],[data-t="hero-block"]{visibility:hidden}' });
+    const rect = (await box().boundingBox())!;
+    /** The horizontal centre of the bright pixels of the box, in pixels from its left edge. */
+    const headlineCentre = async (): Promise<number> => {
+      const shot = PNG.sync.read(await box().screenshot());
+      let sum = 0;
+      let count = 0;
+      for (let y = 0; y < shot.height; y++) {
+        for (let x = 0; x < shot.width; x++) {
+          const at = (y * shot.width + x) * 4;
+          if (shot.data[at] > 190 && shot.data[at + 1] > 190 && shot.data[at + 2] > 190) {
+            sum += x;
+            count += 1;
+          }
+        }
+      }
+      expect(count, 'the headline is drawn').toBeGreaterThan(200);
+      return sum / count;
+    };
+    // The reveal has ended and the headline has eased to where the pointer puts it.
+    await page.mouse.move(rect.x + 5, rect.y + rect.height / 2);
+    await page.waitForTimeout(4500);
+    const atLeft = await headlineCentre();
+    await page.mouse.move(rect.x + rect.width - 5, rect.y + rect.height / 2);
+    await page.waitForTimeout(3500);
+    const atRight = await headlineCentre();
+    expect(atRight - atLeft).toBeGreaterThan(8);
+    // And the box still gets the click.
+    const hit = await page.evaluate(({ x, y }) => (document.elementFromPoint(x, y) as HTMLElement | null)?.getAttribute('data-t'), { x: rect.x + rect.width - 60, y: rect.y + 300 });
+    expect(hit).toBe('hero');
+  });
+
+  describe('an image layer', () => {
+    const imageRequests = () => {
+      const seen: { url: string; status: number }[] = [];
+      page.on('response', (response) => {
+        if (new URL(response.url()).pathname.startsWith('/site-images/')) seen.push({ url: response.url(), status: response.status() });
+      });
+      return seen;
+    };
+
+    it.each(['fx-picture', 'fx-picture-post'])("draws a picture uploaded to the site in its own colours, fetched from the site's own image route (/%s)", async (slug) => {
+      const requests = imageRequests();
+      await page.goto(`${pictureOrigin}/${slug}`);
+      await waitForState('live');
+      await expect.poll(() => box().evaluate((element) => getComputedStyle(element.firstElementChild as Element).opacity), { timeout: 5000 }).toBe('1');
+      const open = await openPoint();
+      await expect.poll(async () => sameColour(await pixel(open.x, open.y), GREEN, 12), { timeout: 10_000 }).toBe(true);
+      expect(picturePath).toMatch(/^\/site-images\/[0-9a-f]{64}\.png$/);
+      expect(requests).toEqual([{ url: `${pictureOrigin}${picturePath}`, status: 200 }]);
+      expect(fxWarnings()).toEqual([]);
+      expect(problems).toEqual([]);
+    });
+
+    it('draws it under reduced motion too: the picture arrives after the first frame and still gets drawn', async () => {
+      await newPage({ reducedMotion: 'reduce' });
+      const requests = imageRequests();
+      await page.goto(`${pictureOrigin}/fx-picture-frame`);
+      await waitForState('live');
+      const open = await openPoint();
+      await expect.poll(async () => sameColour(await pixel(open.x, open.y), GREEN, 12), { timeout: 10_000 }).toBe(true);
+      expect(requests).toHaveLength(1);
+    });
+  });
+
+  describe('when the reduced motion preference changes on an open page', () => {
+    it('a scene whose calm state is the background stops drawing, and draws again when motion is allowed again', async () => {
+      await page.goto(`${origin}/fx-immediate`);
+      await waitForState('live');
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await waitForState('calm');
+      expect(await canvases()).toBe(0);
+      expect(await box().evaluate((element) => (element as HTMLElement).style.isolation)).toBe('');
+      const open = await openPoint();
+      expect(sameColour(await pixel(open.x, open.y), BLUE)).toBe(true);
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await waitForState('live');
+      expect(await canvases()).toBe(1);
+      expect(fxWarnings()).toEqual([]);
+    });
+
+    it('a scene whose calm state is a frame keeps one canvas and holds still', async () => {
+      await page.addInitScript(() => {
+        const counter = window as unknown as { __fxClears: number };
+        counter.__fxClears = 0;
+        for (const proto of [WebGL2RenderingContext.prototype, WebGLRenderingContext.prototype]) {
+          const clear = proto.clear;
+          proto.clear = function (this: WebGLRenderingContext, mask: number) {
+            counter.__fxClears += 1;
+            return clear.call(this, mask);
+          };
+        }
+      });
+      await page.goto(`${origin}/fx-frame`);
+      await waitForState('live');
+      const clears = () => page.evaluate(() => (window as unknown as { __fxClears: number }).__fxClears);
+      // With motion allowed the scene draws every frame.
+      const moving = await clears();
+      await page.waitForTimeout(500);
+      expect(await clears()).toBeGreaterThan(moving);
+
+      // The scene is mounted afresh for the new preference: wait for a canvas that is not the old one.
+      await box().evaluate((element) => element.querySelector('canvas')!.setAttribute('data-old', ''));
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.waitForFunction(() => {
+        const hero = document.querySelector('[data-t="hero"]');
+        return hero?.getAttribute('data-fc-fx-state') === 'live' && hero.querySelector('canvas:not([data-old])') !== null;
+      });
+      expect(await canvases()).toBe(1);
+      await page.waitForTimeout(1500);
+      const settled = await clears();
+      await page.waitForTimeout(1500);
+      expect(await clears()).toBe(settled);
+    });
   });
 
   it('when the engine chunk does not arrive: keeps the box, warns once, throws nothing', async () => {

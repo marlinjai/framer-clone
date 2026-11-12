@@ -22,6 +22,7 @@ import type {
   LayerComponentProps,
   LayerDefinition,
 } from "../types";
+import { useWindowPointer } from "../interactivity";
 import { textSchema } from "../schemas";
 
 interface TextValues {
@@ -132,6 +133,7 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   // Spec section 8: Safari caps WebGL contexts; never leak textures.
   useEffect(() => () => tex.dispose(), [tex]);
 
+  const pointer = useWindowPointer();
   const startedAt = useRef<number | null>(null);
   useFrame((state) => {
     const t = state.clock.elapsedTime;
@@ -143,8 +145,8 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     if (meshRef.current) {
       const s = THREE.MathUtils.lerp(1.1, 1.0, e);
       meshRef.current.scale.set(s, s, 1);
-      const tx = ctx.reduce ? 0 : state.pointer.x * v.parallax;
-      const ty = ctx.reduce ? 0 : state.pointer.y * v.parallax * 0.62;
+      const tx = ctx.reduce ? 0 : pointer.x * v.parallax;
+      const ty = ctx.reduce ? 0 : pointer.y * v.parallax * 0.62;
       meshRef.current.position.x += (tx - meshRef.current.position.x) * 0.05;
       meshRef.current.position.y += (ty - meshRef.current.position.y) * 0.05;
     }

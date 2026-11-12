@@ -179,7 +179,7 @@ export function isBlockedTag(tag: unknown, foreign: ForeignContent = false): boo
   return true;
 }
 
-const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName', FX_PROP]);
+const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName']);
 
 /** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
 export const isSettingsProp = (name: string): boolean =>
@@ -194,7 +194,10 @@ export const isSettingsProp = (name: string): boolean =>
  */
 export function isBlockedProp(name: string, value: unknown): boolean {
   const blocked = isDroppedProp(name, value);
-  if (blocked && !isSettingsProp(name)) warnOnce(`the prop ${name}`);
+  // A stored FX scene (src/lib/fxScene) is an object under `fx`: off the element like any
+  // setting, and nothing to report. A text `fx` is an SVG gradient's focal point and passes above.
+  const fxScene = name === FX_PROP && typeof value === 'object';
+  if (blocked && !isSettingsProp(name) && !fxScene) warnOnce(`the prop ${name}`);
   return blocked;
 }
 

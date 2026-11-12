@@ -22,6 +22,7 @@ import {
   globalAttributes,
   legacyCssProperties,
 } from '@/lib/styles/webPlatformNames.generated';
+import { isFxSceneProp } from '@/lib/fxScene/marker';
 
 // ---------- CSS ----------
 
@@ -110,7 +111,7 @@ export function attributeName(prop: string): string {
 
 /** Props that are the editor's own data, or that React reads as more than an attribute. */
 const RESERVED_PROPS: ReadonlySet<string> = new Set([
-  'children', 'key', 'ref', 'style', 'query', 'bindings', 'effects', 'behaviour', 'fx', 'dangerouslySetInnerHTML',
+  'children', 'key', 'ref', 'style', 'query', 'bindings', 'effects', 'behaviour', 'dangerouslySetInnerHTML',
   'suppressContentEditableWarning', 'suppressHydrationWarning', 'hostType',
 ]);
 
@@ -142,6 +143,8 @@ export function attributeNameError(typed: string, tag: string): string | null {
     return 'A page runs no stored code, so event handlers and raw HTML are not available.';
   }
   if (lower === 'style') return 'Add styles as CSS properties above.';
+  // `fx` is an SVG gradient's focal point there and the FX scene of a box everywhere else.
+  if (isFxSceneProp(prop, tag)) return `${name} belongs to the editor and cannot be set here.`;
   if (!isRenderedAttribute(prop.toLowerCase())) return `${name} is not available on a page: nothing would render it.`;
   if (!isAttributeProp(prop)) return `${name} belongs to the editor and cannot be set here.`;
   return null;
