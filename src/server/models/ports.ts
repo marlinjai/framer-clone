@@ -62,6 +62,14 @@ export interface DecodedStats {
   clips: number;
 }
 
+/** Thrown by a re-encoder for a model it refuses on purpose (too large once decoded, not decodable). The upload answers with its status and message. */
+export class ModelRefusalError extends Error {
+  constructor(readonly code: string, message: string, readonly status: 413 | 422 | 500 | 503 = 413) {
+    super(message);
+    this.name = 'ModelRefusalError';
+  }
+}
+
 /** Step 2: the Khronos glTF validator. Gated: its dependency is not added here. */
 export interface ModelValidator {
   validate(bytes: Uint8Array): Promise<{ ok: true } | { ok: false; message: string }>;
