@@ -283,6 +283,16 @@ describe('rule 5: a connection that does not open in time', () => {
     expect(gate.pauseLeftMs()).toBe(200);
   });
 
+  it('leaves no timer behind when the attempt fails before its time is up', () => {
+    newGate(2000);
+    open().failsWith('ECONNREFUSED');
+    expect(vi.getTimerCount()).toBe(0);
+    // Nor when the other side hangs up while it is still connecting.
+    pass(200);
+    open().hangsUp();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('is left alone once it has opened: the timer ended with the connect', () => {
     newGate(2000);
     const socket = open();
@@ -299,6 +309,16 @@ describe('an error always has a listener', () => {
     const socket = open();
     // An emitter throws when an 'error' has no listener.
     expect(() => socket.failsWith('EADDRNOTAVAIL')).not.toThrow();
+  });
+
+  it('every error is heard, not only the first: a second one before the close raises nothing', () => {
+    newGate();
+    const socket = open();
+    socket.emit('error', Object.assign(new Error('first'), { code: 'ECONNRESET' }));
+    expect(() => socket.emit('error', Object.assign(new Error('second'), { code: 'EPIPE' }))).not.toThrow();
+    socket.hangsUp();
+    // And the two errors and the close counted as one end: one pause, of the first length.
+    expect(gate.pauseLeftMs()).toBe(200);
   });
 
   it('also for a socket that was not opened, when it is closed with its error', () => {
@@ -320,6 +340,20 @@ describe('rule 6: shutting the gate', () => {
     expect(connecting.destroyed).toBe(true);
     expect(connected.destroyedWith).toBeUndefined();
     expect(connecting.destroyedWith).toBeUndefined();
+  });
+
+  it('leaves no timer behind: not the connect timer of a socket that was still connecting, nor any other', () => {
+    newGate(2000);
+    const connected = open();
+    connected.opens();
+    open();
+    expect(vi.getTimerCount()).toBe(1);
+    gate.shut();
+    expect(vi.getTimerCount()).toBe(0);
+    // A socket asked for after shutting has one zero timer, and none once it has fired.
+    open();
+    pass(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('opens no more: a socket asked for afterwards is closed a moment later with an error that says so', () => {

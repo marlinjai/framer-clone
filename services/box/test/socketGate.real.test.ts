@@ -247,12 +247,23 @@ describe('an error always has a listener', () => {
     expect(socket.destroyed).toBe(true);
   });
 
-  it('still has one after every other listener was removed, as the driver does at a close', async () => {
+  it('has its listener while the socket is open, and a closed socket stripped of every listener, as the driver leaves it, raises nothing', async () => {
     const server = await listener((socket) => socket.resume());
     const gate = gateTo(server.port);
     const socket = gate.open();
     await new Promise((resolve) => socket.once('connect', resolve));
+    // While it is open the gate listens for its errors.
     expect(socket.listenerCount('error')).toBe(1);
+    const closed = new Promise((resolve) => socket.once('close', resolve));
+    socket.destroy();
+    await closed;
+    // What the driver does at every close: it removes every listener, the gate's too.
+    socket.removeAllListeners();
+    expect(socket.listenerCount('error')).toBe(0);
+    // Nothing the gate or anyone does to the closed socket now raises an error nobody hears.
+    expect(() => socket.destroy(Object.assign(new Error('late'), { code: 'CONNECTION_DESTROYED' }))).not.toThrow();
+    gate.shut();
+    await sleep(50);
   });
 });
 

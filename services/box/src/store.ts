@@ -189,8 +189,10 @@ export function createPostgresStore(database: string | DatabaseTarget, options: 
    * is busy but answering keeps its pool (replacing it would fail every other
    * call for nothing), one that went silent does not (its connections would
    * never be asked again). It is also thrown away once 24 of its calls were
-   * given up on, whatever answered meanwhile: with one connection silent and
-   * the other answering, the answers alone would keep the silent one in use.
+   * given up on, whatever answered meanwhile: with one connection, calls wait
+   * one behind the other, and statements that were given up on stay in that
+   * line; a database that has become slow all over would keep answering now
+   * and then while the line only grows. Throwing the pool away empties it.
    * The old pool's connections are closed for real, at once, and the next
    * request starts on fresh ones, so service comes back by itself.
    */

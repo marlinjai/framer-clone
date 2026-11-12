@@ -187,27 +187,27 @@ describe('the image', () => {
     // that passed. An earlier form expected exactly 60 whatever the time, and failed when 62 requests
     // took 1.26 seconds on a busy machine.
     const target = `/box/${SITE_A}/${'d'.repeat(64)}`;
-    const statuses: number[] = [];
+    const responses: RawResponse[] = [];
     const started = Date.now();
     // Every request claims another client address in X-Forwarded-For; none of that is believed.
-    for (let i = 0; i < 90; i++) statuses.push((await httpGet(box.port, target, { ...FRAME_HEADERS, 'X-Forwarded-For': `198.51.100.${i}` })).status);
+    for (let i = 0; i < 90; i++) responses.push(await httpGet(box.port, target, { ...FRAME_HEADERS, 'X-Forwarded-For': `198.51.100.${i}` }));
     const seconds = (Date.now() - started) / 1000;
-    const let_through = statuses.filter((status) => status === 404).length;
-    const refused = statuses.filter((status) => status === 429).length;
-    expect(let_through + refused).toBe(90);
+    const statuses = responses.map((response) => response.status);
+    const letThrough = statuses.filter((status) => status === 404).length;
+    const refused = responses.filter((response) => response.status === 429);
+    expect(letThrough + refused.length).toBe(90);
     // The first 60 are let through, whatever the time.
     expect(statuses.slice(0, 60).every((status) => status === 404)).toBe(true);
     // Beyond them, no more than one for each second that passed (and one for the second under way).
-    expect(let_through).toBeGreaterThanOrEqual(60);
-    expect(let_through).toBeLessThanOrEqual(60 + Math.floor(seconds) + 1);
+    expect(letThrough).toBeGreaterThanOrEqual(60);
+    expect(letThrough).toBeLessThanOrEqual(60 + Math.floor(seconds) + 1);
     // So some were refused, unless the 90 requests took half a minute, which would say nothing.
     expect(seconds).toBeLessThan(25);
-    expect(refused).toBeGreaterThanOrEqual(90 - 60 - Math.floor(seconds) - 1);
-    expect(refused).toBeGreaterThan(0);
-    // A refusal, right after another refusal, has the refusal's headers.
-    const last = await httpGet(box.port, target, FRAME_HEADERS);
-    if (last.status === 429) expectRefusal(last, 429);
-    else expect(last.status).toBe(404);
+    expect(refused.length).toBeGreaterThanOrEqual(90 - 60 - Math.floor(seconds) - 1);
+    expect(refused.length).toBeGreaterThan(0);
+    // Every one of the refusals, whenever it came, is a refusal in full: status, policy, no cookie.
+    for (const response of refused) expectRefusal(response, 429);
+    expect(refused[0]!.headers['retry-after']).toBe('60');
   });
 
   it('says at start how many proxies it believes, and logs no path, no whole address and no secret', async () => {

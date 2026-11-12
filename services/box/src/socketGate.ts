@@ -90,8 +90,10 @@ export function createSocketGate(
         pauseMs = at - openedAt < DID_NOT_LAST_MS ? Math.min(pauses.maxMs, Math.max(pauses.firstMs, pauseMs * 2)) : 0;
         nextOpenAt = at + pauseMs;
       };
-      // An error always has a listener, whatever else listens or stops listening: an 'error' nobody
-      // hears would end the process.
+      // From the moment the socket is handed out until it has closed, its errors have a listener, every
+      // one of them and not only the first: an 'error' nobody hears would end the process. (At the
+      // close the driver removes every listener, this one too. That is safe: a closed socket emits
+      // nothing more, and everything the gate itself does to a socket happens before its close.)
       socket.on('error', ended);
       socket.once('connect', () => clearTimeout(timer));
       socket.once('close', () => {
