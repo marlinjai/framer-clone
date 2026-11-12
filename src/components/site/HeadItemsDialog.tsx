@@ -30,6 +30,7 @@ export type HeadScope = { kind: 'site'; project: ProjectModelType } | { kind: 'p
 /** The editor for one home, wired to its model action. */
 export const HeadItemsPanel = observer(({ scope }: { scope: HeadScope }) => {
   const items = (scope.kind === 'site' ? scope.project.site.head : scope.page.metadata.head) as readonly StoredHeadItem[];
+  const { here, elsewhere } = homeProblems(scope);
   const write = (next: StoredHeadItem[]) => {
     if (scope.kind === 'site') return scope.project.updateSiteHead(next);
     const { headDropped } = scope.page.updateMetadata({ head: next });
@@ -58,6 +59,8 @@ export const HeadItemsPanel = observer(({ scope }: { scope: HeadScope }) => {
         cap={scope.kind === 'site' ? HEAD_LIMITS.siteItems : HEAD_LIMITS.pageItems}
         write={write}
         home={scope.kind}
+        problems={here}
+        elsewhere={elsewhere}
       />
     </div>
   );
@@ -65,7 +68,16 @@ export const HeadItemsPanel = observer(({ scope }: { scope: HeadScope }) => {
 
 export function HeadItemsDialog({ scope, open, onClose }: { scope: HeadScope; open: boolean; onClose: () => void }) {
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) return;
+        // A valid edit still in a field saves when the field loses focus; closing would unmount it
+        // first, so the focus is taken off it here, and the row writes before the dialog goes.
+        (document.activeElement as HTMLElement | null)?.blur?.();
+        onClose();
+      }}
+    >
       {open && (
         <DialogContent
           data-testid="head-dialog"
@@ -93,18 +105,29 @@ export function HeadItemsDialog({ scope, open, onClose }: { scope: HeadScope; op
   );
 }
 
-/** What the section says about the list: how many items, and how many this build refuses. */
-function summaryOf(scope: HeadScope): { count: number; problems: number } {
-  const items = scope.kind === 'site' ? scope.project.site.head : scope.page.metadata.head;
-  const siteItems = scope.project.site.head;
-  const resolution = scope.kind === 'site' ? resolveHead(siteItems, []) : resolveHead([], items);
-  return { count: items.length, problems: resolution.problems.length };
+/**
+ * What the published page leaves out, the way resolveHead decides it (the same function the page
+ * and the check before publishing use): by stored index for this home's own list, and as lines
+ * for a site item a page's list pushes out of the page.
+ */
+function homeProblems(scope: HeadScope): { here: Map<number, string>; elsewhere: string[] } {
+  const site = scope.project.site.head;
+  const resolution = scope.kind === 'site' ? resolveHead(site, []) : resolveHead(site, scope.page.metadata.head);
+  const here = new Map<number, string>();
+  const elsewhere: string[] = [];
+  for (const problem of resolution.problems) {
+    if (problem.home === scope.kind) here.set(problem.index, problem.message);
+    else elsewhere.push(`Site head item ${problem.index + 1} is left out of this page: ${problem.message}`);
+  }
+  return { here, elsewhere };
 }
 
 /** The Head section a settings dialog shows: a line of status and the button that opens the editor. */
 export const HeadItemsSection = observer(({ scope }: { scope: HeadScope }) => {
   const [open, setOpen] = React.useState(false);
-  const { count, problems } = summaryOf(scope);
+  const { here } = homeProblems(scope);
+  const count = (scope.kind === 'site' ? scope.project.site.head : scope.page.metadata.head).length;
+  const problems = here.size;
   const id = scope.kind === 'site' ? 'site-head-section' : 'page-head-section';
   return (
     <section aria-labelledby={`${id}-title`} className="flex flex-col gap-2" data-testid={id}>

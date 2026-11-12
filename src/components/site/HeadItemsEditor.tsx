@@ -115,10 +115,14 @@ interface FormProps {
   /** The stored item's own refusal, when this build refuses it. */
   refusal: string | null;
   mode: 'new' | 'edit';
+  /** How many more items the home can take: a draft that would hold more is not saved, and says so. */
+  room: number;
+  /** Focus the first field when the form appears (after an add). */
+  autoFocus?: boolean;
   onCommit: (items: StoredHeadItem[]) => void;
 }
 
-function HeadItemForm({ idPrefix, value, refusal, mode, onCommit }: FormProps) {
+function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommit }: FormProps) {
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(value));
   const [touched, setTouched] = React.useState(false);
   const stamp = JSON.stringify(value);
@@ -129,14 +133,21 @@ function HeadItemForm({ idPrefix, value, refusal, mode, onCommit }: FormProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stamp]);
 
-  const candidate = candidateOf(draft);
+  const found = candidateOf(draft);
+  // An edit may add items by splitting a pasted list; a new item adds all of them.
+  const added = found.ok ? found.items.length - (mode === 'edit' ? 1 : 0) : 0;
+  const candidate: Candidate =
+    found.ok && added > room
+      ? { ok: false, message: `This would make ${added} more items and there is room for ${Math.max(room, 0)}. Delete some first.` }
+      : found;
   const set = (patch: Partial<Draft>) => {
     setTouched(true);
     setDraft((d) => ({ ...d, ...patch }));
   };
   const setKind = (kind: HeadKind) => {
     // The fields the new kind cannot hold are dropped, not hidden (changeHeadKind).
-    const carried = changeHeadKind(value ?? { kind: draft.kind, content: draft.content }, kind);
+    // What was typed, not what was stored: the content is the one field meta and property share.
+    const carried = changeHeadKind({ kind: draft.kind, content: draft.content }, kind);
     setTouched(true);
     setDraft({ ...BLANK, kind, content: text(carried.content) });
   };
@@ -158,7 +169,7 @@ function HeadItemForm({ idPrefix, value, refusal, mode, onCommit }: FormProps) {
     <div onBlur={leave} className="flex flex-col gap-2" data-testid={mode === 'new' ? 'head-new' : 'head-row'}>
       <div className="flex flex-col gap-1">
         <label htmlFor={id('kind')} className={fieldLabel}>Kind</label>
-        <select id={id('kind')} className={inputBase} value={draft.kind} onChange={(e) => setKind(e.target.value as HeadKind)}>
+        <select id={id('kind')} className={inputBase} value={draft.kind} autoFocus={autoFocus} onChange={(e) => setKind(e.target.value as HeadKind)}>
           {HEAD_KINDS.map((k) => (
             <option key={k} value={k}>{KIND_LABEL[k]}</option>
           ))}
@@ -240,7 +251,7 @@ function HeadItemForm({ idPrefix, value, refusal, mode, onCommit }: FormProps) {
       )}
 
       {help && <p className={hint}>{help}</p>}
-      <p id={id('message')} role={showMessage ? 'alert' : undefined} className={showMessage ? 'text-[12px] text-destructive' : hint} data-testid="head-message">
+      <p id={id('message')} aria-live="polite" className={showMessage ? 'text-[12px] text-destructive' : hint} data-testid="head-message">
         {showMessage
           ? mode === 'edit' && value
             ? `${message} Not saved: the last saved version is kept.`
@@ -276,49 +287,86 @@ export interface HeadItemsEditorProps {
   write: (next: StoredHeadItem[]) => { ok: true; dropped: number } | { ok: false; errors: string[] };
   /** Names the home in the messages: "page" or "site". */
   home: 'page' | 'site';
+  /**
+   * What the published page leaves out of THIS list, by stored index (resolveHead's problems for
+   * this home): a refusal, a repeated name, an item past the cap, a fourth structured data block.
+   * A stored item the parser accepts but the page drops must not read "Published".
+   */
+  problems?: ReadonlyMap<number, string>;
+  /** Site items this page's list pushes out of the page (the shared structured data cap): told once, here. */
+  elsewhere?: readonly string[];
 }
 
-export function HeadItemsEditor({ items, cap, write, home }: HeadItemsEditorProps) {
+let nextRowId = 0;
+const freshIds = (count: number): number[] => Array.from({ length: count }, () => (nextRowId += 1));
+
+export function HeadItemsEditor({ items, cap, write, home, problems, elsewhere = [] }: HeadItemsEditorProps) {
   const [notice, setNotice] = React.useState('');
   const [adding, setAdding] = React.useState(items.length === 0);
   const [formKey, setFormKey] = React.useState(0);
-  const run = (next: StoredHeadItem[], done: string) => {
+  // A row keeps its identity, and so its draft and its focus, through its own save, another row's
+  // save and a delete. An undo, a redo or a write from elsewhere changes the list under us: then
+  // every row is new, which is the only honest reading of a list we did not write.
+  const [ids, setIds] = React.useState<number[]>(() => freshIds(items.length));
+  const rowIds = ids.length === items.length ? ids : freshIds(items.length);
+  if (rowIds !== ids) setIds(rowIds);
+  const countRef = React.useRef<HTMLParagraphElement>(null);
+
+  const run = (next: StoredHeadItem[], nextIds: number[], done: string) => {
+    if (next.length > cap) {
+      setNotice(`Not saved: that would make ${next.length} items, and the ${home} holds ${cap}. Delete some first.`);
+      return false;
+    }
     const result = write(next);
-    if (!result.ok) setNotice(result.errors.join(' '));
-    else setNotice(result.dropped > 0 ? `${done} ${result.dropped} past the limit of ${cap} were left out.` : done);
-    return result.ok;
+    if (!result.ok) {
+      setNotice(result.errors.join(' '));
+      return false;
+    }
+    setNotice(result.dropped > 0 ? `${done} ${result.dropped} could not be kept.` : done);
+    setIds(nextIds);
+    return true;
   };
   const replaceAt = (index: number, replacement: StoredHeadItem[]) => {
     const next = [...items.slice(0, index), ...replacement, ...items.slice(index + 1)];
-    run(next, 'Saved.');
+    const extra = freshIds(replacement.length - 1);
+    run(next, [...rowIds.slice(0, index + 1), ...extra, ...rowIds.slice(index + 1)], replacement.length > 1 ? `${replacement.length} items saved.` : 'Saved.');
   };
-  const remove = (index: number) => run(items.filter((_, i) => i !== index), 'Item deleted.');
+  const remove = (index: number) => {
+    if (run(items.filter((_, i) => i !== index), rowIds.filter((_, i) => i !== index), 'Item deleted.')) countRef.current?.focus();
+  };
   const full = items.length >= cap;
+  const room = cap - items.length;
 
   return (
     <div className="flex flex-col gap-3" data-testid="head-editor">
-      <p className={hint} data-testid="head-count">{items.length} of {cap} items on the {home}.</p>
+      <p ref={countRef} tabIndex={-1} className={`${hint} outline-none`} data-testid="head-count">{items.length} of {cap} items on the {home}.</p>
       <p role="status" aria-live="polite" className={hint} data-testid="head-notice">{notice}</p>
+      {elsewhere.length > 0 && (
+        <ul className="list-disc pl-4 text-[11px] text-destructive" data-testid="head-elsewhere">
+          {elsewhere.map((line) => <li key={line}>{line}</li>)}
+        </ul>
+      )}
 
       {items.length === 0 && <p className="text-xs text-muted-foreground">No head items yet.</p>}
       <ul className="flex flex-col gap-3">
         {items.map((item, index) => {
           const parsed = parseHeadItem(item);
           const refusal = parsed.ok ? null : parsed.refusal.message;
+          const left = problems?.get(index) ?? refusal;
           return (
-            <li key={`${index}:${JSON.stringify(item)}`} className="rounded-md border border-border p-3" data-testid="head-item" data-refused={refusal ? 'true' : undefined}>
+            <li key={rowIds[index]} className="rounded-md border border-border p-3" data-testid="head-item" data-refused={refusal ? 'true' : undefined}>
               <div className="mb-2 flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-[12px] font-medium" title={summary(item)}>{summary(item)}</p>
-                  <p className={refusal ? 'text-[11px] text-destructive' : hint} data-testid="head-status">
-                    {refusal ? `Refused, not published: ${refusal}` : 'Published'}
+                  <p className={left ? 'text-[11px] text-destructive' : hint} data-testid="head-status">
+                    {left ? `${refusal ? 'Refused, not published' : 'Not published'}: ${left}` : 'Published'}
                   </p>
                 </div>
                 <Button type="button" size="sm" variant="ghost" aria-label={`Delete head item ${index + 1}`} onClick={() => remove(index)}>
                   <Trash2 className="h-3.5 w-3.5" aria-hidden />
                 </Button>
               </div>
-              <HeadItemForm idPrefix={`head-${home}-${index}`} value={item} refusal={refusal} mode="edit" onCommit={(next) => replaceAt(index, next)} />
+              <HeadItemForm idPrefix={`head-${home}-${rowIds[index]}`} value={item} refusal={refusal} mode="edit" room={room} onCommit={(next) => replaceAt(index, next)} />
             </li>
           );
         })}
@@ -328,7 +376,7 @@ export function HeadItemsEditor({ items, cap, write, home }: HeadItemsEditorProp
         <div className="rounded-md border border-dashed border-border p-3">
           <p className="mb-2 text-[12px] font-medium">New head item</p>
           {full ? (
-            <p className="text-xs text-destructive" role="alert">The {home} holds {cap} items, the most it can. Delete one to add another.</p>
+            <p className="text-xs text-destructive" aria-live="polite">The {home} holds {cap} items, the most it can. Delete one to add another.</p>
           ) : (
             <HeadItemForm
               key={formKey}
@@ -336,8 +384,10 @@ export function HeadItemsEditor({ items, cap, write, home }: HeadItemsEditorProp
               value={null}
               refusal={null}
               mode="new"
+              room={room}
+              autoFocus={formKey > 0}
               onCommit={(added) => {
-                if (run([...items, ...added], added.length > 1 ? `${added.length} items added.` : 'Item added.')) setFormKey((k) => k + 1);
+                if (run([...items, ...added], [...rowIds, ...freshIds(added.length)], added.length > 1 ? `${added.length} items added.` : 'Item added.')) setFormKey((k) => k + 1);
               }}
             />
           )}
@@ -347,6 +397,7 @@ export function HeadItemsEditor({ items, cap, write, home }: HeadItemsEditorProp
           <Button type="button" size="sm" variant="outline" disabled={full} onClick={() => setAdding(true)}>
             <Plus className="mr-1 h-3.5 w-3.5" aria-hidden /> Add head item
           </Button>
+          {full && <span className="ml-2 text-[11px] text-muted-foreground">The {home} holds {cap} items, the most it can.</span>}
         </div>
       )}
     </div>

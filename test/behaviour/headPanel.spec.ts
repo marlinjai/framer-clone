@@ -11,7 +11,8 @@
 // refused and is deleted.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { chromium, type Browser, type BrowserType, type Locator, type Page } from 'playwright';
+import { chromium, webkit, type Browser, type BrowserType, type Locator, type Page } from 'playwright';
+import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { getPrismaClient } from '@/server/db';
 import { getSiteRepository, type TenantScope } from '@/server/sites';
@@ -21,10 +22,7 @@ const SCOPE: TenantScope = {
   workspaceId: `ws_headpanel_${randomUUID().slice(0, 8)}`,
   tenantGroupId: '018f9c10-0000-7000-8000-0000000051c7',
 };
-// Chromium only. In WebKit the harness puts the dialogs (the existing Site settings dialog too,
-// its Save button included) below the window, so a pointer cannot reach them: a placement
-// problem of that page that this slice did not cause and does not claim to have proven around.
-const ENGINES: [string, BrowserType][] = [['chromium', chromium]];
+const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
 
 interface Probe {
   __editor: { projectJson: () => string; undo: () => void; addPage: (title: string) => string; setSiteHead: (items: unknown[]) => void };
@@ -36,6 +34,14 @@ const textOf = (locator: Locator) => () => locator.textContent();
 const disabled = (locator: Locator) => () => locator.isDisabled();
 const valueOf = (locator: Locator) => () => locator.inputValue();
 const project = (page: Page): Promise<Stored> => page.evaluate(() => JSON.parse((window as unknown as Probe).__editor.projectJson()));
+
+/** Types into the open Head dialog's new-item form and presses Add. */
+async function addMeta(page: Page, name: string, content: string) {
+  const form = page.getByTestId('head-new');
+  await form.getByLabel('Name').fill(name);
+  await form.getByLabel('Content').fill(content);
+  await form.getByRole('button', { name: 'Add item' }).click();
+}
 
 let bundle: string;
 beforeAll(async () => {
@@ -63,14 +69,6 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
   /** The new-item form stays open after an add; a list that began with items opens it with the button. */
   async function ensureNewForm(page: Page) {
     if ((await page.getByTestId('head-new').count()) === 0) await page.getByRole('button', { name: 'Add head item' }).click();
-  }
-
-  /** Types into the open Head dialog's new-item form and presses Add. */
-  async function addMeta(page: Page, name: string, content: string) {
-    const form = page.getByTestId('head-new');
-    await form.getByLabel('Name').fill(name);
-    await form.getByLabel('Content').fill(content);
-    await form.getByRole('button', { name: 'Add item' }).click();
   }
 
   async function openSiteHead(page: Page) {
@@ -226,6 +224,103 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
       expect(JSON.parse(ld![1])).toEqual({ '@context': 'https://schema.org', '@type': 'Organization', name: 'Bakery' });
     } finally {
       await page.close();
+    }
+  });
+});
+
+// The editor of the real production build, which the server answers on its editor host (the
+// unsaved demo project, no sign-in). The browser cannot resolve that host, so a route hands each
+// request to the server with the host header set. This is the product's own stylesheet, scripts
+// and dialogs, not the harness's: it is what shows that a dialog sits where it should in WebKit.
+const PORT = () => Number(process.env.BEHAVIOUR_PORT);
+const EDITOR_HOST = 'editor.invalid';
+
+describe.each(ENGINES)('on the real build\'s editor, in %s', (_name, engine) => {
+  let browser: Browser;
+  beforeAll(async () => {
+    browser = await engine.launch();
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+
+  async function realEditor(): Promise<Page> {
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+    await context.route(`http://${EDITOR_HOST}:${PORT()}/**`, async (route) => {
+      const url = new URL(route.request().url());
+      const answer = await new Promise<{ status: number; headers: http.IncomingHttpHeaders; data: Buffer }>((resolve, reject) => {
+        const req = http.request({ host: '127.0.0.1', port: PORT(), path: url.pathname + url.search, method: route.request().method(), headers: { host: EDITOR_HOST } }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, data: Buffer.concat(chunks) }));
+        });
+        req.on('error', reject);
+        req.end();
+      });
+      const headers: Record<string, string> = {};
+      for (const [key, value] of Object.entries(answer.headers)) {
+        if (typeof value === 'string' && !['content-length', 'transfer-encoding', 'content-encoding', 'connection'].includes(key)) headers[key] = value;
+      }
+      // A redirect (to the sign-in page) cannot be fulfilled; the demo editor asks for none it needs.
+      if (answer.status >= 300 && answer.status < 400) return route.abort();
+      return route.fulfill({ status: answer.status, headers, body: answer.data });
+    });
+    const page = await context.newPage();
+    page.setDefaultTimeout(15_000);
+    await page.goto(`http://${EDITOR_HOST}:${PORT()}/`);
+    await page.getByRole('button', { name: 'Site settings' }).first().waitFor();
+    return page;
+  }
+
+  /** Every part of the element is inside the window: a pointer can reach it. */
+  const inWindow = (page: Page, testId: string) =>
+    page.evaluate((id) => {
+      const r = (document.querySelector(`[data-testid="${id}"]`) as HTMLElement).getBoundingClientRect();
+      return r.x >= 0 && r.y >= 0 && r.x + r.width <= innerWidth && r.y + r.height <= innerHeight;
+    }, testId);
+
+  it('places the Site settings and Head dialogs inside the window, and adds an item through them', async () => {
+    const page = await realEditor();
+    try {
+      await page.getByRole('button', { name: 'Site settings' }).first().click();
+      await page.getByTestId('site-settings-dialog').waitFor();
+      await page.waitForTimeout(600);
+      expect(await inWindow(page, 'site-settings-dialog')).toBe(true);
+      await page.getByTestId('site-head-section-open').click();
+      await page.getByTestId('head-dialog').waitFor();
+      await page.waitForTimeout(600);
+      expect(await inWindow(page, 'head-dialog')).toBe(true);
+      await addMeta(page, 'google-site-verification', 'abc123');
+      await expect.poll(textOf(page.getByTestId('head-item').getByTestId('head-status'))).toBe('Published');
+      await page.keyboard.press('Escape');
+      await page.getByTestId('site-head-section-summary').waitFor();
+      expect(await page.getByTestId('site-head-section-summary').textContent()).toBe('1 item');
+      // Save reaches the project and the list stays.
+      await page.getByRole('button', { name: 'Save' }).click();
+      await page.getByTestId('site-settings-dialog').waitFor({ state: 'detached' });
+      await page.getByRole('button', { name: 'Site settings' }).first().click();
+      await page.getByTestId('site-head-section-summary').waitFor();
+      expect(await page.getByTestId('site-head-section-summary').textContent()).toBe('1 item');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  it('opens the page\'s Head dialog from Page settings, inside the window, and refuses an owned name', async () => {
+    const page = await realEditor();
+    try {
+      await page.getByRole('button', { name: /Page settings for/ }).first().click({ force: true });
+      await page.getByTestId('page-head-section-open').click();
+      await page.getByTestId('head-dialog').waitFor();
+      await page.waitForTimeout(600);
+      expect(await inWindow(page, 'head-dialog')).toBe(true);
+      const form = page.getByTestId('head-new');
+      await form.getByLabel('Name').fill('og:title');
+      await form.getByLabel('Content').fill('x');
+      await expect.poll(textOf(form.getByTestId('head-message'))).toContain('Social title');
+      await expect.poll(disabled(form.getByRole('button', { name: 'Add item' }))).toBe(true);
+    } finally {
+      await page.context().close();
     }
   });
 });

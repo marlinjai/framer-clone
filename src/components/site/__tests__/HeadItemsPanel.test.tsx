@@ -17,7 +17,7 @@ import { HELP_KEYS, META_HELP, PROPERTY_HELP, REL_HELP } from '@/lib/site/headIt
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
-const { HeadItemsPanel, HeadItemsSection } = await import('../HeadItemsDialog');
+const { HeadItemsPanel, HeadItemsSection, HeadItemsDialog } = await import('../HeadItemsDialog');
 const { HeadItemsEditor } = await import('../HeadItemsEditor');
 
 let project: ProjectModelType;
@@ -309,6 +309,120 @@ describe('the check before publishing', () => {
     expect(result.head!.map((i) => i.message).join(' ')).toMatch(/at most 3 structured data/);
     const siteBad = check([{ kind: 'meta', name: 'viewport', content: 'x' }], []);
     expect(siteBad.head).toHaveLength(1);
+  });
+});
+
+describe('the review of slice H3: stateful edges', () => {
+  const meta = (name: string, content: string) => ({ kind: 'meta', name, content });
+
+  it('a valid edit followed by Delete on the same row deletes at the first click: the button survives the save', () => {
+    project.updateSiteHead([meta('author', 'one'), meta('rating', 'general')]);
+    site();
+    const row = within(screen.getAllByTestId('head-item')[0]);
+    const button = row.getByRole('button', { name: 'Delete head item 1' });
+    const field = row.getByLabelText('Content');
+    fireEvent.change(field, { target: { value: 'edited' } });
+    fireEvent.blur(field);
+    expect(project.site.head[0]).toEqual(meta('author', 'edited'));
+    // The node the pointer went down on is still the one in the document.
+    expect(button.isConnected).toBe(true);
+    fireEvent.click(button);
+    expect(project.site.head).toEqual([meta('rating', 'general')]);
+  });
+
+  it('saving one row keeps another row\'s half-typed draft', () => {
+    project.updateSiteHead([meta('author', 'one'), meta('rating', 'general')]);
+    site();
+    const [first, second] = screen.getAllByTestId('head-item').map((li) => within(li));
+    fireEvent.change(second.getByLabelText('Content'), { target: { value: 'half typed' } });
+    fireEvent.change(first.getByLabelText('Content'), { target: { value: 'edited' } });
+    fireEvent.blur(first.getByLabelText('Content'));
+    expect(project.site.head[0]).toEqual(meta('author', 'edited'));
+    expect((screen.getAllByTestId('head-item')[1].querySelector('input[id$="-content"]') as HTMLInputElement).value).toBe('half typed');
+  });
+
+  it('closing the dialog with a valid edit still in its field saves it', () => {
+    project.updateSiteHead([meta('author', 'one')]);
+    const onClose = vi.fn();
+    render(<HeadItemsDialog scope={{ kind: 'site', project }} open onClose={onClose} />);
+    const field = screen.getByLabelText('Content') as HTMLInputElement;
+    field.focus();
+    fireEvent.change(field, { target: { value: 'typed, not yet blurred' } });
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(project.site.head[0]).toEqual(meta('author', 'typed, not yet blurred'));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('a pasted list that would pass the cap is refused whole, in an edit row and in the new form, and nothing is lost', () => {
+    const ld = (name: string) => ({ '@context': 'https://schema.org', '@type': 'Thing', name });
+    const filled = Array.from({ length: HEAD_LIMITS.siteItems - 1 }, (_, i) => meta('author', `a${i}`));
+    project.updateSiteHead([...filled, { kind: 'jsonld', data: ld('x') }].slice(0, HEAD_LIMITS.siteItems));
+    const before = JSON.stringify(project.site.head);
+    site();
+    const last = within(screen.getAllByTestId('head-item')[HEAD_LIMITS.siteItems - 1]);
+    fireEvent.change(last.getByLabelText('JSON-LD'), { target: { value: JSON.stringify([ld('a'), ld('b'), ld('c')]) } });
+    fireEvent.blur(last.getByLabelText('JSON-LD'));
+    expect(JSON.stringify(project.site.head)).toBe(before);
+    expect(message()).toMatch(/there is room for 0/);
+  });
+
+  it('Add stays off, with the reason, for a list that does not fit', () => {
+    project.updateSiteHead(Array.from({ length: HEAD_LIMITS.siteItems - 1 }, (_, i) => meta('author', `a${i}`)));
+    site();
+    click('Add head item');
+    fireEvent.change(newForm().getByLabelText('Kind'), { target: { value: 'jsonld' } });
+    const ld = { '@context': 'https://schema.org', '@type': 'Thing' };
+    fireEvent.change(newForm().getByLabelText('JSON-LD'), { target: { value: JSON.stringify([ld, ld, ld]) } });
+    expect((newForm().getByRole('button', { name: /Add/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(message()).toMatch(/room for 1/);
+  });
+
+  it('a kind change after typing keeps what was typed in the content', () => {
+    project.updateSiteHead([meta('author', 'stored')]);
+    site();
+    const row = within(screen.getByTestId('head-item'));
+    fireEvent.change(row.getByLabelText('Content'), { target: { value: 'typed' } });
+    fireEvent.change(row.getByLabelText('Kind'), { target: { value: 'property' } });
+    expect((row.getByLabelText('Content') as HTMLInputElement).value).toBe('typed');
+  });
+
+  it('a stored item the page drops shows as not published, not as Published', () => {
+    project.updateSiteHead([meta('author', 'first'), meta('author', 'second')]);
+    site();
+    const statuses = screen.getAllByTestId('head-status').map((el) => el.textContent);
+    expect(statuses[0]).toBe('Published');
+    expect(statuses[1]).toMatch(/^Not published: An earlier item already says this/);
+  });
+
+  it('a page lists the site items its own structured data pushes out of the page', () => {
+    const ld = (name: string) => ({ kind: 'jsonld', data: { '@context': 'https://schema.org', '@type': 'Thing', name } });
+    project.updateSiteHead([ld('s1'), ld('s2')]);
+    home.updateMetadata({ head: [ld('p1'), ld('p2')] });
+    page();
+    expect(screen.getByTestId('head-elsewhere').textContent).toMatch(/Site head item 2 is left out of this page/);
+  });
+
+  it('focus lands on the next place to work: the new form after an add, the count after a delete', () => {
+    site();
+    fireEvent.change(newForm().getByLabelText('Name'), { target: { value: 'author' } });
+    fireEvent.change(newForm().getByLabelText('Content'), { target: { value: 'a' } });
+    fireEvent.click(newForm().getByRole('button', { name: 'Add item' }));
+    expect(document.activeElement).toBe(newForm().getByLabelText('Kind'));
+    click('Delete head item 1');
+    expect(document.activeElement).toBe(screen.getByTestId('head-count'));
+  });
+
+  it('the check names a site item once however many pages there are', () => {
+    const second = project.createPage('About');
+    const snapshot = (p: PageModelType) => JSON.parse(JSON.stringify(getSnapshot(p)));
+    const result = checkBeforePublish(
+      project.site.business,
+      [home, second].map((p) => ({ id: p.id, slug: p.slug, metadata: { title: p.metadata.title }, snapshot: snapshot(p) })),
+      { definitions: project.definitions, refused: [] },
+      project.site.theme,
+      [{ kind: 'meta', name: 'viewport', content: 'x' }],
+    );
+    expect(result.head).toHaveLength(1);
   });
 });
 

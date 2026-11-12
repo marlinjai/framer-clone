@@ -406,7 +406,7 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
           <ul className="list-disc pl-4" data-testid="publish-head-issues">
             {check.head!.map((issue) => (
               <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
-                {issue.title}: {issue.message}. Open Head to fix it.
+                {issue.title}: {issue.message}. {issue.pageId ? 'Open the page\'s settings to fix it.' : 'Open Site settings to fix it.'}
               </li>
             ))}
           </ul>
