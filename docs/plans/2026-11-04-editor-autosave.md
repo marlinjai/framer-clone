@@ -159,8 +159,10 @@ Folded in from the third review of 8bcce7b1 (decided while building, say so if y
 - ~~The migration gives up after 5 s waiting for its lock.~~ Taken out again in the fourth
   review: adding a nullable column without a default is metadata only, and a migration that
   fails on a timeout is marked failed by Prisma (P3009), blocking every later deploy. The
-  rollback (drop the column, `prisma migrate resolve --rolled-back`) is in `deploy/README.md`,
-  "Migration rollbacks".
+  rollback is in `deploy/README.md`, "Migration rollbacks": the default is to leave the nullable columns in place;
+  dropping them is destructive, needs its own authorization, and must also delete the migration's `_prisma_migrations`
+  row in the same transaction (`prisma migrate resolve --rolled-back` refuses an applied migration, P3012, and is only
+  for one marked failed, P3009).
 - **Cmd/Ctrl+S on the standalone preview** only keeps the browser dialog away (nothing to save
   there).
 
