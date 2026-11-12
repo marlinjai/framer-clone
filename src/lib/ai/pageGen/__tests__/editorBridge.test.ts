@@ -364,6 +364,28 @@ describe('a generation that adds site tokens', () => {
     expect(JSON.stringify(siteTheme())).toBe(before);
   });
 
+  it('Undo then Redo restores the page, its nodes and the token exactly: the project is the same document as after the apply', () => {
+    const target = captureTarget('newPage', page, undefined);
+    const applied = applyResult(project, target, themedResult(PAGE, target));
+    if (!applied.ok) throw new Error(applied.reason);
+    const afterApply = JSON.stringify(getSnapshot(project));
+    const tokenId = siteTheme().tokens[0].id;
+    getHistoryStore()!.undo();
+    expect(project.getPage(applied.value.pageId)).toBeUndefined();
+    expect(siteTheme().tokens).toHaveLength(0);
+    getHistoryStore()!.redo();
+    const created = project.getPage(applied.value.pageId)!;
+    expect(created).toBeDefined();
+    expect(((created.appComponentTree as ComponentInstance).children[0] as ComponentInstance).props.style.backgroundColor).toBe(ref(tokenId));
+    expect(siteTheme().tokens.map((t) => t.id)).toEqual([tokenId]);
+    // Nothing differs from the document the apply produced, so a save after Redo stores the same thing.
+    expect(JSON.stringify(getSnapshot(project))).toBe(afterApply);
+    // And the history is back where it was: one entry, nothing left to redo, one to undo.
+    expect(getHistoryStore()!.history.length).toBe(1);
+    expect(getHistoryStore()!.canRedo).toBe(false);
+    expect(getHistoryStore()!.canUndo).toBe(true);
+  });
+
   it('does the same for a replace into an existing page', () => {
     const container = tree().children[0] as ComponentInstance;
     const target = captureTarget('replace', page, container);
