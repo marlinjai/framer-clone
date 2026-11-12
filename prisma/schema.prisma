@@ -336,6 +336,7 @@ model Site {
   cspReports  CspReportCount[]
   revisions   SiteRevision[]   @relation("SiteRevisions")
   images      SiteImage[]
+  models      SiteModel[]
 
   @@unique([id, workspaceId])
   @@index([workspaceId])
@@ -832,5 +833,53 @@ model ErasureEvent {
 
   @@index([tenantId])
   @@map("erasure_events")
+  @@schema("public")
+}
+
+/// One stored 3D model of a site (docs/plans/2026-11-02-3d-scene-primitive.md, "Storage"): the metadata of the
+/// re-encoded file whose bytes live in object storage under `served/<sha256>` (never in this table), plus the kept
+/// original's hash. Stored once per site and SHA-256 of the re-encoded file, served at `/site-models/<sha256>.glb`
+/// on the site's own hosts. Never edited except `lastUsedAt` (a repeat upload or a new use refreshes it, so
+/// collection counts 30 days from the last use). A branch's models are its main site's (the repository resolves it,
+/// as it does for images). Deleting the site deletes its rows (cascade); the blobs are collected separately.
+model SiteModel {
+  id String @id @default(uuid())
+
+  siteId String @map("site_id")
+
+  // --- hard isolation boundary (both indexed), denormalised from the Site ---
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  sha256        String
+  // Bytes of the re-encoded file, at most 8 MB (the per-model quota).
+  byteSize      Int      @map("byte_size")
+  triangles     Int
+  materialCount Int      @map("material_count")
+  nodeCount     Int      @map("node_count")
+  clipCount     Int      @map("clip_count")
+  textureCount  Int      @default(0) @map("texture_count")
+  extensions    String[]
+  // The material and node names the role panel lists (JSON arrays of strings).
+  materialNames Json     @default("[]") @map("material_names")
+  nodeNames     Json     @default("[]") @map("node_names")
+
+  // The kept original (`original/<sha256>` in object storage), never served.
+  originalSha256 String @map("original_sha256")
+  originalBytes  Int    @map("original_bytes")
+
+  // The auth-brain user who uploaded it first.
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  lastUsedAt DateTime @default(now()) @map("last_used_at")
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, sha256])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@index([sha256])
+  @@index([originalSha256])
+  @@map("site_models")
   @@schema("public")
 }

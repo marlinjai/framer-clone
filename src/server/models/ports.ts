@@ -23,7 +23,11 @@ export interface SiteModelRecord {
   materials: number;
   nodes: number;
   clips: number;
+  textures: number;
   extensions: string[];
+  /** The material and node names the role panel lists (bounded by the structure caps, each at most 80 characters). */
+  materialNames: string[];
+  nodeNames: string[];
   uploaderId: string;
   createdAt: Date;
   /** Set whenever the same model is uploaded or chosen again, so collection counts age from the last use. */
@@ -60,6 +64,7 @@ export interface DecodedStats {
   materials: number;
   nodes: number;
   clips: number;
+  textures: number;
 }
 
 /** Thrown by a re-encoder for a model it refuses on purpose (too large once decoded, not decodable). The upload answers with its status and message. */
@@ -77,5 +82,5 @@ export interface ModelValidator {
 
 /** Steps 5 and 6: decode, measure, dedupe, resize textures, compress with meshopt. Gated: glTF-Transform is not added here. */
 export interface ModelReencoder {
-  reencode(bytes: Uint8Array): Promise<{ bytes: Uint8Array; input: DecodedStats; output: DecodedStats }>;
+  reencode(bytes: Uint8Array): Promise<{ bytes: Uint8Array; input: DecodedStats; output: DecodedStats; names: { materials: string[]; nodes: string[] } }>;
 }

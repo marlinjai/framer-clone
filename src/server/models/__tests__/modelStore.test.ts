@@ -30,15 +30,15 @@ function glb(tag: string, bin = 8): Uint8Array {
 }
 
 const row = (siteId: string, sha256: string, bytes: number, extra: Record<string, unknown> = {}) => ({
-  siteId, sha256, bytes, triangles: 1, materials: 1, nodes: 1, clips: 0, extensions: [], uploaderId: 'u',
+  siteId, sha256, bytes, triangles: 1, materials: 1, nodes: 1, clips: 0, textures: 0, extensions: [], materialNames: [], nodeNames: [], uploaderId: 'u',
   createdAt: new Date(), lastUsedAt: new Date(), originalSha256: `o-${sha256}`, originalBytes: 1, ...extra,
 });
 
-const SMALL: DecodedStats = { triangles: 1000, maxTextureSide: 1024, boundingBox: [4, 2, 8], materials: 2, nodes: 5, clips: 0 };
+const SMALL: DecodedStats = { triangles: 1000, maxTextureSide: 1024, boundingBox: [4, 2, 8], materials: 2, nodes: 5, clips: 0, textures: 0 };
 const okValidator: ModelValidator = { validate: async () => ({ ok: true }) };
 /** A re-encoder that returns a fixed output, measuring whatever it is told to. */
 const reencoder = (output: Uint8Array, input: Partial<DecodedStats> = {}, out: Partial<DecodedStats> = {}): ModelReencoder => ({
-  reencode: async () => ({ bytes: output, input: { ...SMALL, ...input }, output: { ...SMALL, maxTextureSide: 1024, ...out } }),
+  reencode: async () => ({ bytes: output, input: { ...SMALL, ...input }, output: { ...SMALL, maxTextureSide: 1024, ...out }, names: { materials: ['paint', 'glass'], nodes: ['root'] } }),
 });
 const deps = (extra: Partial<UploadDeps> = {}): UploadDeps & { blobs: MemoryBlobStore; models: MemorySiteModels } => ({
   blobs: new MemoryBlobStore(), models: new MemorySiteModels(), validator: okValidator, reencoder: reencoder(glb('out')), ...extra,
@@ -110,7 +110,7 @@ describe('the upload pipeline fails closed', () => {
     expect(d.blobs.files.size).toBe(2);
     expect([...d.blobs.files.keys()].some((k) => k.startsWith('served/'))).toBe(true);
     expect([...d.blobs.files.keys()].some((k) => k.startsWith('original/'))).toBe(true);
-    expect((await d.models.list('s1'))[0]).toMatchObject({ siteId: 's1', uploaderId: 'u1', triangles: 1000 });
+    expect((await d.models.list('s1'))[0]).toMatchObject({ siteId: 's1', uploaderId: 'u1', triangles: 1000, materialNames: ['paint', 'glass'], nodeNames: ['root'], textures: 0 });
   });
 
   it('is idempotent: the same result stored twice is one row and says so', async () => {
@@ -229,7 +229,7 @@ describe('the upload pipeline fails closed', () => {
     await d.models.insertWithinQuota(row('s1', '1'.repeat(64), 199 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
     const outputs = [glb('a', 600 * 1024), glb('b', 600 * 1024), glb('c', 600 * 1024)];
     let i = 0;
-    const re: ModelReencoder = { reencode: async () => ({ bytes: outputs[i++ % 3], input: SMALL, output: SMALL }) };
+    const re: ModelReencoder = { reencode: async () => ({ bytes: outputs[i++ % 3], input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
     const results = await Promise.all([0, 1, 2].map((n) => acceptModelUpload(glb(`in${n}`), 's1', 'u', { ...d, reencoder: re })));
     expect(results.filter((r) => r.ok).length).toBe(1);
     expect(await d.models.totalBytes('s1')).toBeLessThanOrEqual(200 * MB);
@@ -263,9 +263,9 @@ describe('the upload pipeline fails closed', () => {
     ['no bounding box', { ...SMALL, boundingBox: undefined }], ['a short bounding box', { ...SMALL, boundingBox: [1, 1] }],
     ['a non-array bounding box', { ...SMALL, boundingBox: 5 }], ['NaN materials', { ...SMALL, materials: NaN }], ['no stats at all', undefined],
   ])('refuses malformed measurements cleanly: %s', async (_n, bad) => {
-    const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: bad as never, output: SMALL }) };
+    const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: bad as never, output: SMALL, names: { materials: [], nodes: [] } }) };
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', deps({ reencoder: re })))).toMatchObject({ status: 413 });
-    const re2: ModelReencoder = { reencode: async () => ({ bytes: undefined as never, input: SMALL, output: SMALL }) };
+    const re2: ModelReencoder = { reencode: async () => ({ bytes: undefined as never, input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', deps({ reencoder: re2 })))).toMatchObject({ status: 500 });
   });
 });
