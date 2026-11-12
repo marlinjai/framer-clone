@@ -179,7 +179,7 @@ export function isBlockedTag(tag: unknown, foreign: ForeignContent = false): boo
   return true;
 }
 
-const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName']);
+const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName', 'scene']);
 
 /** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
 export const isSettingsProp = (name: string): boolean =>

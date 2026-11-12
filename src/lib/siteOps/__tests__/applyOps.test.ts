@@ -218,6 +218,11 @@ describe('applyOperations: refusals write nothing', () => {
     if (!outcome.ok) expect(outcome.rejected[0].reason).toContain('cannot sit inside <button>');
   });
 
+  it('refuses to set a 3D scene or its marker through setProps', async () => {
+    expect((await refused([{ op: 'setProps', nodeId: 'link', props: { scene: 'x' } }]))[0].reason).toMatch(/scene is not set through setProps/);
+    expect((await refused([{ op: 'setProps', nodeId: 'link', props: { 'data-scene': 'three' } }]))[0].reason).toMatch(/data-scene is not set through setProps/);
+  });
+
   it('rejects a handler prop and a javascript link', async () => {
     expect((await refused([{ op: 'setProps', nodeId: 'link', props: { onclick: 'alert(1)' } }]))[0].reason).toMatch(/onclick/);
     expect((await refused([{ op: 'setProps', nodeId: 'link', props: { href: 'javascript:alert(1)' } }]))[0].reason).toMatch(/href/);
