@@ -1,42 +1,42 @@
 {
-  "generatedAt": "2026-11-11T20:12:33.633Z",
+  "generatedAt": "2026-11-12T00:40:13.672Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 613,
+  "durationSeconds": 419,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1820,
+        "pass": 1823,
         "fail": 22,
         "notTested": 0,
-        "total": 1842
+        "total": 1845
       },
       "renderer": {
-        "pass": 1793,
+        "pass": 1796,
         "fail": 49,
         "notTested": 0,
-        "total": 1842
+        "total": 1845
       },
       "canvas": {
         "pass": 1745,
-        "fail": 97,
+        "fail": 100,
         "notTested": 0,
-        "total": 1842
+        "total": 1845
       },
       "panel": {
         "pass": 1241,
-        "fail": 601,
+        "fail": 604,
         "notTested": 0,
-        "total": 1842
+        "total": 1845
       },
       "ai": {
         "pass": 1438,
-        "fail": 404,
+        "fail": 407,
         "notTested": 0,
-        "total": 1842
+        "total": 1845
       }
     },
     "acceptedNotTaught": 91,
@@ -552,9 +552,41 @@
           "notTested": 0,
           "total": 9
         }
+      },
+      "fx-scene": {
+        "format": {
+          "pass": 3,
+          "fail": 0,
+          "notTested": 0,
+          "total": 3
+        },
+        "renderer": {
+          "pass": 3,
+          "fail": 0,
+          "notTested": 0,
+          "total": 3
+        },
+        "canvas": {
+          "pass": 0,
+          "fail": 3,
+          "notTested": 0,
+          "total": 3
+        },
+        "panel": {
+          "pass": 0,
+          "fail": 3,
+          "notTested": 0,
+          "total": 3
+        },
+        "ai": {
+          "pass": 0,
+          "fail": 3,
+          "notTested": 0,
+          "total": 3
+        }
       }
     },
-    "included": 1842,
+    "included": 1845,
     "excluded": [
       {
         "kind": "html-element",
@@ -5144,7 +5176,10 @@
       "page-item:theme:mode-dark": "pass pass pass pass theme",
       "page-item:theme:document-background": "pass pass pass pass theme",
       "page-item:theme:document-color": "pass pass pass pass theme",
-      "page-item:theme:document-font": "pass pass pass pass theme"
+      "page-item:theme:document-font": "pass pass pass pass theme",
+      "fx-scene:scene:hub-hero": "pass pass fx-scene fx-scene fx-scene",
+      "fx-scene:scene:godrays-hero": "pass pass fx-scene fx-scene fx-scene",
+      "fx-scene:scene:noise-gradient": "pass pass fx-scene fx-scene fx-scene"
     }
   },
   "corpus": {
@@ -9500,6 +9535,16 @@
     {
       "id": "theme",
       "description": "A site's shared colour and font tokens, its colour mode and its document defaults (docs/plans/2026-11-02-theme-and-head.md). Stored (T1) and published (T2); the editor canvas waits for slice T3, the panel for T4 and the generator for T5.",
+      "matrixCells": 9,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 9
+    },
+    {
+      "id": "fx-scene",
+      "description": "An FX scene (a box that draws a Lumitra FX scene behind its content) that this surface does not handle yet: the canvas, the properties panel and the generator come with later slices of the FX plan.",
       "matrixCells": 9,
       "corpusChecks": 0,
       "fixtures": [],

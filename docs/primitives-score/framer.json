@@ -1,8 +1,8 @@
 {
   "comparedWith": {
     "file": "docs/primitives-score/latest.json",
-    "generatedAt": "2026-11-11T20:12:33.633Z",
-    "included": 1842
+    "generatedAt": "2026-11-12T00:40:13.672Z",
+    "included": 1845
   },
   "framerPlugin": {
     "name": "framer-plugin",
@@ -10,15 +10,15 @@
     "typingsSha256": "38e57e89ce85f08f6624a203c31a9bde87d6449c8a94a269aa5bf22b0d11839e"
   },
   "totals": {
-    "rows": 1842,
+    "rows": 1845,
     "framer": {
       "native": 40,
       "partial": 509,
       "code-only": 1091,
-      "unknown": 202
+      "unknown": 205
     },
     "framerTyped": 549,
-    "ourRenderer": 1793,
+    "ourRenderer": 1796,
     "ourPanel": 1241,
     "documentedNotMeasured": 83
   },
@@ -293,6 +293,23 @@
       "ourPanel": 9,
       "framerTypedOursFails": 0,
       "oursPassesFramerUntyped": 6,
+      "framerTypedPanelFails": 0
+    },
+    {
+      "kind": "fx-scene",
+      "label": "FX scene promises",
+      "total": 3,
+      "framer": {
+        "native": 0,
+        "partial": 0,
+        "code-only": 0,
+        "unknown": 3
+      },
+      "framerTyped": 0,
+      "ourRenderer": 3,
+      "ourPanel": 0,
+      "framerTypedOursFails": 0,
+      "oursPassesFramerUntyped": 3,
       "framerTypedPanelFails": 0
     }
   ],
@@ -10406,6 +10423,36 @@
       "symbols": [],
       "ourRenderer": true,
       "ourPanel": true
+    },
+    {
+      "key": "fx-scene:scene:godrays-hero",
+      "kind": "fx-scene",
+      "id": "scene:godrays-hero",
+      "verdict": "unknown",
+      "reason": "an FX scene of this app's own engine, which this mapping has not settled",
+      "symbols": [],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "fx-scene:scene:hub-hero",
+      "kind": "fx-scene",
+      "id": "scene:hub-hero",
+      "verdict": "unknown",
+      "reason": "an FX scene of this app's own engine, which this mapping has not settled",
+      "symbols": [],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "fx-scene:scene:noise-gradient",
+      "kind": "fx-scene",
+      "id": "scene:noise-gradient",
+      "verdict": "unknown",
+      "reason": "an FX scene of this app's own engine, which this mapping has not settled",
+      "symbols": [],
+      "ourRenderer": true,
+      "ourPanel": false
     },
     {
       "key": "html-element-attribute:a.download",
