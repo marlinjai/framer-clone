@@ -483,10 +483,11 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
       expect(await camera(page)).toBe(before);
       // The finger left the scroller moving, so it coasts on for a moment. A person lets it stop before
-      // pressing something else, and so does this: on Linux, ChromeOS and Android, Chromium takes a tap that
-      // lands on a coasting scroll as "stop", not as a press, anywhere on the screen (on macOS it does not,
-      // which is why this only ever failed in continuous integration). Measured on a bare page with no editor
-      // in it: a tap sent at once after this drag was swallowed in 11 of 30 runs in Linux Chromium and in none of 30 after this wait.
+      // pressing something else, and so does this: Chromium on Linux takes a tap that lands on a coasting
+      // scroll as "stop", not as a press, wherever on the screen it lands. Chromium on macOS does not, which
+      // is why this only ever failed in continuous integration. Measured in Linux Chromium with this editor
+      // and these steps: without the wait the tool stayed on Interact in 21 of 25 runs, with it in 0 of 25
+      // (on a bare page with no editor: 11 of 30 against 0 of 30).
       await scrollAtRest(scroller);
     }
     await bar.getByRole('button', { name: 'Select tool' }).tap();
