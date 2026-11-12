@@ -82,9 +82,11 @@ describe('the site theme in the context', () => {
     document: { backgroundColor: 'var(--fc-t-ab12cd34)' },
   };
 
-  it('sends live, readable tokens only, with the mode and the page defaults', () => {
+  it('sends live tokens, a broken one by name only, never a tombstone, with the mode and the page defaults', () => {
     const sent = themeContextOf(theme).theme!;
-    expect(sent.tokens.map((t) => t.id)).toEqual(['ab12cd34', 'ef56gh78']);
+    expect(sent.tokens.map((t) => t.id)).toEqual(['ab12cd34', 'br00ken1', 'ef56gh78']);
+    expect(sent.tokens[1]).toEqual({ id: 'br00ken1', name: 'Broken', kind: 'color', broken: true });
+    expect(themeContextText(sent, true)).not.toContain('Broken');
     expect(sent.mode).toBe('light');
     expect(sent.document).toEqual({ backgroundColor: 'var(--fc-t-ab12cd34)' });
   });

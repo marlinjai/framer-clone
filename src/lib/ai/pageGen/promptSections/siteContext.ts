@@ -64,6 +64,8 @@ export interface ContextToken {
   dark?: string;
   /** A font: a library id or `system`. */
   family?: string;
+  /** A colour with no readable value: sent by name only, so the generator cannot take its name, never offered to the model. */
+  broken?: true;
 }
 
 export interface SiteContextTheme {
@@ -101,6 +103,7 @@ export const SiteContextSchema = z.strictObject({
             light: text(THEME_LIMITS.colorValue).optional(),
             dark: text(THEME_LIMITS.colorValue).optional(),
             family: text(100).optional(),
+            broken: z.literal(true).optional(),
           }),
         )
         .max(THEME_LIMITS.liveTokens),
@@ -148,7 +151,8 @@ export function themeContextOf(theme: SiteTheme | undefined): { theme?: SiteCont
   const tokens: ContextToken[] = [];
   for (const token of liveTokens(theme)) {
     if (token.kind === 'font') tokens.push({ id: token.id, name: token.name, kind: 'font', family: token.family });
-    else if (!token.broken) tokens.push({ id: token.id, name: token.name, kind: 'color', light: token.light, ...(token.dark !== undefined ? { dark: token.dark } : {}) });
+    else if (token.broken) tokens.push({ id: token.id, name: token.name, kind: 'color', broken: true });
+    else tokens.push({ id: token.id, name: token.name, kind: 'color', light: token.light, ...(token.dark !== undefined ? { dark: token.dark } : {}) });
   }
   const document = Object.fromEntries(DOCUMENT_KEYS.flatMap((key) => (theme.document[key] ? [[key, theme.document[key]]] : [])));
   if (tokens.length === 0 && theme.mode === undefined && Object.keys(document).length === 0) return {};
@@ -165,7 +169,7 @@ export function themeFromContext(context: SiteContextTheme | undefined): SiteThe
   const tokens = context.tokens.map((t): ThemeToken =>
     t.kind === 'font'
       ? { id: t.id, name: t.name, kind: 'font', family: t.family ?? 'system' }
-      : { id: t.id, name: t.name, kind: 'color', light: t.light ?? '', ...(t.dark !== undefined ? { dark: t.dark } : {}) },
+      : { id: t.id, name: t.name, kind: 'color', light: t.broken ? '' : t.light ?? '', ...(t.dark !== undefined && !t.broken ? { dark: t.dark } : {}) },
   );
   return normalizeTheme({ ...(context.mode !== undefined ? { mode: context.mode } : {}), tokens, document: context.document });
 }
@@ -242,7 +246,8 @@ function tokenFact(token: ContextToken): Record<string, string> {
  * teaches stays small: the reference, the fontFamily rule, the cap and what never happens.
  */
 export function themeContextText(theme: SiteContextTheme | undefined, newPage: boolean): string {
-  const tokens = theme?.tokens ?? [];
+  // A token with no readable value is known to the validator, never offered to the model.
+  const tokens = (theme?.tokens ?? []).filter((t) => !t.broken);
   const mode = theme?.mode;
   const facts = {
     ...(mode !== undefined ? { mode } : {}),

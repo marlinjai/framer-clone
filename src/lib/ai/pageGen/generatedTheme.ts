@@ -159,6 +159,9 @@ export interface AdoptedTokens {
 
 export type AdoptOutcome = ({ ok: true } & AdoptedTokens) | { ok: false; errors: string[] };
 
+/** A name as it may stand in a message sent back to the model: owner and model text, so no control character and no angle bracket. */
+export const plainName = (name: string): string => name.replace(/[\u0000-\u001f\u007f<>]/g, ' ').slice(0, 40);
+
 const KIND_WORD: Record<TokenKind, string> = { color: 'colour', font: 'font' };
 
 function sameColor(a: ColorToken, light: string | null, dark: string | null | undefined): boolean {
@@ -178,16 +181,20 @@ export function adoptProposedTokens(theme: SiteTheme, proposed: readonly Propose
   const added: ThemeToken[] = [];
   const errors: string[] = [];
   for (const token of proposed) {
-    const label = `"${token.name}" (${token.ref})`;
+    const label = `"${plainName(token.name)}" (${token.ref})`;
     const same = liveTokens(working).find((t) => t.kind === token.kind && t.name.toLowerCase() === token.name.toLowerCase());
     if (token.kind === 'color') {
       const light = parseColorValue(token.light);
       const dark = token.dark === undefined ? undefined : parseColorValue(token.dark);
+      if (same && same.kind === 'color' && same.broken) {
+        errors.push(`${label}: the site has a colour called "${plainName(same.name)}" whose value cannot be read, so it cannot be used or reused. Pick another name.`);
+        continue;
+      }
       if (same && same.kind === 'color') {
         if (light !== null && dark !== null && sameColor(same, light, dark)) {
           idByRef.set(token.ref, same.id);
         } else {
-          errors.push(`${label}: the site already has a colour called "${same.name}", var(--fc-t-${same.id}), with other values. Use it, or pick another name; a generation never changes an existing token.`);
+          errors.push(`${label}: the site already has a colour called "${plainName(same.name)}", var(--fc-t-${same.id}), with other values. Use it, or pick another name; a generation never changes an existing token.`);
         }
         continue;
       }
@@ -202,7 +209,7 @@ export function adoptProposedTokens(theme: SiteTheme, proposed: readonly Propose
     } else {
       if (same && same.kind === 'font') {
         if (same.family === token.family) idByRef.set(token.ref, same.id);
-        else errors.push(`${label}: the site already has a font called "${same.name}", var(--fc-t-${same.id}), with another family. Use it, or pick another name; a generation never changes an existing token.`);
+        else errors.push(`${label}: the site already has a font called "${plainName(same.name)}", var(--fc-t-${same.id}), with another family. Use it, or pick another name; a generation never changes an existing token.`);
         continue;
       }
       const edit = addFontToken(working, { name: token.name, family: token.family ?? '' }, random);
@@ -297,16 +304,16 @@ export function judgeReferences(property: string, value: string, ctx: ReferenceC
       return fail(`var(--fc-t-${id}) is not a token of this site: use one from the site's list`);
     }
     if (token.kind === 'color' && token.broken) {
-      return fail(`"${token.name}" has no readable value, so it paints nothing: use another token`);
+      return fail(`"${plainName(token.name)}" has no readable value, so it paints nothing: use another token`);
     }
     if (token.deleted && !ctx.held.has(id)) {
-      return fail(`"${token.name}" was deleted from the site: use a token that is still there`);
+      return fail(`"${plainName(token.name)}" was deleted from the site: use a token that is still there`);
     }
     if (token.kind === 'font' && !(isFontProperty && scan.whole)) {
-      return fail(`"${token.name}" is a font: it goes in fontFamily, as the whole value, and nowhere else`);
+      return fail(`"${plainName(token.name)}" is a font: it goes in fontFamily, as the whole value, and nowhere else`);
     }
     if (token.kind === 'color' && isFontProperty) {
-      return fail(`"${token.name}" is a colour: fontFamily takes a font token`);
+      return fail(`"${plainName(token.name)}" is a colour: fontFamily takes a font token`);
     }
   }
   if (isFontProperty && !scan.whole) {
@@ -364,7 +371,7 @@ export function reconcileGeneratedTokens(
       if (!identical) {
         return {
           ok: false,
-          reason: `The site now has a ${KIND_WORD[token.kind]} called "${same.name}" with other values than the one this page was written with. Nothing was changed; generate it again.`,
+          reason: `The site now has a ${KIND_WORD[token.kind]} called "${plainName(same.name)}" with other values than the one this page was written with. Nothing was changed; generate it again.`,
         };
       }
       idMap.set(token.id, same.id);
