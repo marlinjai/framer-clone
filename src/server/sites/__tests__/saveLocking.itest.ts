@@ -19,6 +19,7 @@ import type { PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import { SiteChangedError, SiteImageMissingError, SiteVersionRequiredError, type TenantScope } from '@/server/sites';
 import { SiteBranchRepository } from '@/server/sites/branches/repository';
+import { SiteBranchMergeService } from '@/server/sites/branches/merge';
 import { SiteImageError, deleteSiteImage, storeSiteImage } from '@/server/sites/siteImages';
 import { png } from '@/lib/images/__tests__/fixtures';
 import { latestVersionRepository } from './latestVersionRepository';
@@ -40,11 +41,17 @@ function page(id: string, slug: string, text: string) {
   };
 }
 
-function project(siteId: string, over: { pages?: Record<string, unknown>; favicon?: string; text?: string } = {}) {
+/** The page with an image node whose `src` is the given path: a place the save does not check but the delete searches. */
+function withNodeImage<T extends { appComponentTree: { children: unknown[] } }>(p: T, path?: string): T {
+  if (!path) return p;
+  return { ...p, appComponentTree: { ...p.appComponentTree, children: [{ id: 'img', type: 'img', componentType: 'host', props: { src: path }, children: [] }] } };
+}
+
+function project(siteId: string, over: { pages?: Record<string, unknown>; favicon?: string; text?: string; homeText?: string; aboutText?: string; nodeImage?: string } = {}) {
   return {
     id: siteId,
     metadata: { title: 'Bakery', description: '', createdAt: 1, updatedAt: 2 },
-    pages: over.pages ?? { home: page('home', '', over.text ?? 'x'), about: page('about', 'about', over.text ?? 'y') },
+    pages: over.pages ?? { home: withNodeImage(page('home', '', over.homeText ?? over.text ?? 'x'), over.nodeImage), about: page('about', 'about', over.aboutText ?? over.text ?? 'y') },
     siteSettings: { siteName: 'Bakery', faviconUrl: over.favicon ?? '' },
   } as never;
 }
@@ -216,21 +223,29 @@ describe('a branch save naming an image and the delete of that image never both 
     return { repo, scope, mainId, branchId: branch.branchId, owner };
   }
   const stored = async (mainId: string, sha: string) => (await prisma.siteImage.count({ where: { siteId: mainId, sha256: sha } })) === 1;
-  const named = async (branchId: string, path: string) =>
-    ((await prisma.site.findUniqueOrThrow({ where: { id: branchId }, select: { siteSettings: true } })).siteSettings as { faviconUrl?: string }).faviconUrl === path;
+  /** The path is in the branch's stored settings or pages. */
+  const carries = async (branchId: string, path: string) => {
+    const row = await prisma.site.findUniqueOrThrow({ where: { id: branchId }, select: { siteSettings: true } });
+    const pages = await prisma.sitePage.findMany({ where: { siteId: branchId }, select: { snapshot: true } });
+    return JSON.stringify([row.siteSettings, pages.map((p) => p.snapshot)]).includes(path);
+  };
   const outcome = <T,>(run: Promise<T>) =>
     run.then(
       () => 'ok',
       (e: unknown) => (e instanceof SiteImageMissingError ? 'missing' : e instanceof SiteImageError ? e.code : `error ${String(e).slice(0, 80)}`),
     );
 
-  it('the save is in flight (blocked writing a page) when the delete asks: the delete waits for it, then finds the image in use', async () => {
+  it.each([
+    ['the favicon', 'favicon'],
+    ['an image node\'s own src, a place the save does not check but the delete searches', 'node'],
+  ] as const)('the save is in flight (blocked writing a page) when the delete asks, the path in %s: the delete waits for it, then finds the image in use', async (_where, where) => {
     const { repo, scope, mainId, branchId, owner } = await setup();
+    const carry = (path: string) => (where === 'favicon' ? { favicon: path } : { nodeImage: path });
     for (let round = 0; round < 5; round += 1) {
       const { image } = await storeSiteImage(owner, png(32 + round, 32 + round), 'favicon', ACTOR.id, prisma);
       // The save passes its image check, then waits on a page row of the branch.
       const page = await holdLock((tx) => tx.$queryRaw`SELECT 1 FROM public.site_pages WHERE site_id = ${branchId} AND page_id = 'home' FOR UPDATE`);
-      const save = outcome(repo.saveProject(scope, project(branchId, { favicon: image.path }), { mustExist: true }));
+      const save = outcome(repo.saveProject(scope, project(branchId, carry(image.path)), { mustExist: true }));
       await pause(400);
       const del = outcome(deleteSiteImage(mainId, image.sha256, prisma));
       await pause(400);
@@ -239,7 +254,7 @@ describe('a branch save naming an image and the delete of that image never both 
       expect(saved, `round ${round} save`).toBe('ok');
       expect(deleted, `round ${round} delete`).toBe('image_in_use');
       expect(await stored(mainId, image.sha256)).toBe(true);
-      expect(await named(branchId, image.path)).toBe(true);
+      expect(await carries(branchId, image.path)).toBe(true);
       await repo.saveProject(scope, project(branchId), { mustExist: true });
       await deleteSiteImage(mainId, image.sha256, prisma);
     }
@@ -259,7 +274,7 @@ describe('a branch save naming an image and the delete of that image never both 
       expect(deleted, `round ${round} delete`).toBe('ok');
       expect(saved, `round ${round} save`).toBe('missing');
       expect(await stored(mainId, image.sha256)).toBe(false);
-      expect(await named(branchId, image.path)).toBe(false);
+      expect(await carries(branchId, image.path)).toBe(false);
     }
   }, 120_000);
 
@@ -318,4 +333,119 @@ describe('every writer of a site together', () => {
     expect(n('branch save', 'branch save 2'), `branch: ${domain['branch save']} / ${domain['branch save 2']}`).toBeGreaterThan(0);
     expect(n('other site')).toBe(10);
   }, 180_000);
+});
+
+// The writers whose behaviour beside a save changed most (the save used to conflict with them through the serializable
+// level and now meets them on row locks): a merge, an update from main, the undo of a merge and an erase of personal
+// data, racing main and branch saves. Every call must END: commit, or be refused with the domain's own answer
+// (changed, stale, closed, nothing to erase), never a database conflict, a deadlock, or a half-written site.
+describe('the branch writers beside saves', () => {
+  const QUERY = { value: 'Erika Muster', caseSensitive: false };
+  const allShown = (preview: { matches: Array<{ id: string; blocked: string | null }> }) => preview.matches.filter((m) => m.blocked === null).map((m) => m.id);
+  const DOMAIN_ANSWERS = new Set([
+    'SiteChangedError', 'SiteGoneError', 'SiteNotFoundError', 'SiteErasedSinceLoadError', 'ErasePreviewStaleError', 'NothingToEraseError',
+    'BranchNotFoundError', 'BranchClosedError', 'MergeUndoUnavailableError', 'BranchReviewStaleError', 'BranchUnchangedError',
+    'BranchConflictsError', 'BranchUpdatedFirstError', 'BranchMergeInvalidError', 'SiteNeedsRepublishError', 'SiteImageMissingError',
+  ]);
+
+  it('merge, update from main, undo and erase race main and branch saves: every call ends, no deadlock, no half-written site', async () => {
+    const repo = latestVersionRepository();
+    const branches = new SiteBranchRepository(prisma);
+    const merges = new SiteBranchMergeService(prisma, repo);
+    const problems: string[] = [];
+    const answered: Record<string, { ok: number; refused: Record<string, number> }> = {};
+    const deadlocks = async () => Number((await prisma.$queryRaw<{ n: bigint }[]>`SELECT deadlocks AS n FROM pg_stat_database WHERE datname = current_database()`)[0].n);
+    const deadlocksBefore = await deadlocks();
+
+    const flow = async (label: string, run: () => Promise<unknown>) => {
+      const entry = (answered[label] ??= { ok: 0, refused: {} });
+      try {
+        await run();
+        entry.ok += 1;
+      } catch (err) {
+        const name = err instanceof Error ? err.constructor.name : String(err);
+        if (DOMAIN_ANSWERS.has(name)) entry.refused[name] = (entry.refused[name] ?? 0) + 1;
+        else problems.push(`${label}: ${name} ${err instanceof Error ? err.message.slice(0, 140) : ''}`);
+      }
+    };
+
+    const later = async <T,>(ms: number, run: () => Promise<T>) => {
+      await pause(ms);
+      return run();
+    };
+    // Who starts first changes what is raced: the writer finishing before the saves (it commits), both at once
+    // (they meet on the locks), the saves first (the writer is refused as changed or stale).
+    const MODES = ['merge first', 'erase first', 'simultaneous', 'saves first'] as const;
+    const rounds = 16;
+    for (let round = 0; round < rounds; round += 1) {
+      const mode = MODES[round % 4];
+      const writerDelay = mode === 'saves first' ? 80 : 0;
+      const savesDelay = mode === 'merge first' ? 150 : mode === 'erase first' ? 100 : 0;
+      const othersDelay = mode === 'merge first' ? 350 : mode === 'erase first' ? 250 : writerDelay;
+      const mergeDelay = mode === 'erase first' ? 150 : writerDelay;
+      const eraseDelay = mode === 'merge first' ? 350 : writerDelay;
+      const scope = scopeOf();
+      const mainId = randomUUID();
+      await repo.saveProject(scope, project(mainId, { text: `Erika Muster main ${round}` }));
+      const { branch } = await branches.createBranch(scope, mainId, { name: `Round ${round}`, actor: ACTOR });
+      const branchId = branch.branchId;
+      // The branch changes the home page only; when main goes ahead it changes the other page only: no conflict, so
+      // an update from main brings it in cleanly and a merge can commit.
+      await repo.saveProject(scope, project(branchId, { text: `Erika Muster main ${round}`, homeText: `Erika Muster branch ${round}` }), { mustExist: true });
+      // Four rounds with the branch behind main (a merge is turned into an update first), four up to date, alternating by block.
+      if (Math.floor(round / 4) % 2 === 0) await repo.saveProject(scope, project(mainId, { text: `Erika Muster main ${round}`, aboutText: `Erika Muster main ahead ${round}` }), { mustExist: true });
+
+      // What the writers hold when the race starts: a review and its token, and the erase's preview.
+      const first = await merges.changes(scope, branchId);
+      await merges.approve(scope, branchId, { token: first.token }, ACTOR).catch(() => undefined);
+      const { token } = await merges.changes(scope, branchId);
+      const erase = async (siteId: string, preview: Awaited<ReturnType<typeof repo.searchPersonalData>>) =>
+        repo.erasePersonalData(scope, siteId, { query: QUERY, replacement: '[entfernt]', token: preview.token, chosen: allShown(preview), erasedBy: ACTOR.id });
+      const preview = await repo.searchPersonalData(scope, mainId, QUERY);
+      await Promise.all([
+        flow('merge', () => later(mergeDelay, () => merges.merge(scope, branchId, { token }, ACTOR))),
+        flow('update from main', () => later(othersDelay, () => merges.update(scope, branchId, { token }, ACTOR))),
+        flow('erase', () => later(eraseDelay, () => erase(mainId, preview))),
+        flow('main save', () => later(savesDelay, () => repo.saveProject(scope, project(mainId, { text: `Erika Muster main save ${round}` }), { mustExist: true }))),
+        flow('main save 2', () => later(savesDelay + 10, () => repo.saveProject(scope, project(mainId, { text: `main save two ${round}` }), { mustExist: true }))),
+        flow('branch save', () => later(savesDelay, () => repo.saveProject(scope, project(branchId, { text: `Erika Muster branch save ${round}` }), { mustExist: true }))),
+        flow('branch save 2', () => later(savesDelay + 10, () => repo.saveProject(scope, project(branchId, { text: `branch save two ${round}` }), { mustExist: true }))),
+      ]);
+
+      // The undo of a merge, racing saves of main and an erase.
+      const record = await prisma.siteBranch.findUnique({ where: { id: branchId }, select: { status: true } });
+      if (record?.status === 'merged') {
+        const againPreview = await repo.searchPersonalData(scope, mainId, QUERY);
+        await Promise.all([
+          flow('undo of a merge', () => later(writerDelay, () => merges.undoMerge(scope, mainId, branchId, ACTOR))),
+          flow('main save after the merge', () => later(savesDelay, () => repo.saveProject(scope, project(mainId, { text: `after the merge ${round}` }), { mustExist: true }))),
+          flow('erase after the merge', () => later(writerDelay, () => erase(mainId, againPreview))),
+        ]);
+      }
+
+      // No half-written site: each site that exists holds both its pages, readable, and a version.
+      for (const id of [mainId, branchId]) {
+        const site = await prisma.site.findUnique({ where: { id }, select: { version: true, siteSettings: true, redirects: true } });
+        if (!site) continue;
+        const rows = await prisma.sitePage.findMany({ where: { siteId: id }, select: { pageId: true, snapshot: true } });
+        const label = `round ${round}, ${id === mainId ? 'main' : 'branch'}`;
+        if (rows.length !== 2) problems.push(`${label}: ${rows.length} page rows`);
+        if (rows.some((r) => !(r.snapshot as { appComponentTree?: unknown })?.appComponentTree)) problems.push(`${label}: a page without its tree`);
+        if (!(site.version >= 1) || !Array.isArray(site.redirects)) problems.push(`${label}: version ${site.version}, redirects ${JSON.stringify(site.redirects)?.slice(0, 40)}`);
+      }
+    }
+    expect(problems).toEqual([]);
+    expect(await deadlocks()).toBe(deadlocksBefore);
+    // Saves got through, and the branch writers were exercised (an answer of any kind counts; a call that threw something else is a problem above).
+    expect(answered['main save'].ok + answered['main save 2'].ok).toBeGreaterThan(0);
+    expect(answered['branch save'].ok + answered['branch save 2'].ok).toBeGreaterThan(0);
+    // The writers were not only refused: each committed at least once (the rounds where they start first).
+    // The first erase is almost always refused as stale (its preview predates the writers that run before it), so the
+    // erase counts when it commits in either race.
+    const committed = (...labels: string[]) => labels.reduce((sum, label) => sum + (answered[label]?.ok ?? 0), 0);
+    expect(committed('merge'), JSON.stringify(answered.merge)).toBeGreaterThan(0);
+    expect(committed('update from main'), JSON.stringify(answered['update from main'])).toBeGreaterThan(0);
+    expect(committed('undo of a merge'), JSON.stringify(answered['undo of a merge'])).toBeGreaterThan(0);
+    expect(committed('erase', 'erase after the merge'), JSON.stringify([answered.erase, answered['erase after the merge']])).toBeGreaterThan(0);
+  }, 300_000);
 });

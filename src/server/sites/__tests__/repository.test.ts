@@ -485,6 +485,14 @@ describe('SiteRepository.saveProject concurrency', () => {
     expect(seen[3]).toMatch(/FOR UPDATE$/);
     expect(prisma.$queryRaw.mock.calls[3].slice(1)).toEqual(['site_1', SCOPE.workspaceId]);
 
+    // The path anywhere in the document, a node's own `src` as well: the delete searches all of it.
+    seen.length = 0;
+    prisma.$queryRaw.mockClear();
+    const inNode = { id: 'site_1', metadata: { title: 'S', description: '', createdAt: 1, updatedAt: 2 }, pages: { home: { id: 'home', slug: '', metadata: { title: 'Home' }, appComponentTree: { id: 'r', type: 'img', props: { src: `/site-images/${sha}.png` } } } } } as never;
+    await repo.saveProject(SCOPE, inNode, { expectedVersion: 1 });
+    expect(seen).toHaveLength(4);
+    expect(seen[2]).toMatch(/FOR SHARE$/);
+
     seen.length = 0;
     prisma.$queryRaw.mockClear();
     await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });

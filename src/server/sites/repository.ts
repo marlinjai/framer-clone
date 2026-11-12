@@ -136,6 +136,18 @@ async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+/** The path of an uploaded image in any text, the pattern deleteSiteImage's scan (referencedHashes) searches for. */
+const SITE_IMAGE_PATH = /site-images\/[0-9a-f]{64}/;
+
+/** Whether the document a save carries holds an uploaded image's path anywhere: settings, definitions, any page. */
+function carriesSiteImagePath(persisted: PersistedSite): boolean {
+  return (
+    SITE_IMAGE_PATH.test(JSON.stringify(persisted.siteSettings)) ||
+    (persisted.components != null && SITE_IMAGE_PATH.test(JSON.stringify(persisted.components))) ||
+    persisted.pages.some((p) => SITE_IMAGE_PATH.test(JSON.stringify(p.snapshot)))
+  );
+}
+
 /** The uploaded images a save names: in the settings, as a page's sharing image, in an FX scene on a page or in a component. */
 function namedImagesOf(persisted: PersistedSite): ReturnType<typeof namedSiteImages> {
   return namedSiteImages(persisted.siteSettings, [
@@ -644,7 +656,9 @@ export class SiteRepository {
    *
    *  1. A transaction advisory lock on the site id, so two creators of one id queue even though there is no row
    *     to lock yet (the second then finds the first's site and is refused by the version lock).
-   *  2. For a branch that names an uploaded image (an image is its main site's): the main site's row, FOR SHARE.
+   *  2. For a branch whose document carries an uploaded image's path ANYWHERE (an image is its main site's): the main
+   *     site's row, FOR SHARE. This is the text search the delete does (referencedHashes), not only the places the
+   *     save checks (namedImagesOf), because the delete protects every place the path can sit.
    *     Deleting an image takes main's row FOR UPDATE (siteImages.ts), so a delete and this save cannot overlap:
    *     the delete then sees this branch's pages, or this save then finds the image gone. Shared, so branch saves
    *     do not wait for one another here. Main is always taken before the branch, the order of the branch merge
@@ -656,7 +670,7 @@ export class SiteRepository {
   private async lockSiteForSave(tx: Prisma.TransactionClient, scope: TenantScope, persisted: PersistedSite): Promise<void> {
     const siteId = persisted.siteId;
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_save:${siteId}`}))`;
-    if (namedImagesOf(persisted).size > 0) {
+    if (carriesSiteImagePath(persisted)) {
       const own = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`SELECT branch_of_site_id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId}`;
       const mainId = own[0]?.branch_of_site_id;
       if (mainId) await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
