@@ -722,3 +722,85 @@ an FX scene box added; its section first in the panel with the five layers of th
 new context; the box picked in the Tablet frame and the scene moved there, still one canvas; the preview opened with
 Live on: the canvas scene gone, the preview scene `waiting` and then `live` after 1.6 seconds (the `settled` start),
 one canvas; preview closed and the canvas scene back; Live off: no canvas, the boxes as before.
+
+### F6 `fx-ai-and-agent` (2026-11-12)
+
+The page generator and an agent's site operations can write an FX scene, through one reader.
+
+- **`src/lib/fxScene/generation.ts`, `readGeneratedFx`:** the one function that reads what is written under `fx` on an
+  FX scene box. It reads two forms. The **preset form** is the only one that is taught: `{ preset, start?, calm?,
+  background?, layers?: [{ id, visible?, params? }] }`, a preset recoloured and retuned inside each setting's range. It
+  cannot gain a layer: an entry that names no layer of the preset is left out with a note, an invented kind of layer
+  included, and a picture address is never written. The **stored form** (`{ version, scene, start, calm }`) is what a
+  box already holds; it goes through the strict reader exactly as a stored page does. Every change is made with the
+  functions of `edit.ts`, the ones the panel uses.
+- **The generator** (`validateGeneration`): the palette entry `fxScene` is a preset the model may name, and a box sent
+  back with its marker and its stored scene is read too (the model is shown the nodes it replaces, scene included, so a
+  regeneration keeps a hand-tuned scene). What was repaired or left out is a review note. An unknown preset falls back
+  to the default scene; a returned scene the reader refuses leaves a plain box with its content. The box's own CSS
+  background follows the preset unless the model set one.
+- **One scene per page:** a generation keeps its first FX scene in document order and any other as a plain box, and
+  none when the page already holds one outside what is replaced (`pageHasFxScene`, sent by the editor and by site
+  operations).
+- **What is taught** (`fxGenerationDocs`, part of the generation format the generator's prompt and
+  `describe_vocabulary` both carry): the four presets, each layer with every setting's range and the preset's value,
+  built from the engine's own presets and schemas, the same text on every run. The stored scene itself is never
+  printed into a prompt: the registry entry is listed without it.
+- **Site operations:** `insertNodes` places an FX scene through the generator's validator, as it places everything.
+  A new operation `setFxScene { nodeId, fx }` replaces the scene of an existing FX scene box, in either form.
+  `setProps` keeps refusing `fx` and the marker and now points to `setFxScene`. `getPage` shows a box's stored scene
+  whole, so an agent can read it, change it and send it back.
+- **Score:** the generator column of the three FX rows passes (`test/score/fx.score.ts`): written from its preset the
+  scene is the reference scene exactly, one retuned setting changes only that setting, an invented layer is left out
+  with a note.
+
+Decided in F6, say so if you disagree:
+
+- **A generator repairs, an agent is refused.** The generator keeps a scene with review notes. A site operation
+  refuses on any note: the site operations promise that nothing is dropped silently, so an agent never gets a scene
+  other than the one it wrote.
+- **Both forms are accepted from both.** The plan says the generator starts from presets only. It is taught only the
+  preset form, but a stored scene must be accepted back, or a regeneration next to an existing FX box would replace a
+  hand-tuned scene with a default. An agent needs the stored form to place a scene tuned elsewhere, such as the
+  lumitra.co hero in F8. The strict reader is the safety line for both.
+- **A text layer never shows the engine's sample words.** Two presets draw text ("Introducing", "Lumitra"). In the
+  preset form the words come from whoever writes the scene: text that is not given is left empty, and a text layer
+  given no text at all is hidden, with a note.
+- **A wrong kind of value keeps the preset's value.** The strict reader answers one with the layer kind's own default,
+  which is right for a stored page and would have turned a preset's bloom of 0.35 into 0 here.
+- **The fonts of a text layer are not taught.** The engine's list holds typefaces the page generator is told not to
+  use. The preset's font stays.
+- **No picture through the generator.** No preset holds an image layer, and the preset form cannot add one. An agent
+  can send a stored scene with a picture, which must be one of the site's own uploads; agents have no upload yet, so
+  that picture has to be uploaded in the editor first.
+- **Site operations have no undo of their own.** A batch is all or nothing, and a refused scene writes nothing; going
+  back is the site's revisions, as for every other operation.
+
+Found by the tests and fixed:
+
+- **An agent was told "the operation failed unexpectedly"** when the save refused a scene's picture that the site does
+  not store (a path of the right shape, so the reader accepts it). The write was refused correctly, but the reason was
+  swallowed. Every content refusal of the save (status 422) now reaches the agent with its reason.
+- **A setting given the wrong kind of value silently lost the preset's value** (see above).
+- Two presets' descriptions were engine shorthand ("v7 lockup...", "Phase 3 depth showcase..."); they now say what
+  the scene looks like, since the generator and the panel both show them.
+
+Tests:
+
+- `src/lib/fxScene/__tests__/generation.test.ts` (23): both forms; unknown preset, invented layer by id and by kind,
+  unknown setting, wrong kind, out of range, a colour that is none, bad `start`, `calm`, `background` and `layers`;
+  the text rule; a foreign, an editor-only and a script address refused; every documented setting accepted at the end
+  of its range.
+- `src/lib/ai/pageGen/__tests__/validateFxScene.test.ts` (17): **a generated FX node from a preset survives
+  `validateGeneration`**; **an invented layer type is dropped with a review note**; the marker or a scene on a node
+  that is no FX box makes none; an SVG `radialGradient` keeps its `fx`; a scene sent back is kept exactly; one scene
+  per page; nothing of a stored scene in the prompts.
+- `src/lib/siteOps/__tests__/applyOps.test.ts` (the real operations engine): `insertNodes` places a scene with
+  nothing repaired; six kinds of wrong scene each refuse with the reason and write nothing; a second scene on a page
+  is refused; `setFxScene` in both forms; **a foreign image address is refused**, as are the editor's own image
+  address, an unknown layer kind and an unknown version; a refused scene takes its whole batch with it.
+- `src/server/siteOps/__tests__/siteOps.itest.ts` (real Postgres): an agent places a scene, reads it back, retunes
+  it; a picture the site does not store is refused when the batch commits, with the reason and the version unchanged.
+
+The plan's check names an agent `set_node`; there is no operation of that name. The same check runs against
+`setFxScene` and `insertNodes`, the two operations that can carry a scene.

@@ -2,6 +2,8 @@
 // scenes of Lumitra FX, the WebGL effects engine an FX scene box draws
 // (docs/plans/2026-11-08-lumitra-fx-in-sites.md, slice F4).
 //
+//   ai        the generator writes the scene from its preset through the real validator,
+//             retunes one setting and nothing else, and cannot add a layer.
 //   format    the strict reader (src/lib/fxScene) gives exactly the scene the
 //             engine's own loader gives, repairs nothing, and reading what it
 //             stores gives the same scene again
@@ -24,6 +26,8 @@ import { chromium, type Browser, type Page } from 'playwright';
 import type { PNG } from 'pngjs';
 import { PRESETS, deserializeScene, serializeScene } from '@/lib/fx/format';
 import { parseFxProp, storedFxProp } from '@/lib/fxScene/fxScene';
+import { deriveBreakpointKeys } from '@/lib/ai/pageGen/schema';
+import { validateGeneration } from '@/lib/ai/pageGen/validate';
 import {
   CHANNEL_TOLERANCE,
   MAX_DIFFERING_SHARE,
@@ -71,6 +75,54 @@ function formatCell(scene: OracleScene): Cell {
   const again = parseFxProp(JSON.parse(JSON.stringify(storedFxProp(read.fx))));
   if (!again.ok || again.notes.length > 0 || JSON.stringify(again.fx) !== JSON.stringify(read.fx)) return fail('storing and reading again changed the scene');
   return pass();
+}
+
+/** The engine preset each reference scene is (the same pairs as SCENES above). */
+const PRESET_OF: Readonly<Record<string, string>> = { 'hub-hero': 'gold-noise-gradient', 'godrays-hero': 'godrays-hero', 'noise-gradient': 'noise-gradient' };
+
+const AI_CONTEXT = { breakpoints: deriveBreakpointKeys([{ label: 'Desktop', minWidth: 1280 }, { label: 'Mobile', minWidth: 320 }]) };
+
+/** One generated FX scene box through the real validateGeneration: the scene it stores and what was noted. */
+function generated(fx: unknown): { scene?: ReturnType<typeof serializeScene>; warnings: string[] } {
+  const outcome = validateGeneration({ nodes: [{ type: 'div', preset: 'fxScene', props: { fx }, children: [{ type: 'h1', props: { children: 'Over the scene' } }] }] }, AI_CONTEXT);
+  if (!outcome.ok) return { warnings: outcome.errors };
+  const read = parseFxProp(outcome.result.nodes[0]?.props.fx);
+  return { ...(read.ok ? { scene: serializeScene(read.fx.scene) } : {}), warnings: outcome.result.warnings };
+}
+
+/**
+ * AI: the generator can write the scene, and only what it may. Three things, all through
+ * the real validator: (1) the preset form, with the words of a text layer given, stores
+ * exactly the reference scene with nothing noted; (2) one setting retuned inside its range
+ * changes that setting and nothing else; (3) an invented layer is left out with a note and
+ * the scene is still the reference.
+ */
+function aiCell(id: string, scene: OracleScene): Cell {
+  const presetId = PRESET_OF[id];
+  if (!presetId) return fail('no preset stands for this scene');
+  const reference = JSON.stringify(serializeScene(deserializeScene(scene)));
+  // A text layer's words come from the model, or the layer is hidden: the reference shows its own.
+  const words = scene.layers
+    .filter((layer) => layer.type === 'text')
+    .map((layer) => ({ id: layer.id, params: Object.fromEntries(['eyebrowText', 'headlineText', 'taglineText'].map((k) => [k, layer.params[k]])) }));
+
+  const plain = generated({ preset: presetId, layers: words });
+  if (!plain.scene) return fail(`refused: ${plain.warnings.join('; ')}`);
+  if (plain.warnings.length > 0) return fail(`repaired: ${plain.warnings.join('; ')}`);
+  if (JSON.stringify(plain.scene) !== reference) return fail('the generated scene differs from the reference scene');
+
+  const target = scene.layers.find((layer) => layer.type === 'bloom');
+  if (!target) return fail('the scene has no bloom layer to retune');
+  const tuned = generated({ preset: presetId, layers: [...words, { id: target.id, params: { intensity: 1.25 } }] });
+  if (!tuned.scene || tuned.warnings.length > 0) return fail(`a retuned setting was not kept: ${tuned.warnings.join('; ')}`);
+  const expected = JSON.parse(reference) as OracleScene;
+  expected.layers.find((layer) => layer.id === target.id)!.params.intensity = 1.25;
+  if (JSON.stringify(tuned.scene) !== JSON.stringify(expected)) return fail('retuning one setting changed something else');
+
+  const invented = generated({ preset: presetId, layers: [...words, { id: 'storm', type: 'particleStorm', params: { count: 9000 } }] });
+  if (!invented.scene || JSON.stringify(invented.scene) !== reference) return fail('an invented layer changed the scene');
+  if (!invented.warnings.some((warning) => warning.includes('particleStorm'))) return fail('an invented layer was left out without a note');
+  return pass('written from its preset unchanged; one setting retuned and nothing else; an invented layer left out with a note');
 }
 
 /** This app's engine and reader as one script: `window.__mountSites(stored)` mounts into `#stage` and resolves with what happened. */
@@ -159,14 +211,25 @@ describe('FX scene promises', () => {
     expect(Object.keys(SCENES).sort()).toEqual([...fxScenes.scenes].sort());
     const format: SurfaceResults = {};
     const renderer: SurfaceResults = {};
+    const ai: SurfaceResults = {};
     for (const [id, scene] of Object.entries(SCENES)) {
       format[key(id)] = formatCell(scene);
       renderer[key(id)] = await rendererCell(scene);
+      ai[key(id)] = aiCell(id, scene);
     }
     const rows = new Set(fxSceneEntries().map((e) => rowKey(e.kind, e.id)));
-    for (const name of [...Object.keys(format), ...Object.keys(renderer)]) expect(rows.has(name), name).toBe(true);
-    writeOut('fx-scenes', { format, renderer });
+    for (const name of [...Object.keys(format), ...Object.keys(renderer), ...Object.keys(ai)]) expect(rows.has(name), name).toBe(true);
+    writeOut('fx-scenes', { format, renderer, ai });
   }, 300_000);
+
+  it('the generator cell can fail: a scene that is no preset has no preset form', () => {
+    expect(aiCell('unknown-scene', SCENES['hub-hero']).status).toBe('fail');
+    const other = JSON.parse(JSON.stringify(SCENES['hub-hero'])) as OracleScene;
+    other.layers[0].params.speed = 3.5;
+    const cell = aiCell('hub-hero', other);
+    expect(cell.status).toBe('fail');
+    expect(cell.note).toMatch(/differs from the reference scene/);
+  });
 
   it('the comparison can fail: one changed colour is far over the tolerance', async () => {
     const changed = JSON.parse(JSON.stringify(SCENES['hub-hero'])) as OracleScene;
