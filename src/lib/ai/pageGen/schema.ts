@@ -125,7 +125,7 @@ export interface GenerationPreset {
  */
 export function listGenerationPresets(): GenerationPreset[] {
   return Object.values(COMPONENT_REGISTRY)
-    .filter((entry) => !entry.preset)
+    .filter((entry) => !entry.preset && entry.generation !== false)
     .map((entry) => ({
       id: entry.id,
       label: entry.label,

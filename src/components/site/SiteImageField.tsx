@@ -44,6 +44,7 @@ const hint = 'text-[11px] text-muted-foreground';
 const ACCEPT: Record<SiteImageKind, string> = {
   favicon: 'image/png,image/x-icon,image/vnd.microsoft.icon,.png,.ico',
   sharing: 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp',
+  scene: 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp',
 };
 
 const TYPE_NAMES: Record<string, string> = {

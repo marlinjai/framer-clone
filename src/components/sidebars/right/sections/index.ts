@@ -9,6 +9,7 @@ export { EffectsSection } from './EffectsSection';
 export { FormSection } from './FormSection';
 export { StickyCtaSection } from './StickyCtaSection';
 export { MapEmbedSection } from './MapEmbedSection';
+export { FxSceneSection } from './FxSceneSection';
 export { TextContentSection } from './TextContentSection';
 export { LinkSection } from './LinkSection';
 export { CustomSection } from './CustomSection';

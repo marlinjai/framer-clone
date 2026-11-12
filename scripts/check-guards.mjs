@@ -144,8 +144,11 @@ export const FX_DIR = 'src/lib/fx';
  *  - `@/lib/fx/format`: the stored format, the layer schemas and the scene
  *    operations. Render-free (src/lib/fx/__tests__/importGraph.test.ts), for a
  *    server, a panel or a validator.
+ *  - `@/lib/fx/unified`: the Studio bridge, which reads a scene in Lumitra Studio's
+ *    format. Render-free too, but it brings the scene-core package, so it is its
+ *    own entry, loaded only where such a scene is imported.
  */
-export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`];
+export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`, `${FX_DIR}/unified`];
 
 /**
  * Roots scanned for the FX rules ONLY, beside DEFAULT_ROOTS: the browser suites and

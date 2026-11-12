@@ -3,9 +3,10 @@ import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { isFxScene } from '@/lib/fxScene/marker';
 
-export type ComponentCategory = 'viewport' | 'placement' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta' | 'mapEmbed';
-export type SectionId = 'component' | 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'mapEmbed' | 'link' | 'custom';
+export type ComponentCategory = 'viewport' | 'placement' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta' | 'mapEmbed' | 'fxScene';
+export type SectionId = 'component' | 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'mapEmbed' | 'fxScene' | 'link' | 'custom';
 
 // Exported so the AI page generator's schema docs (src/lib/ai/pageGen/schema.ts)
 // offer exactly the tags this properties panel knows how to edit.
@@ -25,6 +26,8 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
   if (isStickyCta(component.props)) return 'stickyCta';
   // The map embed is a div whose content the renderers draw.
   if (isMapEmbed(component.props)) return 'mapEmbed';
+  // An FX scene box is a container that also draws a scene: its own section first.
+  if (isFxScene(component.props, component.type)) return 'fxScene';
   if (component.type === 'img') return 'image';
   if (component.type === 'a') return 'link';
   if (TEXT_TYPES.has(component.type)) return 'text';
@@ -59,4 +62,7 @@ export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   // The map first; the box is sized and styled like any block. No layout: its
   // content is the placeholder or the map, never children.
   mapEmbed:   ['mapEmbed', 'size', 'position', 'typography', 'styles', 'effects', 'custom'],
+  // The scene first, then everything a container has: the box holds the content shown
+  // over the scene, and its own background is what shows where the scene is not drawn.
+  fxScene:    ['fxScene', 'size', 'position', 'layout', 'typography', 'styles', 'effects', 'custom'],
 };

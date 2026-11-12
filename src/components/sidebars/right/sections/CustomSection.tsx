@@ -57,7 +57,7 @@ const TEXT_BUTTON =
   'h-7 flex-none rounded-[6px] border border-border px-2.5 text-[11px] text-foreground transition-colors ' +
   'hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand';
 
-const LOCKED_TAG: ReadonlySet<ComponentCategory> = new Set(['form', 'formField', 'formSubmit', 'stickyCta', 'mapEmbed']);
+const LOCKED_TAG: ReadonlySet<ComponentCategory> = new Set(['form', 'formField', 'formSubmit', 'stickyCta', 'mapEmbed', 'fxScene']);
 
 interface CustomSectionProps {
   component: ComponentInstance;
