@@ -622,6 +622,9 @@ first a person without code can use.
 - **Clip playback in, character tools out.**
 - **Poster required,** which the forcing case did not have.
 - **No GSAP.** The timeline and intros are our own code, which keeps the bundle budget.
+- **Vocabulary (decided in S1, 2026-11-12): "3D scene" is this primitive, "FX scene" or "visual effect" is Lumitra FX** (`src/lib/fxScene`, prop `fx`, marker `data-fx="scene"`). This primitive uses prop `scene`, marker `data-scene="three"`, directory `src/lib/scene`. The editor panel, palette and AI documentation never say a bare "scene": always "3D scene" here and "FX scene" there. The two never share a prop or marker.
+- **`parseScene` contract (S1):** strict shape (unknown keys, bad names, counts over caps, an `ease-in`, any `loop`, an orbit on a non-still drive are refused), numbers clamped with a warning, an unknown model or image hash refused when the site's library is passed in, an anchor to a node that is gone dropped with a warning. `scene` and `data-scene` are refused in `setProps` (the scene is written by the editor through `parseScene`).
+- **S1 leaves the score's format column to S10,** which builds the "Scene promises" kind; S1's unit tests cover every clamp and refusal directly.
 
 ## For Marlin to decide
 
