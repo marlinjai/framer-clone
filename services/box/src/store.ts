@@ -9,9 +9,10 @@
 //   box_document(text, text) RETURNS TABLE (
 //     document text, live boolean, subdomain_labels text[], custom_hostnames text[])
 
-import { Socket } from 'node:net';
+import type { Socket } from 'node:net';
 import postgres from 'postgres';
 import { parseDatabaseUrl, type DatabaseTarget } from './databaseUrl';
+import { createSocketGate, DEFAULT_PAUSES, type OpenPauses } from './socketGate';
 
 export interface BoxRow {
   document: unknown;
@@ -97,77 +98,18 @@ function isAnswerFromDatabase(error: unknown): boolean {
   return name === 'PostgresError' && typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code);
 }
 
-/** The pause before a pool opens its next connection after one that did not last: the first, and the longest it grows to. */
-export interface OpenPauses {
-  firstMs: number;
-  maxMs: number;
-}
-const DEFAULT_PAUSES: OpenPauses = { firstMs: 100, maxMs: 2000 };
-
 export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: number, pauses: OpenPauses = DEFAULT_PAUSES): BoxPool {
-  const sockets = new Set<Socket>();
-  // Set when the pool is thrown away: from then on it opens no connection, whatever the driver retries.
-  let dead = false;
-  // A connection that closes within a second of opening (a database that refuses, accepts and hangs
-  // up, or is restarting) is followed by a pause, twice as long each time up to two seconds. During
-  // the pause no connection is opened, so the driver's retries cannot become hundreds of connections
-  // a second, and a new call fails at once as a connection failure, so no caller waits for nothing.
-  let pauseMs = 0;
-  let nextOpenAt = 0;
-  // Connections that are open right now (connected and not yet closed).
-  let connected = 0;
+  // The box opens the database's sockets itself, to the one host it checked, and keeps hold of them:
+  // when to open one, and how they are closed, is in socketGate.ts.
+  const gate = createSocketGate(target, connectTimeoutMs, pauses);
 
   /**
-   * A socket for the driver. It is always a socket, handed over at once, never a failure of this
-   * function: whatever goes wrong (a refusal, a timeout, a pause, a pool that was thrown away)
-   * reaches the driver as the socket's own error and close, the way it expects. A failure of the
-   * function itself would leave one of the driver's connections waiting for good.
+   * Fails a call at once while no connection may be opened: nobody waits for a database that just
+   * refused. The pool holds one connection (see `max` below), so during a pause there is none to
+   * send a call to.
    */
-  const openSocket = (): Socket => {
-    const socket = new Socket();
-    // An error always has a listener, also before the driver adds its own and after it removed them:
-    // an 'error' nobody listens to would end the process.
-    socket.on('error', () => {});
-    sockets.add(socket);
-    // When this socket began to connect, or null when it never did.
-    let openedAt: number | null = null;
-    let timer: NodeJS.Timeout | undefined = undefined;
-    let isConnected = false;
-    socket.once('connect', () => {
-      clearTimeout(timer);
-      isConnected = true;
-      connected += 1;
-    });
-    socket.once('close', () => {
-      clearTimeout(timer);
-      sockets.delete(socket);
-      if (isConnected) connected -= 1;
-      // Only a connection that was really tried says something about the database. A socket that was
-      // never opened (handed out during a pause, or after the pool was thrown away) must not start
-      // or lengthen a pause: it would keep itself going on a database that is well.
-      if (dead || openedAt === null) return;
-      const now = performance.now();
-      pauseMs = now - openedAt < 1000 ? Math.min(pauses.maxMs, Math.max(pauses.firstMs, pauseMs * 2)) : 0;
-      nextOpenAt = now + pauseMs;
-    });
-    if (dead || performance.now() < nextOpenAt) {
-      // Not opened. The socket is closed a moment later, not now: the driver attaches its own
-      // listeners after this function returns, and it has to hear the close to put its timers away.
-      setTimeout(() => socket.destroy(), 0);
-      return socket;
-    }
-    openedAt = performance.now();
-    timer = setTimeout(() => socket.destroy(Object.assign(new Error('the connection did not open in time'), { code: 'CONNECT_TIMEOUT' })), connectTimeoutMs);
-    // What the driver writes before the connection is open waits for it.
-    socket.connect({ host: target.host, port: target.port });
-    return socket;
-  };
-
-  /** Fails a call at once while no connection is open and none may be opened yet: nobody waits for a database that just refused. */
   const refuseWhilePaused = () => {
-    if (connected === 0 && performance.now() < nextOpenAt) {
-      throw Object.assign(new Error('the last connection did not last; not opening another yet'), { code: 'CONNECTION_PAUSED' });
-    }
+    if (gate.pauseLeftMs() > 0) throw Object.assign(new Error('the last connection did not last; not opening another yet'), { code: 'CONNECTION_PAUSED' });
   };
 
   // `socket` is an option of the driver (its connection.js) that its type definitions leave out. The
@@ -180,9 +122,11 @@ export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: numbe
     password: target.password,
     // No Transport Layer Security in this version: the address parser refuses an address that asks for it.
     ssl: false,
-    // The role allows 4 connections. Two here, so a pool that is being thrown away and the one that
-    // takes its place stay within the limit together.
-    max: 2,
+    // One connection. The driver sends calls down it one behind the other without waiting for each
+    // answer, which is plenty for a lookup by primary key behind a cache; and with one connection
+    // there is no second one that can fail while the first is busy, which is where the hard states
+    // were. An old pool and its replacement together are two of the role's four.
+    max: 1,
     idle_timeout: 30,
     connect_timeout: Math.ceil(connectTimeoutMs / 1000),
     // The driver's own growing wait between connection attempts is switched off: the pause above is the
@@ -195,9 +139,7 @@ export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: numbe
     prepare: true,
     onnotice: () => {},
     connection: { application_name: 'framer-clone-box', statement_timeout: 2000 },
-    // The box opens the socket itself, to the one host it checked, and keeps hold of it, so a
-    // connection that went silent can be closed for real and not only asked to close.
-    socket: openSocket,
+    socket: () => gate.open(),
   };
   const sql = postgres(driverOptions);
   return {
@@ -219,9 +161,10 @@ export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: numbe
     },
     end: () => sql.end({ timeout: 2 }),
     destroy() {
-      dead = true;
+      // The gate first, so that nothing the driver does while ending can open a connection. The
+      // sockets are closed for real, not only asked to close; then the driver is told to end.
+      gate.shut();
       sql.end({ timeout: 0 }).catch(() => {});
-      for (const socket of sockets) socket.destroy();
     },
   };
 }

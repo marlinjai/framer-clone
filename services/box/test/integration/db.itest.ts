@@ -269,30 +269,29 @@ describe('the handler on a real database', () => {
     }
   });
 
-  it('opens its second connection again after the database ended it, while the first stays in use', async () => {
-    const twoStore = createPostgresStore(pg.readerUrl);
+  it('opens its connection again after the database ended it', async () => {
+    const ownStore = createPostgresStore(pg.readerUrl);
     const sessions = () => Number(pg.sql("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'framer-clone-box' AND usename = 'box_reader';").trim());
-    const pair = () => Promise.all([twoStore.find(SITE_A, HASH), twoStore.find(SITE_B, HASH)].map((call) => call.then(() => 'ok', () => 'failed')));
+    const call = () => ownStore.find(SITE_A, HASH).then(() => 'ok', () => 'failed');
     try {
-      // Two calls at once open both connections of this store; the shared store may hold idle ones too.
+      // The shared store may hold an idle connection too; this store adds exactly one, however many
+      // calls are made at once.
       const others = sessions();
-      expect(await pair()).toEqual(['ok', 'ok']);
-      expect(sessions()).toBe(others + 2);
-      // The database ends the newer one within a second of its opening, as a killed backend would.
+      expect(await Promise.all([call(), call(), call()])).toEqual(['ok', 'ok', 'ok']);
+      expect(sessions()).toBe(others + 1);
+      // The database ends it within a second of its opening, as a killed backend would.
       pg.sql(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'framer-clone-box' AND usename = 'box_reader' ORDER BY backend_start DESC LIMIT 1;`);
-      // Pairs of calls for six seconds: on a real database failures stop within the first seconds and
-      // the second connection is back. (That a pause cannot keep itself going is held by the unit
-      // suite, which fails without that rule; this test passes either way and shows the recovery.)
-      const results: string[][] = [];
-      for (let i = 0; i < 30; i++) {
-        results.push(await pair());
+      // Calls for five seconds: on a real database the failures stop within the first seconds and
+      // the connection is back. (The rules of the pause are held by test/socketGate.test.ts.)
+      const results: string[] = [];
+      for (let i = 0; i < 25; i++) {
+        results.push(await call());
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
-      const lateFailures = results.slice(15).flat().filter((result) => result === 'failed').length;
-      expect(lateFailures).toBe(0);
-      expect(sessions()).toBe(others + 2);
+      expect(results.slice(12).filter((result) => result === 'failed')).toHaveLength(0);
+      expect(sessions()).toBe(others + 1);
     } finally {
-      await twoStore.close().catch(() => {});
+      await ownStore.close().catch(() => {});
     }
   });
 

@@ -457,43 +457,162 @@ describe('store failures', () => {
       }
     });
 
-    it('with one connection open, a pause does not refuse calls', async () => {
-      // The first connection is let in and then says nothing; every later one is hung up on.
-      let accepted = 0;
-      const held: Socket[] = [];
-      const server = createServer((socket) => {
-        accepted += 1;
-        socket.on('error', () => {});
-        if (accepted === 1) {
-          held.push(socket);
-          socket.once('data', () => socket.write(Buffer.from([0x52, 0, 0, 0, 8, 0, 0, 0, 0, 0x5a, 0, 0, 0, 5, 0x49])));
-          socket.resume();
-        } else {
-          socket.destroy();
-        }
-      });
-      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-      const port = (server.address() as { port: number }).port;
-      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500, { firstMs: 2000, maxMs: 2000 });
-      const outcome = (ms: number) =>
+    describe('against a fake database that answers', () => {
+      // The least of a Postgres that answers: it lets the box log in, and answers every statement
+      // with an error of its own ("42883") and "ready for query". For the store that error is an
+      // answer of the database, which is all these tests need to tell "answered" from "failed".
+      const READY = Buffer.from([0x5a, 0, 0, 0, 5, 0x49]);
+      const LOGGED_IN = Buffer.concat([Buffer.from([0x52, 0, 0, 0, 8, 0, 0, 0, 0]), READY]);
+      const ANSWER = (() => {
+        const fields = Buffer.from('SERROR\0C42883\0Mno such function\0\0', 'latin1');
+        const head = Buffer.alloc(5);
+        head[0] = 0x45;
+        head.writeInt32BE(4 + fields.length, 1);
+        return Buffer.concat([head, fields, READY]);
+      })();
+
+      /** `fate(n)` says what happens to the n-th connection: it is answered, or hung up on at once. */
+      async function fakeDatabase(fate: (n: number) => 'answer' | 'hang up') {
+        const state = { accepted: 0 };
+        const open = new Set<Socket>();
+        const server = createServer((socket) => {
+          state.accepted += 1;
+          socket.on('error', () => {});
+          if (fate(state.accepted) === 'hang up') {
+            socket.destroy();
+            return;
+          }
+          open.add(socket);
+          socket.on('close', () => open.delete(socket));
+          let loggedIn = false;
+          socket.on('data', (chunk: Buffer) => {
+            if (!loggedIn) {
+              loggedIn = true;
+              socket.write(LOGGED_IN);
+              return;
+            }
+            // One answer for each statement the driver parses ('P').
+            for (let i = 0; i + 4 < chunk.length; i += 1 + chunk.readInt32BE(i + 1)) {
+              if (chunk[i] === 0x50) socket.write(ANSWER);
+            }
+          });
+        });
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        return {
+          state,
+          target: parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${(server.address() as { port: number }).port}/app`),
+          close: async () => {
+            for (const socket of open) socket.destroy();
+            await new Promise((resolve) => server.close(resolve));
+          },
+        };
+      }
+
+      /** What became of one call: 'answered', the code it failed with, or 'still waiting' after `ms`. */
+      const outcomeOf = (pool: BoxPool, ms = 1500) =>
         Promise.race([
-          Promise.resolve().then(() => pool.ping()).then(() => 'answered', (error: { code?: string }) => error.code ?? 'failed'),
+          Promise.resolve()
+            .then(() => pool.ping())
+            .then(
+              () => 'answered',
+              (error: { name?: string; code?: string }) => (error.name === 'PostgresError' && error.code === '42883' ? 'answered' : (error.code ?? 'failed')),
+            ),
           new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), ms)),
         ]);
+
+      it('a call on a healthy database is answered, on one connection', async () => {
+        const database = await fakeDatabase(() => 'answer');
+        const pool = openPostgresPool(database.target, 500);
+        try {
+          expect(await Promise.all([outcomeOf(pool), outcomeOf(pool), outcomeOf(pool), outcomeOf(pool)])).toEqual(['answered', 'answered', 'answered', 'answered']);
+          expect(database.state.accepted).toBe(1);
+        } finally {
+          pool.destroy();
+          await database.close();
+        }
+      });
+
+      it('after one hang-up the call fails quickly, and the next connection is opened when the first pause is over, not later', async () => {
+        // The first connection is hung up on; every later one is answered.
+        const database = await fakeDatabase((n) => (n === 1 ? 'hang up' : 'answer'));
+        const pool = openPostgresPool(database.target, 500, { firstMs: 300, maxMs: 2000 });
+        try {
+          const started = Date.now();
+          // The call that met the hang-up is told so, quickly: the driver tries it again on a socket
+          // the box does not open (the pause has begun), and that socket is closed with an error.
+          const first = await outcomeOf(pool, 1000);
+          expect(first).not.toBe('answered');
+          expect(first).not.toBe('still waiting');
+          expect(Date.now() - started).toBeLessThan(250);
+          // Inside the pause nothing is opened.
+          expect(await outcomeOf(pool)).toBe('CONNECTION_PAUSED');
+          expect(database.state.accepted).toBe(1);
+          // 400 ms after the hang-up: past the first pause of 300 ms, well before the 600 ms a pause
+          // started a second time would last. The database is asked again, and answers.
+          await new Promise((resolve) => setTimeout(resolve, 400 - (Date.now() - started)));
+          expect(await outcomeOf(pool)).toBe('answered');
+          expect(database.state.accepted).toBe(2);
+          // And it stays well: many calls, all answered, no further connection.
+          const later = await Promise.all(Array.from({ length: 20 }, () => outcomeOf(pool)));
+          expect(new Set(later)).toEqual(new Set(['answered']));
+          expect(database.state.accepted).toBe(2);
+        } finally {
+          pool.destroy();
+          await database.close();
+        }
+      });
+
+      it('recovers from a database that hangs up several times and then answers', async () => {
+        const database = await fakeDatabase((n) => (n <= 3 ? 'hang up' : 'answer'));
+        const pool = openPostgresPool(database.target, 500, { firstMs: 30, maxMs: 120 });
+        try {
+          const results: string[] = [];
+          const started = Date.now();
+          while (Date.now() - started < 1500) {
+            results.push(await outcomeOf(pool));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          // It came back by itself, stayed back, and nothing was left waiting.
+          expect(results).not.toContain('still waiting');
+          expect(results.slice(-30).every((result) => result === 'answered')).toBe(true);
+          expect(database.state.accepted).toBe(4);
+        } finally {
+          pool.destroy();
+          await database.close();
+        }
+      });
+    });
+
+    it('against a database that keeps refusing, no caller waits: every call fails within a moment', async () => {
+      // A port nothing listens on, for four seconds, with a call every 60 ms and a short pause, so the
+      // driver is asked to connect again and again. With the driver's own growing wait between
+      // attempts left on, a call would sit out that wait, a second and more by the fifth attempt.
+      const probe = createServer();
+      await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+      const port = (probe.address() as { port: number }).port;
+      await new Promise((resolve) => probe.close(resolve));
+      const pool = openPostgresPool(parseDatabaseUrl(`postgres://box_reader@127.0.0.1:${port}/app`), 500, { firstMs: 20, maxMs: 20 });
+      let longest = 0;
+      const codes = new Set<string>();
       try {
-        // Two calls at once: the second makes the driver open a second connection, which is hung up
-        // on, so a pause of two seconds begins while the first connection stays open.
-        const firstTwo = [outcome(400), outcome(400)];
-        await Promise.all(firstTwo);
-        expect(accepted).toBeGreaterThanOrEqual(2);
-        // A call now is not refused for the pause: it goes to the connection that is open.
-        expect(await outcome(300)).not.toBe('CONNECTION_PAUSED');
+        const started = Date.now();
+        while (Date.now() - started < 4000) {
+          const at = Date.now();
+          const code = await Promise.race([
+            Promise.resolve().then(() => pool.ping()).then(() => 'answered', (error: { code?: string }) => error.code ?? 'failed'),
+            new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 2500)),
+          ]);
+          codes.add(code);
+          longest = Math.max(longest, Date.now() - at);
+          await new Promise((resolve) => setTimeout(resolve, 60));
+        }
       } finally {
         pool.destroy();
-        for (const socket of held) socket.destroy();
-        await new Promise((resolve) => server.close(resolve));
       }
-    });
+      expect(codes).not.toContain('still waiting');
+      expect(codes).not.toContain('answered');
+      expect(longest).toBeLessThan(300);
+    }, 15_000);
 
     // That a pool which was thrown away opens no socket at all is held by the two 'goes silent' tests
     // above, which fail without that guard. This one shows the driver itself stops.

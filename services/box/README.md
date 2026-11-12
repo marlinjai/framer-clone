@@ -13,6 +13,7 @@ The box is the small service that serves a *custom code block* of a site built i
 ## What it is made of
 
 - Plain Node 22 on `node:http`, no web framework. One runtime dependency, `postgres`, bundled into a single file, so the image holds no `node_modules`.
+- One connection to the database. The box opens that socket itself (`src/socketGate.ts`): after a connection that did not last it pauses before opening another, and it closes a silent one for real.
 - The contract both sides share (headers, the shell, the hash, the address) is `src/lib/customCode/contract.ts` in the application's source. The box bundles it from there, so the two cannot drift. It imports nothing.
 
 ## What it answers
