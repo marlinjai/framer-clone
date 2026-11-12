@@ -88,10 +88,20 @@ describe('the visitor words in the notice, through the real merge code', () => {
     expect(out).toContain('Contact Bcc: evil@example.com');
   });
 
-  it('the preheader is plain text with the visitor summary in it: control characters are spaces, nothing is a header', () => {
+  it('the preheader reads the visitor summary and nothing else of the visitor, and is merged as plain text: the service escapes it afterwards', () => {
     const pre = templateCreate('form_notification').preheader as string;
-    const out = personalizeText(pre, personalization({ ...BASE, summary_text: 'Name: A\u0000\r\nBcc: x' }));
+    // Our side of the contract: which values the preheader can carry.
+    expect([...pre.matchAll(/\{\{\s*([a-z_]+)/g)].map((m) => m[1])).toEqual(['summary_text']);
+    const summary = summaryText([{ key: 'm', label: 'Message', type: 'text', value: '<b>"hi"</b> & <script>x</script>\u0000\r\nBcc: x' }], 'en');
+    const out = personalizeText(pre, personalization({ ...BASE, summary_text: summary }));
+    // Control characters (a header break) are gone.
     expect(out).not.toMatch(/[\u0000-\u001f]/);
+    // personalizeText is NOT an HTML escaper (a header is not HTML): the markup characters arrive as they were typed, so the
+    // preview's HTML safety rests on the service escaping the merged preheader before it places it in the hidden element
+    // (email-editor apps/service/src/worker/compose.ts `withPreheader`: replaceHiddenPreview(html, escapePreviewText(preheader)),
+    // tested in packages/core/src/compiler/__tests__/hiddenPreview.test.ts, `escapePreviewText`). This test fails if the
+    // contract ever starts escaping here too (a double escape would print `&amp;lt;` in inboxes), and it names the dependency.
+    expect(out).toContain('<b>"hi"</b> & <script>x</script>');
   });
 
   it('what the shop sends fits the service contract: names, scalar values, the length limit, no service-filled name', () => {
