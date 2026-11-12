@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-12T18:46:20.939Z",
+  "generatedAt": "2026-11-12T19:35:16.073Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 769,
+  "durationSeconds": 521,
   "matrix": {
     "surfaces": {
       "format": {
@@ -33,8 +33,8 @@
         "total": 1845
       },
       "ai": {
-        "pass": 1441,
-        "fail": 404,
+        "pass": 1444,
+        "fail": 401,
         "notTested": 0,
         "total": 1845
       }
@@ -547,8 +547,8 @@
           "total": 9
         },
         "ai": {
-          "pass": 0,
-          "fail": 9,
+          "pass": 3,
+          "fail": 6,
           "notTested": 0,
           "total": 9
         }
@@ -5168,15 +5168,15 @@
       "component:interaction-click": "pass pass reusable-components reusable-components reusable-components",
       "component:interaction-appear": "pass pass reusable-components reusable-components reusable-components",
       "component:placement-trigger": "pass pass reusable-components reusable-components reusable-components",
-      "page-item:theme:color-token": "pass pass pass pass theme",
-      "page-item:theme:font-token": "pass pass pass pass theme",
-      "page-item:theme:dark-value": "pass pass pass pass theme",
-      "page-item:theme:mode-system": "pass pass pass pass theme",
-      "page-item:theme:mode-light": "pass pass pass pass theme",
-      "page-item:theme:mode-dark": "pass pass pass pass theme",
-      "page-item:theme:document-background": "pass pass pass pass theme",
-      "page-item:theme:document-color": "pass pass pass pass theme",
-      "page-item:theme:document-font": "pass pass pass pass theme",
+      "page-item:theme:color-token": "pass pass pass pass pass",
+      "page-item:theme:font-token": "pass pass pass pass pass",
+      "page-item:theme:dark-value": "pass pass pass pass pass",
+      "page-item:theme:mode-system": "pass pass pass pass ai-theme-refused",
+      "page-item:theme:mode-light": "pass pass pass pass ai-theme-refused",
+      "page-item:theme:mode-dark": "pass pass pass pass ai-theme-refused",
+      "page-item:theme:document-background": "pass pass pass pass ai-theme-refused",
+      "page-item:theme:document-color": "pass pass pass pass ai-theme-refused",
+      "page-item:theme:document-font": "pass pass pass pass ai-theme-refused",
       "fx-scene:scene:hub-hero": "pass pass pass pass pass",
       "fx-scene:scene:godrays-hero": "pass pass pass pass pass",
       "fx-scene:scene:noise-gradient": "pass pass pass pass pass"
@@ -7062,7 +7062,7 @@
           {
             "viewport": "Tablet",
             "state": "initial",
-            "ratio": 0.00004593298455406079,
+            "ratio": 0,
             "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
@@ -7156,7 +7156,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0004963689740420272,
+            "ratio": 0,
             "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
@@ -9538,16 +9538,6 @@
       "cost": 10
     },
     {
-      "id": "theme",
-      "description": "A site's shared colour and font tokens, its colour mode and its document defaults (docs/plans/2026-11-02-theme-and-head.md). Stored (T1) and published (T2); the editor canvas waits for slice T3, the panel for T4 and the generator for T5.",
-      "matrixCells": 9,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 9
-    },
-    {
       "id": "import-dynamic-logic",
       "description": "JSX that is a program, not markup: reported as left over by the static import, as the plan requires.",
       "matrixCells": 0,
@@ -9565,6 +9555,16 @@
       "fixtures": [
         "radix-accordion"
       ],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 6
+    },
+    {
+      "id": "ai-theme-refused",
+      "description": "The site's colour mode and its document defaults: stored, published, drawn and edited, but refused to the generator on purpose. A token applies to every page of the site and a brief is about one, so the generator may use a token and add one, and has no field for the mode or the page defaults. See \"What the AI may read and write\" in the theme and head plan.",
+      "matrixCells": 6,
+      "corpusChecks": 0,
+      "fixtures": [],
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 6
