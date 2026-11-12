@@ -29,7 +29,7 @@ import {
 } from '@/lib/renderer/server/renderPublishedPage';
 import { jsonLdScriptText } from '@/lib/site/publishedHead';
 import { siteLookFromPages } from '@/lib/site/notFoundDefault';
-import { findLegalPage } from '@/lib/legal/legalPages';
+import { findLegalPage, legalLanguage } from '@/lib/legal/legalPages';
 import { productPagePath } from '@/lib/pages/slug';
 import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 
@@ -72,35 +72,65 @@ export function findNotFoundPage(site: PublishedSite) {
   return site.pages.find((p) => p.pageId === id) ?? null;
 }
 
-/** What a form and the checkout say on a branch's public preview instead of sending anything. */
+/** What a form and the checkout say on a branch's public preview instead of sending anything, in English. */
 export const PREVIEW_UNAVAILABLE = 'This is a preview: nothing is sent or ordered from it.';
 
-const PREVIEW_DATE = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
+/**
+ * The words a preview adds to a page, in the site's language as the consent banner picks it (German for a
+ * German site, English for every other): the band, and what a form and the checkout say instead of sending.
+ * The visitor is the site owner's client, who reads the site in its language.
+ */
+const PREVIEW_COPY = {
+  en: {
+    unavailable: PREVIEW_UNAVAILABLE,
+    locale: 'en-GB',
+    band: (branch: string, until: string) =>
+      `Preview of the branch “${branch}”. This is not the live site: forms and checkout are switched off. The link works until ${until} UTC.`,
+  },
+  de: {
+    unavailable: 'Dies ist eine Vorschau: Von hier wird nichts gesendet und nichts bestellt.',
+    locale: 'de-DE',
+    band: (branch: string, until: string) =>
+      `Vorschau des Entwurfs „${branch}“. Dies ist nicht die veröffentlichte Website: Formulare und Kasse sind abgeschaltet. Der Link gilt bis ${until} UTC.`,
+  },
+} as const;
+
+/** What a form and the checkout say on a preview, in the site's language. */
+export function previewUnavailableText(language: string): string {
+  return PREVIEW_COPY[legalLanguage(language)].unavailable;
+}
+
+const BAND_STYLE: React.CSSProperties = {
+  padding: '8px 16px',
+  background: '#111111',
+  color: '#ffffff',
+  font: '500 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif',
+  textAlign: 'center',
+  boxSizing: 'border-box',
+};
 
 /**
  * The band every page of a branch's public preview carries (site branches, slice S8): it says that this is not
  * the live site, which branch it shows and until when the link works. Plain markup with its own inline styles,
- * above the page and outside its design, so no page style can hide what the visitor is looking at.
+ * outside the page's design, so no page style can hide what the visitor is looking at.
+ *
+ * It sits at the bottom edge of the window, not the top: a site's own header is very often fixed or sticky at
+ * the top, and a band there lay over it. So that it never covers the end of the page either, the same text is
+ * laid out once more, unseen, after the page: exactly as tall as the band at every width, however it wraps.
  */
-export function PreviewBand({ preview }: { preview: PreviewOf }): React.ReactElement {
+export function PreviewBand({ preview, language = 'en' }: { preview: PreviewOf; language?: string }): React.ReactElement {
+  const copy = PREVIEW_COPY[legalLanguage(language)];
+  const until = new Intl.DateTimeFormat(copy.locale, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }).format(new Date(preview.expiresAt));
+  const text = copy.band(preview.branchName, until);
   return (
-    <div
-      role="note"
-      data-fc-preview-band=""
-      style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 2147483000,
-        padding: '8px 16px',
-        background: '#111111',
-        color: '#ffffff',
-        font: '500 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif',
-        textAlign: 'center',
-      }}
-    >
-      Preview of the branch “{preview.branchName}”. This is not the live site: forms and checkout are switched off. The link
-      works until {PREVIEW_DATE.format(new Date(preview.expiresAt))} UTC.
-    </div>
+    <>
+      <div aria-hidden="true" data-fc-preview-band-space="" style={{ ...BAND_STYLE, visibility: 'hidden' }}>
+        {text}
+      </div>
+      <div role="note" data-fc-preview-band="" style={{ ...BAND_STYLE, position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 2147483000 }}>
+        {text}
+      </div>
+    </>
   );
 }
 
@@ -157,7 +187,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
     cmsRepo: getPublishedCmsRepository(site.workspaceId),
     commerceRepo: await commerceRepoForSite(site, root),
     analytics,
-    unavailable: site.preview ? PREVIEW_UNAVAILABLE : null,
+    unavailable: site.preview ? previewUnavailableText(site.siteSettings.language) : null,
     // The base of `{{product.href}}`: the site's product page, if it has one.
     productPagePath: productPagePath(site.pages.map((p) => p.slug)),
     breakpoints: adapted.breakpoints,
@@ -181,7 +211,6 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
 
   return (
     <>
-      {site.preview ? <PreviewBand preview={site.preview} /> : null}
       {jsonLd && !site.preview ? (
         // schema.org data for search engines; `<` is escaped (jsonLdScriptText).
         <script
@@ -191,6 +220,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
         />
       ) : null}
       {body}
+      {site.preview ? <PreviewBand preview={site.preview} language={site.siteSettings.language} /> : null}
     </>
   );
 }

@@ -101,7 +101,8 @@ export function reviewTotals(review: DocumentReview): { pages: number; component
   return {
     pages: review.units.filter((u) => u.unit === 'page').length,
     components: review.units.filter((u) => u.unit === 'component').length,
-    elements: review.units.reduce((n, u) => n + u.elements.length, 0),
+    // A page or component that is new or removed as a whole counts with every element it holds.
+    elements: review.units.reduce((n, u) => n + (u.elementCount ?? u.elements.length), 0),
     settings: review.site.length + review.settings.length + (review.pageOrder ? 1 : 0),
   };
 }
