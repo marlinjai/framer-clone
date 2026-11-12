@@ -108,7 +108,7 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   sent after the submission is stored, a failure logged and shown in the inbox, never losing the
   submission. Built 2026-11-12 on `feat/form-notification-mail` (plan: "Form notification emails (2026-11-12)" in the
   site essentials plan; tests green on real Postgres). Left: land the pull request (it carries tenant migration
-  031 and deploys on merge), then one live letter to Marlin's own address on production. (2026-11-12)
+  031, held; a merge does not deploy, releases are manual per deploy/README), then a release Marlin approves, then one live letter to Marlin's own address on production. (2026-11-12)
 - [ ] Animated components, a few chosen ones: React Bits was checked on 2026-10-23 and is MIT plus
   Commons Clause, which forbids redistributing its components "alone, in a bundle, or as a ported
   version", so a builder that offers them to its customers cannot ship them. Instead build the
