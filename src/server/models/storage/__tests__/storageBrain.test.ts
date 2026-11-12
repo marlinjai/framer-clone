@@ -26,6 +26,9 @@ function world(over: { namespace?: string } = {}) {
 const fault = (f: Fault): Fault => f;
 const refusal = async (p: Promise<unknown>): Promise<StorageBrainError> => { try { await p; } catch (e) { if (e instanceof StorageBrainError) return e; throw e; } throw new Error('expected a StorageBrainError'); };
 
+/** The cleanup protocol's removal: a snapshot, then exactly that snapshot. */
+const del = async (s: StorageBrainBlobStore, key: string) => s.removeSnapshot(key, await s.snapshot(key));
+
 describe('configuration', () => {
   const make = (over: Record<string, unknown>) => () => new StorageBrainBlobStore({ baseUrl: BASE, apiKey: KEY_A, ...over } as never);
   it('refuses an unsafe address, a bad key and a bad namespace', () => {
@@ -61,7 +64,7 @@ describe('round trip', () => {
     expect(await store.get(key)).toEqual(b);
     const [file] = fake.live('tenant-a');
     expect(file).toMatchObject({ context: `framer-models/${key}`, fileType: 'model/gltf-binary', tags: { owner: 'framer-models', blob: key }, processingStatus: 'completed' });
-    await store.delete(key);
+    await del(store, key);
     expect(await store.has(key)).toBe(false);
     expect(fake.live('tenant-a')).toEqual([]);
   });
@@ -143,7 +146,7 @@ describe('what counts as a blob: only our own, exact, completed files', () => {
     const failed = fake.plant('tenant-a', { context: ctx, tags, processingStatus: 'failed', bytes: null, sizeBytes: 0 });
     expect(await store.has(key)).toBe(false);
     expect(await store.get(key)).toBeNull();
-    await store.delete(key);
+    await del(store, key);
     expect(pending.deletedAt).toBeNull();
     expect(failed.deletedAt).toBeNull();
   });
@@ -155,7 +158,7 @@ describe('what counts as a blob: only our own, exact, completed files', () => {
     await make(KEY_B).put(key, b);
     expect(await make(KEY_A).has(key)).toBe(false);
     expect(await make(KEY_A).get(key)).toBeNull();
-    await make(KEY_A).delete(key);
+    await del(make(KEY_A), key);
     expect(fake.live('tenant-b').length).toBe(1);
   });
 
@@ -180,14 +183,14 @@ describe('DELETE ON AMBIGUITY REFUSES', () => {
     const { store, fake, key, ctx, tags } = await setup();
     fake.plant('tenant-a', { context: ctx, tags });
     expect(fake.live('tenant-a').length).toBe(2);
-    await store.delete(key);
+    await del(store, key);
     expect(fake.live('tenant-a')).toEqual([]);
   });
 
   it('refuses, deleting nothing, when a file with our exact context has no ownership tag (a stranger\'s or an older convention)', async () => {
     const { store, fake, key, ctx } = await setup();
     const stranger = fake.plant('tenant-a', { context: ctx, tags: null });
-    expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+    expect((await refusal(del(store, key))).code).toBe('ambiguous');
     expect(stranger.deletedAt).toBeNull();
     expect(fake.live('tenant-a').length).toBe(2);
     expect(fake.calls.some((c) => c.method === 'DELETE')).toBe(false);
@@ -197,7 +200,7 @@ describe('DELETE ON AMBIGUITY REFUSES', () => {
     for (const tags of [{ owner: 'framer-models', blob: `served/${'f'.repeat(64)}` }, { owner: 'someone-else', blob: '' }]) {
       const { store, fake, key, ctx } = await setup();
       fake.plant('tenant-a', { context: ctx, tags: { ...tags, blob: tags.blob || key } });
-      expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+      expect((await refusal(del(store, key))).code).toBe('ambiguous');
       expect(fake.calls.some((c) => c.method === 'DELETE')).toBe(false);
     }
   });
@@ -205,7 +208,7 @@ describe('DELETE ON AMBIGUITY REFUSES', () => {
   it('refuses when a same-context file is of a non-model type', async () => {
     const { store, fake, key, ctx, tags } = await setup();
     fake.plant('tenant-a', { context: ctx, tags, fileType: 'application/pdf' });
-    expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+    expect((await refusal(del(store, key))).code).toBe('ambiguous');
     expect(fake.calls.some((c) => c.method === 'DELETE')).toBe(false);
   });
 
@@ -221,11 +224,11 @@ describe('DELETE ON AMBIGUITY REFUSES', () => {
       },
     });
     fake.faults = [listing((b) => { b.files.push({ id: 'not-a-uuid' }); })];
-    expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+    expect((await refusal(del(store, key))).code).toBe('ambiguous');
     fake.faults = [listing((b) => { b.files.push(b.files[0]); b.total += 1; })];
-    expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+    expect((await refusal(del(store, key))).code).toBe('ambiguous');
     fake.faults = [listing((b) => { b.total += 3; })];
-    expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+    expect((await refusal(del(store, key))).code).toBe('ambiguous');
     expect(fake.calls.some((c) => c.method === 'DELETE')).toBe(false);
     expect(fake.live('tenant-a').length).toBe(1);
   });
@@ -236,7 +239,7 @@ describe('DELETE ON AMBIGUITY REFUSES', () => {
       const f = fake.live('tenant-a')[0];
       return new Response(JSON.stringify({ files: [{ id: f.id, context: 'someone-else/thing', tags: f.tags, fileType: f.fileType, sizeBytes: f.sizeBytes, processingStatus: 'completed', createdAt: new Date(f.createdAt).toISOString() }], nextCursor: null, total: 1 }), { status: 200 });
     } })];
-    expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+    expect((await refusal(del(store, key))).code).toBe('ambiguous');
     expect(fake.calls.some((c) => c.method === 'DELETE')).toBe(false);
   });
 
@@ -244,7 +247,7 @@ describe('DELETE ON AMBIGUITY REFUSES', () => {
     const { store, fake, key } = await setup();
     const other = fake.plant('tenant-a', { context: `other-app/${key}`, tags: { owner: 'other-app', blob: key } });
     const foreign = fake.plant('tenant-b', { context: `framer-models/${key}`, tags: { owner: 'framer-models', blob: key } });
-    await store.delete(key);
+    await del(store, key);
     expect(other.deletedAt).toBeNull();
     expect(foreign.deletedAt).toBeNull();
   });
@@ -252,11 +255,59 @@ describe('DELETE ON AMBIGUITY REFUSES', () => {
   it('treats a 404 on delete as done, and surfaces any other delete failure without hiding it', async () => {
     const { store, fake, key } = await setup();
     fake.faults = [fault({ when: (r) => r.method === 'DELETE', times: 1, respond: () => new Response('{}', { status: 404 }) })];
-    await store.delete(key);
+    await del(store, key);
     const { store: s2, fake: f2, key: k2 } = await setup();
     f2.faults = [fault({ when: (r) => r.method === 'DELETE', respond: () => new Response('{}', { status: 400 }) })];
-    expect((await refusal(s2.delete(k2))).code).toBe('bad-response');
+    expect((await refusal(del(s2, k2))).code).toBe('bad-response');
     void fake;
+  });
+});
+
+describe('snapshot and removeSnapshot (the cleanup protocol\'s removal)', () => {
+  it('removes exactly the copies listed when the snapshot was taken, never a copy put afterwards (a stalled cleaner resuming late)', async () => {
+    const { store, fake } = world();
+    const b = glb('stalled');
+    const key = served(b);
+    await store.put(key, b);
+    const snap = await store.snapshot(key);
+    await del(store, key); // another cleaner took over and finished
+    expect(await store.hasBlob(key)).toBe(false);
+    await store.put(key, b); // a fresh upload puts a new copy, with a new id
+    expect(fake.live('tenant-a')).toHaveLength(1);
+    await store.removeSnapshot(key, snap); // the stalled cleaner resumes: its ids are gone already (404 counts as done)
+    expect(await store.hasBlob(key)).toBe(true);
+    expect(await store.get(key)).toEqual(b);
+  });
+
+  it('an empty snapshot removes nothing, and a snapshot of nothing is not an error', async () => {
+    const { store, fake } = world();
+    const key = served(glb('absent'));
+    const snap = await store.snapshot(key);
+    await store.removeSnapshot(key, snap);
+    expect(fake.live('tenant-a')).toEqual([]);
+  });
+
+  it('removes only a snapshot this adapter took, for the same key (a forged or foreign one could name any file id)', async () => {
+    const { store, make } = world();
+    const b = glb('forge'); const c = glb('other');
+    await store.put(served(b), b); await store.put(served(c), c);
+    const snap = await store.snapshot(served(b));
+    expect((await refusal(store.removeSnapshot(served(c), snap))).code).toBe('invalid-key'); // another key
+    expect((await refusal(store.removeSnapshot(served(b), { key: served(b), ids: ['anything'] }))).code).toBe('invalid-key'); // forged
+    expect((await refusal(store.removeSnapshot(served(b), make().snapshot(served(b)) as never))).code).toBe('invalid-key'); // a promise, not a snapshot
+    expect(await store.has(served(b))).toBe(true);
+    expect(await store.has(served(c))).toBe(true);
+    await store.removeSnapshot(served(b), snap);
+    expect(await store.has(served(b))).toBe(false);
+    expect(await store.has(served(c))).toBe(true);
+  });
+
+  it('hasBlob says a complete copy is listed, like has', async () => {
+    const { store } = world();
+    const b = glb('hb');
+    expect(await store.hasBlob(served(b))).toBe(false);
+    await store.put(served(b), b);
+    expect(await store.hasBlob(served(b))).toBe(true);
   });
 });
 
@@ -270,7 +321,7 @@ describe('pagination', () => {
     await store.put(key, b);
     const pages = fake.calls.filter((c) => c.path === '/api/v1/files').length;
     expect(pages).toBeGreaterThan(2);
-    await store.delete(key);
+    await del(store, key);
     expect(fake.live('tenant-a')).toEqual([]);
   });
 
@@ -281,7 +332,7 @@ describe('pagination', () => {
     const b = glb('tie');
     const key = served(b);
     for (let i = 0; i < 5; i++) fake.plant('tenant-a', { context: `framer-models/${key}`, tags: { owner: 'framer-models', blob: key }, bytes: glb(`t${i}`), sizeBytes: 80 });
-    expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+    expect((await refusal(del(store, key))).code).toBe('ambiguous');
     expect(fake.live('tenant-a').length).toBe(5);
     expect(fake.calls.some((c) => c.method === 'DELETE')).toBe(false);
   });
@@ -290,7 +341,7 @@ describe('pagination', () => {
     const { store, fake } = world();
     const key = served(glb('loop'));
     fake.faults = [fault({ when: (r) => r.url.includes('/api/v1/files?'), respond: () => new Response(JSON.stringify({ files: [], nextCursor: 'AAAA', total: 0 }), { status: 200 }) })];
-    expect((await refusal(store.delete(key))).code).toBe('ambiguous');
+    expect((await refusal(del(store, key))).code).toBe('ambiguous');
     expect(fake.calls.filter((c) => c.path === '/api/v1/files').length).toBeLessThanOrEqual(20);
   });
 });

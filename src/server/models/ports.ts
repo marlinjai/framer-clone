@@ -7,12 +7,11 @@
 // migration is applied by the next deployment's boot (`prisma migrate deploy`) and needs its own authorization.
 // Nothing here reads an environment variable.
 
-/** Bytes by key. Keys are `served/<sha256>` (the re-encoded file) and `original/<sha256>` (kept for one later re-encode, never served). */
+/** Bytes by key. There is NO delete here: removal goes through the cleanup protocol's `BlobDeleter` (coordination.ts). Keys are `served/<sha256>` (the re-encoded file) and `original/<sha256>` (kept for one later re-encode, never served). */
 export interface ModelBlobStore {
   put(key: string, bytes: Uint8Array): Promise<void>;
   get(key: string): Promise<Uint8Array | null>;
   has(key: string): Promise<boolean>;
-  delete(key: string): Promise<void>;
   /** Every key under a prefix with when it was written, for the orphan sweep (collect.ts). */
   list(prefix: string): Promise<{ key: string; createdAt: Date }[]>;
 }
