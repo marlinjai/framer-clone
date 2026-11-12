@@ -67,7 +67,17 @@ vi.mock('@/components/PublishedVersionsButton', () => ({ __esModule: true, defau
 vi.mock('@/components/SaveStatus', () => ({ __esModule: true, default: () => <span role="status">Saved</span> }));
 vi.mock('@/components/PublishButton', () => ({ __esModule: true, default: () => <button type="button">Publish</button> }));
 
+// These are the compact bar's (under 1024px): the wide bar's More menu holds only what folded into it
+// (src/components/__tests__/TopBarFold.test.tsx).
+let realMatchMedia: typeof window.matchMedia | undefined;
 beforeEach(() => {
+  realMatchMedia = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches: query === '(max-width: 1023.98px)',
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
   currentStore = {
     editorUI: {
       currentProject: { id: 'site_1', metadata: { title: 'Demo' } },
@@ -75,7 +85,11 @@ beforeEach(() => {
     },
   };
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  if (realMatchMedia) window.matchMedia = realMatchMedia;
+  else delete (window as { matchMedia?: unknown }).matchMedia;
+});
 
 const openMore = () => {
   const trigger = screen.getByRole('button', { name: 'More actions' });
@@ -147,6 +161,22 @@ describe('compact top bar', () => {
     fireEvent.click(screen.getByText('Initial state'));
     expect(history.jumpTo).toHaveBeenCalledWith(0);
     expect(dialog.textContent).toContain('Moved Header');
+  });
+
+  it('the unsaved demo has nothing published, so More leaves out Published versions until it is kept', () => {
+    currentStore.editorUI.isUnsavedDemo = true;
+    const { unmount } = render(<TopBar />);
+    openMore();
+    let names = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
+    expect(names).not.toContain('Published versions');
+    expect(names).toContain('Domains');
+    unmount();
+    // Kept as a project: the item is back.
+    currentStore.editorUI.isUnsavedDemo = false;
+    render(<TopBar />);
+    openMore();
+    names = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
+    expect(names).toContain('Published versions');
   });
 
   it('without a project the project-only actions are left out and Generate is disabled', () => {

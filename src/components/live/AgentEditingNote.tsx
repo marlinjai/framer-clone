@@ -1,50 +1,69 @@
 // src/components/live/AgentEditingNote.tsx
 //
-// The top bar's note while an agent works on the open site (plan
-// docs/plans/2026-11-08-live-agent-canvas.md, section 1, "unsaved local edits"):
-// "Claude is editing this site", so a person who starts editing knows a
-// conflict may follow ("Claude is reading this site" while it has only read in
-// this run; once it wrote, "editing" stays until the run ends).
+// The top bar's chip while an agent works on the open site (plan
+// docs/plans/2026-11-08-live-agent-canvas.md, section 1, "unsaved local edits"),
+// so a person who starts editing knows a conflict may follow.
+//
+// Compact by decision (docs/plans/2026-11-12-top-bar-fold.md): the agent dot in
+// the presence colour and a short label ("Agent editing", "2 agents reading"),
+// in a slot of its own beside the save status, never over it. The full sentence
+// ("Claude is editing this site", with the agent's name and what it does) is the
+// chip's tooltip, which hover and keyboard focus both open, and its description
+// for a screen reader; the Agent activity feed keeps every step. Pressing the
+// chip opens that feed. Under 1024px (`compact`) only the dot shows.
+//
 // Shown while a call runs and AGENT_ACTIVE_MS after the last one ended
 // (src/lib/live/presenceStore.ts). Not a live region itself: the verb changes
 // with every call, and the announcer (src/components/live/AgentAnnouncer.tsx)
-// speaks the note once per run instead. The compact bar (under 1024px) shows a
-// dot with the sentence as its tooltip and for screen readers, so the notice is
-// there on every layout.
+// speaks the note once per run instead.
 'use client';
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
-import { editingNote } from '@/lib/live/activityText';
+import { activityMode, editingNote, type ActivityMode } from '@/lib/live/activityText';
 import type { LivePresenceStore } from '@/lib/live/presenceStore';
+import { BarTooltip } from '@/components/topbar/BarTooltip';
+
+/** The chip's short words: "Agent editing", "2 agents reading". */
+export function agentChipLabel(count: number, mode: ActivityMode): string {
+  return `${count === 1 ? 'Agent' : `${count} agents`} ${mode}`;
+}
 
 const AgentEditingNote = observer(function AgentEditingNote({ className = '', compact = false }: { className?: string; compact?: boolean }) {
   const { editorUI } = useStore();
   const presence = editorUI.livePresence as LivePresenceStore | undefined;
-  const note = editingNote(
-    (presence?.active ?? []).map((a) => ({ label: a.label, tool: a.focus.tool })),
-    presence?.runEdited ?? false,
-  );
+  const describedBy = React.useId();
+  const agents = (presence?.active ?? []).map((a) => ({ label: a.label, tool: a.focus.tool }));
+  const edited = presence?.runEdited ?? false;
+  const note = editingNote(agents, edited);
+  const mode = activityMode(agents, edited);
+  if (!note || !mode) return <span className={className} />;
+  const label = agentChipLabel(agents.length, mode);
+  const dot = <span aria-hidden="true" className="block size-2 shrink-0 rounded-full bg-agent-presence forced-colors:bg-[CanvasText]" />;
   return (
-    <span className={className}>
-      {note && compact && (
-        // The compact bar has no room for the sentence: a dot that carries it for a screen reader and as a tooltip.
-        <span data-agent-editing-note="" title={note} className="inline-flex size-6 items-center justify-center">
-          <span aria-hidden="true" className="block size-2 rounded-full bg-agent-presence forced-colors:bg-[CanvasText]" />
-          <span className="sr-only">{note}</span>
-        </span>
-      )}
-      {note && !compact && (
-        <span
+    <span className={`shrink-0 ${className}`}>
+      <BarTooltip text={note}>
+        <button
+          type="button"
           data-agent-editing-note=""
-          title={note}
-          className="inline-flex max-w-[260px] items-center gap-1.5 truncate rounded-full border border-agent-presence/40 bg-agent-presence/10 px-2 py-0.5 text-xs font-medium text-foreground"
+          aria-label={label}
+          aria-describedby={describedBy}
+          // The feed is where every step stays: the chip opens it.
+          onClick={() => presence?.setPanelOpen(true)}
+          className={
+            compact
+              ? 'inline-flex size-8 items-center justify-center rounded text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand'
+              : 'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-agent-presence/40 bg-agent-presence/10 px-2.5 text-xs font-medium text-foreground hover:bg-agent-presence/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand forced-colors:border-[CanvasText]'
+          }
         >
-          <span aria-hidden="true" className="block size-1.5 shrink-0 rounded-full bg-agent-presence forced-colors:bg-[CanvasText]" />
-          <span className="truncate">{note}</span>
-        </span>
-      )}
+          {dot}
+          {compact ? null : <span>{label}</span>}
+          <span id={describedBy} className="sr-only">
+            {note}
+          </span>
+        </button>
+      </BarTooltip>
     </span>
   );
 });

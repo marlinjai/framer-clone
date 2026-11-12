@@ -117,7 +117,7 @@ const SaveStatus = observer(() => {
 
   if (isUnsavedDemo) {
     return (
-      <div className="mr-1 flex min-w-0 items-center gap-2 lg:mr-2">
+      <div className="mr-1 flex min-w-0 items-center gap-2 lg:mr-2 lg:shrink-0">
         <span role="status" aria-live="polite" data-testid="save-status" className="flex items-center gap-1.5 text-xs text-muted-foreground" title="This demo exists only in this browser tab. Keep it as a project to save it.">
           <CloudOff size={14} aria-hidden className="shrink-0" />
           <span className="max-md:sr-only">Demo, not saved</span>
@@ -140,7 +140,9 @@ const SaveStatus = observer(() => {
   const reasonHidden = failed && state.hidden === true;
 
   return (
-    <div ref={statusRoot} className="mr-1 flex min-w-0 items-center gap-1.5 lg:mr-2" data-autosave-phase={state.phase}>
+    // Its own width on the wide bar, never squeezed: the bar folds other controls first
+    // (docs/plans/2026-11-12-top-bar-fold.md). The compact bar lets it give way for the back link instead.
+    <div ref={statusRoot} className="mr-1 flex min-w-0 items-center gap-1.5 lg:mr-2 lg:shrink-0" data-autosave-phase={state.phase}>
       <span role="status" aria-live="polite" aria-atomic="true" data-testid="save-announcement" className="sr-only">
         {announcement}
       </span>
@@ -168,7 +170,13 @@ const SaveStatus = observer(() => {
           </button>
         ) : (
           // A problem appearing fades in once; the ordinary words just change.
-          <span key={failed ? 'failed' : 'ok'} className={`whitespace-nowrap ${failed ? FADE : 'max-sm:sr-only'}`}>
+          // The top bar's fold counts the widest ordinary word for this one (data-fold-reserve), so the bar does
+          // not fold and unfold as Saved and Unsaved changes take turns (docs/plans/2026-11-12-top-bar-fold.md).
+          <span
+            key={failed ? 'failed' : 'ok'}
+            data-fold-reserve={failed ? undefined : 'Unsaved changes'}
+            className={`whitespace-nowrap ${failed ? FADE : 'max-sm:sr-only'}`}
+          >
             {label}
           </span>
         )}

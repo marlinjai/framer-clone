@@ -16,6 +16,7 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { Loader2, ScanSearch, Undo2, Wand } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BarTooltip, FoldLabel, ICON_ONLY } from '@/components/topbar/BarTooltip';
 import {
   Dialog,
   DialogBody,
@@ -438,28 +439,35 @@ export const PolishPageButton = observer(function PolishPageButton({
   open: openProp,
   onOpenChange,
   triggerClassName = '',
+  iconOnly = false,
   ...props
 }: ReviewRunnerOptions &
   ControllableOpenProps & {
     /** Extra classes for the trigger (the compact top bar hides it and opens the dialog from its More menu). */
     triggerClassName?: string;
+    /** The top bar folded its words into the icon (docs/plans/2026-11-12-top-bar-fold.md); the name stays for a screen reader. */
+    iconOnly?: boolean;
   }) {
   const { editorUI } = useStore();
   const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
   return (
     <>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className={`mr-2 ${triggerClassName}`}
-        onClick={() => setOpen(true)}
-        disabled={!editorUI.currentPage}
-        title="Measure the page layout and let AI fix clipped text, overflow and contrast"
-      >
-        <Wand size={16} />
-        Polish
-      </Button>
+      <BarTooltip text={editorUI.currentPage ? 'Measure the page layout and let AI fix clipped text, overflow and contrast' : 'Open a page to polish its layout with AI'}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`mr-2 shrink-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${iconOnly ? ICON_ONLY : ''} ${triggerClassName}`}
+          // Not `disabled`: a disabled button gets no hover or focus, so its tooltip could not say why it is off.
+          aria-disabled={editorUI.currentPage ? undefined : true}
+          onClick={() => {
+            if (editorUI.currentPage) setOpen(true);
+          }}
+        >
+          <Wand size={16} aria-hidden />
+          <FoldLabel folded={iconOnly}>Polish</FoldLabel>
+        </Button>
+      </BarTooltip>
       <PolishPageDialog open={open} onOpenChange={setOpen} {...props} />
     </>
   );
