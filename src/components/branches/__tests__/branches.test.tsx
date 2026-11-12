@@ -34,9 +34,9 @@ vi.mock('@/lib/sites/branchClient', async (importActual) => {
 vi.mock('../leave', () => leave);
 vi.mock('@/hooks/useStore', () => ({ useStore: () => ({ editorUI: { currentProject: null, currentPage: null } }) }));
 
-import BranchSwitcher from '../BranchSwitcher';
+import BranchSwitcher, { recentlyMerged } from '../BranchSwitcher';
 import { BranchBadge, BranchClosedElsewhere, MainChangedNote, ReviewAndMergeButton, SharePreviewButton } from '../BranchBar';
-import { discardText } from '../BranchDialogs';
+import { branchLimitText, discardText } from '../BranchDialogs';
 import ClosedBranch, { closedBranchText } from '@/app/projects/ClosedBranch';
 import UndoMerge, { undoErrorText } from '../UndoMerge';
 import { BranchApiError } from '@/lib/sites/branchClient';
@@ -273,6 +273,253 @@ describe('a branch behind main', () => {
 });
 
 
+
+describe('recently merged, in the switcher', () => {
+  const mergedBranch = (over: Partial<BranchSummaryJson> = {}) =>
+    summary({ branchId: 'site-merged', name: 'Winter menu', status: 'merged', version: null, baseVersion: null, mergedAt: '2026-11-11T10:00:00.000Z', ...over });
+  const listWith = (closed: BranchSummaryJson[], open: BranchSummaryJson[] = [summary()]) => client.list.mockResolvedValue({ mainSiteId: MAIN, mainVersion: 7, open, closed });
+
+  it('shows no such group when nothing was merged, discarded branches included', async () => {
+    listWith([summary({ branchId: 'site-gone', name: 'Old idea', status: 'discarded', discardedAt: '2026-11-11T10:00:00.000Z' })]);
+    renderWith(onMain);
+    openMenu(/switch branch/i);
+    await screen.findByRole('menuitem', { name: /spring sale/i });
+    expect(screen.queryByText('Recently merged')).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /old idea/i })).toBeNull();
+  });
+
+  it('lists the latest three merges, newest first, and leaves the discarded ones out', () => {
+    const rows = recentlyMerged(
+      [],
+      [
+        mergedBranch({ branchId: 'm1', name: 'One', mergedAt: '2026-11-01T10:00:00.000Z' }),
+        summary({ branchId: 'd1', name: 'Dropped', status: 'discarded' }),
+        mergedBranch({ branchId: 'm4', name: 'Four', mergedAt: '2026-11-04T10:00:00.000Z', undoUntil: '2026-12-04T10:00:00.000Z' }),
+        mergedBranch({ branchId: 'm2', name: 'Two', mergedAt: '2026-11-02T10:00:00.000Z' }),
+        mergedBranch({ branchId: 'm3', name: 'Three', mergedAt: '2026-11-03T10:00:00.000Z' }),
+      ],
+    );
+    expect(rows.map((r) => r.branch.name)).toEqual(['Four', 'Three', 'Two']);
+    expect(rows.map((r) => r.canUndo)).toEqual([true, false, false]);
+    expect(rows[1].detail).toBe('Merged on 3 November 2026');
+    expect(rows[1].opens).toBe('m3');
+  });
+
+  it('a merged branch opens its old address, after saving this tab, and offers no undo once that is over', async () => {
+    listWith([mergedBranch()]);
+    renderWith(onMain);
+    openMenu(/switch branch/i);
+    expect(await screen.findByText('Recently merged')).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: /undo the merge/i })).toBeNull();
+    const row = screen.getByRole('menuitem', { name: /winter menu/i });
+    expect(row.textContent).toMatch(/Merged on 11 November 2026/);
+    fireEvent.click(row);
+    await waitFor(() => expect(leave.openSite).toHaveBeenCalledWith('site-merged'));
+    expect(leave.savedBeforeLeaving).toHaveBeenCalledWith(MAIN);
+  });
+
+  it('undoes the latest merge from the menu: the same dialog, this tab saved first, then the new branch', async () => {
+    listWith([mergedBranch({ undoUntil: '2026-12-11T10:00:00.000Z' })]);
+    client.undoMerge.mockResolvedValue({ undone: true, branch: { branchId: 'branch-new' }, merged: {}, mainVersion: 9 });
+    renderWith(onMain);
+    openMenu(/switch branch/i);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo the merge of “Winter menu”…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toMatch(/Undo the merge of “Winter menu”\?/);
+    expect(dialog.textContent).toMatch(/Bakery goes back to what it was just before this merge/);
+    expect(client.undoMerge).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Undo the merge' }));
+    });
+    expect(leave.savedBeforeLeaving).toHaveBeenCalledWith(MAIN);
+    expect(client.undoMerge).toHaveBeenCalledWith(MAIN, 'site-merged');
+    expect(leave.openSite).toHaveBeenCalledWith('branch-new');
+  });
+
+  it('does not undo over what this tab has not saved, and says so in the dialog', async () => {
+    listWith([mergedBranch({ undoUntil: '2026-12-11T10:00:00.000Z' })]);
+    leave.savedBeforeLeaving.mockResolvedValue(false);
+    renderWith(onMain);
+    openMenu(/switch branch/i);
+    fireEvent.click(await screen.findByRole('menuitem', { name: /undo the merge/i }));
+    // The dialog opens once the menu has closed.
+    const confirm = await screen.findByRole('button', { name: 'Undo the merge' });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+    expect((await screen.findByRole('alert')).textContent).toMatch(/not saved yet/);
+    expect(client.undoMerge).not.toHaveBeenCalled();
+    // Trying again is possible, and "Keep the merge" closes the dialog with nothing changed.
+    expect(screen.getByRole('button', { name: 'Undo the merge' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Keep the merge' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('a merge the server no longer undoes closes the dialog and keeps the reason in the bar', async () => {
+    listWith([mergedBranch({ undoUntil: '2026-12-11T10:00:00.000Z' })]);
+    client.undoMerge.mockRejectedValue(new BranchApiError('merge_undo_unavailable', 'This merge can no longer be undone: only the latest merge can be undone.', 409));
+    renderWith(onMain);
+    openMenu(/switch branch/i);
+    fireEvent.click(await screen.findByRole('menuitem', { name: /undo the merge/i }));
+    // The dialog opens once the menu has closed.
+    const confirm = await screen.findByRole('button', { name: 'Undo the merge' });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('status').textContent).toMatch(/only the latest merge can be undone/);
+    expect(leave.openSite).not.toHaveBeenCalled();
+  });
+
+  it('an undone merge says where the work went and goes there, with no undo offered', async () => {
+    listWith([mergedBranch({ undoneIntoBranchId: 'site-back', undoneAt: '2026-11-12T08:00:00.000Z' })], [summary({ branchId: 'site-back', name: 'Winter menu 2' })]);
+    renderWith(onMain);
+    openMenu(/switch branch/i);
+    const row = await screen.findByRole('menuitem', { name: /Merge undone/ });
+    expect(row.textContent).toMatch(/Its changes are on the branch “Winter menu 2” now\./);
+    expect(screen.queryByRole('menuitem', { name: /undo the merge/i })).toBeNull();
+    fireEvent.click(row);
+    await waitFor(() => expect(leave.openSite).toHaveBeenCalledWith('site-back'));
+  });
+
+  it('an undone merge whose new branch is closed too names it and goes to the old address', () => {
+    const undone = mergedBranch({ undoneIntoBranchId: 'site-back', undoneAt: '2026-11-12T08:00:00.000Z' });
+    const [named] = recentlyMerged([], [undone, summary({ branchId: 'site-back', name: 'Winter menu 2', status: 'discarded' })]);
+    expect(named.detail).toBe('Merge undone. Its changes went to the branch “Winter menu 2”, which has been merged or discarded since.');
+    expect(named.opens).toBe('site-merged');
+    expect(named.canUndo).toBe(false);
+    // The branch that took the work is no longer among the listed ones: still said, without a name.
+    const [unnamed] = recentlyMerged([], [undone]);
+    expect(unnamed.detail).toBe('Merge undone. Its changes went to another branch, which has been merged or discarded since.');
+  });
+});
+
+describe('the new branch dialog', () => {
+  const tenOpen = Array.from({ length: 10 }, (_, i) => summary({ branchId: `site-b${i}`, name: `Branch number ${i}` }));
+
+  async function openDialog(state: EditorBranchState = onMain) {
+    renderWith(state);
+    openMenu(/switch branch/i);
+    // The item is chosen once the list has answered, as a person does.
+    await screen.findAllByRole('menuitem', { name: /spring sale|branch number 0/i });
+    fireEvent.click(screen.getByRole('menuitem', { name: /new branch/i }));
+    return screen.findByRole('dialog');
+  }
+
+  it('says the limit and where the site stands in each state of the count', () => {
+    expect(branchLimitText('Bakery', undefined)).toEqual({ text: 'A site can have up to 10 open branches at a time.', reached: false });
+    expect(branchLimitText('Bakery', 0)).toEqual({ text: 'Bakery has no open branch yet. A site can have up to 10 at a time.', reached: false });
+    expect(branchLimitText('Bakery', 3).text).toBe('3 of 10 branches are open on Bakery.');
+    expect(branchLimitText('Bakery', 10).reached).toBe(true);
+    expect(branchLimitText('Bakery', 10).text).toMatch(/already has 10 open branches, the most a site can have\. Merge or discard one of them/);
+  });
+
+  it('names the site it copies and how many branches are open, tied to the name field', async () => {
+    const dialog = await openDialog();
+    expect(dialog.textContent).toMatch(/A copy of Bakery as it is saved now/);
+    const limit = screen.getByText('1 of 10 branches are open on Bakery.');
+    expect(screen.getByLabelText('Branch name').getAttribute('aria-describedby')).toContain(limit.id);
+    const create = screen.getByRole('button', { name: 'Create branch' });
+    expect(create.getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('opened on a branch, names the site and not the branch as what is copied', async () => {
+    const dialog = await openDialog(onBranch());
+    expect(dialog.textContent).toMatch(/A copy of Bakery as it is saved now/);
+  });
+
+  it('at the limit says why as text, keeps the button reachable and makes no request, by click or by Enter', async () => {
+    client.list.mockResolvedValue({ mainSiteId: MAIN, mainVersion: 7, open: tenOpen, closed: [] });
+    await openDialog();
+    const reason = screen.getByText(/Bakery already has 10 open branches/);
+    const create = screen.getByRole('button', { name: 'Create branch' }) as HTMLButtonElement;
+    expect(create.getAttribute('aria-disabled')).toBe('true');
+    expect(create.disabled).toBe(false);
+    expect(create.getAttribute('aria-describedby')).toBe(reason.id);
+    const field = screen.getByLabelText('Branch name');
+    fireEvent.change(field, { target: { value: 'One more' } });
+    fireEvent.click(create);
+    fireEvent.submit(field.closest('form')!);
+    await act(async () => {});
+    expect(client.create).not.toHaveBeenCalled();
+    expect(leave.savedBeforeLeaving).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a count from when the editor was opened is shown but does not turn the button off', async () => {
+    // The list cannot be read: all the dialog has is the number the editor was opened with.
+    client.list.mockRejectedValue(new BranchApiError('branches_failed', 'listing the branches failed, try again', 500));
+    client.create.mockRejectedValue(new BranchApiError('branch_limit', 'This site already has 10 open branches.', 409));
+    renderWith({ ...onMain, openBranches: 10 } as EditorBranchState);
+    openMenu(/switch branch/i);
+    await screen.findByText('listing the branches failed, try again');
+    fireEvent.click(screen.getByRole('menuitem', { name: /new branch/i }));
+    expect(await screen.findByText(/Bakery already has 10 open branches/)).toBeTruthy();
+    const create = screen.getByRole('button', { name: 'Create branch' });
+    expect(create.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Branch name'), { target: { value: 'One more' } });
+    fireEvent.click(create);
+    // The server decides, and its refusal is said.
+    expect((await screen.findByRole('alert')).textContent).toBe('This site already has 10 open branches.');
+  });
+});
+
+describe('explanations a keyboard and a touch screen reach', () => {
+  const describedText = (el: HTMLElement) => document.getElementById(el.getAttribute('aria-describedby') ?? '')?.textContent ?? null;
+
+  it('the badge carries its explanation as text, and the switcher\'s menu shows it on a branch only', async () => {
+    renderWith(onBranch());
+    const words = 'A branch of Bakery. It is never published; merge it into Bakery to publish its changes.';
+    expect(screen.getByText('Branch').textContent).toBe(`Branch. ${words}`);
+    openMenu(/switch branch/i);
+    const menu = await screen.findByRole('menu');
+    expect(describedText(menu)).toBe(words);
+    cleanup();
+    renderWith(onMain);
+    openMenu(/switch branch/i);
+    expect((await screen.findByRole('menu')).getAttribute('aria-describedby')).toBeNull();
+    expect(screen.queryByText(words)).toBeNull();
+  });
+
+  it('"Update" and "Review and merge" point at text that is on the page', () => {
+    renderWith(onBranch({ mainMoved: true }));
+    expect(describedText(screen.getByRole('button', { name: 'Update' }))).toBe('Bring the changes made to Bakery into this branch');
+    expect(describedText(screen.getByRole('button', { name: 'Review and merge' }))).toBe('Branches are never published. Merge into Bakery, then publish from there.');
+  });
+});
+
+describe('a narrow window', () => {
+  it('folds the labels into their icons with the names kept, shortens the sentences, and never shrinks a button', () => {
+    render(
+      <SiteBranchProvider initial={onBranch({ mainMoved: true })}>
+        <Bar />
+        <SharePreviewButton />
+      </SiteBranchProvider>,
+    );
+    for (const name of ['Update', 'Review and merge', 'Share preview']) {
+      const control = screen.getByRole('button', { name });
+      expect(control.className).toMatch(/\bshrink-0\b/);
+      expect(control.querySelector('span')?.className).toMatch(/max-sm:sr-only/);
+    }
+    // The switcher's name gives way first; the full name is in its accessible name and in the menu.
+    const trigger = screen.getByRole('button', { name: 'Branch Spring sale. Switch branch' });
+    expect(trigger.className).toMatch(/\bshrink\b/);
+    expect(trigger.className).not.toMatch(/shrink-0/);
+    expect(screen.getByText('Bakery has changed').className).toMatch(/min-w-0/);
+  });
+
+  it('a branch closed elsewhere keeps "What now?" whole while its sentence shortens', async () => {
+    render(
+      <SiteBranchProvider initial={onBranch({ status: 'merged' })}>
+        <BranchClosedElsewhere />
+      </SiteBranchProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Keep looking' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByText('This branch was merged into Bakery.').className).toMatch(/truncate/);
+    expect(screen.getByRole('button', { name: 'What now?' }).className).toMatch(/shrink-0/);
+  });
+});
 
 describe('discard', () => {
   it('names what is lost in each state of the count', () => {

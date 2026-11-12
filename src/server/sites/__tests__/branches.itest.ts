@@ -498,6 +498,35 @@ describe('closed records are bounded', () => {
   });
 });
 
+describe('the listing keeps what the switcher needs', () => {
+  it('the latest merge and the branch an undone merge went to stay listed behind any number of discards', async () => {
+    const raw = (over: Record<string, unknown>) => ({
+      id: randomUUID(), siteId: mainId, workspaceId: scope.workspaceId, tenantGroupId: TENANT_GROUP, name: 'Raw',
+      status: 'discarded' as const, createdByKind: 'user', createdBy: ALICE.id, ...over,
+    });
+    const wentTo = raw({ name: 'Took the work', discardedAt: new Date('2026-02-01T00:00:00Z') });
+    const undone = raw({ name: 'Undone merge', status: 'merged', mergedAt: new Date('2026-03-01T00:00:00Z'), undoneIntoBranchId: wentTo.id });
+    const latest = raw({
+      name: 'Latest merge', status: 'merged', mergedAt: new Date('2026-04-01T00:00:00Z'),
+      mainBeforeDocument: { name: 'Bakery' }, mainBeforeExpiresAt: new Date(Date.now() + 86_400_000),
+    });
+    await prisma.siteBranch.createMany({ data: [wentTo, undone, latest] as never });
+    await prisma.$executeRaw`UPDATE public.site_branches SET updated_at = '2026-01-01 00:00:00'::timestamp WHERE site_id = ${mainId}`;
+    // Twenty-five discards after them: more than the listing shows.
+    await prisma.siteBranch.createMany({ data: Array.from({ length: 25 }, () => raw({ discardedAt: new Date() })) as never });
+
+    const { closed } = await branches.listBranches(scope, mainId);
+    const byId = new Map(closed.map((b) => [b.branchId, b]));
+    expect(byId.get(latest.id)).toMatchObject({ status: 'merged', name: 'Latest merge' });
+    expect(byId.get(latest.id)!.undoUntil).toBeInstanceOf(Date);
+    expect(byId.get(undone.id)).toMatchObject({ status: 'merged', undoneIntoBranchId: wentTo.id });
+    expect(byId.get(wentTo.id)).toMatchObject({ name: 'Took the work', status: 'discarded' });
+    // Bounded all the same: the twenty most recent, the latest merges, and what they name.
+    expect(closed).toHaveLength(23);
+    expect(new Set(closed.map((b) => b.branchId)).size).toBe(23);
+  });
+});
+
 describe('one change, both or neither', () => {
   it('a rename and ready in one request: a name clash changes neither', async () => {
     const { branch: a } = await create('First');

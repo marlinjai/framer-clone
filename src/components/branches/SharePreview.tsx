@@ -51,8 +51,11 @@ export default function SharePreview({
   branchId,
   branchName,
   disabledReason,
+  compact = false,
   copy = (text: string) => navigator.clipboard.writeText(text),
 }: {
+  /** In the editor's top bar: on a narrow window the label folds into the icon (the name stays for a screen reader). */
+  compact?: boolean;
   mainSiteId: string;
   branchId: string;
   branchName: string;
@@ -150,7 +153,7 @@ export default function SharePreview({
           if (!disabledReason) setShown(true);
         }}
       >
-        <Link2 aria-hidden /> Share preview
+        <Link2 aria-hidden /> <span className={compact ? 'max-sm:sr-only' : undefined}>Share preview</span>
       </Button>
       {disabledReason ? (
         <span id={reasonId} className="sr-only">

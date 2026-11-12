@@ -94,6 +94,9 @@ export type SiteBranchContext =
 /** How many closed branches a listing shows. The records stay; only the listing is bounded. */
 const CLOSED_LISTED = 20;
 
+/** How many of the latest merges a listing always holds, however many branches were discarded after them. */
+const MERGED_ALWAYS_LISTED = 3;
+
 /** Copying a site at the 10 MB limit, page by page, fits in this. */
 const BRANCH_WRITE_TRANSACTION = { maxWait: 5_000, timeout: 30_000 } as const;
 
@@ -440,11 +443,28 @@ export class SiteBranchRepository {
       }),
       renamedSinceFork(this.prisma, main.id, scope.workspaceId),
     ]);
+    // The switcher offers the undo of the latest merge and says where an undone merge went. Neither may fall
+    // out of the list because many branches were discarded since: the latest merges are always in it, and so
+    // is every closed branch that a listed merge names as where its work went (an open one is in `open`).
+    const listed = new Set([...open, ...closed].map((row) => row.id));
+    const latestMerged = await this.prisma.siteBranch.findMany({
+      where: { siteId: main.id, workspaceId: scope.workspaceId, status: 'merged', id: { notIn: [...listed] } },
+      orderBy: { mergedAt: 'desc' },
+      take: MERGED_ALWAYS_LISTED,
+      select: RECORD_SELECT,
+    });
+    const newestListedMerge = closed.filter((row) => row.status === 'merged').length;
+    const more = latestMerged.slice(0, Math.max(0, MERGED_ALWAYS_LISTED - newestListedMerge));
+    for (const row of more) listed.add(row.id);
+    const wentTo = [...closed, ...more].map((row) => row.undoneIntoBranchId).filter((id): id is string => !!id && !listed.has(id));
+    const targets = wentTo.length
+      ? await this.prisma.siteBranch.findMany({ where: { id: { in: wentTo }, siteId: main.id, workspaceId: scope.workspaceId }, select: RECORD_SELECT })
+      : [];
     return {
       mainSiteId: main.id,
       mainVersion: main.version,
       open: open.map((row) => summaryOf(row, main.version, renamed.has(row.id))),
-      closed: closed.map((row) => summaryOf(row, main.version)),
+      closed: [...closed, ...more, ...targets].map((row) => summaryOf(row, main.version)),
     };
   }
 

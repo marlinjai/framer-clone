@@ -84,6 +84,11 @@ function start(port: number, logFile: string): ChildProcess {
       NODE_ENV: 'production',
       TZ: 'UTC',
       EDITOR_HOST: 'editor.invalid',
+      // Published sites answer on `<label>.sites.localhost` with or without this; a branch's public preview
+      // link (`preview-<token>.sites.localhost`, previewLink.spec.ts) is only known as one with it.
+      PUBLIC_SITE_BASE_HOST: 'sites.localhost',
+      // Site branches on, so a preview link shows its branch. No editor route is asked on this server.
+      SITE_BRANCHES_COMPANIES: '*',
       NEXT_TELEMETRY_DISABLED: '1',
       // Public by design, and only a site with analytics turned on reads them: the consent banner needs both.
       ANALYTICS_PUBLIC_INGESTION_KEY: `ap_live_${randomBytes(16).toString('hex')}`,

@@ -83,6 +83,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
       const older = v !== undefined && (v.main !== main.version || v.branch !== branch.version);
       const moved = lastToken.current !== null && lastToken.current !== review.token;
       lastToken.current = review.token;
+      lastState.current = review.state ?? null;
       if ((older || moved) && reloadedFor.current !== review.token) {
         reloadedFor.current = review.token;
         router.refresh();
@@ -105,24 +106,39 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
   );
 
   const read = useCallback(() => branchClient.changes(branchId).then(show, failed), [branchId, show, failed]);
+  /**
+   * The regular look: asks with the key of the review the page holds, and is told `current` when nothing it was
+   * computed from moved, which costs the server three small rows instead of the whole review. Anything else it
+   * answers is the review itself. Without a key (an older server, nothing loaded yet) it is a plain read.
+   */
+  const lastState = useRef<string | null>(null);
+  const look = useCallback(() => {
+    const state = lastState.current;
+    if (!state) return read();
+    return branchClient.changesIfMoved(branchId, state).then((answer) => ('current' in answer ? undefined : show(answer)), failed);
+  }, [branchId, read, show, failed]);
 
   useEffect(() => {
     if (merged) return;
     void read();
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void read();
+      if (document.visibilityState === 'visible') void look();
     }, REVIEW_REFRESH_MS);
-    const onVisible = () => document.visibilityState === 'visible' && void read();
+    const onVisible = () => document.visibilityState === 'visible' && void look();
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [read, merged]);
+  }, [read, look, merged]);
 
   const review = loaded.kind === 'ok' ? loaded.review : null;
   const units = review?.review?.units ?? [];
   const unit: UnitReview | undefined = units.find((u) => u.id === unitId) ?? units[0];
+
+  // Built when the unit or the selected element changes, not on every render (a notice, a busy mark, a typed note).
+  const mainOutlines = useMemo(() => outlineSheet(unit, 'main', focusId, escapeId), [unit, focusId]);
+  const branchOutlines = useMemo(() => outlineSheet(unit, 'branch', focusId, escapeId), [unit, focusId]);
 
   /** A refusal because the state moved: read again and say so. */
   const stale = (err: unknown) => {
@@ -235,6 +251,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
     editOff ?? (!c.options.includes(side) ? 'This answer is not possible here.' : busy !== null ? 'wait' : null);
   const openCount = review?.conflicts.length ?? 0;
   const behind = Boolean(review && !review.upToDate);
+  const mergeHint = behind ? `Brings the changes made to ${mainName} into the branch first. Then look again and merge.` : `Merge into ${mainName}. Nothing is published.`;
   // What a pane says when it draws nothing, by why: still reading, could not read, nothing changed, nothing picked.
   const idleText =
     loaded.kind === 'loading' ? 'Reading the changes…' : loaded.kind === 'failed' ? 'The changes could not be read.' : units.length === 0 ? 'This branch changes no page yet.' : 'Pick a page on the left.';
@@ -276,11 +293,16 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
           size="sm"
           variant="brand"
           disabled={!review || busy !== null || blocker !== null}
-          title={blocker ?? (behind ? `Brings the changes made to ${mainName} into the branch first. Then look again and merge.` : `Merge into ${mainName}. Nothing is published.`)}
+          // What the press does is text the button points at; why it is off is said below ("Merge is not possible yet").
+          aria-describedby={blocker === null ? `${reasonId}-merge` : undefined}
+          title={blocker ?? mergeHint}
           onClick={() => act('merge')}
         >
           <GitMerge aria-hidden /> {busy === 'merge' ? (behind ? 'Updating…' : 'Merging…') : behind ? `Update from ${mainName} first` : `Merge into ${mainName}`}
         </Button>
+        <span id={`${reasonId}-merge`} className="sr-only">
+          {mergeHint}
+        </span>
       </header>
 
       {sendingBack ? (
@@ -388,6 +410,8 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
               >
                 {busy === 'update' ? 'Updating…' : 'Update the branch'}
               </Button>
+              {/* Why it is off, as text: a disabled button's tooltip reaches neither a keyboard nor a touch screen. */}
+              {openCount > 0 && !editOff ? <p className="mt-1 text-muted-foreground">Every question needs an answer first.</p> : null}
             </section>
           ) : null}
 
@@ -446,6 +470,13 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
                           <span className="font-medium">{fieldText(f.field)}</span> changed
                         </li>
                       ))}
+                    {u.elementCount !== undefined ? (
+                      // New or removed as a whole: one line, not one per element (the picture beside shows it).
+                      <li className="text-xs text-muted-foreground" data-whole-unit={u.id}>
+                        {u.change === 'added' ? 'The whole' : 'This'} {u.unit === 'page' ? 'page' : 'component'} {u.change === 'added' ? 'is new' : 'is removed'}
+                        {u.elementCount > 0 ? `, with ${u.elementCount.toLocaleString('en-GB')} ${u.elementCount === 1 ? 'element' : 'elements'}` : ''}.
+                      </li>
+                    ) : null}
                     {u.elements.map((e) => (
                       <li key={e.id}>
                         <button
@@ -495,7 +526,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
               page={mainPage}
               site={mainModel.site}
               emptyText={unit?.change === 'added' ? `This ${unit.unit} is new on the branch.` : idleText}
-              outlines={outlineSheet(unit, 'main', focusId, escapeId)}
+              outlines={mainOutlines}
               focusId={focusId}
             />
             <ReviewPane
@@ -504,7 +535,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
               page={branchPage}
               site={branchModel.site}
               emptyText={unit?.change === 'removed' ? `The branch removes this ${unit.unit}.` : idleText}
-              outlines={outlineSheet(unit, 'branch', focusId, escapeId)}
+              outlines={branchOutlines}
               focusId={focusId}
             />
           </div>
