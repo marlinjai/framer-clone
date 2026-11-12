@@ -10,6 +10,9 @@ import { Document, NodeIO } from '@gltf-transform/core';
 import { EXTTextureWebP, EXTMeshoptCompression } from '@gltf-transform/extensions';
 import { checkGlb } from '@/lib/scene/glb';
 import { MemoryBlobStore, MemorySiteModels } from '../../memory';
+
+/** One in-memory instance is both the repository and the coordinator. */
+const memoryModels = () => { const models = new MemorySiteModels(); return { models, coordinator: models }; };
 import { DECODED_LIMITS, acceptModelUpload, decodedProblem } from '../../uploadModel';
 import { ModelRefusalError } from '../../ports';
 import { khronosValidator, safeReencoder } from '../adapters';
@@ -277,13 +280,13 @@ describe('review findings', () => {
   }, SLOW);
 
   it('answers a validator that timed out as 413 timeout, not as an invalid file, and stores nothing', async () => {
-    const d = { blobs: new MemoryBlobStore(), models: new MemorySiteModels(), validator: khronosValidator({ script: fixture('spin.mjs'), timeoutMs: 400 }), reencoder: safeReencoder() };
+    const d = { blobs: new MemoryBlobStore(), ...memoryModels(), validator: khronosValidator({ script: fixture('spin.mjs'), timeoutMs: 400 }), reencoder: safeReencoder() };
     expect(await acceptModelUpload(await model(), 's', 'u', d)).toMatchObject({ ok: false, status: 413, code: 'timeout' });
     expect(d.blobs.files.size).toBe(0);
   }, SLOW);
 
   it('words a server-side refusal as ours to retry, not as the file\'s fault', async () => {
-    const d = { blobs: new MemoryBlobStore(), models: new MemorySiteModels(), validator: { validate: async () => ({ ok: true as const }) }, reencoder: { reencode: async () => { throw new ModelRefusalError('reencode-failed', 'the optimised model could not be read back', 500); } } };
+    const d = { blobs: new MemoryBlobStore(), ...memoryModels(), validator: { validate: async () => ({ ok: true as const }) }, reencoder: { reencode: async () => { throw new ModelRefusalError('reencode-failed', 'the optimised model could not be read back', 500); } } };
     const r = await acceptModelUpload(await model(), 's', 'u', d);
     expect(r).toMatchObject({ ok: false, status: 500 });
     if (!r.ok) expect(r.message).toMatch(/Try again/);
@@ -345,7 +348,7 @@ describe('second review findings', () => {
 });
 
 describe('the whole upload with the real pipeline (offline, in-memory storage)', () => {
-  const deps = () => ({ blobs: new MemoryBlobStore(), models: new MemorySiteModels(), validator: khronosValidator(), reencoder: safeReencoder() });
+  const deps = () => ({ blobs: new MemoryBlobStore(), ...memoryModels(), validator: khronosValidator(), reencoder: safeReencoder() });
 
   it('stores a re-encoded model that passes the validator and the guard', async () => {
     const d = deps();
@@ -376,7 +379,7 @@ describe('the whole upload with the real pipeline (offline, in-memory storage)',
   }, SLOW);
 
   it('is still fail-closed without the adapters', async () => {
-    const r = await acceptModelUpload(await model(), 'site-1', 'u', { blobs: new MemoryBlobStore(), models: new MemorySiteModels() });
+    const r = await acceptModelUpload(await model(), 'site-1', 'u', { blobs: new MemoryBlobStore(), ...memoryModels() });
     expect(r).toMatchObject({ ok: false, status: 503, code: 'not-configured' });
   });
 });
