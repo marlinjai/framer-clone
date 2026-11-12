@@ -871,6 +871,12 @@ applied migration (`deploy/README.md`, "Migration 20261112200000_site_models"). 
 packages (`@gltf-transform/*`, `gltf-validator`, `meshoptimizer`) and a pinned `sharp`; main also holds a first slice
 of the head items work. This refresh is itself a snapshot: recompute at the release commit.
 
+**The deploy checklist lives in the site branches plan** (`docs/plans/2026-11-10-site-branches.md`, section 12), kept
+by the owner who runs the deploy. Its rule, which this plan follows: the list is true only for the commit it was read
+at, so before the go is asked it is read again at the exact release commit, every owner (FX, site branches, Books, 3D
+scene, head items) confirms its part at that commit, and the go is asked for one named commit. This section records
+the FX side and is not a second checklist.
+
 So the deploy is a joint decision of the FX, branching, Books and 3D scene work, and Marlin's to make. This slice does
 not start it.
 
