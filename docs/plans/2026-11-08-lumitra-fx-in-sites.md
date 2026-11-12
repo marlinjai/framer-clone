@@ -804,3 +804,10 @@ Tests:
 
 The plan's check names an agent `set_node`; there is no operation of that name. The same check runs against
 `setFxScene` and `insertNodes`, the two operations that can carry a scene.
+
+### State after F6 (2026-11-12)
+
+F1 to F6 are merged (#365, #368, #369, #373, #378, #383) and none of it is deployed: the last production deploy is
+from 2026-11-09 and deploys are started by hand. F7 is the next slice and begins with a deploy to app.lumitra.co, so it
+waits for Marlin's yes. Until then nothing outside the repository has changed, and lumitra.co is served by lumitra-web
+as before.
