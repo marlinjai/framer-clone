@@ -51,9 +51,11 @@ function StatusIcon({ state, saving }: { state: AutosaveState; saving: boolean }
   switch (state.phase) {
     case 'unsaved':
       return <CircleDot {...props} />;
+    case 'conflict':
+      // A refusal held for a replay about to resolve it shows as unsaved, not as a conflict.
+      return state.held ? <CircleDot {...props} /> : <CloudAlert {...props} />;
     case 'retrying':
     case 'failed':
-    case 'conflict':
       return <CloudAlert {...props} />;
     default:
       return <CloudCheck {...props} />;
@@ -132,7 +134,8 @@ const SaveStatus = observer(() => {
   const saving = isSaving(state);
   const reason = saveFailureReason(state, now);
   const failed = state.phase === 'failed' || state.phase === 'retrying';
-  const conflict = state.phase === 'conflict';
+  // A refusal held for a replay about to resolve it (or the person's open edit) is not shown as one yet.
+  const conflict = state.phase === 'conflict' && !state.held;
   const tone = failed ? 'text-destructive' : conflict ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground';
   const reasonHidden = failed && state.hidden === true;
 
@@ -145,7 +148,14 @@ const SaveStatus = observer(() => {
       </span>
       <span
         data-testid="save-status"
-        title={reason ?? (conflict ? 'This project was saved somewhere else. Choose what to keep.' : 'Changes are saved automatically. Cmd+S (Ctrl+S) saves at once.')}
+        title={
+          reason ??
+          (conflict
+            ? 'This project was saved somewhere else. Choose what to keep.'
+            : state.phase === 'conflict'
+              ? 'Your changes are being put on top of a newer version of this project.'
+              : 'Changes are saved automatically. Cmd+S (Ctrl+S) saves at once.')
+        }
         className={`flex min-w-0 items-center gap-1.5 text-xs ${tone}`}
       >
         <StatusIcon state={state} saving={saving} />

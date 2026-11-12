@@ -107,7 +107,7 @@ export function useSaveAnnouncement(state: AutosaveState): string {
   const kind =
     state.phase === 'failed' || state.phase === 'retrying'
       ? 'failure'
-      : state.phase === 'conflict'
+      : state.phase === 'conflict' && !state.held
         ? 'conflict'
         : state.phase === 'saved'
           ? 'saved'
@@ -137,7 +137,8 @@ function settledLabel(state: AutosaveState): string | undefined {
     case 'failed':
       return 'Not saved';
     case 'conflict':
-      return state.retrying ? undefined : 'Changed elsewhere';
+      // Held for a replay about to resolve it (or the person's open edit): still just unsaved to the person.
+      return state.retrying ? undefined : state.held ? 'Unsaved changes' : 'Changed elsewhere';
     default:
       return undefined;
   }

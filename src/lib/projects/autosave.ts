@@ -26,7 +26,11 @@
 //     asks (load newer, save mine over it, keep both). It resumes only after a
 //     write of this tab succeeds (Save mine over it, a Publish) or the page
 //     reloads. "Keep editing" is not a resolution, so a refusal never loops;
-//     the status's "Changed elsewhere" (and Cmd+S) reopens the dialog.
+//     the status's "Changed elsewhere" (and Cmd+S) reopens the dialog. While
+//     the live sync (src/lib/projects/liveSync.ts) holds the refusal for the
+//     person's edit or for a replay of the refused edit on the newer copy
+//     (setConflictDialogHold), the dialog waits and the state is `held`: the
+//     status still says the changes are unsaved, not "Changed elsewhere".
 //   - A passing failure (network, 5xx, 408, 429) is shown and retried with
 //     backoff (2 s, 5 s, 15 s, 30 s, then every 60 s). A refusal (any other
 //     4xx: signed out, no permission, too large, malformed) is shown with its
@@ -98,8 +102,12 @@ export type AutosaveState =
   | { phase: 'failed'; message: string; status?: number; retriesStopped?: boolean; hidden?: boolean }
   /** Publish is writing this copy: autosave waits, and Cmd+S has nothing to add. */
   | { phase: 'publishing' }
-  /** The version lock refused: the server is at `currentVersion`. */
-  | { phase: 'conflict'; currentVersion: number; dialogOpen: boolean; retrying: boolean };
+  /**
+   * The version lock refused: the server is at `currentVersion`. `held`: the
+   * dialog waits (the person is mid-edit, or the live sync is about to replay
+   * the refused edit on the newer copy), so the status does not yet say so.
+   */
+  | { phase: 'conflict'; currentVersion: number; dialogOpen: boolean; retrying: boolean; held?: boolean };
 
 /** The project the controller watches: the editor's live ProjectModel. */
 export type AutosaveProject = ProjectModelType;
@@ -230,6 +238,9 @@ export class AutosaveController {
     if (next.phase !== 'conflict') this.stopHeldDialog();
     this.stamp++;
     this.state = next;
+    // A held refusal always has its watcher, also one put back after a Publish
+    // that changed nothing: otherwise its dialog (and the status's way to it) never comes.
+    if (next.phase === 'conflict' && next.held && !next.dialogOpen) this.watchHeldDialog();
     for (const listener of [...this.listeners]) listener();
     notifyRegistry();
   }
@@ -532,6 +543,8 @@ export class AutosaveController {
     content: SavedContent,
     once = false,
   ): Promise<void> {
+    // "Save mine over it": the person already chose in the dialog; a refusal of it reopens the dialog, it is no edit to replay.
+    const over = this.overPending !== undefined;
     let result: ProjectWriteResult;
     try {
       result = await this.deps.write(snapshot, expectedVersion, options);
@@ -564,8 +577,10 @@ export class AutosaveController {
       // The person is mid-edit, or the live sync is about to replay the refused edit
       // on the newer copy (conflictDialogHolds): the dialog waits, never under the
       // cursor and never for a conflict about to resolve itself.
-      const held = conflictDialogHolds.get(this.projectId)?.() ?? false;
-      this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: !held, retrying: false });
+      // The hold is told of the refusal, so a settled edit it can replay holds the dialog too.
+      const hold = conflictDialogHolds.get(this.projectId);
+      const held = hold?.(over ? { over: true } : { currentVersion: result.currentVersion }) ?? false;
+      this.setState({ phase: 'conflict', currentVersion: result.currentVersion, dialogOpen: !held, retrying: false, ...(held ? { held: true } : {}) });
       if (held) this.watchHeldDialog();
       return;
     }
@@ -659,7 +674,7 @@ export class AutosaveController {
       const held = conflictDialogHolds.get(this.projectId)?.() ?? false;
       if (held && Date.now() - since < HELD_DIALOG_MAX_MS) return;
       this.stopHeldDialog();
-      this.setState({ ...state, dialogOpen: true });
+      this.setState({ ...unheld(state), dialogOpen: true });
     }, HELD_DIALOG_CHECK_MS);
   }
 
@@ -672,13 +687,13 @@ export class AutosaveController {
   dismissConflict(): void {
     // "Keep editing" is the person's answer: a held dialog does not come back by itself.
     this.stopHeldDialog();
-    if (this.state.phase === 'conflict' && !this.state.retrying) this.setState({ ...this.state, dialogOpen: false });
+    if (this.state.phase === 'conflict' && !this.state.retrying) this.setState({ ...unheld(this.state), dialogOpen: false });
   }
 
   /** Reopen the dialog (the status's "Changed elsewhere", or Cmd+S). */
   openConflict(): void {
     this.stopHeldDialog();
-    if (this.state.phase === 'conflict') this.setState({ ...this.state, dialogOpen: true });
+    if (this.state.phase === 'conflict') this.setState({ ...unheld(this.state), dialogOpen: true });
   }
 
   /** "Load the newer version": the reload that follows must not warn. */
@@ -1061,11 +1076,22 @@ export function abandonWorkingCopy(projectId: string): void {
 // project id -> whether a refusal's dialog should wait right now, installed by the
 // live sync (src/lib/projects/liveSync.ts), which may start before the project's
 // autosave controller exists: true while the person is mid-edit or a replay of
-// the refused edit is pending.
-const conflictDialogHolds = new Map<string, () => boolean>();
+// the refused edit is pending. Called with `refusal` once, as a refusal lands
+// (before its write counts as settled), and without it while the dialog waits.
+/** `over`: the refusal answered a "Save mine over it"; a replay mark with no newer copy on the way then holds nothing. */
+export type ConflictDialogHold = (refusal?: { currentVersion?: number; over?: boolean }) => boolean;
+const conflictDialogHolds = new Map<string, ConflictDialogHold>();
+
+/** A conflict state whose dialog no longer waits: the status may say so. */
+function unheld(state: Extract<AutosaveState, { phase: 'conflict' }>): Extract<AutosaveState, { phase: 'conflict' }> {
+  if (!state.held) return state;
+  const rest = { ...state };
+  delete rest.held;
+  return rest;
+}
 
 /** The live sync installs when a refusal's dialog should wait; only its own installation is removed. */
-export function setConflictDialogHold(projectId: string, hold: () => boolean): () => void {
+export function setConflictDialogHold(projectId: string, hold: ConflictDialogHold): () => void {
   conflictDialogHolds.set(projectId, hold);
   return () => {
     if (conflictDialogHolds.get(projectId) === hold) conflictDialogHolds.delete(projectId);
