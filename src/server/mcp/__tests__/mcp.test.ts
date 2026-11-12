@@ -337,7 +337,7 @@ describe('protocol', () => {
     }
     expect((byName.publish.inputSchema.properties as Record<string, unknown>).approvalId).toBeDefined();
     const ops = (byName.apply_batch.inputSchema.properties as Record<string, { items: { oneOf: unknown[] } }>).ops;
-    expect(ops.items.oneOf).toHaveLength(12);
+    expect(ops.items.oneOf).toHaveLength(13);
     const unknown = await s.handler.POST(post(s.key, rpc('tools/call', { name: 'delete_everything', arguments: {} })));
     expect(((await unknown.json()) as { error: { code: number } }).error.code).toBe(-32602);
   });

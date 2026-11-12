@@ -26,6 +26,7 @@ import { isVoidTag } from '@/lib/drag/voidTags';
 import { breakpointKeyMap, toEditorSnapshot, type PageBreakpoint } from '@/lib/ai/pageGen/apply';
 import type { PageGenResultPayload, PageGenTarget } from '@/lib/ai/pageGen/protocol';
 import { closedAncestorOf } from '@/lib/ai/pageGen/promptSections/behaviour';
+import { holdsFxScene } from '@/lib/fxScene/marker';
 import { projectGateProblem } from './applyOps';
 
 /** Where a generation goes, as a caller names it. */
@@ -95,6 +96,8 @@ export function generationTarget(
   }
   // No preset under a button, link or the like the result would stand in (validate.ts).
   const closedAncestor = closedAncestorOf(root, componentId, target.kind);
+  // A page draws one FX scene (src/lib/fxScene): say when it keeps one outside what is replaced.
+  const pageHasFxScene = holdsFxScene([root], target.kind === 'replace' ? componentId : undefined);
   // Generating into a page without frames: the default three first, so the
   // breakpoint ids the styles are keyed to are ids real frames carry.
   page.ensureDefaultViewports();
@@ -117,6 +120,7 @@ export function generationTarget(
         kind: target.kind,
         context: serializeSubtree(component, { maxTokens: CONTEXT_TOKENS }),
         ...(closedAncestor ? { closedAncestor } : {}),
+        ...(pageHasFxScene ? { pageHasFxScene } : {}),
       },
       pageId: page.id,
       componentId,

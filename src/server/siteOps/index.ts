@@ -150,6 +150,15 @@ function fromError(err: unknown, siteId?: string): SiteOpsResult<never> {
     });
   }
   if (err instanceof SiteRepositoryError && err.status === 400) return fail({ code: 'invalid_request', message: err.message });
+  // What the save itself refuses about the content (422): nothing was written, and the caller can
+  // act on the reason. An image a scene or the settings name must be one this site stores.
+  if (err instanceof SiteRepositoryError && err.code === 'site_image_missing') {
+    return fail({
+      code: 'invalid_request',
+      message: `${err.message.split(' (')[0]}. An image an FX scene, the site settings or a page names must first be uploaded to this site in the editor; nothing was written.`,
+    });
+  }
+  if (err instanceof SiteRepositoryError && err.status === 422) return fail({ code: 'invalid_request', message: `${err.message} Nothing was written.` });
   if (err instanceof SiteRepositoryError && err.code === 'erased_since_load') {
     return fail({
       code: 'failed',

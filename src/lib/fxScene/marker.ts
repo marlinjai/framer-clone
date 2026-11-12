@@ -36,6 +36,32 @@ export function isFxScene(props: unknown, type: unknown = 'div'): boolean {
   return type === 'div' && !!props && typeof props === 'object' && !Array.isArray(props) && (props as Record<string, unknown>)[FX_ATTR] === FX_MARKER;
 }
 
+/** A node as the walk below needs it: a model instance and a stored snapshot both fit. */
+interface SceneTreeNode {
+  id?: unknown;
+  type?: unknown;
+  props?: unknown;
+  children?: readonly unknown[] | { values(): Iterable<unknown> } | null;
+}
+
+/**
+ * Whether a tree holds an FX scene box, not counting the subtree of `exceptId` (what a
+ * generation is about to replace). A page draws one scene, so whoever adds one asks first.
+ */
+export function holdsFxScene(roots: Iterable<unknown>, exceptId?: string): boolean {
+  const stack: unknown[] = [...roots];
+  while (stack.length > 0) {
+    const node = stack.pop() as SceneTreeNode | null | undefined;
+    if (!node || typeof node !== 'object') continue;
+    if (exceptId !== undefined && node.id === exceptId) continue;
+    if (isFxScene(node.props, node.type)) return true;
+    const children = node.children;
+    if (Array.isArray(children)) stack.push(...children);
+    else if (children && typeof (children as { values?: unknown }).values === 'function') stack.push(...(children as { values(): Iterable<unknown> }).values());
+  }
+  return false;
+}
+
 /**
  * Written by the published page, never stored: `data-fc-fx` carries the index
  * of a box's scene in the page's FX program (applyFx), `data-fc-fx-state` says

@@ -157,6 +157,8 @@ import {
   type StickyCtaPropKey,
 } from '@/lib/stickyCta/stickyCta';
 import { cleanMapEmbedProp, cleanMapText, isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { readGeneratedFx } from '@/lib/fxScene/generation';
+import { FX_ATTR, FX_MARKER, FX_PROP, isFxScene } from '@/lib/fxScene/marker';
 
 
 /** One validated node, ready for ComponentModel.create (responsive keys are still breakpoint KEYS). */
@@ -241,6 +243,12 @@ export interface ValidateContext {
    * wire. Defaults to none: a new page.
    */
   closedAncestor?: string;
+  /**
+   * The page the result goes into already holds an FX scene (src/lib/fxScene) outside what
+   * this generation replaces. A page draws one, so a generated one is then kept as a plain
+   * box. Defaults to false: a new page.
+   */
+  pageHasFxScene?: boolean;
 }
 
 /**
@@ -1181,6 +1189,11 @@ class Validator {
     // embed address is the owner's to paste in the panel.
     const isMapPreset = isMapEmbed(preset?.defaultProps);
     const mapProps: Record<string, unknown> = {};
+    // An FX scene box (src/lib/fxScene): the preset, or a box sent back with its marker (the
+    // model is shown the nodes it replaces, stored scene included). What it writes under `fx`
+    // is read by readGeneratedFx below and nowhere else; the marker is set here, never taken.
+    const isFxBox = isFxScene(preset?.defaultProps, preset?.htmlType) || (type === 'div' && modelProps[FX_ATTR] === FX_MARKER);
+    let rawFx: unknown;
     let decorative = false;
     const props: Record<string, unknown> = {};
     let text: string | undefined;
@@ -1233,6 +1246,10 @@ class Validator {
         const cleaned = cleanStickyCtaProp(key as StickyCtaPropKey, value);
         if (cleaned === undefined) this.warn(path, `${key} of the sticky call to action is not usable, dropped`);
         else stickyProps[key] = cleaned;
+        continue;
+      }
+      if (isFxBox && (key === FX_PROP || key === FX_ATTR)) {
+        if (key === FX_PROP) rawFx = value;
         continue;
       }
       if (isMapPreset && (key === 'mapUrl' || key === 'mapAddress' || key === 'mapTitle')) {
@@ -1309,6 +1326,27 @@ class Validator {
     };
     // The preset's sample address is never published: placeMapEmbeds sets the real one.
     if (isMapPreset) delete merged.mapAddress;
+    if (isFxBox) {
+      // One reader for the generator and for site operations (src/lib/fxScene/generation.ts).
+      const scene = readGeneratedFx(rawFx);
+      if (scene.ok) {
+        merged[FX_ATTR] = FX_MARKER;
+        merged[FX_PROP] = scene.stored;
+        for (const note of scene.notes) this.warn(path, `FX scene: ${note}`);
+        // The box's own background is what shows wherever the scene is not drawn: it goes
+        // with the preset, unless the model set one.
+        const ownBackground = ['background', 'backgroundColor', 'backgroundImage'].some((key) => modelStyle[key] !== undefined);
+        if (scene.background !== undefined && !ownBackground) style.background = scene.background;
+      } else if (preset && isFxScene(preset.defaultProps, preset.htmlType)) {
+        // The preset's own scene is already in `merged`: a box asked for as a scene stays one.
+        this.warn(path, `FX scene: ${scene.message} The default scene is used.`);
+      } else {
+        // A box that came back with a scene the reader refuses: a plain box, with its content.
+        delete merged[FX_ATTR];
+        delete merged[FX_PROP];
+        this.warn(path, `FX scene: ${scene.message} The box is kept as a plain box.`);
+      }
+    }
     if (isStickyCta(presetDefaults)) {
       // The label and the link must come from the model: the preset's
       // placeholders ("Book now" to "#contact") would publish a dead button.
@@ -2129,6 +2167,37 @@ function placeStickyCta(nodes: GeneratedNodeSnapshot[], v: Validator, allowed: b
 }
 
 /**
+ * A page draws one FX scene (src/lib/fxScene): the published page gives its one WebGL
+ * context to the first and leaves every other as its plain box. So a generation keeps its
+ * first scene, and none when the page already holds one outside what is replaced; any
+ * other is kept as the plain box with its content, with a warning.
+ */
+function placeFxScenes(nodes: GeneratedNodeSnapshot[], v: Validator, pageHoldsOne: boolean): GeneratedNodeSnapshot[] {
+  let kept = pageHoldsOne;
+  // In document order, as the published page finds them: a box before what it holds.
+  const walk = (list: GeneratedNodeSnapshot[]): GeneratedNodeSnapshot[] =>
+    list.map((node) => {
+      let own = node;
+      if (isFxScene(node.props, node.type)) {
+        if (!kept) kept = true;
+        else {
+          const props = { ...node.props };
+          delete props[FX_ATTR];
+          delete props[FX_PROP];
+          v.warnings.push(
+            `${node.label}: FX scene: ${pageHoldsOne ? 'this page already has an FX scene' : 'a generation holds one FX scene'}, and a page draws only one: this box was kept as a plain box`,
+          );
+          own = { ...node, props };
+        }
+      }
+      if (own.children.length === 0) return own;
+      const children = walk(own.children);
+      return { ...own, children };
+    });
+  return walk(nodes);
+}
+
+/**
  * The Google map's rules: it shows the Site settings address and nothing else, so a
  * page without one gets no map, at most one per generation, and never inside an svg.
  * Dropped with a warning.
@@ -2194,7 +2263,11 @@ export function validateGeneration(raw: unknown, ctx: ValidateContext): Validati
   // Counted with it: a preset dropped below takes its nodes off v.nodeCount, and the error
   // must say how many nodes the model wrote, not how many were left.
   const writtenNodes = v.nodeCount;
-  const placed = placeMapEmbeds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v, cleanMapText(ctx.mapAddress ?? undefined));
+  const placed = placeFxScenes(
+    placeMapEmbeds(placeStickyCta(parsed, v, ctx.allowStickyCta === true), v, cleanMapText(ctx.mapAddress ?? undefined)),
+    v,
+    ctx.pageHasFxScene === true,
+  );
   const nodes = applyGeneratedBehaviour(dropExpandingSvgs(scopeIds(placed, v), v), v);
   gateStartValues(nodes, v);
   dropForeignAddresses(nodes, v, ctx.heldAddresses ?? new Set());

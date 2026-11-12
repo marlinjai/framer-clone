@@ -51,7 +51,8 @@ import { keyedBreakpoints, type KeyedBreakpoint } from './breakpoints';
 import { foreignContentOf, renderGateProblem, type GateNode } from './gate';
 import { countLinksToPage } from './pageLinks';
 import { MAX_BATCH_OPS, OperationSchema, type Operation, type RejectedOperation } from './types';
-import { FX_ATTR, isFxSceneProp } from '@/lib/fxScene/marker';
+import { readGeneratedFx } from '@/lib/fxScene/generation';
+import { FX_ATTR, FX_PROP, holdsFxScene, isFxScene, isFxSceneProp } from '@/lib/fxScene/marker';
 
 /** The prefix of a reference to something an earlier operation created. */
 export const REF_PREFIX = 'ref:';
@@ -527,6 +528,8 @@ export async function applyOperations(
             breakpoints: asBreakpointKeys(keyed),
             ...(deps.newId ? { newId: deps.newId } : {}),
             mapAddress: address || null,
+            // A page draws one FX scene (src/lib/fxScene): none is inserted beside one.
+            pageHasFxScene: holdsFxScene([page.appComponentTree as ComponentInstance]),
             // No preset under a button, link or the like the parent stands in (validate.ts).
             closedAncestor: closedAncestorOf(
               [page.appComponentTree as ComponentInstance, ...(page.canvasNodes.values() as Iterable<ComponentInstance>)],
@@ -621,7 +624,8 @@ export async function applyOperations(
         const removing: string[] = [];
         for (const [key, value] of Object.entries(op.props)) {
           // An FX scene is stored only after its own check, never as a loose prop.
-          if (PROPS_NOT_SET_HERE.has(key) || isFxSceneProp(key, node.type)) throw new OpRefused(`${key} is not set through setProps`);
+          if (isFxSceneProp(key, node.type)) throw new OpRefused('fx is not set through setProps: setFxScene replaces the scene of an FX scene box, after its own check');
+          if (PROPS_NOT_SET_HERE.has(key)) throw new OpRefused(`${key} is not set through setProps`);
           if (value === null) removing.push(key);
           else setting[key] = value;
         }
@@ -650,6 +654,22 @@ export async function applyOperations(
         node.setProps(patch);
         touched.push({ page, nodeId: node.id });
         return `set ${Object.keys(setting).length} and removed ${removing.length} prop(s) of ${node.id}`;
+      }
+
+      case 'setFxScene': {
+        const { page, node } = nodeFor(op.nodeId);
+        if (!isFxScene(node.props, node.type)) {
+          throw new OpRefused('this node is not an FX scene box; insertNodes places one ({"type":"div","preset":"fxScene","props":{"fx":{"preset":"..."}}})');
+        }
+        // The one reader the generator uses. What it would repair or leave out refuses the
+        // operation: an agent is never handed a scene other than the one it wrote.
+        const scene = readGeneratedFx(op.fx);
+        if (!scene.ok) throw new OpRefused(scene.message);
+        if (scene.notes.length > 0) throw new OpRefused(scene.notes.join(' '));
+        node.setProps({ [FX_PROP]: scene.stored });
+        touched.push({ page, nodeId: node.id });
+        const layers = scene.stored.scene.layers.length;
+        return `set the FX scene of ${node.id} (${layers} layer${layers === 1 ? '' : 's'}); the box's own background, shown where the scene is not drawn, is unchanged (updateStyle sets it)`;
       }
 
       case 'moveNode': {

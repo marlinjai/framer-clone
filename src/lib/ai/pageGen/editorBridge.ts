@@ -25,6 +25,7 @@ import {
 import type { PageGenModel, PageGenRequest, PageGenResultPayload } from './protocol';
 import { siteContextFromSettings } from './promptSections/siteContext';
 import { closedAncestorOf } from './promptSections/behaviour';
+import { holdsFxScene } from '@/lib/fxScene/marker';
 
 export type TargetKind = 'newPage' | 'replace' | 'insert';
 
@@ -166,7 +167,17 @@ export function buildRequest(input: {
       target.kind,
     )
     : undefined;
-  return { ...base, target: { kind: target.kind, context, ...(closedAncestor ? { closedAncestor } : {}) } };
+  // A page draws one FX scene (src/lib/fxScene): say when it keeps one outside what is replaced.
+  const pageHasFxScene =
+    !!page &&
+    holdsFxScene(
+      [page.appComponentTree as ComponentInstance, ...(page.canvasNodes.values() as Iterable<ComponentInstance>)],
+      target.kind === 'replace' ? target.componentId : undefined,
+    );
+  return {
+    ...base,
+    target: { kind: target.kind, context, ...(closedAncestor ? { closedAncestor } : {}), ...(pageHasFxScene ? { pageHasFxScene } : {}) },
+  };
 }
 
 function findInPage(page: PageModelType, id: string): ComponentInstance | undefined {

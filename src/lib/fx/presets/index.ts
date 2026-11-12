@@ -50,7 +50,7 @@ export const PRESETS: PresetMeta[] = [
   {
     id: "godrays-hero",
     label: "God Rays Hero",
-    blurb: "v7 lockup with volumetric rays, bloom, chromatic, vignette.",
+    blurb: "Large centred words with rays of light streaming out of them, over a violet noise field.",
     load: () => deserializeScene(godraysHero),
   },
   {
@@ -62,7 +62,7 @@ export const PRESETS: PresetMeta[] = [
   {
     id: "bokeh-focuspull",
     label: "Bokeh Focus-Pull",
-    blurb: "Phase 3 depth showcase: animated radius high -> 0 on the lockup.",
+    blurb: "Two soft orbs and centred words that come into focus out of a blur, over a violet and blue gradient.",
     load: () => deserializeScene(bokehFocuspull),
   },
 ];

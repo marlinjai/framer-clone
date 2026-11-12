@@ -123,6 +123,66 @@ declares a value, the button toggles it, the part is shown while it is true.
 A value is read only by the nodes inside the one declaring it. Nothing else: no timers, no other events,
 no links or code in behaviour. At most 24 triggers per generation; anything that does not fit is dropped.
 
+## FX scene (an animated WebGL background)
+
+A box that draws an animated scene (a gradient, a noise field, god rays, bloom, grain) behind its children:
+{"type":"div","preset":"fxScene","label":"Hero","props":{"fx":{"preset":"<preset id>"},"style":{...}},
+"children":[...the content over the scene...]}. Use it for a hero or one feature band, never as decoration
+on every section: a page draws ONE scene (a second FX scene on a page is kept as a plain box).
+
+The scene is drawn only where the browser can (JavaScript, WebGL, and by default no reduced motion asked
+for). Everywhere else a visitor sees the box's own CSS background, which you get from the preset: keep it,
+or set style.background to a still background that works with your content, and always give the content
+over the scene a colour that reads on both.
+
+props.fx:
+- "preset": one of the presets below. The only way to start a scene; without fx the box is "gold-noise-gradient".
+- "start": "settled", "visible", "immediate": after the page has loaded (the default), when the box scrolls into view, or at once.
+- "calm": "background", "frame": what a visitor who asked for reduced motion gets, the box background (the default) or one still frame of the scene.
+- "background": the scene's own background colour, as #rrggbb.
+- "layers": [{"id":"<a layer id of the preset>","visible":true|false,"params":{"<setting>":<value>}}]: recolour and
+  retune the preset's layers. Name only the layers and settings you change. A value outside a range is moved
+  into it.
+- You cannot add a layer, change a layer's kind, change a text layer's font, or write a picture address: an
+  entry that names no layer of the preset is left out.
+- A text layer draws its own words. Give it eyebrowText, headlineText, taglineText (leave one out to leave it empty), or set
+  "visible": false; a text layer given no text is hidden. Text for people who cannot see the scene belongs in
+  the children, not in the scene.
+
+Presets (each layer: id, kind, then its settings with the range and, in brackets, the preset's value):
+
+### FX preset "gold-noise-gradient" (Gold Noise Gradient): The lumitra.co hero: a slow gold noise field on black, soft grain.
+- "gradient-bg" (gradient): colorA colour (#4a3610); colorB colour (#8a6a1e); colorC colour (#241a06); colorD colour (#000000); speed 0 to 4 (0.2); scale 0.2 to 2.5 (1.05); falloff 0.5 to 6 (3); opacity 0 to 1 (1)
+- "noise" (noiseFill): color colour (#d9b552); scale 0.5 to 6 (2.6); speed 0 to 4 (0.3); intensity 0 to 1 (0.3)
+- "bloom" (bloom): intensity 0 to 3 (0.35); threshold 0 to 1 (0.45); radius 0 to 1 (0.7)
+- "vignette" (vignette): offset 0 to 1 (0.3); darkness 0 to 1 (0.75)
+- "grain" (grain): opacity 0 to 1 (0.12); premultiply true or false (false)
+
+### FX preset "godrays-hero" (God Rays Hero): Large centred words with rays of light streaming out of them, over a violet noise field.
+- "noise" (noiseFill): color colour (#b89cff); scale 0.5 to 6 (2.4); speed 0 to 4 (1); intensity 0 to 1 (0.22)
+- "text-lockup" (text): eyebrowText text, at most 200 characters; headlineText text, at most 200 characters; taglineText text, at most 200 characters; headlineWeight one of "300", "400", "500", "600", "700", "800" ("500"); eyebrowSize 30 to 200 (88); headlineSize 80 to 480 (300); taglineSize 24 to 160 (60); color colour (#dfe6ff); width 2 to 9 (5); height 1 to 5 (2.5); reveal 0 to 5 (2); parallax 0 to 0.6 (0.16)
+- "god-rays" (godRays): sourceLayerId a layer id of this preset (text-lockup); density 0.8 to 1 (0.92); decay 0.8 to 0.99 (0.9); weight 0 to 1 (0.3); exposure 0 to 0.6 (0.18); samples 20 to 120 (60); clampMax 0.5 to 1 (0.9)
+- "bloom" (bloom): intensity 0 to 3 (0.7); threshold 0 to 1 (0.5); radius 0 to 1 (0.62)
+- "chromatic" (chromaticAberration): offset [x, y], each 0 to 0.006 ([0.0007, 0.0004])
+- "vignette" (vignette): offset 0 to 1 (0.45); darkness 0 to 1 (0.55)
+
+### FX preset "noise-gradient" (Noise Gradient): Calm mesh gradient under a layered noise field; soft grain top.
+- "gradient-bg" (gradient): colorA colour (#0d2a52); colorB colour (#3a1361); colorC colour (#0a3556); colorD colour (#04040a); speed 0 to 4 (0.35); scale 0.2 to 2.5 (1.1); falloff 0.5 to 6 (2.4); opacity 0 to 1 (1)
+- "noise" (noiseFill): color colour (#9fb6ff); scale 0.5 to 6 (2); speed 0 to 4 (0.5); intensity 0 to 1 (0.32)
+- "bloom" (bloom): intensity 0 to 3 (0.45); threshold 0 to 1 (0.4); radius 0 to 1 (0.75)
+- "vignette" (vignette): offset 0 to 1 (0.38); darkness 0 to 1 (0.62)
+- "grain" (grain): opacity 0 to 1 (0.16); premultiply true or false (false)
+
+### FX preset "bokeh-focuspull" (Bokeh Focus-Pull): Two soft orbs and centred words that come into focus out of a blur, over a violet and blue gradient.
+- "gradient-bg" (gradient): colorA colour (#1d0a3a); colorB colour (#3c1361); colorC colour (#0c2856); colorD colour (#07070f); speed 0 to 4 (0.25); scale 0.2 to 2.5 (1.05); falloff 0.5 to 6 (2.6); opacity 0 to 1 (1)
+- "shape-orb-a" (shape): shape one of "circle", "roundedRect", "blob" ("blob"); position [x, y], each -1.6 to 1.6 ([-0.55, 0.2]); size 0.05 to 2 (0.4); aspect 0.2 to 3 (1); radius 0 to 1 (0.18); softness 0 to 1 (0.35); color colour (#9fb6ff); opacity 0 to 1 (0.85); wobble 0 to 1 (0.3)
+- "shape-orb-b" (shape): shape one of "circle", "roundedRect", "blob" ("blob"); position [x, y], each -1.6 to 1.6 ([0.55, -0.18]); size 0.05 to 2 (0.32); aspect 0.2 to 3 (1); radius 0 to 1 (0.18); softness 0 to 1 (0.4); color colour (#ff7eb6); opacity 0 to 1 (0.75); wobble 0 to 1 (0.4)
+- "text-lockup" (text): eyebrowText text, at most 200 characters; headlineText text, at most 200 characters; taglineText text, at most 200 characters; headlineWeight one of "300", "400", "500", "600", "700", "800" ("500"); eyebrowSize 30 to 200 (88); headlineSize 80 to 480 (300); taglineSize 24 to 160 (60); color colour (#f4f6ff); width 2 to 9 (5); height 1 to 5 (2.5); reveal 0 to 5 (1.6); parallax 0 to 0.6 (0.12)
+- "bokeh" (bokeh): radius 0 to 0.08 (0.045); mixRadius 0 to 1 (0.18); easing 0 to 0.6 (0.4); focusPos [x, y], each -1 to 1 ([0, 0]); invert true or false (false); reveal 0 to 5 (2.4)
+- "bloom" (bloom): intensity 0 to 3 (0.55); threshold 0 to 1 (0.35); radius 0 to 1 (0.7)
+- "vignette" (vignette): offset 0 to 1 (0.4); darkness 0 to 1 (0.65)
+- "grain" (grain): opacity 0 to 1 (0.14); premultiply true or false (false)
+
 ## Fonts
 
 The self-hosted font library (no other web font is available). Write fontFamily exactly as quoted, the
@@ -235,6 +295,10 @@ library default of its kind; a plain system stack (system-ui, Georgia, ...) is k
 - type: div
 - form component (see "Forms"): props label, name, placeholder, required, minLength, maxLength, options, inputBackground, inputBorderColor, inputTextColor, inputRadius
 - defaults: {"data-form-kind":"form-field","fieldType":"textarea","label":"Message","name":"message","placeholder":"How can we help?","required":true,"style":{"color":"#111827","display":"block","fontFamily":"inherit","fontSize":"15px","width":"100%"}}
+### preset "fxScene" (FX scene, category layout)
+- type: div
+- FX scene (see "FX scene"): props.fx names a preset and what it changes; at most one per page
+- defaults: {"data-fx":"scene","style":{"alignItems":"center","background":"radial-gradient(60% 50% at 20% 15%, rgba(201, 160, 74, 0.28), transparent 70%), radial-gradient(45% 40% at 85% 60%, rgba(107, 78, 20, 0.35), transparent 70%), #000000","display":"flex","flexDirection":"column","justifyContent":"center","minHeight":"480px","padding":"48px 24px","position":"relative","width":"100%"}}
 ### preset "grid" (Grid, category layout)
 - type: div
 - defaults: {"style":{"backgroundColor":"#f9fafb","border":"1px dashed #d1d5db","borderRadius":"8px","display":"grid","gap":"12px","gridTemplateColumns":"repeat(3, minmax(0, 1fr))","minHeight":"160px","padding":"16px","width":"360px"}}

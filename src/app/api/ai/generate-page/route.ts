@@ -116,8 +116,8 @@ const ClosedAncestorSchema = z
 
 const TargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('newPage'), title: z.string().max(120).optional() }),
-  z.object({ kind: z.literal('replace'), context: z.unknown(), closedAncestor: ClosedAncestorSchema }),
-  z.object({ kind: z.literal('insert'), context: z.unknown(), closedAncestor: ClosedAncestorSchema }),
+  z.object({ kind: z.literal('replace'), context: z.unknown(), closedAncestor: ClosedAncestorSchema, pageHasFxScene: z.boolean().optional() }),
+  z.object({ kind: z.literal('insert'), context: z.unknown(), closedAncestor: ClosedAncestorSchema, pageHasFxScene: z.boolean().optional() }),
 ]);
 
 const BodySchema = z.strictObject({

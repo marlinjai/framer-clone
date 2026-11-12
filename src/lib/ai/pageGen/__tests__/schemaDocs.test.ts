@@ -47,17 +47,15 @@ describe('buildSchemaDocs', () => {
     for (const entry of Object.values(COMPONENT_REGISTRY).filter((at) => !at.preset && at.generation !== false)) {
       expect(docs).toContain(`### preset "${entry.id}" (${entry.label}, category ${entry.category})`);
       expect(docs).toContain(`- type: ${entry.htmlType}`);
-      expect(docs).toContain(`- defaults: ${stableStringify(entry.defaultProps)}`);
+      // An FX scene box is documented without its stored scene (validateFxScene.test.ts).
+      const { fx: _scene, ...defaults } = entry.defaultProps as Record<string, unknown>;
+      void _scene;
+      expect(docs).toContain(`- defaults: ${stableStringify(entry.id === 'fxScene' ? defaults : entry.defaultProps)}`);
     }
   });
 
-  it('teaches no entry the generator has no checked way to write yet: the FX scene box', () => {
-    const held = Object.values(COMPONENT_REGISTRY).filter((at) => at.generation === false);
-    expect(held.map((at) => at.id)).toEqual(['fxScene']);
-    for (const entry of held) expect(docs).not.toContain(`### preset "${entry.id}"`);
-    // Nothing of a stored scene reaches the prompt either.
-    expect(docs).not.toContain('noiseFill');
-    expect(docs).not.toContain('data-fx');
+  it('holds no entry back: every entry has a checked way to be written', () => {
+    expect(Object.values(COMPONENT_REGISTRY).filter((at) => at.generation === false)).toEqual([]);
   });
 
   it('teaches no behaviour preset as an element, which is all its entry names', () => {

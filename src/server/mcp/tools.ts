@@ -467,6 +467,10 @@ export const OPERATION_SCHEMAS: JsonSchema[] = [
     nodeId: idArg('The node'),
     props: { type: 'object', additionalProperties: { type: ['string', 'number', 'boolean', 'null'] }, description: 'name to value; null removes it.' },
   }, ['nodeId', 'props']),
+  op('setFxScene', 'Replace the scene of an FX scene box (a div with data-fx "scene"; insertNodes places one with preset "fxScene"). fx is the preset form of the generation format ("FX scene" in describe_vocabulary) or a whole stored scene. Refused with the reason when anything would be left out or changed: an unknown preset, layer or setting, a value out of its range, a picture that is not one of this site\'s uploads.', {
+    nodeId: idArg('The FX scene box'),
+    fx: { type: 'object', description: '{ preset, start?, calm?, background?, layers?: [{ id, visible?, params? }] }, or a stored scene { version: 1, scene, start, calm }.' },
+  }, ['nodeId', 'fx']),
   op('moveNode', 'Move a node within its page.', { nodeId: idArg('The node'), to: placeSchema }, ['nodeId', 'to']),
   op('removeNode', 'Remove a node with everything inside it.', { nodeId: idArg('The node') }, ['nodeId']),
   op('addRule', 'A selector rule on a node (&:hover, & > li), optionally inside at-rules.', {
@@ -582,7 +586,7 @@ export const TOOLS: ToolDef[] = [
     title: 'Edit a site',
     description: [
       `Apply a batch of 1 to ${MAX_BATCH_OPS} edit operations to a site's working copy, in order, all or nothing, saved on expectedVersion.`,
-      'Operations: createPage, updatePageSettings, deletePage, insertNodes, updateStyle, updateText, setProps, moveNode, removeNode, addRule, setTheme, placeComponent (describe_vocabulary explains each).',
+      'Operations: createPage, updatePageSettings, deletePage, insertNodes, updateStyle, updateText, setProps, setFxScene, moveNode, removeNode, addRule, setTheme, placeComponent (describe_vocabulary explains each).',
       'A node or page an operation creates can carry "ref"; later operations of the batch name it as "ref:<name>", and the answer maps each ref to its new id.',
       'Answers the new `version` (name it in the next write), the created ids and one summary line per operation.',
       'Refusals write nothing: site_changed (with currentVersion: read again, then redo the batch on it) or rejected (each refused operation with its index and reason; fix those and resend the whole batch).',
