@@ -38,6 +38,7 @@ import { revealPlanOfTrees } from '@/lib/live/reveal';
 import { observer } from 'mobx-react-lite';
 import { Sparkles, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BarTooltip, FoldLabel, ICON_ONLY } from '@/components/topbar/BarTooltip';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -718,11 +719,14 @@ export const GeneratePageButton = observer(function GeneratePageButton({
   open: openProp,
   onOpenChange,
   triggerClassName = '',
+  iconOnly = false,
 }: {
   transport?: PageGenTransport;
   resume?: PageGenResume;
   /** Extra classes for the trigger (the compact top bar hides it and opens the dialog from its More menu). */
   triggerClassName?: string;
+  /** The top bar folded its words into the icon (docs/plans/2026-11-12-top-bar-fold.md); the name stays for a screen reader. */
+  iconOnly?: boolean;
 } & ControllableOpenProps) {
   const { editorUI } = useStore();
   const [open, setOpen] = useControllableOpen({ open: openProp, onOpenChange });
@@ -736,18 +740,19 @@ export const GeneratePageButton = observer(function GeneratePageButton({
   }, [projectId]);
   return (
     <>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className={`mr-2 ${triggerClassName}`}
-        onClick={() => setOpen(true)}
-        disabled={!editorUI.currentProject}
-        title="Generate a page or section with AI"
-      >
-        <Sparkles size={16} />
-        Generate
-      </Button>
+      <BarTooltip text="Generate a page or section with AI">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`mr-2 shrink-0 ${iconOnly ? ICON_ONLY : ''} ${triggerClassName}`}
+          onClick={() => setOpen(true)}
+          disabled={!editorUI.currentProject}
+        >
+          <Sparkles size={16} aria-hidden />
+          <FoldLabel folded={iconOnly}>Generate</FoldLabel>
+        </Button>
+      </BarTooltip>
       <GeneratePageDialog open={open} onOpenChange={setOpen} transport={transport} resume={resume} />
     </>
   );

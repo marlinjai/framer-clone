@@ -533,15 +533,34 @@ describe('a narrow window', () => {
     for (const name of ['Update', 'Review and merge', 'Share preview']) {
       const control = screen.getByRole('button', { name });
       expect(control.className).toMatch(/\bshrink-0\b/);
-      // Until a very wide window: the layout itself is proven in real browsers (test/behaviour/branches.spec.ts).
-      // The primary action keeps its words on a laptop; the other two wait for a wide window.
-      expect(control.querySelector('span')?.className).toMatch(name === 'Review and merge' ? /max-lg:sr-only/ : /max-2xl:sr-only/);
+      // In the compact bar the words fold into the icon; on the wide bar the bar's own fold decides
+      // (docs/plans/2026-11-12-top-bar-fold.md, proven in real browsers in test/behaviour/branches.spec.ts).
+      expect(control.querySelector('[data-fold-label]')?.className).toMatch(/max-lg:sr-only/);
     }
     // The switcher's name gives way first; the full name is in its accessible name and in the menu.
     const trigger = screen.getByRole('button', { name: 'Branch Spring sale. Switch branch' });
     expect(trigger.className).toMatch(/\bshrink\b/);
     expect(trigger.className).not.toMatch(/shrink-0/);
     expect(screen.getByText('Bakery has changed').className).toMatch(/min-w-0/);
+  });
+
+  it('folds the words of Update, Share preview and Review and merge when the wide bar asks, keeping each name and the filled button', () => {
+    render(
+      <SiteBranchProvider initial={onBranch({ mainMoved: true })}>
+        <MainChangedNote iconOnly />
+        <SharePreviewButton iconOnly />
+        <ReviewAndMergeButton iconOnly />
+      </SiteBranchProvider>,
+    );
+    for (const name of ['Update', 'Review and merge', 'Share preview']) {
+      const control = screen.getByRole('button', { name });
+      expect(control.querySelector('[data-fold-label]')?.className).toMatch(/\bsr-only\b/);
+      expect(control.className).toMatch(/\bw-8\b/);
+    }
+    // Review and merge stays the bar's filled (brand) button when it folds.
+    expect(screen.getByRole('button', { name: 'Review and merge' }).className).toMatch(/bg-brand/);
+    // The idle sentence goes with the words; the button says what it does in its description.
+    expect(screen.getByText('Bakery has changed').className).toMatch(/\bhidden\b/);
   });
 
   it('a branch closed elsewhere keeps "What now?" whole while its sentence shortens', async () => {

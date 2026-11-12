@@ -209,7 +209,7 @@ const PublishButton = observer(() => {
   };
 
   return (
-    <div className="flex items-center gap-2 mr-1 lg:mr-2">
+    <div className="flex items-center gap-2 mr-1 lg:mr-2 lg:shrink-0">
       {state.kind === 'success' && (
         <TopBarStatus
           kind="success"

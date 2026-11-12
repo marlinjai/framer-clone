@@ -18,6 +18,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link2 } from 'lucide-react';
+import { BarTooltip, ICON_ONLY } from '@/components/topbar/BarTooltip';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { BranchApiError, branchClient, type PreviewLinkJson } from '@/lib/sites/branchClient';
@@ -52,10 +53,13 @@ export default function SharePreview({
   branchName,
   disabledReason,
   compact = false,
+  iconOnly = false,
   copy = (text: string) => navigator.clipboard.writeText(text),
 }: {
-  /** In the editor's top bar: on a narrow window the label folds into the icon (the name stays for a screen reader). */
+  /** In the editor's top bar: under 1024px the label folds into the icon (the name stays for a screen reader). */
   compact?: boolean;
+  /** The wide top bar folded its words into the icon (docs/plans/2026-11-12-top-bar-fold.md). */
+  iconOnly?: boolean;
   mainSiteId: string;
   branchId: string;
   branchName: string;
@@ -139,22 +143,31 @@ export default function SharePreview({
 
   return (
     <>
-      <Button
-        ref={trigger}
-        type="button"
-        size="sm"
-        variant="outline"
-        // Not `disabled`: the button stays reachable by keyboard so the reason can be read, and does nothing.
-        aria-disabled={disabledReason ? true : undefined}
-        aria-describedby={disabledReason ? reasonId : undefined}
-        title={disabledReason}
-        className={disabledReason ? 'cursor-not-allowed opacity-50' : undefined}
-        onClick={() => {
-          if (!disabledReason) setShown(true);
-        }}
-      >
-        <Link2 aria-hidden /> <span className={compact ? 'max-2xl:sr-only' : undefined}>Share preview</span>
-      </Button>
+      {(() => {
+        const button = (
+          <Button
+            ref={trigger}
+            type="button"
+            size="sm"
+            variant="outline"
+            // Not `disabled`: the button stays reachable by keyboard so the reason can be read, and does nothing.
+            aria-disabled={disabledReason ? true : undefined}
+            aria-describedby={disabledReason ? reasonId : undefined}
+            title={compact ? undefined : disabledReason}
+            className={`${disabledReason ? 'cursor-not-allowed opacity-50' : ''} ${iconOnly ? ICON_ONLY : ''}`}
+            onClick={() => {
+              if (!disabledReason) setShown(true);
+            }}
+          >
+            <Link2 aria-hidden />
+            <span data-fold-label="" className={iconOnly ? 'sr-only' : compact ? 'max-lg:sr-only' : undefined}>
+              Share preview
+            </span>
+          </Button>
+        );
+        // In the top bar the label can fold away: a tooltip that hover and focus open says what it does.
+        return compact ? <BarTooltip text={disabledReason ?? 'Share a preview link of this branch'}>{button}</BarTooltip> : button;
+      })()}
       {disabledReason ? (
         <span id={reasonId} className="sr-only">
           {disabledReason}

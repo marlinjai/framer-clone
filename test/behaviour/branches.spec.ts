@@ -243,6 +243,100 @@ for (const [engine, type] of ENGINES) {
       await page.close();
     });
 
+    /** The boxes of the save status and the agent chip, and whether the status's words fit inside their own box. */
+    const statusAndChip = (page: Page) =>
+      page.evaluate(() => {
+        const box = (el: Element | null) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null;
+        };
+        const status = document.querySelector('[data-editor-topbar] [data-testid="save-status"]');
+        // The chip of the bar that shows at this width (the wide bar's words, or the compact bar's dot).
+        const chip = [...document.querySelectorAll('[data-editor-topbar] [data-agent-editing-note]')].find((el) => box(el));
+        const words = status?.querySelector('span.whitespace-nowrap');
+        return {
+          status: box(status),
+          chip: box(chip ?? null),
+          chipName: chip?.getAttribute('aria-label') ?? null,
+          // The status's own words are never cut or spilled out of it (the bug of 2026-11-12: "Saved" under the pill).
+          statusSpills: words ? words.getBoundingClientRect().right > (status as Element).getBoundingClientRect().right + 0.5 : false,
+          fold: document.querySelector('[data-editor-topbar]')!.getAttribute('data-fold'),
+        };
+      });
+
+    // Seen on production on 2026-11-12 at 1680px: the agent's note was drawn over the save status, and both were
+    // unreadable. The agent chip has a slot of its own now and the bar folds its other controls first
+    // (docs/plans/2026-11-12-top-bar-fold.md): at every width the two sit side by side, apart.
+    it.each([
+      { name: 'a large desktop', width: 1680, branch: true },
+      { name: 'a desktop', width: 1440, branch: true },
+      { name: 'a laptop', width: 1280, branch: true },
+      { name: 'a small laptop', width: 1024, branch: true },
+      { name: 'a tablet', width: 768, branch: true },
+      { name: 'a phone', width: 390, branch: true },
+      { name: 'a laptop, on main', width: 1280, branch: false },
+      { name: 'a small laptop, on main', width: 1024, branch: false },
+    ])('on $name, while an agent edits, the save status and the agent chip never overlap and nothing is over another', async ({ width, branch }) => {
+      const state = branch ? onBranch({ mainMoved: true, name: 'Test new design' }) : onMain;
+      const { page, crashes } = await openEditor(browser, bundle, { viewport: { width, height: 800 } }, async (p) => {
+        await p.addInitScript((s) => {
+          Object.assign(window, { __BRANCH_STATE__: s, __STORED_SITE__: true, __AGENT_ACTIVE__: 'lumitra-sites-agent-mcp' });
+        }, state);
+      });
+      page.setDefaultTimeout(5000);
+      await page.locator('[data-editor-topbar] [data-agent-editing-note]').first().waitFor({ state: 'attached' });
+      const seen = await statusAndChip(page);
+      expect(seen.status, `the save status shows at ${width}px`).not.toBeNull();
+      expect(seen.chip, `the agent chip shows at ${width}px`).not.toBeNull();
+      expect(seen.chipName).toBe('Agent editing');
+      const { status, chip } = seen as { status: NonNullable<typeof seen.status>; chip: NonNullable<typeof seen.chip> };
+      const apart = chip.left >= status.right - 0.5 || chip.right <= status.left + 0.5;
+      expect(apart, `status [${Math.round(status.left)}, ${Math.round(status.right)}] and chip [${Math.round(chip.left)}, ${Math.round(chip.right)}] at ${width}px`).toBe(true);
+      expect(seen.statusSpills, `the save status's words spill out at ${width}px`).toBe(false);
+      const geometry = await barGeometry(page);
+      expect(geometry.outside, `outside the window at ${width}px`).toEqual([]);
+      expect(geometry.over, `over one another at ${width}px`).toEqual([]);
+      expect(geometry.covered, `covered at ${width}px`).toEqual([]);
+      expect(geometry.scrolls).toBe(false);
+      // Undo, redo and preview never fold on the wide bar; Review and merge (or Publish) is always there.
+      if (width >= 1024) {
+        for (const n of ['Undo', 'Redo', 'Preview']) expect(geometry.names, `${n} at ${width}px`).toContain(n);
+      }
+      expect(geometry.names.some((n) => (branch ? /Review and merge/ : /^Publish/).test(n))).toBe(true);
+      expect(crashes).toEqual([]);
+      await page.close();
+    });
+
+    // The fold order (docs/plans/2026-11-12-top-bar-fold.md), in a real layout: the wider the window, the fewer
+    // folds, and the most a laptop-sized branch bar with an agent at work needs is all three.
+    it('folds less as the window widens, and settles on the same level when the width comes back', async () => {
+      const state = onBranch({ mainMoved: true, name: 'Test new design' });
+      const { page, crashes } = await openEditor(browser, bundle, { viewport: { width: 1920, height: 800 } }, async (p) => {
+        await p.addInitScript((s) => {
+          Object.assign(window, { __BRANCH_STATE__: s, __STORED_SITE__: true, __AGENT_ACTIVE__: 'lumitra-sites-agent-mcp' });
+        }, state);
+      });
+      page.setDefaultTimeout(5000);
+      await page.locator('[data-editor-topbar] [data-agent-editing-note]').first().waitFor({ state: 'attached' });
+      const levels: number[] = [];
+      for (const width of [1920, 1680, 1440, 1280, 1024]) {
+        await page.setViewportSize({ width, height: 800 });
+        await page.waitForFunction(() => new Promise((r) => requestAnimationFrame(() => r(true))));
+        levels.push(Number(await page.locator('[data-editor-topbar]').getAttribute('data-fold')));
+      }
+      // Never fewer folds on a narrower window.
+      for (let i = 1; i < levels.length; i++) expect(levels[i], `levels ${levels.join(', ')}`).toBeGreaterThanOrEqual(levels[i - 1]);
+      expect(levels[levels.length - 1]).toBeGreaterThan(0);
+      // Back to the widest: the same level as at first (the fold remembers nothing that keeps it folded).
+      await page.setViewportSize({ width: 1920, height: 800 });
+      await page.waitForFunction(() => new Promise((r) => requestAnimationFrame(() => r(true))));
+      expect(Number(await page.locator('[data-editor-topbar]').getAttribute('data-fold'))).toBe(levels[0]);
+      console.log(`fold levels at 1920, 1680, 1440, 1280, 1024: ${levels.join(', ')}`);
+      expect(crashes).toEqual([]);
+      await page.close();
+    });
+
     it('shows Review and merge in place of Publish on a branch, and opens the review with Enter', async () => {
       const { page, crashes, went } = await open(onBranch(), async () => undefined);
       expect(await page.getByRole('button', { name: 'Publish', exact: true }).count()).toBe(0);

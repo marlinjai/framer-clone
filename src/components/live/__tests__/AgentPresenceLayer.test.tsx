@@ -7,7 +7,7 @@
 import '@testing-library/jest-dom/vitest';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import { TransformProvider, useTransformNotifier } from '@/contexts/TransformContext';
 import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
@@ -29,7 +29,7 @@ import AgentPresenceLayer, {
   visibleCanvasRect,
 } from '../AgentPresenceLayer';
 import AgentPageDot from '../AgentPageDot';
-import AgentEditingNote from '../AgentEditingNote';
+import AgentEditingNote, { agentChipLabel } from '../AgentEditingNote';
 
 let page: PageModelType;
 let notify: () => void;
@@ -285,14 +285,36 @@ describe('the top bar\'s editing note', () => {
 });
 
 describe('the compact bar\'s editing note', () => {
-  it('is a dot that carries the sentence for a tooltip and a screen reader, only while an agent is active', () => {
+  it('is a dot named for a screen reader, with the sentence as its description and tooltip, only while an agent is active', () => {
     cleanup();
     render(<AgentEditingNote compact />);
     expect(document.querySelector('[data-agent-editing-note]')).toBeNull();
     act(() => presence().applyActivity({ callId: 'c1', agentId: 'a1', label: 'Claude', tool: 'apply_batch', phase: 'start', at: new Date().toISOString() }));
-    const note = document.querySelector('[data-agent-editing-note]')!;
-    expect(note).toHaveAttribute('title', 'Claude is editing this site');
-    expect(note).toHaveTextContent('Claude is editing this site');
+    const note = screen.getByRole('button', { name: 'Agent editing' });
+    expect(note).toHaveAttribute('data-agent-editing-note');
+    expect(note).toHaveAccessibleDescription('Claude is editing this site');
+    expect(note).not.toHaveAttribute('title');
+  });
+});
+
+describe('the wide bar\'s agent chip', () => {
+  it('says "Agent editing" in short, the full sentence in its description, and opens the activity feed when pressed', () => {
+    cleanup();
+    render(<AgentEditingNote />);
+    act(() => presence().applyActivity({ callId: 'c2', agentId: 'a1', label: 'lumitra-sites-agent-mcp', tool: 'apply_batch', phase: 'start', at: new Date().toISOString() }));
+    const chip = screen.getByRole('button', { name: 'Agent editing' });
+    expect(chip).toHaveTextContent(/^Agent editing/);
+    expect(chip).toHaveAccessibleDescription('lumitra-sites-agent-mcp is editing this site');
+    // The dot is decoration beside the words; forced colours draw it in the text colour.
+    expect(chip.querySelector('[aria-hidden="true"]')?.className).toMatch(/forced-colors:bg-\[CanvasText\]/);
+    act(() => presence().setPanelOpen(false));
+    fireEvent.click(chip);
+    expect(presence().panelOpen).toBe(true);
+  });
+
+  it('counts the agents when more than one works', () => {
+    expect(agentChipLabel(1, 'reading')).toBe('Agent reading');
+    expect(agentChipLabel(2, 'editing')).toBe('2 agents editing');
   });
 });
 

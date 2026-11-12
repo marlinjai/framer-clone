@@ -53,7 +53,7 @@ export function TopBarStatus({ kind, title, onDismiss, inlineMaxWidth = 'lg:max-
       aria-live={kind === 'error' ? undefined : 'polite'}
       title={title}
       data-editor-ui="true"
-      className={`flex items-center gap-1 text-xs ${tone} lg:truncate ${inlineMaxWidth} max-lg:fixed max-lg:inset-x-4 max-lg:top-[4.5rem] max-lg:z-[95] max-lg:justify-between max-lg:gap-2 max-lg:rounded-md max-lg:border max-lg:border-border max-lg:bg-background max-lg:py-1.5 max-lg:pl-3 max-lg:pr-1 max-lg:shadow-lg phone:top-14`}
+      className={`flex items-center gap-1 text-xs ${tone} lg:shrink-0 lg:truncate ${inlineMaxWidth} max-lg:fixed max-lg:inset-x-4 max-lg:top-[4.5rem] max-lg:z-[95] max-lg:justify-between max-lg:gap-2 max-lg:rounded-md max-lg:border max-lg:border-border max-lg:bg-background max-lg:py-1.5 max-lg:pl-3 max-lg:pr-1 max-lg:shadow-lg phone:top-14`}
     >
       <span className="flex min-w-0 items-center gap-1 lg:truncate">{children}</span>
       <button

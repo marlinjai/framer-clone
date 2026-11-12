@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import SaveAsNewProjectDialog from '@/components/SaveAsNewProjectDialog';
 import { GitMerge, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BarTooltip, ICON_ONLY } from '@/components/topbar/BarTooltip';
 import { useSiteBranch } from '@/contexts/SiteBranchContext';
 import { BranchApiError, branchClient } from '@/lib/sites/branchClient';
 import { openReview, savedBeforeLeaving } from './leave';
@@ -106,7 +107,11 @@ export function BarMessage({ text }: { text: string }) {
 }
 
 /** "Main has changed" with Update: brings main's changes into the branch. */
-export function MainChangedNote({ className = '' }: { className?: string }) {
+/**
+ * `iconOnly`: the wide top bar folded its words (docs/plans/2026-11-12-top-bar-fold.md): the idle sentence goes and
+ * Update keeps only its icon. A result or a refusal is always shown.
+ */
+export function MainChangedNote({ className = '', iconOnly = false }: { className?: string; iconOnly?: boolean }) {
   const { state, refresh } = useSiteBranch();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -114,7 +119,7 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
   const hintId = useId();
   if (state?.kind !== 'branch' || !state.branch.mainMoved || !isOpenBranchStatus(state.branch.status)) {
     return message ? (
-      <span role="status" className={`min-w-0 max-w-[22rem] text-xs leading-tight text-muted-foreground ${className}`}>
+      <span role="status" className={`min-w-0 max-w-[22rem] text-xs leading-tight text-muted-foreground lg:shrink-0 ${className}`}>
         <BarMessage text={message} />
       </span>
     ) : null;
@@ -151,10 +156,17 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
 
   return (
     <>
-      <div role="status" className={`flex min-w-0 items-center gap-2 text-xs ${className}`}>
-        {/* Only the idle label gives way on a narrow window; a result or a refusal is always shown, on up to
-            three lines where there is little room (its full text stays in the page for a screen reader). */}
-        <span className={`min-w-0 max-w-[22rem] leading-tight text-muted-foreground ${message ? '' : 'max-2xl:hidden'}`}>
+      {/* Its own width on the wide bar (a sentence wraps inside its cap): the bar folds other controls instead of
+          squeezing it (docs/plans/2026-11-12-top-bar-fold.md). */}
+      <div role="status" className={`flex min-w-0 items-center gap-2 text-xs lg:shrink-0 ${className}`}>
+        {/* Only the idle label gives way (in the compact bar, and at the wide bar's first fold); a result or a
+            refusal is always shown, on up to three lines where there is little room (its full text stays in the
+            page for a screen reader). */}
+        <span
+          className={`min-w-0 max-w-[22rem] leading-tight text-muted-foreground ${
+            message ? '' : iconOnly ? 'hidden' : 'max-lg:hidden lg:whitespace-nowrap'
+          }`}
+        >
           {message ? <BarMessage text={message} /> : `${mainName} has changed`}
         </span>
         {conflicts ? (
@@ -172,10 +184,14 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
           </Button>
         ) : null}
         {/* The label folds into the icon on a narrow window; the name and the description stay for a screen reader. */}
-        <Button size="sm" variant="outline" className="shrink-0" onClick={update} disabled={busy} aria-describedby={hintId} title={hint}>
-          <RefreshCw aria-hidden className={busy ? 'animate-spin motion-reduce:animate-none' : undefined} />{' '}
-          <span className="max-2xl:sr-only">{busy ? 'Updating…' : 'Update'}</span>
-        </Button>
+        <BarTooltip text={hint}>
+          <Button size="sm" variant="outline" className={`shrink-0 ${iconOnly ? ICON_ONLY : ''}`} onClick={update} disabled={busy} aria-describedby={hintId}>
+            <RefreshCw aria-hidden className={busy ? 'animate-spin motion-reduce:animate-none' : undefined} />
+            <span data-fold-label="" className={iconOnly ? 'sr-only' : 'max-lg:sr-only'}>
+              {busy ? 'Updating…' : 'Update'}
+            </span>
+          </Button>
+        </BarTooltip>
       </div>
       {/* Outside the status: inside it, every new message would read the hint out again. */}
       <span id={hintId} className="sr-only">
@@ -209,7 +225,7 @@ export const BranchClosedElsewhere = observer(function BranchClosedElsewhere() {
   return (
     <>
       {/* The sentence shortens on a narrow window; "What now?" never does, and its dialog says it in full. */}
-      <span role="status" className="mr-2 flex min-w-0 items-center gap-1 text-xs text-destructive">
+      <span role="status" className="mr-2 flex min-w-0 max-w-[24rem] items-center gap-1 text-xs text-destructive lg:shrink-0">
         <span className="min-w-0 truncate">This branch {what}.</span>
         <button type="button" className="shrink-0 underline" onClick={() => setDismissed(false)}>
           What now?
@@ -268,7 +284,7 @@ export const UpdateUndoneNote = observer(function UpdateUndoneNote({ className =
   if (state?.kind !== 'branch' || !history?.undoneUpdateId) return null;
   const canRedo = history.canRedo && history.history[history.undoIdx]?.id === history.undoneUpdateId;
   return (
-    <div role="alert" className={`flex min-w-0 items-center gap-2 text-xs text-destructive ${className}`}>
+    <div role="alert" className={`flex min-w-0 items-center gap-2 text-xs text-destructive lg:shrink-0 ${className}`}>
       <span className="min-w-0 max-w-[26rem] leading-tight">
         <BarMessage text={`You undid the changes brought in from ${state.mainName}. Merging this branch now would take them out of ${state.mainName} too.`} />
       </span>
@@ -282,17 +298,18 @@ export const UpdateUndoneNote = observer(function UpdateUndoneNote({ className =
 });
 
 /** On a branch: "Share preview", the public preview link (S8). Whether the person may is the server's answer. */
-export function SharePreviewButton({ className }: { className?: string }) {
+export function SharePreviewButton({ className, iconOnly = false }: { className?: string; iconOnly?: boolean }) {
   const { state } = useSiteBranch();
   if (state?.kind !== 'branch' || !isOpenBranchStatus(state.branch.status)) return null;
   return (
     <span className={`shrink-0 ${className ?? ''}`}>
-      <SharePreview mainSiteId={state.mainSiteId} branchId={state.siteId} branchName={state.branch.name} compact />
+      <SharePreview mainSiteId={state.mainSiteId} branchId={state.siteId} branchName={state.branch.name} compact iconOnly={iconOnly} />
     </span>
   );
 }
 
-export function ReviewAndMergeButton() {
+/** `iconOnly`: the wide top bar folded its words into the icon (docs/plans/2026-11-12-top-bar-fold.md); it stays the bar's filled button. */
+export function ReviewAndMergeButton({ iconOnly = false }: { iconOnly?: boolean } = {}) {
   const { state } = useSiteBranch();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -321,21 +338,25 @@ export function ReviewAndMergeButton() {
   return (
     <>
       {message ? (
-        <span role="alert" className="mr-2 min-w-0 max-w-[20rem] text-xs leading-tight text-destructive">
+        <span role="alert" className="mr-2 min-w-0 max-w-[20rem] text-xs leading-tight text-destructive lg:shrink-0">
           <BarMessage text={message} />
         </span>
       ) : null}
-      <Button
-        variant="brand"
-        size="sm"
-        className="mr-2 shrink-0"
-        onClick={open}
-        disabled={busy}
-        aria-describedby={hintId}
-        title={hint}
-      >
-        <GitMerge aria-hidden /> <span className="max-lg:sr-only">{busy ? 'Opening…' : 'Review and merge'}</span>
-      </Button>
+      <BarTooltip text={hint}>
+        <Button
+          variant="brand"
+          size="sm"
+          className={`mr-2 shrink-0 ${iconOnly ? ICON_ONLY : ''}`}
+          onClick={open}
+          disabled={busy}
+          aria-describedby={hintId}
+        >
+          <GitMerge aria-hidden />
+          <span data-fold-label="" className={iconOnly ? 'sr-only' : 'max-lg:sr-only'}>
+            {busy ? 'Opening…' : 'Review and merge'}
+          </span>
+        </Button>
+      </BarTooltip>
       <span id={hintId} className="sr-only">
         {hint}
       </span>
