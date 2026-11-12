@@ -112,7 +112,12 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
    * answers is the review itself. Without a key (an older server, nothing loaded yet) it is a plain read.
    */
   const lastState = useRef<string | null>(null);
+  // Set the moment the merge is answered, before the screen is drawn again: the listeners below are taken off
+  // only when the effect is cleaned up, a moment after the merged screen shows, and a tab that became visible
+  // in between would read a branch that is gone (seen as a test that failed now and then under load).
+  const mergedNow = useRef(false);
   const look = useCallback(() => {
+    if (mergedNow.current) return Promise.resolve();
     const state = lastState.current;
     if (!state) return read();
     return branchClient.changesIfMoved(branchId, state).then((answer) => ('current' in answer ? undefined : show(answer)), failed);
@@ -196,6 +201,7 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
         await read();
       } else {
         await branchClient.merge(branchId, review.token);
+        mergedNow.current = true;
         setMerged(true);
       }
     } catch (err) {

@@ -138,6 +138,26 @@ describe('forward', () => {
     expect(client.changes.mock.calls.length).toBe(reads);
   });
 
+  it('a tab that becomes visible in the very moment the merge is answered reads nothing either', async () => {
+    client.changes.mockResolvedValue(review());
+    // The tab becomes visible right after the merge is answered: at the next turn of the event loop, when the
+    // merged screen may not be drawn yet and the page has not taken its listeners off.
+    client.merge.mockImplementation(async () => {
+      setTimeout(() => document.dispatchEvent(new Event('visibilitychange')), 0);
+      return { merged: true, branch: summary({ status: 'merged' }), mainVersion: 9 };
+    });
+    open();
+    await screen.findByText(/elements changed/);
+    const reads = client.changes.mock.calls.length;
+    fireEvent.click(button('Merge into Bakery'));
+    expect(await screen.findByRole('heading', { name: 'Merged into Bakery' })).toBeTruthy();
+    document.dispatchEvent(new Event('visibilitychange'));
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(client.changes.mock.calls.length).toBe(reads);
+  });
+
   it('sends back with a note, and needs one', async () => {
     client.changes.mockResolvedValue(review());
     client.sendBack.mockResolvedValue({ branch: summary({ reviewNote: 'Fix the hours' }) });
