@@ -853,8 +853,21 @@ Confirmed by the site branches owner against main at `380da6c1` on 2026-11-12, w
   work's), watches the start sequence apply the migrations, checks with the switch still off that sites, the published
   landing page and Books behave as before, and then hands over to this slice for the FX browser proof.
 
-So the deploy is a joint decision of the FX, branching and Books work, and Marlin's to make. This slice does not start
-it.
+**This inventory is a snapshot of main at `380da6c1`, and it goes stale with every merge.** Whoever starts the deploy
+recomputes it at the exact commit that is released, not at an older one, because the container applies every pending
+migration at start:
+
+- `git diff --name-only --diff-filter=A 7b32ea16 <release commit> -- prisma/migrations src/server/commerce/migrations`
+  lists the migrations the deploy would apply (replace `7b32ea16` by the commit production runs if that has changed);
+- `git diff 7b32ea16 <release commit> -- package.json deploy/README.md` shows changed dependencies and deploy notes.
+
+Already known to change it: the 3D model store (#394, open on 2026-11-12) adds the additive Prisma migration
+`20261112200000_site_models` (one new table that nothing reads or writes yet; its rollback is in `deploy/README.md`
+and beside the migration). Once that is on main, a deploy from that commit or a later one applies six application
+migrations, not five. Merging it applies nothing to production; applying it is part of the deploy decision.
+
+So the deploy is a joint decision of the FX, branching, Books and 3D scene work, and Marlin's to make. This slice does
+not start it.
 
 ### F7 and F8, prepared offline (2026-11-12)
 
