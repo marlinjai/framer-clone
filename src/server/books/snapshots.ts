@@ -285,15 +285,18 @@ export function recipientMissingFields(contact: RecipientContact): string[] {
  * Build the customer snapshot from the contact (name, address) and the customer
  * row (tax fields). The caller has checked {@link recipientMissingFields} first;
  * the parse is the backstop.
+ *
+ * The version is the least one that can say what the invoice is addressed to: version 1 when there is no
+ * contact person, version 2 only when there is one. That keeps every invoice without a "z. Hd." readable by the
+ * build that predates contact persons (its reader accepts version 1 only), so a rollback of the application
+ * leaves those documents intact; only documents addressed to a person need the newer reader.
  */
 export function buildCustomerSnapshot(
   contact: RecipientContact,
   customer: { customerType: 'b2c' | 'b2b'; vatId: string | null; taxNumber: string | null },
   contactPerson: SnapshotContactPerson | null = null,
-): CustomerSnapshotV2 {
-  return customerSnapshotV2Schema.parse({
-    v: 2,
-    contactPerson,
+): CustomerSnapshot {
+  const common = {
     contactId: contact.id,
     kind: contact.kind,
     name: contact.name,
@@ -308,7 +311,9 @@ export function buildCustomerSnapshot(
     customerType: customer.customerType,
     vatId: customer.vatId,
     taxNumber: customer.taxNumber,
-  });
+  };
+  if (contactPerson === null) return customerSnapshotV1Schema.parse({ v: 1, ...common });
+  return customerSnapshotV2Schema.parse({ v: 2, contactPerson, ...common });
 }
 
 /** Build the sender snapshot. The caller has checked {@link senderMissingFields} first. */

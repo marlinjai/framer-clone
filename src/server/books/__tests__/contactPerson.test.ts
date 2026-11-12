@@ -119,21 +119,38 @@ describe('the recipient snapshot union', () => {
   const tax = { customerType: 'b2b' as const, vatId: null, taxNumber: null };
   const person = { contactId: '0190a000-0000-7000-8000-0000000000d1', affiliationId: '0190a000-0000-7000-8000-0000000000d2', name: 'Anna Beispiel', role: 'Einkauf' };
 
-  it('reads a version 1 snapshot (every document issued before, every import) unchanged, with no contact person', () => {
-    const v1 = customerSnapshotV1Schema.parse({ ...buildCustomerSnapshot(contact, tax), v: 1, contactPerson: undefined });
-    const parsed = customerSnapshotSchema.parse(v1);
-    expect(parsed).toEqual(v1);
-    expect(parsed.v).toBe(1);
+  /**
+   * The recipient reader of the production build that predates contact persons (commit 7b32ea16,
+   * `customerSnapshotV1Schema` in snapshots.ts), frozen here: version 1 only. A document that build cannot parse
+   * cannot be viewed, rendered, cancelled or corrected after an application rollback.
+   */
+  const OLD_READER = customerSnapshotV1Schema;
+
+  it('writes version 1 when the invoice has no contact person, and the previous build can read it', () => {
+    const snap = buildCustomerSnapshot(contact, tax);
+    expect(snap.v).toBe(1);
+    expect(snap).not.toHaveProperty('contactPerson');
+    const json = JSON.parse(JSON.stringify(snap));
+    expect(OLD_READER.safeParse(json).success).toBe(true);
+    const parsed = customerSnapshotSchema.parse(json);
+    expect(parsed).toEqual(snap);
     expect(snapshotContactPerson(parsed)).toBeNull();
   });
 
-  it('reads a version 2 snapshot with and without a contact person, from the real JSON shape', () => {
-    const withPerson = JSON.parse(JSON.stringify(buildCustomerSnapshot(contact, tax, person)));
-    const parsed = customerSnapshotSchema.parse(withPerson);
-    expect(parsed.v).toBe(2);
+  it('writes version 2 only when there is a contact person, which the previous build refuses (so it needs the newer reader)', () => {
+    const snap = buildCustomerSnapshot(contact, tax, person);
+    expect(snap.v).toBe(2);
+    const json = JSON.parse(JSON.stringify(snap));
+    expect(OLD_READER.safeParse(json).success).toBe(false);
+    const parsed = customerSnapshotSchema.parse(json);
     expect(snapshotContactPerson(parsed)).toEqual(person);
-    const none = customerSnapshotSchema.parse(JSON.parse(JSON.stringify(buildCustomerSnapshot(contact, tax))));
-    expect(snapshotContactPerson(none)).toBeNull();
+  });
+
+  it('still reads a stored version 2 snapshot with an explicit null person (written by a build of the first release)', () => {
+    const stored = { ...JSON.parse(JSON.stringify(buildCustomerSnapshot(contact, tax))), v: 2, contactPerson: null };
+    const parsed = customerSnapshotSchema.parse(stored);
+    expect(parsed.v).toBe(2);
+    expect(snapshotContactPerson(parsed)).toBeNull();
   });
 
   it('refuses a corrupt version 2 (a missing or malformed person) and an unknown version', () => {
