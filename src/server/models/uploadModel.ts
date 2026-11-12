@@ -15,14 +15,17 @@
 //      nodes, clips, bones), and that the output is within what the pipeline promises
 //   5  the guard again on the OUTPUT (what is served is checked, not trusted)
 //   6  quotas: 8 MB per model, 200 MB per site; the original is kept, not served
-//   7  write the blobs (always: content-addressed, so a repeat is harmless and a half-written one is
-//      repaired), then insert the row atomically within the quotas. A failed insert deletes NOTHING:
-//      the blobs are shared by content across sites and a concurrent upload may rely on them, so
-//      orphans are left to the collection sweep. The unique key losing a race is "already stored".
+//   7  coordinated with blob cleanup (coordination.ts, the approved protocol): beginUpload inserts the row as PENDING
+//      within the quotas BEFORE anything is written, and refuses (busy) while a cleanup holds a tombstone on either
+//      blob; then the blobs are written (always: content-addressed, so a repeat is harmless and a half-written one is
+//      repaired); then markReady promotes the row, fenced by this attempt's token. A failed put abandons only this
+//      attempt's pending row and deletes NOTHING: the blobs are shared by content across sites, so orphans are left to
+//      the cleanup. An identical upload already READY is "already stored"; a PENDING one is "busy, retry".
 
 import { MAX_FILE_BYTES, checkGlb } from '@/lib/scene/glb';
 import { MODEL_QUOTAS, checkModelQuota } from '@/lib/scene/modelQuota';
-import { ModelRefusalError, type DecodedStats, type InsertOutcome, type ModelBlobStore, type ModelReencoder, type ModelValidator, type SiteModelRecord, type SiteModelRepository } from './ports';
+import { PENDING_TTL_MS, type ModelCoordinator } from './coordination';
+import { ModelRefusalError, type DecodedStats, type ModelBlobStore, type ModelReencoder, type ModelValidator, type SiteModelRecord, type SiteModelRepository } from './ports';
 
 /** Step 5's decoded caps (plan). */
 export const DECODED_LIMITS = {
@@ -47,6 +50,8 @@ export const DECODED_LIMITS = {
 export interface UploadDeps {
   blobs: ModelBlobStore;
   models: SiteModelRepository;
+  /** Orders this upload against blob cleanup; the Postgres implementation is gated with its migration. */
+  coordinator: ModelCoordinator;
   validator?: ModelValidator;
   reencoder?: ModelReencoder;
   now?: () => Date;
@@ -146,31 +151,43 @@ export async function acceptModelUpload(input: Uint8Array, siteId: string, uploa
     extensions: served.summary.extensionsUsed, uploaderId, createdAt: now, lastUsedAt: now,
     originalSha256: originalSha, originalBytes: input.byteLength,
   };
+  // 7a. The row first, as pending: from here on every cleanup counts this upload's blobs as referenced.
+  const attempt = crypto.randomUUID();
+  let begin: Awaited<ReturnType<ModelCoordinator['beginUpload']>>;
   try {
-    // Always written: the keys are content-addressed, so rewriting is harmless and repairs a partial blob.
-    await deps.blobs.put(`served/${sha}`, encoded.bytes);
-    await deps.blobs.put(`original/${originalSha}`, input);
-  } catch (err) {
-    logFailure('storing the blobs', siteId, err);
-    return fail(500, 'store-failed', 'The model could not be saved. Try again.');
-  }
-  let outcome: InsertOutcome;
-  try {
-    outcome = await deps.models.insertWithinQuota(record, { servedBytes: MODEL_QUOTAS.perSite, originalBytes: MODEL_QUOTAS.originalsPerSite });
+    begin = await deps.coordinator.beginUpload({ record, limits: { servedBytes: MODEL_QUOTAS.perSite, originalBytes: MODEL_QUOTAS.originalsPerSite }, attempt, now, pendingTtlMs: PENDING_TTL_MS });
   } catch (err) {
     logFailure('saving the row', siteId, err);
     return fail(500, 'store-failed', 'The model could not be saved. Try again.');
   }
-  if (!outcome.ok) {
-    if (outcome.reason === 'exists') {
-      // A concurrent upload of the same content won the unique key: the model is stored.
+  if (!begin.ok) {
+    if (begin.reason === 'exists') {
+      // The same content is already stored (ready) for this site, or it was while this upload was running.
       const row = await deps.models.find(siteId, sha);
       if (row) return { ok: true, model: row, alreadyStored: true };
-      return fail(500, 'store-failed', 'The model could not be saved. Try again.');
+      return fail(503, 'busy', 'The model is being saved by another upload. Try again in a moment.');
     }
-    if (outcome.reason === 'originals-quota') return fail(413, 'site-quota', `The originals kept for your site's models would pass ${MODEL_QUOTAS.originalsPerSite / 1048576} MB. Delete a model you no longer use to make room.`);
+    if (begin.reason === 'busy' || begin.reason === 'in-progress') return fail(503, 'busy', 'The model is being saved or cleaned up right now. Try again in a moment.');
+    if (begin.reason === 'originals-quota') return fail(413, 'site-quota', `The originals kept for your site's models would pass ${MODEL_QUOTAS.originalsPerSite / 1048576} MB. Delete a model you no longer use to make room.`);
     const q = checkModelQuota(record.bytes, MODEL_QUOTAS.perSite);
     return fail(413, 'site-quota', q.ok ? 'Your site has no room for another model. Delete one you no longer use.' : q.message);
   }
+  // 7b. The blobs. Always written: the keys are content-addressed, so rewriting is harmless and repairs a partial blob.
+  try {
+    await deps.blobs.put(`served/${sha}`, encoded.bytes);
+    await deps.blobs.put(`original/${originalSha}`, input);
+  } catch (err) {
+    logFailure('storing the blobs', siteId, err);
+    // Free the quota this attempt reserved; blobs it may have written are left to the cleanup (they are shared by content).
+    await deps.coordinator.abandonUpload(siteId, sha, begin.attempt).catch(() => false);
+    return fail(500, 'store-failed', 'The model could not be saved. Try again.');
+  }
+  // 7c. Promote, fenced by this attempt's token: a row that was reaped or taken over meanwhile is not ours to promote.
+  let ready: boolean;
+  try { ready = await deps.coordinator.markReady(siteId, sha, begin.attempt, now); } catch (err) {
+    logFailure('promoting the row', siteId, err);
+    return fail(500, 'store-failed', 'The model could not be saved. Try again.');
+  }
+  if (!ready) return fail(503, 'superseded', 'The upload was interrupted. Try again.');
   return { ok: true, model: record, alreadyStored: false };
 }

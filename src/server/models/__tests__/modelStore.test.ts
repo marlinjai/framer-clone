@@ -40,9 +40,10 @@ const okValidator: ModelValidator = { validate: async () => ({ ok: true }) };
 const reencoder = (output: Uint8Array, input: Partial<DecodedStats> = {}, out: Partial<DecodedStats> = {}): ModelReencoder => ({
   reencode: async () => ({ bytes: output, input: { ...SMALL, ...input }, output: { ...SMALL, maxTextureSide: 1024, ...out }, names: { materials: ['paint', 'glass'], nodes: ['root'] } }),
 });
-const deps = (extra: Partial<UploadDeps> = {}): UploadDeps & { blobs: MemoryBlobStore; models: MemorySiteModels } => ({
-  blobs: new MemoryBlobStore(), models: new MemorySiteModels(), validator: okValidator, reencoder: reencoder(glb('out')), ...extra,
-}) as never;
+const deps = (extra: Partial<UploadDeps> = {}): UploadDeps & { blobs: MemoryBlobStore; models: MemorySiteModels } => {
+  const models = new MemorySiteModels();
+  return { blobs: new MemoryBlobStore(), models, coordinator: models, validator: okValidator, reencoder: reencoder(glb('out')), ...extra } as never;
+};
 const refused = (r: Awaited<ReturnType<typeof acceptModelUpload>>) => { if (r.ok) throw new Error('expected a refusal'); return r; };
 
 describe('quotas (D1: the defaults, never raised here)', () => {
@@ -198,7 +199,7 @@ describe('the upload pipeline fails closed', () => {
     const d = deps();
     await acceptModelUpload(glb('in'), 's2', 'u', d);
     const before = new Set(d.blobs.files.keys());
-    d.models.insertWithinQuota = async () => { throw new Error('db down'); };
+    d.models.beginUpload = async () => { throw new Error('db down'); };
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 500, code: 'store-failed' });
     expect(spy).toHaveBeenCalled();
@@ -207,23 +208,41 @@ describe('the upload pipeline fails closed', () => {
     expect(await d.blobs.get([...before].find((k) => k.startsWith('served/'))!)).not.toBeNull();
   });
 
-  it('two concurrent identical uploads: one row, both succeed, the blob survives', async () => {
+  it('two concurrent identical uploads: one proceeds, the other is told to retry, and the retry finds the model stored', async () => {
     const d = deps();
     const release: (() => void)[] = [];
     const slow = d.blobs.put.bind(d.blobs);
     d.blobs.put = (key, bytes) => new Promise<void>((resolve) => { release.push(() => void slow(key, bytes).then(resolve)); });
     const a = acceptModelUpload(glb('in'), 's1', 'u', d);
-    const b = acceptModelUpload(glb('in'), 's1', 'u', d);
-    // Each upload writes its two blobs one after the other: hold both uploads at each write so they interleave.
+    // While the first holds its pending row, an identical upload by the same site is refused as busy (never "stored").
+    while (release.length < 1) await new Promise((r) => setTimeout(r, 1));
+    expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 503, code: 'busy' });
+    expect(await d.models.list('s1')).toEqual([]); // a pending row is not visible
     for (let round = 0; round < 2; round++) {
-      while (release.length < 2) await new Promise((r) => setTimeout(r, 1));
+      while (release.length < 1) await new Promise((r) => setTimeout(r, 1));
       release.splice(0).forEach((r) => r());
     }
-    const [ra, rb] = await Promise.all([a, b]);
-    expect(ra.ok && rb.ok).toBe(true);
-    expect([ra, rb].filter((r) => r.ok && r.alreadyStored).length).toBe(1);
+    expect((await a).ok).toBe(true);
     expect((await d.models.list('s1')).length).toBe(1);
+    const retry = await acceptModelUpload(glb('in'), 's1', 'u', d);
+    expect(retry.ok && retry.alreadyStored).toBe(true);
     expect(await d.blobs.has([...d.blobs.files.keys()].find((k) => k.startsWith('served/'))!)).toBe(true);
+  });
+
+  it('a failed put abandons only its own pending row (the quota is freed) and a failed promotion is refused, not served', async () => {
+    const d = deps();
+    const put = d.blobs.put.bind(d.blobs);
+    d.blobs.put = async () => { throw new Error('storage down'); };
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 500, code: 'store-failed' });
+    spy.mockRestore();
+    expect(d.models.rows.size).toBe(0);
+    d.blobs.put = put;
+    // An upload whose pending row was reaped (and taken by another attempt) meanwhile cannot promote it.
+    const markReady = d.models.markReady.bind(d.models);
+    d.models.markReady = async (s, h, _attempt, at) => markReady(s, h, 'someone-else', at);
+    expect(refused(await acceptModelUpload(glb('in'), 's1', 'u', d))).toMatchObject({ status: 503, code: 'superseded' });
+    expect(await d.models.list('s1')).toEqual([]);
   });
 
   it('cannot pass the site quota with parallel uploads: the quota is checked inside the insert', async () => {
@@ -412,7 +431,7 @@ describe('orphan blobs (written before a row that never came)', () => {
     expect((await blobs.list('served/')).map((b) => b.key)).toEqual(['served/a']);
   });
 
-  it('a refused upload leaves its blobs for the sweep, not for an immediate delete another upload could be relying on', async () => {
+  it('a refused upload writes nothing at all: the quota is checked on the pending row, before any blob', async () => {
     const d = deps();
     await d.models.insertWithinQuota(row('s1', 'f'.repeat(64), 200 * MB), { servedBytes: 1e12, originalBytes: 1e12 });
     const re: ModelReencoder = { reencode: async () => ({ bytes: glb('out'), input: SMALL, output: SMALL, names: { materials: [], nodes: [] } }) };
@@ -421,7 +440,6 @@ describe('orphan blobs (written before a row that never came)', () => {
     await d.models.insertWithinQuota(row('s1', 'e'.repeat(64), 1, { originalBytes: 200 * MB }), { servedBytes: 1e12, originalBytes: 1e12 });
     const r = await acceptModelUpload(glb('in'), 's1', 'u', { ...d, reencoder: re });
     expect(r).toMatchObject({ ok: false, status: 413 });
-    const orphans = planOrphanSweep({ now: new Date(Date.now() + 2 * ORPHAN_GRACE_MS), blobs: await d.blobs.list(''), referencedServed: new Set(), referencedOriginals: new Set(['o-' + 'e'.repeat(64)]) });
-    expect(orphans.length).toBe(2);
+    expect(await d.blobs.list('')).toEqual([]);
   });
 });
