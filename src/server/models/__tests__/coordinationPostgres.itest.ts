@@ -132,6 +132,14 @@ describe('the protocol steps on Postgres', () => {
     expect(await prisma.modelBlobTombstone.count({ where: { key } })).toBe(0);
   });
 
+  it('cleanup methods are refused on a workspace-scoped repository (they act across every workspace)', async () => {
+    const scoped = new PrismaSiteModels(prisma, { workspaceId: 'ws-anything' });
+    await expect(scoped.beginDelete({ key: `served/${hexOf()}`, attempt: 'a', now: new Date(), leaseMs: 1000 })).rejects.toThrow(/system level/);
+    await expect(scoped.completeDelete(`served/${hexOf()}`, 'a')).rejects.toThrow(/system level/);
+    await expect(scoped.expiredTombstones(new Date(), 10)).rejects.toThrow(/system level/);
+    await expect(scoped.reapPendingUploads(new Date(), 10)).rejects.toThrow(/system level/);
+  });
+
   it('the constraints: a ready row cannot carry an attempt, a pending row must, keys are validated', async () => {
     const site = await makeSite();
     const ws = (await prisma.site.findUniqueOrThrow({ where: { id: site }, select: { workspaceId: true } })).workspaceId;
@@ -283,7 +291,8 @@ describe('the real upload and cleanup code under concurrent, jittered runs on Po
   const jitter = () => sleep(Math.floor(Math.random() * 6));
 
   /** Runs the concurrent rounds against `repo` and returns the first violation found, or null. */
-  async function rounds(repo: PrismaSiteModels, count: number): Promise<string | null> {
+  type Stats = { upOk: number; upBusy: number; upOther: number; kept: number; deleted: number; retry: number };
+  async function rounds(repo: PrismaSiteModels, count: number, stats: Stats = { upOk: 0, upBusy: 0, upOther: 0, kept: 0, deleted: 0, retry: 0 }, opts: { slowRemove?: boolean } = {}): Promise<string | null> {
     for (let i = 0; i < count; i++) {
       const storage = new IdStorage();
       let counter = 0;
@@ -297,13 +306,18 @@ describe('the real upload and cleanup code under concurrent, jittered runs on Po
       };
       const deleter: BlobDeleter = {
         snapshot: async (k) => { await jitter(); return storage.ids(k); },
-        removeSnapshot: async (_k, snap) => { await jitter(); for (const id of snap as string[]) storage.files.delete(id); },
+        // `slowRemove` widens the window between a cleaner's tombstone and its storage delete (a slow storage call).
+        removeSnapshot: async (_k, snap) => { await (opts.slowRemove ? sleep(15 + Math.floor(Math.random() * 20)) : jitter()); for (const id of snap as string[]) storage.files.delete(id); },
         hasBlob: async (k) => { await jitter(); return storage.has(k); },
       };
       const siteB = await makeSite(); const siteC = await makeSite();
       const upload = (site: string) => jitter().then(() => acceptModelUpload(input, site, 'u', { blobs, models: repo, coordinator: repo, validator, reencoder }));
       const clean = () => jitter().then(() => deleteBlobsCoordinated([served, original], { coordinator: repo, storage: deleter }));
-      await Promise.all([upload(siteB), upload(siteC), clean(), clean()]);
+      const [u1, u2, c1, c2] = await Promise.all([upload(siteB), upload(siteC), clean(), clean()]);
+      for (const u of [u1, u2]) { if (u.ok) stats.upOk++; else if (u.code === 'busy') stats.upBusy++; else stats.upOther++; }
+      for (const c of [c1, c2]) { stats.kept += c.kept.length; stats.deleted += c.deleted.length; stats.retry += c.retry.length; }
+      // No actor crashed, so nothing may be left pending: an upload that returned ok promoted its row, a refused one released it.
+      if (await prisma.siteModel.count({ where: { siteId: { in: [siteB, siteC] }, state: 'pending' } })) return `round ${i}: a pending row was left by an upload that finished`;
       // Recovery: leftovers of an interrupted run would be taken over after their lease; here time simply passes.
       const later = new Date(Date.now() + 2 * 60 * 60_000);
       await repo.reapPendingUploads(later, 1000);
@@ -326,7 +340,27 @@ describe('the real upload and cleanup code under concurrent, jittered runs on Po
   }
 
   it('upload vs cleanup, two sites, two cleaners: no ready row ever lacks its blobs, and nothing is left over', async () => {
-    expect(await rounds(new PrismaSiteModels(prisma), 40)).toBeNull();
+    const stats: Stats = { upOk: 0, upBusy: 0, upOther: 0, kept: 0, deleted: 0, retry: 0 };
+    expect(await rounds(new PrismaSiteModels(prisma), 60, stats)).toBeNull();
+    // The dangerous orderings were really reached: uploads won (their blobs were kept), cleanups won (uploads told to retry).
+    expect(stats.upOk).toBeGreaterThan(0);
+    expect(stats.upBusy).toBeGreaterThan(0);
+    expect(stats.kept).toBeGreaterThan(0);
+    expect(stats.deleted).toBeGreaterThan(0);
+  }, 280_000);
+
+  it('MUTATION: an upload that ignores tombstones is caught by the same concurrent rounds', async () => {
+    class IgnoresTombstones extends PrismaSiteModels {
+      override async beginUpload(i: Parameters<PrismaSiteModels['beginUpload']>[0]) {
+        // Arrives after the cleaner's tombstone (a later request) and removes it first, as if the check were not there.
+        await sleep(12);
+        await prisma.modelBlobTombstone.deleteMany({ where: { key: { in: [`served/${i.record.sha256}`, `original/${i.record.originalSha256}`] } } });
+        return super.beginUpload(i);
+      }
+    }
+    expect(await rounds(new IgnoresTombstones(prisma), 80, undefined, { slowRemove: true })).toMatch(/has no (served|original) blob/);
+    // And the real protocol survives the very same slow deletes.
+    expect(await rounds(new PrismaSiteModels(prisma), 40, undefined, { slowRemove: true })).toBeNull();
   }, 280_000);
 
   it('MUTATION: a cleanup that does not count pending rows is caught by the same concurrent rounds', async () => {
@@ -340,8 +374,8 @@ describe('the real upload and cleanup code under concurrent, jittered runs on Po
         return { kind: 'started', attempt: i.attempt, resumed: false } as const;
       }
     }
-    expect(await rounds(new PrismaSiteModels(prisma), 0)).toBeNull();
-    expect(await rounds(new IgnoresPending(prisma), 150)).not.toBeNull();
+    // The violation is the right one: a ready row whose blob is gone.
+    expect(await rounds(new IgnoresPending(prisma), 150)).toMatch(/has no (served|original) blob/);
   }, 280_000);
 });
 

@@ -138,7 +138,13 @@ export class PrismaSiteModels implements SiteModelRepository, ModelCoordinator {
 
   // ---- the cleanup side: system level, never scoped to a workspace (blobs are shared across sites and companies) ----
 
+  /** A workspace-scoped repository (the upload route's) must never run cleanup: it counts, tombstones and reaps across ALL sites. */
+  private requireSystemScope() {
+    if (this.scope.workspaceId) throw new Error('model cleanup is system level: construct the repository without a workspace');
+  }
+
   async beginDelete({ key, attempt, now, leaseMs }: Parameters<ModelCoordinator['beginDelete']>[0]): Promise<BeginDeleteOutcome> {
+    this.requireSystemScope();
     const m = KEY.exec(key);
     if (!m) throw new Error('model blob key outside the store namespaces');
     return this.client.$transaction(async (tx) => {
@@ -163,16 +169,19 @@ export class PrismaSiteModels implements SiteModelRepository, ModelCoordinator {
   }
 
   async completeDelete(key: string, attempt: string): Promise<boolean> {
+    this.requireSystemScope();
     const r = await this.client.modelBlobTombstone.deleteMany({ where: { key, attempt } });
     return r.count === 1;
   }
 
   async expiredTombstones(now: Date, limit: number): Promise<string[]> {
+    this.requireSystemScope();
     const rows = await this.client.modelBlobTombstone.findMany({ where: { expiresAt: { lte: now } }, orderBy: { expiresAt: 'asc' }, take: limit, select: { key: true } });
     return rows.map((r) => r.key);
   }
 
   async reapPendingUploads(now: Date, limit: number): Promise<{ siteId: string; sha256: string }[]> {
+    this.requireSystemScope();
     const rows = await this.client.$queryRaw<{ site_id: string; sha256: string }[]>`
       DELETE FROM public.site_models
        WHERE id IN (SELECT id FROM public.site_models

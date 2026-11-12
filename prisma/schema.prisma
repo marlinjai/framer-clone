@@ -875,7 +875,8 @@ model SiteModel {
 
   // Coordination with blob cleanup (plan, "Coordinating uploads and blob cleanup"): an upload's row is `pending`, with the
   // attempt that owns it and a deadline, until its blobs are written; `ready` rows carry neither (a CHECK holds it).
-  // Serving, listing and `touch` see ready rows only; the quota counts both.
+  // Serving, listing and `touch` see ready rows only; the quota counts both. The CHECK and the partial index on
+  // `pending_until` exist in the database only (Prisma's schema does not name them; a schema comparison reports them).
   state        String    @default("ready")
   pendingUntil DateTime? @map("pending_until")
   attempt      String?
