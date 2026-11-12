@@ -121,22 +121,28 @@ high-frequency actions, only `transform` and `opacity` move, and everything is o
 
 ## Fix 2026-11-13: settings that did not stick
 
-Reported: changing the direction (kind) or the duration of an appear effect did not reliably stay,
-and the playback did not use the new duration. Reproduced in the demo editor with
-`dev-browser-auto`: the model, the Play control and the preview were correct (Play ran one Web
-Animation with the stored duration and the stored start offset), the fault was in the panel's
-number fields. `DimensionInput` kept the typed text and only re-read the held value when it
-changed, so a value the model clamped to what it already held (a duration typed as 1000 with 400
-stored; also distance, delay, step and strength at their limits, and a fraction rounded to the held
-value) stayed on screen while the stored value, the Play and the published page used the clamped
-one. Separately, a draft typed without a blur was overwritten when the selection or frame changed
-(the fields were not keyed), losing the edit silently. Fix: `DimensionInput` re-reads the held value
-after every commit; the Effects fields are keyed on element and breakpoint so an open draft is
-committed to what it was typed on (skipped when that element is gone). Tests: clamped and rounded
-values, every limit, direction plus duration plus distance in turn, save and reload snapshot,
-undo and redo, selection and frame change with a draft, a Tablet override, bad text and recovery.
-Whole-group breakpoint overrides stay as decided (a Tablet edit copies the whole appear group; the
-source dot shows it).
+Reported: the duration of an appear effect did not reliably stay and the playback did not use the
+new one (the direction too, as reported). The report's screenshot shows Distance 48 and Duration
+400, the two ceilings. Reproduced in the demo editor with `dev-browser-auto`: the model, the Play
+control and the preview were correct (Play ran one Web Animation with the stored duration and
+start offset; a direction change, a duration change and a draft left by clicking another element
+all stored), the fault was in the panel's number fields. `DimensionInput` kept the typed text and
+only re-read the held value when it changed, so a value the model clamped to what it already held
+(a duration typed as 1000 with 400 stored; also distance, delay, step and strength at their limits,
+a fraction rounded to the held value) stayed on screen while the stored value, the Play and the
+published page used the clamped one (shown 1000, played 400). Separately, in a component test a
+draft typed without a blur was overwritten when the selection or frame changed (the fields were not
+keyed); in the browser a real click blurs first, so it did not show there. Fix: `DimensionInput`
+re-reads the held value after every change it emits; the Effects fields are keyed on element and
+breakpoint so an open draft is committed to what it was typed on (skipped when that element is
+gone). Tests: clamped and rounded values, every limit, direction plus duration plus distance in
+turn, a stored snapshot restored, an adopted server copy keeping a changed direction and
+duration, undo and redo, selection and frame change with a draft, a Tablet override, bad text and
+recovery, a unit picked on an empty field. Not reproduced: a direction change that fails to stick;
+and no local database run of a real project save (the save route keeps page snapshots opaque, and
+the open copy and the preview use the same working copy). Whole-group breakpoint overrides stay as
+decided (a Tablet edit copies the whole appear group; the source dot shows it). A question left for
+Marlin: the 400ms ceiling (decided 2026-10-23, "keep reveals short") is what the reported values hit.
 
 ## Out of scope
 

@@ -165,6 +165,18 @@ describe('DimensionInput follows what the parent holds', () => {
     expect(input.value).toBe('400');
   });
 
+  it('keeps a unit picked on an empty field, and types the next number in it', () => {
+    const onChange = vi.fn();
+    render(<Controlled label="Width" value={undefined} onChange={onChange} units={['px', '%']} />);
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    const picker = screen.getByRole('combobox') as HTMLSelectElement;
+    fireEvent.change(picker, { target: { value: '%' } });
+    expect(picker.value).toBe('%');
+    fireEvent.change(input, { target: { value: '50' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onChange).toHaveBeenLastCalledWith('50%');
+  });
+
   it('shows the held value after a stepped change the parent refused', () => {
     function Refusing() {
       return <DimensionInput label="Width" value="10px" onChange={() => {}} />;

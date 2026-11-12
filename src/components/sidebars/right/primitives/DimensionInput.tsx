@@ -125,7 +125,10 @@ export function DimensionInput({
   const unitOptions = units.includes(unit) ? units : [...units, unit];
 
   const emit = useCallback((next: string) => {
-    if (next !== normalizeIncoming(value, bareUnit)) onChange(next);
+    if (next === normalizeIncoming(value, bareUnit)) return;
+    onChange(next);
+    // Only after a real change: picking a unit on an empty field commits nothing
+    // and must keep the unit that was picked.
     setSyncTick((tick) => tick + 1);
   }, [bareUnit, onChange, value]);
 
