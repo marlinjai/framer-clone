@@ -26,6 +26,7 @@ import 'server-only';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
+  countChanges,
   diffDocuments,
   mergeDocuments,
   mergedDocumentProblems,
@@ -41,6 +42,7 @@ import { reviewDocuments, shownValue, type DocumentReview } from '@/lib/siteMerg
 import { getPrismaClient } from '@/server/db';
 import {
   BranchClosedError,
+  BranchUnchangedError,
   BranchConflictsError,
   BranchMergeInvalidError,
   BranchNotFoundError,
@@ -101,6 +103,8 @@ export interface BranchReview {
   upToDate: boolean;
   /** What the branch changed since its fork point. */
   branchChanges: DocumentChanges;
+  /** The branch changes nothing a merge would write (countChanges is zero): a merge is refused. */
+  unchanged: boolean;
   /** What main changed since the fork point; null when up to date. */
   mainChanges: DocumentChanges | null;
   /** Conflicts of bringing main in that still need an answer; empty when up to date. */
@@ -214,6 +218,14 @@ async function withSerializationRetry<T>(run: () => Promise<T>): Promise<T> {
       await new Promise((resolve) => setTimeout(resolve, attempt * (20 + Math.random() * 60)));
     }
   }
+}
+
+/**
+ * Whether merging `branch`, forked at `base`, would write nothing: no change the diff counts, and the site's name
+ * (which a merge carries beside the document, and the diff leaves out) the same.
+ */
+function changesNothing(base: MergeDocument, branch: MergeDocument): boolean {
+  return branch.name === base.name && countChanges(diffDocuments(base, branch)) === 0;
 }
 
 export class SiteBranchMergeService {
@@ -381,11 +393,13 @@ export class SiteBranchMergeService {
       problems = brought.problems;
     }
     await this.keepDraft(scope, stamp, kept);
+    const branchChanges = diffDocuments(state.base, state.branch);
     return {
       branch: await this.branches.getBranch(scope, stamp.mainId, branchId),
       token: reviewToken(stamp),
       upToDate,
-      branchChanges: diffDocuments(state.base, state.branch),
+      branchChanges,
+      unchanged: changesNothing(state.base, state.branch),
       mainChanges: upToDate ? null : diffDocuments(state.base, state.main),
       conflicts,
       settled,
@@ -574,6 +588,10 @@ export class SiteBranchMergeService {
       const updated = await this.updateFrom(scope, state, draftAnswers(stamp.mergeDraft), actor);
       throw new BranchUpdatedFirstError(updated.token);
     }
+
+    // Nothing to merge is refused here, not only by the screen and the agent's tool: a merge that writes an
+    // identical main would still close the branch and end the undo of the merge before it.
+    if (changesNothing(state.base, state.branch)) throw new BranchUnchangedError();
 
     // Up to date: main's name is the fork point's, so the branch's name (renamed or not) is the merged one.
     const merged: MergeDocument = state.branch;

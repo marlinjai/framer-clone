@@ -471,7 +471,11 @@ export function ReviewScreen({ branchId, branchName, mainSiteId, mainName, branc
             ))}
           </ul>
           {review?.review && units.length === 0 && review.review.site.length + review.review.settings.length === 0 ? (
-            <p className="text-muted-foreground">This branch changes nothing yet.</p>
+            <p className="text-muted-foreground">
+              {review.unchanged === false
+                ? 'This branch changes no page: it only arranges the frames on the editor’s canvas differently. Merging brings that arrangement to the site.'
+                : 'This branch changes nothing yet.'}
+            </p>
           ) : null}
         </div>
 

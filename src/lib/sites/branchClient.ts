@@ -78,6 +78,8 @@ export interface BranchReviewJson {
   token: string;
   upToDate: boolean;
   branchChanges: DocumentChangesJson;
+  /** The branch changes nothing a merge would write. Absent from an older server. */
+  unchanged?: boolean;
   mainChanges: DocumentChangesJson | null;
   conflicts: ShownConflictJson[];
   settled: Array<{ id: string; pick: MergeSideJson; conflict?: ShownConflictJson }>;

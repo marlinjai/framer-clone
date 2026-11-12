@@ -230,11 +230,16 @@ describe('forward', () => {
     expect(behind.branch.mainMoved).toBe(true);
     const first = (await (await merge(mainOnly, { token: behind.token })).json()).error;
     expect(first.code).toBe('branch_updated_from_main');
-    // The token the update answered is the one a fresh review gives, its name change included, and it merges.
+    // The token the update answered is the one a fresh review gives, its name change included. The branch now
+    // holds main's name and nothing of its own, so there is nothing to merge; with a change of its own it merges
+    // and main keeps its name.
     const fresh = await review(mainOnly);
     expect(fresh.token).toBe(first.token);
     expect(fresh.branch.mainMoved).toBe(false);
-    expect((await merge(mainOnly, { token: first.token })).status).toBe(200);
+    expect(fresh.unchanged).toBe(true);
+    expect((await (await merge(mainOnly, { token: first.token })).json()).error.code).toBe('branch_unchanged');
+    await edit(us, mainOnly, { home: 'Fresh bread, daily', about: 'Since 1990' });
+    expect((await merge(mainOnly, { token: (await review(mainOnly)).token })).status).toBe(200);
     expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Main name');
 
     // Both renamed: a conflict, never one name dropped without a word.
@@ -550,6 +555,36 @@ describe('re-entry after completion or failure', () => {
   });
 });
 
+describe('a branch that changes nothing', () => {
+  it('is not merged, by the route as by the screen: nothing is written, it stays open, and the merge before it can still be undone', async () => {
+    const first = await createBranch(us, 'First');
+    await edit(us, first, { home: 'First bread', about: 'Since 1990' });
+    expect((await merge(first, { token: (await review(first)).token })).status).toBe(200);
+    const kept = await prisma.siteBranch.findUniqueOrThrow({ where: { id: first }, select: { mainBeforeExpiresAt: true } });
+    expect(kept.mainBeforeExpiresAt).not.toBeNull();
+    const version = (await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true } })).version;
+
+    const empty = await createBranch(us, 'Nothing yet');
+    const read = await review(empty);
+    expect(read.unchanged).toBe(true);
+    const res = await merge(empty, { token: read.token });
+    expect(res.status).toBe(409);
+    const error = (await res.json()).error;
+    expect(error.code).toBe('branch_unchanged');
+    expect(error.message).toMatch(/nothing to merge/);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true } })).version).toBe(version);
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: empty } })).status).toBe('open');
+    // The copy kept for undoing the first merge was not replaced by a merge that did nothing.
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: first }, select: { mainBeforeExpiresAt: true } })).mainBeforeExpiresAt).toEqual(kept.mainBeforeExpiresAt);
+
+    // With a change it merges, and says it is not unchanged.
+    await edit(us, empty, { home: 'Second bread', about: 'Since 1990' });
+    const again = await review(empty);
+    expect(again.unchanged).toBe(false);
+    expect((await merge(empty, { token: again.token })).status).toBe(200);
+  });
+});
+
 describe('isolation', () => {
   it('answers another company’s branch like a missing one on every review route, and writes nothing', async () => {
     sessionMock.mockResolvedValue(memberOf(them));
@@ -584,6 +619,7 @@ describe('isolation', () => {
     sessionMock.mockResolvedValue(memberOf(them));
     authMock.mockImplementation(async () => ({ authenticated: true, userId: `user-${them.companyId}` }));
     const theirs = await createBranch(them, 'Theirs, merged');
+    await edit(them, theirs, { home: 'Their bread', about: 'Since 1990' });
     const { token } = await review(theirs);
     expect((await merge(theirs, { token })).status).toBe(200);
 

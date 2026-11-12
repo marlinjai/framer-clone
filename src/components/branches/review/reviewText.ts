@@ -146,6 +146,9 @@ export function mergeBlocker(review: BranchReviewJson, canMerge: boolean | undef
   if (canMerge === false) return 'Only an admin of this workspace may merge.';
   if (review.conflicts.length > 0) return `${review.conflicts.length === 1 ? 'One question needs' : `${review.conflicts.length} questions need`} an answer first.`;
   if (review.problems.length > 0) return review.problems[0].message;
-  if (review.review && totalsText(review.review) === 'No changes yet' && review.upToDate) return 'The branch changes nothing yet.';
+  // The server's own word (what a merge would write), not the change list's totals: a branch that only moves
+  // frames on the editor's canvas lists no element and can still be merged.
+  const nothing = review.unchanged ?? (review.review ? totalsText(review.review) === 'No changes yet' : false);
+  if (nothing && review.upToDate) return 'The branch changes nothing yet.';
   return null;
 }

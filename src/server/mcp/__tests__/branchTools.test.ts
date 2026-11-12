@@ -146,6 +146,7 @@ function world(options: { key?: VerifiedKey; enabled?: boolean; createdBy?: { ki
     token: state.token,
     upToDate: state.baseVersion === state.mainVersion,
     branchChanges: { ...NO_CHANGES, nodes: { added: state.changes, removed: 0, changed: 0 } },
+    unchanged: state.changes === 0,
     mainChanges: state.baseVersion === state.mainVersion ? null : { ...NO_CHANGES, nodes: { added: 0, removed: 0, changed: 1 } },
     conflicts: state.conflicts,
     settled: [],

@@ -106,3 +106,25 @@ function nodeChanges(before: unknown, after: unknown) {
   }
   return { added, removed, changed };
 }
+
+/**
+ * How many things a set of changes holds: THE one definition of "this branch changes nothing" (zero). The agent's
+ * status, the review's merge button and the merge itself all ask this, so they cannot disagree. It counts what a
+ * merge would write, a frame moved on the editor's canvas included, which the review's change list leaves out.
+ */
+export function countChanges(changes: DocumentChanges): number {
+  return (
+    changes.site.length +
+    changes.settings.length +
+    changes.pages.added.length +
+    changes.pages.removed.length +
+    changes.pages.changed.length +
+    changes.components.added.length +
+    changes.components.removed.length +
+    changes.components.changed.length +
+    changes.nodes.added +
+    changes.nodes.removed +
+    changes.nodes.changed +
+    (changes.pageOrder ? 1 : 0)
+  );
+}

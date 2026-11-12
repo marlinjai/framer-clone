@@ -1009,7 +1009,7 @@ export const TOOLS: ToolDef[] = [
           problems: now.problems,
         });
       }
-      if (now.changeCount === 0) {
+      if (now.unchanged) {
         return errorResult({ code: 'branch_unchanged', message: 'this branch changes nothing against its site, so there is nothing to merge' });
       }
       const main = await getSite(ctx.caller, { siteId: now.branch.siteId }, ctx.deps);

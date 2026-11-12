@@ -37,7 +37,7 @@ import { getSiteBranchRepository, type BranchActor, type BranchSummary, type Sit
 import { getSiteBranchMergeService, type BranchReview, type SiteBranchMergeService } from '@/server/sites/branches/merge';
 import { siteBranchesEnabled } from '@/server/sites/branches/switch';
 import { MAX_OPEN_BRANCHES_PER_SITE } from '@/lib/sites/branches';
-import type { DocumentChanges, MergeAnswers, MergeSide } from '@/lib/siteMerge';
+import { countChanges, type DocumentChanges, type MergeAnswers, type MergeSide } from '@/lib/siteMerge';
 import type { SiteOpsAction, SiteOpsCaller } from '@/lib/siteOps/types';
 import { recordSiteOperation, type AuditEntry } from './audit';
 
@@ -272,22 +272,6 @@ function links(branchId: string, deps: BranchOpsDeps): { previewUrl: string; rev
   return { previewUrl: `${base}/preview`, reviewUrl: `${base}/review` };
 }
 
-function changeCount(changes: DocumentChanges): number {
-  return (
-    changes.site.length +
-    changes.settings.length +
-    changes.pages.added.length +
-    changes.pages.removed.length +
-    changes.pages.changed.length +
-    changes.components.added.length +
-    changes.components.removed.length +
-    changes.components.changed.length +
-    changes.nodes.added +
-    changes.nodes.removed +
-    changes.nodes.changed +
-    (changes.pageOrder ? 1 : 0)
-  );
-}
 
 // ---------- the operations ----------
 
@@ -362,6 +346,8 @@ export interface BranchStatus {
   upToDate: boolean;
   /** How many things the branch changes against its fork point, and what kind. */
   changeCount: number;
+  /** A merge would write nothing (a renamed site counts as a change, though no element changed). */
+  unchanged: boolean;
   branchChanges: DocumentChanges;
   /** What main changed since the fork point; null when up to date. */
   mainChanges: DocumentChanges | null;
@@ -379,12 +365,13 @@ export interface BranchStatus {
 }
 
 function statusOf(review: BranchReview, caller: SiteOpsCaller, deps: BranchOpsDeps): BranchStatus {
-  const count = changeCount(review.branchChanges);
+  const count = countChanges(review.branchChanges);
   return {
     branch: viewOf(review.branch, caller),
     token: review.token,
     upToDate: review.upToDate,
     changeCount: count,
+    unchanged: review.unchanged,
     branchChanges: review.branchChanges,
     mainChanges: review.mainChanges,
     conflicts: review.conflicts.slice(0, CONFLICTS_LISTED),

@@ -363,6 +363,13 @@ export class BranchReviewStaleError extends SiteRepositoryError {
   }
 }
 
+/** A merge of a branch that changes nothing against its site: nothing was written, the branch stays open. 409. */
+export class BranchUnchangedError extends SiteRepositoryError {
+  constructor() {
+    super('branch_unchanged', 'This branch changes nothing yet, so there is nothing to merge. Change something on it, or discard it.', 409);
+  }
+}
+
 /** Conflicts of an update from main still need an answer: nothing was written, the answers given were kept. 409. */
 export class BranchConflictsError extends SiteRepositoryError {
   readonly conflicts: readonly unknown[];
