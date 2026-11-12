@@ -21,6 +21,8 @@ import 'server-only';
 // the copy and its `base_version` are of one moment, and the cap of open branches is counted under it too.
 
 import { randomUUID } from 'node:crypto';
+import { LIVE_EVENTS } from '@/lib/projects/liveEvents';
+import { publishSiteEvent } from '../liveBus';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 import {
@@ -523,7 +525,7 @@ export class SiteBranchRepository {
       });
       return { branch: summaryOf(row, main.version), discarded: true };
     }, BRANCH_WRITE_TRANSACTION);
-    if (outcome.discarded) forgetBranchContent(branchId);
+    if (outcome.discarded) forgetBranchContent(branchId, 'discarded');
     return outcome;
   }
 
@@ -594,7 +596,10 @@ export class SiteBranchRepository {
  * What this process holds of a closed or deleted branch's content: the document route's kept copies and a
  * running generation's draft. Run after the commit that closed it, as a site delete does.
  */
-export function forgetBranchContent(branchId: string): void {
+export function forgetBranchContent(branchId: string, closed?: 'merged' | 'discarded'): void {
+  // An editor tab open on the branch hears it at once (plan section 6): its unsaved work can go nowhere on
+  // this branch any more, and the tab says so with a way on, instead of at its next failed save.
+  if (closed) publishSiteEvent(branchId, LIVE_EVENTS.branchClosed, { status: closed });
   forgetSiteDocuments(branchId);
   endLiveGenerationOfSite(branchId, 'site_changed');
 }

@@ -96,6 +96,7 @@ import {
 import { existingAutosave, reloadDiscarding, setConflictDialogHold } from './autosave';
 import { SSE_HEARTBEAT_MS } from '@/lib/ai/sse';
 import { editorTabId } from './tabId';
+import { BRANCH_CLOSED_BROWSER_EVENT } from './liveEvents';
 import {
   LIVE_EVENTS,
   LIVE_PING_EVENT,
@@ -747,6 +748,9 @@ export class LiveSync {
     on(LIVE_EVENTS.authExpired, () => {
       this.signedOut();
     });
+    on(LIVE_EVENTS.branchClosed, () => {
+      this.branchClosed();
+    });
   }
 
   private clearStable() {
@@ -943,6 +947,22 @@ export class LiveSync {
     this.streamRetryTimer = undefined;
   }
 
+  /**
+   * This site is a branch that was merged or discarded elsewhere (the stream said so, or the document answered
+   * 410): nothing follows it any more, and the branch context is told so it reads the record and shows the way
+   * on (src/components/branches/BranchBar.tsx, BranchClosedElsewhere).
+   */
+  private branchClosed() {
+    this.clearStreamRetry();
+    this.cancelProbe();
+    this.closeStream();
+    this.clearPoll();
+    this.clearFetchRetry();
+    this.generation.reset();
+    this.setPhase('gone');
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(BRANCH_CLOSED_BROWSER_EVENT, { detail: { siteId: this.projectId } }));
+  }
+
   private signedOut() {
     this.clearStreamRetry();
     this.cancelProbe();
@@ -1001,6 +1021,10 @@ export class LiveSync {
         if (this.phaseValue === 'stopped') return;
         if (answer.status === 401 || answer.status === 403) {
           this.signedOut();
+          return;
+        }
+        if (answer.status === 410) {
+          this.branchClosed();
           return;
         }
         if (answer.status === 404) {

@@ -32,9 +32,10 @@ vi.mock('@/lib/sites/branchClient', async (importActual) => {
 });
 
 vi.mock('../leave', () => leave);
+vi.mock('@/hooks/useStore', () => ({ useStore: () => ({ editorUI: { currentProject: null, currentPage: null } }) }));
 
 import BranchSwitcher from '../BranchSwitcher';
-import { BranchBadge, MainChangedNote, ReviewAndMergeButton } from '../BranchBar';
+import { BranchBadge, BranchClosedElsewhere, MainChangedNote, ReviewAndMergeButton, SharePreviewButton } from '../BranchBar';
 import { discardText } from '../BranchDialogs';
 import ClosedBranch, { closedBranchText } from '@/app/projects/ClosedBranch';
 import UndoMerge, { undoErrorText } from '../UndoMerge';
@@ -392,5 +393,59 @@ describe('the closed branch page', () => {
 
   it('says a discard lost the changes and left the site as it was', () => {
     expect(closedBranchText({ ...notice, status: 'discarded' }).body).toMatch(/discarded on 11 November 2026 and its changes are gone/);
+  });
+});
+
+describe('a tab open on a branch that someone else closed', () => {
+  const closedState = (status: 'merged' | 'discarded'): EditorBranchState => ({ kind: 'branch', siteId: BRANCH, mainSiteId: MAIN, mainName: 'Bakery', branch: summary({ status }) });
+
+  it.each([
+    ['merged', /was merged into Bakery/, /is in Bakery now/],
+    ['discarded', /was discarded/, /What the branch held is gone/],
+  ] as const)('%s: says what happened, that nothing more can be saved, and the way to the site', (status, title, body) => {
+    render(
+      <SiteBranchProvider initial={closedState(status)}>
+        <BranchClosedElsewhere />
+        <ReviewAndMergeButton />
+        <SharePreviewButton />
+        <MainChangedNote />
+      </SiteBranchProvider>,
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toMatch(title);
+    expect(dialog.textContent).toMatch(body);
+    expect(dialog.textContent).toMatch(/nothing more can be saved to it/);
+    expect(screen.getByRole('link', { name: 'Open Bakery' }).getAttribute('href')).toBe(`/projects/${MAIN}`);
+    // Nothing that needs an open branch is offered beside it.
+    expect(screen.queryByRole('button', { name: /Review and merge/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Share preview' })).toBeNull();
+  });
+
+  it('"Keep looking" closes the dialog, the bar keeps saying it, and "What now?" brings it back', async () => {
+    render(
+      <SiteBranchProvider initial={closedState('merged')}>
+        <BranchClosedElsewhere />
+      </SiteBranchProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Keep looking' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('status').textContent).toMatch(/This branch was merged into Bakery/);
+    fireEvent.click(screen.getByRole('button', { name: 'What now?' }));
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+  });
+
+  it('shows nothing on an open branch, and reads the record again when the live stream says the branch was closed', async () => {
+    client.get.mockReset().mockResolvedValue({ branch: summary({ status: 'discarded' }) });
+    render(
+      <SiteBranchProvider initial={{ kind: 'branch', siteId: BRANCH, mainSiteId: MAIN, mainName: 'Bakery', branch: summary() }}>
+        <BranchClosedElsewhere />
+      </SiteBranchProvider>,
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('lumitra:branch-closed', { detail: { siteId: BRANCH } }));
+    });
+    expect((await screen.findByRole('dialog')).textContent).toMatch(/was discarded/);
+    expect(client.get).toHaveBeenCalledWith(MAIN, BRANCH);
   });
 });

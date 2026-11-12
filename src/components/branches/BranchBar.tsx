@@ -10,7 +10,13 @@
 import SharePreview from './SharePreview';
 import React, { useState } from 'react';
 import { observer } from 'mobx-react-lite';
+import { getSnapshot } from 'mobx-state-tree';
 import { getHistoryStore } from '@/stores/RootStore';
+import { useStore } from '@/hooks/useStore';
+import { abandonWorkingCopy } from '@/lib/projects/autosave';
+import { isOpenBranchStatus } from '@/lib/sites/branches';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import SaveAsNewProjectDialog from '@/components/SaveAsNewProjectDialog';
 import { GitMerge, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useSiteBranch } from '@/contexts/SiteBranchContext';
@@ -49,7 +55,7 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState(false);
-  if (state?.kind !== 'branch' || !state.branch.mainMoved) {
+  if (state?.kind !== 'branch' || !state.branch.mainMoved || !isOpenBranchStatus(state.branch.status)) {
     return message ? (
       <span role="status" className={`text-xs text-muted-foreground ${className}`}>
         {message}
@@ -114,6 +120,73 @@ export function MainChangedNote({ className = '' }: { className?: string }) {
  * where the changes, the questions and the merge are.
  */
 /**
+ * A tab open on a branch that someone else merged or discarded (plan section 6): says what happened and offers
+ * what is still possible. Nothing can be saved to a closed branch, so the work only this tab holds would be
+ * lost without a word: it can be kept as a project of its own, or left, and the site is one click away.
+ * "Keep looking" closes the dialog; the top bar keeps saying the branch is closed.
+ */
+export const BranchClosedElsewhere = observer(function BranchClosedElsewhere() {
+  const { state } = useSiteBranch();
+  const rootStore = useStore();
+  const [dismissed, setDismissed] = useState(false);
+  const [saveAs, setSaveAs] = useState(false);
+  if (state?.kind !== 'branch') return null;
+  const status = state.branch.status;
+  if (status !== 'merged' && status !== 'discarded') return null;
+  const project = rootStore.editorUI.currentProject;
+  const { mainSiteId, mainName, branch } = state;
+  const what = status === 'merged' ? `was merged into ${mainName}` : 'was discarded';
+  return (
+    <>
+      <span role="status" className="mr-2 shrink-0 text-xs text-destructive">
+        This branch {what}.{' '}
+        <button type="button" className="underline" onClick={() => setDismissed(false)}>
+          What now?
+        </button>
+      </span>
+      <Dialog open={!dismissed && !saveAs} onOpenChange={(open) => setDismissed(!open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>The branch “{branch.name}” {what}</DialogTitle>
+            <DialogDescription>
+              Someone closed this branch while it was open in this tab, so nothing more can be saved to it.{' '}
+              {status === 'merged'
+                ? `What the branch held when it was merged is in ${mainName} now.`
+                : 'What the branch held is gone.'}{' '}
+              Anything changed in this tab since its last save is only here: keep it as a project of its own, or leave it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-wrap">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setDismissed(true)}>
+              Keep looking
+            </Button>
+            {project ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => setSaveAs(true)}>
+                Save this tab’s copy as a new project
+              </Button>
+            ) : null}
+            <Button asChild size="sm">
+              <a href={`/projects/${encodeURIComponent(mainSiteId)}`}>Open {mainName}</a>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {project && saveAs ? (
+        <SaveAsNewProjectDialog
+          open={saveAs}
+          onOpenChange={setSaveAs}
+          defaultName={`${branch.name} (copy)`}
+          getSnapshot={() => getSnapshot(project) as unknown as { pages: Record<string, unknown>; components: Record<string, unknown> }}
+          currentPageId={rootStore.editorUI.currentPage?.id}
+          onSaved={() => abandonWorkingCopy(project.id)}
+          description="This tab’s pages and components become a new project in your company, and it opens in the editor. The closed branch stays closed."
+        />
+      ) : null}
+    </>
+  );
+});
+
+/**
  * On a branch whose "update from main" this tab undid: says what that means, with the way back. The branch still
  * counts as up to date with main, so merging it like this would take main's changes out of main (plan section
  * 6, path 2). Shown until the step is redone or the tab is reloaded.
@@ -140,7 +213,7 @@ export const UpdateUndoneNote = observer(function UpdateUndoneNote({ className =
 /** On a branch: "Share preview", the public preview link (S8). Whether the person may is the server's answer. */
 export function SharePreviewButton({ className }: { className?: string }) {
   const { state } = useSiteBranch();
-  if (state?.kind !== 'branch') return null;
+  if (state?.kind !== 'branch' || !isOpenBranchStatus(state.branch.status)) return null;
   return (
     <span className={className}>
       <SharePreview mainSiteId={state.mainSiteId} branchId={state.siteId} branchName={state.branch.name} />
@@ -152,7 +225,8 @@ export function ReviewAndMergeButton() {
   const { state } = useSiteBranch();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  if (state?.kind !== 'branch') return null;
+  // A branch closed elsewhere has nothing left to review or merge (BranchClosedElsewhere says what happened).
+  if (state?.kind !== 'branch' || !isOpenBranchStatus(state.branch.status)) return null;
   const { siteId, mainName } = state;
 
   async function open() {

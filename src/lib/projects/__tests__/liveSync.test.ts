@@ -479,6 +479,24 @@ describe('liveSync: re-entry', () => {
     expect(streams.length).toBe(count + 1);
   });
 
+  it.each(['document', 'stream'] as const)('a branch closed elsewhere stops following and tells the tab: heard from the %s', async (how) => {
+    const heard: string[] = [];
+    const onClosed = (e: Event) => heard.push((e as CustomEvent<{ siteId: string }>).detail.siteId);
+    window.addEventListener('lumitra:branch-closed', onClosed);
+    start();
+    if (how === 'document') {
+      // The document answers 410 for a merged or discarded branch.
+      server.status = 410;
+      stream().emit('site:version', { origin: 'merge', version: 9, versionBefore: 1 });
+    } else {
+      stream().emit('branch:closed', { status: 'merged' });
+    }
+    await settle();
+    window.removeEventListener('lumitra:branch-closed', onClosed);
+    expect(liveSyncFor(SITE)?.phase).toBe('gone');
+    expect(heard).toEqual([SITE]);
+  });
+
   it('a project gone (404) stops following', async () => {
     start();
     server.status = 404;

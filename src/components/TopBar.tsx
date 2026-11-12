@@ -73,7 +73,7 @@ import {
 import EditableProjectTitle from './EditableProjectTitle';
 import { useSiteBranch } from '@/contexts/SiteBranchContext';
 import BranchSwitcher from './branches/BranchSwitcher';
-import { BranchBadge, MainChangedNote, ReviewAndMergeButton, SharePreviewButton, UpdateUndoneNote } from './branches/BranchBar';
+import { BranchBadge, MainChangedNote, ReviewAndMergeButton, SharePreviewButton, UpdateUndoneNote, BranchClosedElsewhere } from './branches/BranchBar';
 import ColorModeSwitch, { useHasColorModeSwitch } from './ColorModeSwitch';
 
 function relativeTime(ts: number, now: number): string {
@@ -434,6 +434,7 @@ const TopBar = observer(() => {
           branch is never published; publishing happens from main). */}
       {onBranch ? (
         <>
+          <BranchClosedElsewhere />
           <UpdateUndoneNote className="mr-2" />
           <MainChangedNote className="mr-2" />
           <SharePreviewButton className="mr-2" />

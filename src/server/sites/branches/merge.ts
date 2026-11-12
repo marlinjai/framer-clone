@@ -645,7 +645,7 @@ export class SiteBranchMergeService {
       }, WRITE_TRANSACTION),
     );
     if (outcome.kind === 'repeat') return this.mergedOutcome(scope, outcome.stamp);
-    forgetBranchContent(stamp.branchId);
+    forgetBranchContent(stamp.branchId, 'merged');
     this.announce(stamp.mainId, outcome.write, persisted, 'merge', [`Merged branch ${stamp.recordName}`]);
     return { merged: true, branch: await this.branches.getBranch(scope, stamp.mainId, stamp.branchId), mainVersion: outcome.write.version };
   }

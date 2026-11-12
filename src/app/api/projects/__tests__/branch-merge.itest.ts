@@ -555,6 +555,25 @@ describe('re-entry after completion or failure', () => {
   });
 });
 
+describe('a tab open on the branch hears that it was closed', () => {
+  it('a merge and a discard each announce it on the branch\'s own stream, once, after the commit', async () => {
+    const heard: Array<[string, unknown]> = [];
+    const mergedId = await createBranch(us, 'To merge');
+    await edit(us, mergedId, { home: 'Merged bread', about: 'Since 1990' });
+    const discardedId = await createBranch(us, 'To discard');
+    const stop = [mergedId, discardedId].map((id) => subscribeSite(id, (event, data) => event === LIVE_EVENTS.branchClosed && heard.push([id, data])));
+    expect((await merge(mergedId, { token: (await review(mergedId)).token })).status).toBe(200);
+    await getSiteBranchRepository().discardBranch(us.scope, us.mainId, discardedId, { kind: 'user', id: 'u' });
+    // A repeat of either writes nothing and says nothing again.
+    await getSiteBranchRepository().discardBranch(us.scope, us.mainId, discardedId, { kind: 'user', id: 'u' });
+    stop.forEach((off) => off());
+    expect(heard).toEqual([
+      [mergedId, { status: 'merged' }],
+      [discardedId, { status: 'discarded' }],
+    ]);
+  });
+});
+
 describe('a branch that changes nothing', () => {
   it('is not merged, by the route as by the screen: nothing is written, it stays open, and the merge before it can still be undone', async () => {
     const first = await createBranch(us, 'First');
