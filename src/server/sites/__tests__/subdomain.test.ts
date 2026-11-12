@@ -94,3 +94,12 @@ describe('statelessness (no internal dedupe — dedup is the DB layer, MT-06)', 
     expect(issued.size).toBeGreaterThan(0);
   });
 });
+
+describe('labels kept for the public preview links of site branches (S8)', () => {
+  it('are reserved, so no site can ever be given one', () => {
+    expect(isReserved('preview-abcdefghijklmnopqrstuvwxyz234567')).toBe(true);
+    expect(isReserved('Preview-x')).toBe(true);
+    expect(isReserved('preview')).toBe(false);
+    expect(isReserved('previews')).toBe(false);
+  });
+});

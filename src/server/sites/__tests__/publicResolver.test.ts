@@ -491,3 +491,15 @@ describe('resolvePublishedSiteByKey with a revision', () => {
     ).rejects.toThrow('malformed site revision document');
   });
 });
+
+describe('hostLookupKeys and a label kept for preview links (site branches, S8)', () => {
+  it('yields no key, so no cache entry and no read, with a base host and without one', () => {
+    const token = 'abcdefghijklmnopqrstuvwxyz234567';
+    for (const label of [`preview-${token}`, 'preview-nope', 'PREVIEW-x']) {
+      expect(hostLookupKeys(`${label}.lumitra.site`, 'lumitra.site'), label).toEqual([]);
+      expect(hostLookupKeys(`${label}.lumitra.site`, null).filter((k) => k.kind === 'subdomain'), label).toEqual([]);
+    }
+    // A site whose label merely contains the word is a site.
+    expect(hostLookupKeys('previews.lumitra.site', 'lumitra.site')).toEqual([{ kind: 'subdomain', value: 'previews' }]);
+  });
+});

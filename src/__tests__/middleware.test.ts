@@ -914,3 +914,83 @@ describe('middleware: a published host forwards only the cookies the published p
     expect(forwardedCookie(res)).toBeNull();
   });
 });
+
+describe('middleware: a preview host (the public preview link of a site branch, S8)', () => {
+  const PREVIEW = `preview-${'a2'.repeat(16)}.sites.lumitra.co`;
+  const use = () => {
+    process.env.EDITOR_HOST = EDITOR;
+    process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
+  };
+  afterEach(() => {
+    delete process.env.PUBLIC_SITE_BASE_HOST;
+  });
+  const marked = (res: Response) => {
+    expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow, noarchive');
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
+  };
+
+  it('serves its home as the site home and its pages as reads, without any cookie or key travelling on', async () => {
+    use();
+    const home = await middleware(new NextRequest(`https://${PREVIEW}/`, { headers: { host: PREVIEW, cookie: 'lumitra_session=x; lumitra-consent-maps=1', authorization: 'Bearer k' } }));
+    expect(rewriteTarget(home)).toBe(`https://${PREVIEW}/${HOME_REWRITE_SENTINEL}`);
+    marked(home);
+    const page = await middleware(new NextRequest(`https://${PREVIEW}/about`, { headers: { host: PREVIEW, cookie: 'lumitra_session=x' } }));
+    expect(isNext(page)).toBe(true);
+    marked(page);
+    for (const res of [home, page]) {
+      // Next lists the request headers it passes on; the session and the key are not among them.
+      const passed = (res.headers.get('x-middleware-override-headers') ?? '').split(',');
+      expect(passed).not.toContain('cookie');
+      expect(passed).not.toContain('authorization');
+      expect(res.headers.get('x-middleware-request-cookie')).toBeNull();
+      expect(res.headers.get('x-middleware-request-authorization')).toBeNull();
+    }
+  });
+
+  it('refuses every write, every server action, the editor and every other API, each answer marked the same', async () => {
+    use();
+    const attempts: Array<[string, RequestInit & { headers: Record<string, string> }]> = [
+      ['/', { method: 'POST', headers: {} }],
+      ['/about', { method: 'POST', headers: {} }],
+      ['/about', { method: 'GET', headers: { 'next-action': 'abc' } }],
+      ['/about', { method: 'DELETE', headers: {} }],
+      ['/api/forms/submit', { method: 'POST', headers: {} }],
+      ['/api/commerce/orders', { method: 'POST', headers: {} }],
+      ['/api/commerce/orders/o1/pay', { method: 'POST', headers: {} }],
+      ['/api/csp-report', { method: 'POST', headers: {} }],
+      ['/api/commerce/products', { method: 'POST', headers: {} }],
+      ['/api/cms/collections', { method: 'GET', headers: {} }],
+      ['/api/mcp', { method: 'POST', headers: { authorization: 'Bearer k' } }],
+      ['/api/projects/p1/branches/b1/preview-link', { method: 'POST', headers: {} }],
+      ['/projects', { method: 'GET', headers: {} }],
+      ['/projects/p1/preview', { method: 'GET', headers: {} }],
+      ['/API/commerce/products', { method: 'GET', headers: {} }],
+    ];
+    for (const [path, init] of attempts) {
+      const res = await middleware(new NextRequest(`https://${PREVIEW}${path}`, { ...init, headers: { host: PREVIEW, cookie: 'lumitra_session=x', ...init.headers } }));
+      expect(res.status, `${init.method} ${path}`).toBe(404);
+      expect(isNext(res)).toBe(false);
+      marked(res);
+    }
+    const posted = await middleware(new NextRequest(`https://${PREVIEW}/about`, { method: 'POST', headers: { host: PREVIEW } }));
+    expect(await posted.text()).toMatch(/This is a preview: nothing can be sent from it/);
+  });
+
+  it('lets a preview page read its site\'s catalogue, and only read it', async () => {
+    use();
+    for (const path of ['/api/commerce/products', '/api/commerce/products/tee', '/api/commerce/inventory']) {
+      const res = await middleware(new NextRequest(`https://${PREVIEW}${path}`, { headers: { host: PREVIEW } }));
+      expect(isNext(res), path).toBe(true);
+      marked(res);
+    }
+  });
+
+  it('is an ordinary published host while no sites base host is configured, and never the editor', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(new NextRequest(`https://${PREVIEW}/projects`, { headers: { host: PREVIEW, cookie: 'lumitra_session=x' } }));
+    expect(res.status).toBe(404);
+    expect(res.headers.get('x-robots-tag')).toBeNull();
+  });
+});

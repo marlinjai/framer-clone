@@ -11,13 +11,17 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware } from '@/middleware';
-import { HOST_ROUTES, publishedHostAllows, routeFor } from '@/lib/hostRoutes';
+import { HOST_ROUTES, previewHostAllows, publishedHostAllows, routeFor } from '@/lib/hostRoutes';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 
 const APP_DIR = path.resolve(__dirname, '../../app');
 const EDITOR = 'app.lumitra.co';
 const PUBLISHED = 'acme.sites.lumitra.co';
 const CUSTOM_DOMAIN = 'www.acme-shop.de';
+const SITES_BASE = 'sites.lumitra.co';
+/** A branch's public preview link (src/lib/sites/previewHost.ts): well formed, and with a token of the wrong shape. */
+const PREVIEW = `preview-${'a2'.repeat(16)}.${SITES_BASE}`;
+const PREVIEW_MALFORMED = `preview-nope.${SITES_BASE}`;
 
 /** The files that make a route: pages and route handlers, the harness build's included, in every extension Next reads. */
 const ROUTE_FILE = /^(page|route)(\.harness)?\.(js|jsx|ts|tsx)$/;
@@ -108,6 +112,7 @@ const isNext = (res: Response) => res.headers.get('x-middleware-next') === '1';
 const rewriteTarget = (res: Response) => res.headers.get('x-middleware-rewrite');
 
 afterEach(() => {
+  delete process.env.PUBLIC_SITE_BASE_HOST;
   delete process.env.EDITOR_HOST;
 });
 
@@ -190,8 +195,22 @@ describe('host routes: every route under src/app is classified', () => {
       const entry = HOST_ROUTES.find((e) => e.route === routeFile.route);
       const answered = exportedMethods(routeFile);
       for (const method of entry?.published ?? []) expect(answered, routeFile.file).toContain(method);
+      // A preview host only reads, and only what a published host may read too.
+      if (entry?.preview) {
+        expect(answered, routeFile.file).toContain('GET');
+        expect(entry.published, routeFile.file).toContain('GET');
+      }
     },
   );
+
+  it('a preview host reaches the site pages and the catalogue reads, and nothing else', () => {
+    expect(HOST_ROUTES.filter((e) => e.preview).map((e) => e.route).sort()).toEqual([
+      '/[...slug]',
+      '/api/commerce/inventory',
+      '/api/commerce/products',
+      '/api/commerce/products/[handle]',
+    ]);
+  });
 });
 
 describe('host routes: the middleware answers each route by its class', () => {
@@ -216,6 +235,28 @@ describe('host routes: the middleware answers each route by its class', () => {
         expect(res.headers.get('location')).toBeNull();
       }
     }
+
+    // A preview host (a branch's public preview link): a read of a route marked `preview`, nothing else,
+    // whatever the token looks like, and every answer says never index, never store, never refer, never frame.
+    process.env.PUBLIC_SITE_BASE_HOST = SITES_BASE;
+    const mayPreview = entry.preview === true && verb === 'GET';
+    expect(previewHostAllows(pathname, method)).toBe(mayPreview);
+    for (const host of [PREVIEW, PREVIEW_MALFORMED, PREVIEW.toUpperCase()]) {
+      const res = await middleware(request(host, pathname, method, { cookie: 'lumitra_session=x', authorization: 'Bearer not-a-real-key' }));
+      if (mayPreview) {
+        expect(isNext(res), `${host} ${method} ${pathname}`).toBe(true);
+      } else {
+        expect(res.status, `${host} ${method} ${pathname}`).toBe(404);
+        expect(isNext(res)).toBe(false);
+        expect(res.headers.get('location')).toBeNull();
+      }
+      expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow, noarchive');
+      expect(res.headers.get('cache-control')).toBe('private, no-store');
+      expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+      expect(res.headers.get('x-frame-options')).toBe('DENY');
+      expect(res.headers.get('content-security-policy-report-only')).toBeNull();
+    }
+    delete process.env.PUBLIC_SITE_BASE_HOST;
 
     // The editor host is unchanged: signed in and same origin, everything passes.
     // The machine door (/api/mcp and /api/machine/*) is the one place a session
