@@ -142,7 +142,7 @@ describe('the image', () => {
     expect(head.headers['content-length']).toBe(response.headers['content-length']);
   });
 
-  it('serves again by itself after the database froze with its connections open', async () => {
+  it('answers 503 while the database is frozen with its connections open, stays up, and serves again when it thaws', async () => {
     const target = `/box/${SITE_A}/${'9'.repeat(64)}`;
     expect((await httpGet(box.port, target, FRAME_HEADERS)).status).toBe(404);
     pg.pause();

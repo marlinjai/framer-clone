@@ -231,7 +231,10 @@ describe('the handler on a real database', () => {
     expect((await get(SITE_A, HASH)).status).toBe(200);
   });
 
-  it('answers 503 in time while the database is frozen, and serves again by itself when it thaws', async () => {
+  // What this holds: a frozen database is answered 503 in bounded time, nothing stray is left behind, and
+  // service returns. That a silent pool is replaced is held by the unit tests, which fail without it; a
+  // paused Postgres answers its old sessions again once it thaws, so this test alone would not show it.
+  it('answers 503 in time while the database is frozen, and serves again when it thaws', async () => {
     const frozenStore = createPostgresStore(pg.readerUrl, { queryTimeoutMs: 1500 });
     const handle = createBoxHandler({ config, store: frozenStore, killSwitchOn: () => false, cacheTtlMs: 0 });
     const get = () => handle({ method: 'GET', url: `/box/${SITE_A}/${HASH}`, headers: FRAME, remoteAddress: '203.0.113.7' });

@@ -37,7 +37,7 @@ function main(): void {
   try {
     store = createPostgresStore(config.databaseUrl);
   } catch {
-    // The driver's own message can hold parts of the address: only the variable is named.
+    // The address was read once already; whatever still fails here, only the variable is named.
     fail('BOX_DATABASE_URL could not be used');
   }
   // The kill switch is the process's environment, so changing it takes a restart of the box.

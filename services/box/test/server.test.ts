@@ -232,6 +232,30 @@ describe('the server', () => {
     expect(lines).toHaveLength(1);
   });
 
+  it('serves many requests one after the other on one connection: an answered request no longer counts', async () => {
+    const { port } = await start(plain, { maxUnansweredPerSocket: 2 });
+    const answers = await new Promise<number>((resolve) => {
+      const socket = connect(port, '127.0.0.1');
+      let data = '';
+      let sent = 0;
+      const send = () => {
+        sent += 1;
+        socket.write('GET /health HTTP/1.1\r\nHost: x\r\n\r\n');
+      };
+      const count = () => (data.match(/HTTP\/1\.1 200 /g) ?? []).length;
+      socket.on('connect', send);
+      socket.on('data', (chunk) => {
+        data += chunk.toString('latin1');
+        if (count() === 8) socket.destroy();
+        else if (count() === sent) send();
+      });
+      socket.on('close', () => resolve(count()));
+      socket.on('error', () => resolve(count()));
+      setTimeout(() => socket.destroy(), 4000);
+    });
+    expect(answers).toBe(8);
+  });
+
   it('closes a connection that sends more requests than it has been answered', async () => {
     let calls = 0;
     let release!: () => void;

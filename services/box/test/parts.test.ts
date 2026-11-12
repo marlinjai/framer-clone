@@ -4,7 +4,8 @@ import { clientAddressOf, parseAddress, parseCidr, type Cidr } from '../src/clie
 import { ConfigError, isKillSwitchOn, readConfig } from '../src/config';
 import { RateLimiter } from '../src/rateLimit';
 import { createServer, type Socket } from 'node:net';
-import { createPostgresStore, storeFailureOf, withTimeout } from '../src/store';
+import { DatabaseUrlError, parseDatabaseUrl } from '../src/databaseUrl';
+import { createPostgresStore, storeFailureOf, withTimeout, type BoxPool, type BoxRow } from '../src/store';
 
 describe('the rate limiter', () => {
   it('allows a burst of the capacity and gives tokens back over the window', () => {
@@ -193,8 +194,16 @@ describe('the configuration', () => {
     ['a database that is not Postgres', { ...env, BOX_DATABASE_URL: 'mysql://x' }],
     ['a database that is not an address', { ...env, BOX_DATABASE_URL: 'box_reader' }],
     ['a database address with two hosts', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db1,db2/app' }],
+    ['a database address with an escaped second host', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db%2cevil/app' }],
+    ['a database address with a bracketed address', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@[fd00::5]:5432/app' }],
     ['a database address with a malformed escape', { ...env, BOX_DATABASE_URL: 'postgres://box_reader:a%zzb@db.internal/app' }],
     ['a database address with an unknown sslmode', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?sslmode=bogus' }],
+    ['a database address with an sslmode that only prefers', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?sslmode=prefer' }],
+    ['a database address with sslmode twice', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?sslmode=verify-full&sslmode=disable' }],
+    ['a database address that lifts the statement timeout', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?statement_timeout=0' }],
+    ['a database address with an ssl parameter', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal/app?ssl=false' }],
+    ['a database address without a role', { ...env, BOX_DATABASE_URL: 'postgres://db.internal/app' }],
+    ['a database address without a database', { ...env, BOX_DATABASE_URL: 'postgres://box_reader@db.internal' }],
     ['an editor host that is a branch preview host', { ...env, BOX_EDITOR_HOST: 'preview-abcdefghijklmnopqrstuvwxyz234567.sites.lumitra.co' }],
     ['a sites base host that is a branch preview host', { ...env, BOX_SITES_BASE_HOST: 'preview-x.lumitra.co' }],
     ['an expiry on a day that does not exist', { ...env, BOX_SECURITY_TXT_EXPIRES: '2027-02-30T00:00:00Z' }],
@@ -227,6 +236,21 @@ describe('the configuration', () => {
     }
   });
 
+  it('reads the database address into the parts the driver is given', () => {
+    expect(parseDatabaseUrl('postgres://box_reader:p%40ss@db.internal:6543/app?sslmode=verify-full')).toEqual({
+      host: 'db.internal', port: 6543, database: 'app', username: 'box_reader', password: 'p@ss', ssl: 'verify-full',
+    });
+    expect(parseDatabaseUrl('postgresql://box_reader@10.0.0.5/app')).toMatchObject({ host: '10.0.0.5', port: 5432, ssl: false });
+    expect(parseDatabaseUrl('postgres://box_reader@db/app?sslmode=disable').ssl).toBe(false);
+    expect(parseDatabaseUrl('postgres://box_reader@db/app?sslmode=require').ssl).toBe('require');
+    expect(() => parseDatabaseUrl('postgres://box_reader:secret-value@db%2cevil/app')).toThrow(DatabaseUrlError);
+    try {
+      parseDatabaseUrl('postgres://box_reader:secret-value@db%2cevil/app');
+    } catch (error) {
+      expect((error as Error).message).not.toMatch(/secret-value|evil|box_reader/);
+    }
+  });
+
   it('keeps the kill switch on unless it is exactly 0 (D16)', () => {
     expect(isKillSwitchOn({ CUSTOM_CODE_DISABLED: '0' })).toBe(false);
     for (const value of [undefined, '', '1', 'true', 'false', 'no', 'off', ' 0', '0 ', '00', 'O']) {
@@ -249,15 +273,22 @@ describe('store failures', () => {
     expect(storeFailureOf(null)).toBe('query');
   });
 
-  describe('against a listener that accepts and never answers', () => {
-    it('gives up after the timeout, leaves no rejection behind, and starts on fresh connections the next time', async () => {
+  describe('against a listener that goes silent', () => {
+    it.each([
+      ['before it says anything', false],
+      ['after it let the box log in', true],
+    ])('%s: gives up after the timeout, closes the silent connections for real, and starts on fresh ones', async (_when, logsIn) => {
       const sockets: Socket[] = [];
-      const closed = new Set<Socket>();
-      const server = createServer((socket) => {
+      // Takes what is sent and answers nothing, not even the other end's goodbye: a client that only
+      // asks to close (a half close) keeps its socket for ever against this listener. Only a client
+      // that destroys its socket lets go of it.
+      const server = createServer({ allowHalfOpen: true }, (socket) => {
         sockets.push(socket);
         socket.on('error', () => {});
-        socket.on('close', () => closed.add(socket));
-        // Takes what is sent and answers nothing.
+        if (logsIn) {
+          // The least a Postgres says to let a client in: "authentication ok", then "ready for query".
+          socket.once('data', () => socket.write(Buffer.from([0x52, 0, 0, 0, 8, 0, 0, 0, 0, 0x5a, 0, 0, 0, 5, 0x49])));
+        }
         socket.resume();
       });
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -265,20 +296,26 @@ describe('store failures', () => {
       const stray: unknown[] = [];
       const onStray = (reason: unknown) => stray.push(reason);
       process.on('unhandledRejection', onStray);
-      const store = createPostgresStore(`postgres://box_reader@127.0.0.1:${port}/app`, { queryTimeoutMs: 300, connectTimeoutSeconds: 30 });
+      const store = createPostgresStore(`postgres://box_reader@127.0.0.1:${port}/app`, { queryTimeoutMs: 300, connectTimeoutMs: 250 });
       try {
         const started = Date.now();
         await expect(store.find('0b0e7c1a-5d2f-4c3b-9a8e-1f2d3c4b5a69', 'a'.repeat(64))).rejects.toMatchObject({ code: 'BOX_TIMEOUT' });
         expect(Date.now() - started).toBeLessThan(2000);
         // Five more calls, one after the other. A pool that kept its silent connections would stop at
-        // its three and never open another; a pool that is replaced opens a fresh one each time.
+        // its two and never open another; a pool that is replaced opens a fresh one each time.
         for (let i = 0; i < 5; i++) {
           await expect(store.ping()).rejects.toMatchObject({ code: 'BOX_TIMEOUT' });
         }
         expect(sockets.length).toBeGreaterThanOrEqual(6);
-        // Every pool that was given up on closed its connection: at most the last one is still open.
+        // The listener never closes a connection by itself. It now writes to each one: a socket the box
+        // destroyed answers with a reset, which closes the listener's end; a socket the box only asked
+        // to close (and so still holds) takes the bytes and stays. At most the current pool's are left.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        for (const socket of sockets) if (!socket.destroyed) socket.write('x');
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        for (const socket of sockets) if (!socket.destroyed) socket.write('x');
         await new Promise((resolve) => setTimeout(resolve, 300));
-        expect(sockets.length - closed.size).toBeLessThanOrEqual(1);
+        expect(sockets.filter((socket) => !socket.destroyed).length).toBeLessThanOrEqual(2);
         expect(stray).toEqual([]);
       } finally {
         await store.close().catch(() => {});
@@ -307,6 +344,90 @@ describe('store failures', () => {
         await store.close().catch(() => {});
         process.off('unhandledRejection', onStray);
       }
+    });
+
+    it('a connection that does not open in time fails as itself, before the call is given up on', async () => {
+      // 192.0.2.1 is a documentation address: nothing answers, so the connection never opens.
+      const store = createPostgresStore('postgres://box_reader@192.0.2.1:5432/app', { queryTimeoutMs: 1500, connectTimeoutMs: 200 });
+      try {
+        const failure = await store.ping().then(() => null, (error: unknown) => error);
+        expect(['timeout', 'connect']).toContain(storeFailureOf(failure));
+        expect(failure).not.toMatchObject({ code: 'BOX_TIMEOUT' });
+      } finally {
+        await store.close().catch(() => {});
+      }
+    });
+  });
+
+  describe('when to throw a pool away', () => {
+    const SITE = '0b0e7c1a-5d2f-4c3b-9a8e-1f2d3c4b5a69';
+    const later = <T>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
+    const never = <T>() => new Promise<T>(() => {});
+
+    function fakePools(find: (sha256: string, generation: number) => PromiseLike<BoxRow | null>) {
+      const made: { destroyed: boolean; ended: boolean }[] = [];
+      const open = (): BoxPool => {
+        const state = { destroyed: false, ended: false };
+        const generation = made.push(state);
+        return {
+          find: (_siteId, sha256) => find(sha256, generation),
+          ping: () => Promise.resolve(),
+          end: async () => void (state.ended = true),
+          destroy: () => void (state.destroyed = true),
+        };
+      };
+      return { made, open };
+    }
+
+    it('keeps a pool that is busy but answering: one slow call does not fail the others', async () => {
+      // 'slow' never comes back; 'quick' answers after 100 ms, while the slow one is waiting.
+      const { made, open } = fakePools((sha256) => (sha256 === 'slow' ? never() : later(100, null)));
+      const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 300, open });
+      const slow = store.find(SITE, 'slow').then(() => 'answered', (error: { code?: string }) => error.code);
+      const quick = store.find(SITE, 'quick');
+      await expect(quick).resolves.toBeNull();
+      expect(await slow).toBe('BOX_TIMEOUT');
+      // The database answered after the slow call began, so it is not silent: same pool, nothing destroyed.
+      expect(made).toHaveLength(1);
+      expect(made[0]!.destroyed).toBe(false);
+    });
+
+    it('keeps a pool whose database answers with an error of its own', async () => {
+      const { made, open } = fakePools((sha256) =>
+        sha256 === 'slow' ? never() : later(100, null).then(() => Promise.reject(Object.assign(new Error('x'), { code: '57014' }))),
+      );
+      const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 300, open });
+      const slow = store.find(SITE, 'slow').catch((error: { code?: string }) => error.code);
+      await expect(store.find(SITE, 'other')).rejects.toMatchObject({ code: '57014' });
+      expect(await slow).toBe('BOX_TIMEOUT');
+      expect(made).toHaveLength(1);
+    });
+
+    it('throws away a pool that gave no answer at all, once, and serves from the new one', async () => {
+      // The first pool is silent; every later one answers.
+      const { made, open } = fakePools((_sha256, generation) => (generation === 1 ? never() : Promise.resolve({ document: 'x', live: true, subdomainLabels: [], customHostnames: [] })));
+      const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 200, open });
+      const results = await Promise.all(['a', 'b', 'c'].map((sha256) => store.find(SITE, sha256).then(() => 'answered', (error: { code?: string }) => error.code)));
+      expect(results).toEqual(['BOX_TIMEOUT', 'BOX_TIMEOUT', 'BOX_TIMEOUT']);
+      // Three calls gave up together: one replacement, not three.
+      expect(made).toHaveLength(2);
+      expect(made[0]!.destroyed).toBe(true);
+      expect(made[1]!.destroyed).toBe(false);
+      await expect(store.find(SITE, 'd')).resolves.toMatchObject({ live: true });
+      await store.close();
+      expect(made[1]!.ended).toBe(true);
+      expect(made[0]!.ended).toBe(false);
+    });
+
+    it('does not count a failed connection as an answer', async () => {
+      const { made, open } = fakePools((sha256, generation) =>
+        generation > 1 ? Promise.resolve(null) : sha256 === 'slow' ? never() : later(50, null).then(() => Promise.reject(Object.assign(new Error('x'), { code: 'ECONNRESET' }))),
+      );
+      const store = createPostgresStore('postgres://r@db/app', { queryTimeoutMs: 200, open });
+      const slow = store.find(SITE, 'slow').catch((error: { code?: string }) => error.code);
+      await expect(store.find(SITE, 'other')).rejects.toMatchObject({ code: 'ECONNRESET' });
+      expect(await slow).toBe('BOX_TIMEOUT');
+      expect(made).toHaveLength(2);
     });
   });
 

@@ -7,6 +7,7 @@
 
 import { isExactHostname, isPreviewLabelHost } from '../../../src/lib/customCode/contract';
 import { parseAddress, parseCidr, type Cidr } from './clientAddress';
+import { DatabaseUrlError, parseDatabaseUrl } from './databaseUrl';
 
 export interface BoxConfig {
   /** The address the server binds. */
@@ -72,32 +73,13 @@ function isIsoInstant(value: string): boolean {
   return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value.slice(0, 10);
 }
 
-const SSL_MODES = new Set(['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']);
-
-/** One host, credentials that decode, a known `sslmode`: what the driver would otherwise only find out by throwing. */
-function checkDatabaseUrl(value: string): void {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new ConfigError('BOX_DATABASE_URL is not a connection string');
-  }
-  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') throw new ConfigError('BOX_DATABASE_URL is not a Postgres connection string');
-  if (url.hostname === '' || url.hostname.includes(',')) throw new ConfigError('BOX_DATABASE_URL must name one host');
-  try {
-    decodeURIComponent(url.username);
-    decodeURIComponent(url.password);
-    decodeURIComponent(url.pathname);
-  } catch {
-    throw new ConfigError('BOX_DATABASE_URL holds a malformed percent escape');
-  }
-  const sslmode = url.searchParams.get('sslmode');
-  if (sslmode !== null && !SSL_MODES.has(sslmode)) throw new ConfigError('BOX_DATABASE_URL holds an unknown sslmode');
-}
-
 export function readConfig(env: Env): BoxConfig {
   const databaseUrl = required(env, 'BOX_DATABASE_URL');
-  checkDatabaseUrl(databaseUrl);
+  try {
+    parseDatabaseUrl(databaseUrl);
+  } catch (error) {
+    throw new ConfigError(`BOX_DATABASE_URL ${error instanceof DatabaseUrlError ? error.message : 'could not be read'}`);
+  }
 
   const portText = env.BOX_PORT ?? '8080';
   if (!/^[1-9][0-9]{0,4}$/.test(portText) || Number(portText) > 65535) throw new ConfigError('BOX_PORT must be a port number');
