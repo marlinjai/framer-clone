@@ -72,9 +72,9 @@ Decided while building, each reversible:
   an exception.
 - **The server reads the form from the published snapshot**, never from the request, and validates with
   the same module the island uses (`src/lib/forms/validation.ts`).
-- **No mail.** The repository has no mail transport (no Lumitra Mail client, Resend or SMTP), so
-  submissions are stored only and read in the editor's Form submissions view; the Form section says so.
-  The notification email field was left out rather than shipped as a control that does nothing.
+- **No mail (as built 2026-10-24; superseded 2026-11-12).** The repository had no mail transport then, so
+  submissions were stored only. The shop's Lumitra Mail pipeline arrived on 2026-10-27, and the notification
+  email is built on it, see "Form notification emails (2026-11-12)".
 - **No IP stored**, not even hashed (an IPv4 hash is reversible by enumeration). Rate limits are in
   memory per IP and per form.
 - **Without JavaScript** the form posts normally: a thank-you page answers 303, an inline success or an
@@ -256,7 +256,7 @@ while building, each reversible:
     nodes, and drops a bar without a label or a safe link (the preset's placeholder link is never
     used for a generated bar).
 
-Not built here: form notification emails (decision 4) stay open on their own roadmap line.
+Form notification emails (decision 4) were built later, see "Form notification emails (2026-11-12)" at the end.
 
 ## Uploaded favicon and sharing image (2026-11-02)
 
@@ -303,3 +303,37 @@ address. Built beside the address field, which stays. Revised the same day after
    process-local, like the form limiter: framer-clone runs as one container.
 7. **The catalogue and Books logo uploads get the same per-user limit** (separate commit), since they read the same
    kind of body behind the same kind of session.
+
+## Form notification emails (2026-11-12)
+
+Decision 4 said submissions are "notified by email (Lumitra Mail)"; the roadmap line carried the rest. Built on the
+shop's pipeline of [the receipt email plan](2026-10-27-shop-receipt-email.md), not beside it. Decided while building,
+each reversible (say so if you disagree):
+
+1. **The company's own Lumitra Mail connection sends it**, the one the owner makes once on the payments page ("Receipt
+   email"). A platform-wide sender would need a new secret and would send one company's visitors' words from another's
+   name. A company with no shop reaches the same card (it does not need Stripe). Not connected: the submission is stored,
+   the notification row says `skipped: not_connected`, and the inbox says so with the way forward.
+2. **The notice is a third template of that connection** (`form_notification`, German and English, kept out of the
+   buyer letters' kind list on purpose). A connection made before it existed installs it itself at the first notice, with
+   the company's own send key (what connecting does), and stores the ids.
+3. **Who is emailed:** the form's own address (form settings, "Email me at"), else the site's contact email (Site settings,
+   business data), decided at submit time from the PUBLISHED form and site and frozen on the row; a posted value is never
+   read. The form's address is a private prop: the server strips it from the node a client island receives, so visitors
+   never get it (test `notifyEmailPrivate.test.tsx` fails without the strip). Neither set: the row says `no_recipient`.
+4. **Written in the submission's own transaction** (`031_form_notification`, primary key and foreign key = the submission
+   id, `ON DELETE CASCADE`), with a `form_mail` job (the shop job engine, retries 1, 5, 15, 60 minutes, then every 6 hours for
+   three days). The job payload is the submission id only. A repeated post of the same submission id writes nothing more.
+   A failed email never loses the submission: it is stored first, and the notice is a row of its own.
+5. **The letter holds a one-line summary** ("label: value | ...", each value 300 and the whole 1800 characters, Lumitra Mail
+   escapes merge values) and a link to the editor, not the full message. It is frozen at its first attempt and emptied once
+   settled (it carries the visitor's words). Deleting a submission, the project, or a company erasure deletes the notice
+   through the foreign key (erasure coverage: "cascade from form_submission").
+6. **Recovery:** the inbox shows each submission's email (sent, being sent, blocked, failed with the reason, skipped with
+   why) and a "Send email again" for failed ones and for "not connected" ones once connected. A new round gets a new job and
+   a new Lumitra Mail idempotency key; a blocked address and "no recipient" are not resendable.
+7. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then
+   connected plus resend, refusal then resend, blocked, an old connection installing the template, a failing install,
+   reconnect to another workspace, Lumitra Mail down then back with the letter unchanged, three days of failures, a deleted
+   submission mid-retry, and a second company of the same tenant group. Not yet done: a live letter to Marlin's own address
+   (needs the deploy and his yes).

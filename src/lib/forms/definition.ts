@@ -97,8 +97,9 @@ export const NOTIFY_EMAIL_PROP = 'notifyEmail';
 /** The form node without the owner's private settings, safe to send to the browser. */
 export function withoutPrivateFormProps<T extends { props?: Record<string, unknown> | null }>(node: T): T {
   if (!node.props || !(NOTIFY_EMAIL_PROP in node.props)) return node;
-  const { [NOTIFY_EMAIL_PROP]: _private, ...rest } = node.props;
-  return { ...node, props: rest };
+  const props = { ...node.props };
+  delete props[NOTIFY_EMAIL_PROP];
+  return { ...node, props };
 }
 
 /** The non-DOM props of each kind: renderers strip these before emitting an element. */

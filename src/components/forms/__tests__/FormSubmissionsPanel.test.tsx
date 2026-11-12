@@ -32,11 +32,13 @@ const forms = () => [
   { formId: 'form-b', formName: 'Booking', total: rows.filter((r) => r.formId === 'form-b').length, unread: 0 },
 ];
 let failList = false;
+let resendAnswer: { status: number; code?: string; message?: string } = { status: 200 };
 let calls: { method: string; url: string; body?: unknown }[];
 
 beforeEach(() => {
   rows = [item('s3'), item('s2', { readAt: '2026-10-24T11:00:00.000Z' }), item('s1', { formId: 'form-b', formName: 'Booking' })];
   failList = false;
+  resendAnswer = { status: 200 };
   calls = [];
   vi.stubGlobal(
     'fetch',
@@ -52,6 +54,12 @@ beforeEach(() => {
         if (!form && !cursor) list = list.slice(0, 2);
         else if (!form && cursor) list = rows.slice(2);
         return Response.json({ submissions: list, hasMore: !form && !cursor, nextCursor: !form && !cursor ? 'c1' : null, forms: forms() });
+      }
+      if (method === 'POST' && url.endsWith('/resend')) {
+        if (resendAnswer.status !== 200) {
+          return new Response(JSON.stringify({ error: { code: resendAnswer.code, message: resendAnswer.message } }), { status: resendAnswer.status });
+        }
+        return Response.json({ id: url.split('/').slice(-2)[0], queued: true });
       }
       const id = url.split('/').pop()!;
       if (method === 'PATCH') {
@@ -132,5 +140,47 @@ describe('FormSubmissionsPanel', () => {
     rows = [];
     render(<FormSubmissionsPanel projectId="proj-1" />);
     await screen.findByText(/No submissions yet/);
+  });
+
+  describe('the email to the owner', () => {
+    const failed = { status: 'failed' as const, reason: 'Lumitra Mail refused sending: api_key_revoked (401).', recipient: 'owner@bakery.example' };
+
+    it('says nothing for a submission from before notifications, and "sent" without a resend button', async () => {
+      rows = [item('s3', { notification: { status: 'sent', reason: null, recipient: 'owner@bakery.example' } }), item('s2')];
+      render(<FormSubmissionsPanel projectId="proj-1" />);
+      fireEvent.click(await screen.findByRole('button', { name: /Visitor s3/ }));
+      expect(screen.getByTestId('submission-email-status').textContent).toContain('Email sent to owner@bakery.example');
+      expect(screen.queryByRole('button', { name: /Send email again/ })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /Visitor s2/ }));
+      expect(screen.queryAllByTestId('submission-email-status')).toHaveLength(0);
+    });
+
+    it('a failed one is flagged in the list, shows why, and "Send email again" queues it', async () => {
+      rows = [item('s3', { notification: failed })];
+      render(<FormSubmissionsPanel projectId="proj-1" />);
+      expect(await screen.findByText(/no email sent/)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: /Visitor s3/ }));
+      expect(screen.getByRole('alert').textContent).toContain('api_key_revoked');
+      // Opening marks it read first; the button waits for that to finish.
+      await waitFor(() => expect((screen.getByRole('button', { name: /Send email again/ }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: /Send email again/ }));
+      await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === `${BASE}/s3/resend`)).toBe(true));
+      await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('is being sent'));
+      expect(screen.queryByRole('button', { name: /Send email again/ })).toBeNull();
+    });
+
+    it('a resend the server refuses shows its message and keeps the button', async () => {
+      resendAnswer = { status: 409, code: 'mail_not_connected', message: 'connect Lumitra Mail on the payments page first, then send this again' };
+      rows = [item('s3', { notification: { status: 'skipped', reason: 'not_connected', recipient: 'owner@bakery.example' } })];
+      render(<FormSubmissionsPanel projectId="proj-1" />);
+      fireEvent.click(await screen.findByRole('button', { name: /Visitor s3/ }));
+      expect(screen.getByTestId('submission-email-status').textContent).toContain('payments page');
+      await waitFor(() => expect((screen.getByRole('button', { name: /Send email again/ }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: /Send email again/ }));
+      await waitFor(() =>
+        expect(screen.getAllByRole('alert').some((el) => el.textContent?.includes('connect Lumitra Mail on the payments page first'))).toBe(true),
+      );
+      expect(screen.getByRole('button', { name: /Send email again/ })).toBeTruthy();
+    });
   });
 });

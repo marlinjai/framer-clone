@@ -304,6 +304,7 @@ export async function resendFormNotification(
       .updateTable('form_notification')
       .set({ status: 'pending', round, round_started_at: now, last_error: null, mailing_id: null, letter: null, updated_at: now })
       .where('submission_id', '=', ref.submissionId)
+      .where('tenant_id', '=', ref.tenantGroupId)
       .execute();
     await scheduleFormMail(trx, row.companyId, ref.submissionId, round, now);
     return 'queued';
