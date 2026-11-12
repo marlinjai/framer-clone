@@ -450,6 +450,8 @@ Decided after the whole-feature review (2026-11-12), say so if you disagree. Thr
 
 98. **The switch is a plain variable on the Coolify application, not a value in Infisical** (2026-11-12). It is an identifier, not a secret; a plain variable is one delete away from off and needs no secrets tooling to read. The container's start keeps the variables Coolify gives it and adds Infisical's. It is the fourth plain variable there, beside the three that let the container sign in to Infisical. Before the first deploy it was checked unset in both places, so the deploy could not turn branches on by itself.
 
+99. **With the switch off, a branch is hidden from the agent tools as it is from the editor** (2026-11-12, found in the production proof). The tools that take a site id (`get_site`, `get_page`, `apply_batch`, `generate_page`, `preview_url`, `publish`, `rollback`) read a branch id as a missing site while site branches are off for the key's company, for an open branch and for a merged or discarded one, and nothing in the answer says that it is a branch. This narrows decision 60 for that case: `publish` and `rollback` on a branch id are still refused before anyone is asked, but with the switch off as "no such site" instead of "a branch is never published", because saying it is a branch would tell what the switch hides. With the switch on, decision 60 stands as written. The load of a site reports its main site itself, so the check costs no read.
+
 ## 11. For Marlin to decide (answered 2026-11-11)
 
 Marlin took all four recommendations on 2026-11-11: (1) no tier logic, one constant of 10 open branches per site, switched on for Lumitra's own company first, the tier decided with Sites pricing; (2) no required second approval in version one; (3) yes to the public preview link, slice S8 after the core, 7 day expiry by default and a revoke button; (4) the CMS is not branched now.
@@ -605,7 +607,7 @@ Of the sites that existed before, one changed during the proof: "MCP end-to-end 
 
 - **Step 7, approve and decline:** needs Marlin's own fresh sign-in in the visible automation browser; the agent then asks for the merge of "Proof B" again and both pages are run. Until then the agent's merge is proven up to the approval gate and by the tests.
 - **Step 8b:** as recorded under "Step 8: who could play the reviewer".
-- **A finding, fixed in a follow-up pull request:** with the switch off, the agent tool `get_site` still reads an open branch by its id, while the editor answers 404 for that address. Section 9 says off hides branches. It is the company's own data, and a branch stays unpublishable either way.
+- **A finding, fixed in code and not yet deployed (decision 99):** with the switch off, the agent tool `get_site` still read an open branch by its id, while the editor answers 404 for that address. Section 9 says off hides branches. It is the company's own data, and a branch stays unpublishable either way. Production runs `b1e19a32`, which does not have the fix; it reaches production with the next authorized deploy and only matters once a switch is turned off again.
 
 **Observations for other owners**
 

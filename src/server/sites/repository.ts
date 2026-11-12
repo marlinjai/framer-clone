@@ -514,7 +514,7 @@ export class SiteRepository {
   async loadProjectWithVersion(
     scope: TenantScope,
     siteId: string,
-  ): Promise<{ project: ProjectModelType; version: number }> {
+  ): Promise<{ project: ProjectModelType; version: number; mainSiteId: string | null }> {
     assertScope(scope);
     // workspace_id IS in the where-clause, so a cross-workspace site simply
     // returns null here — never another tenant's data.
@@ -534,6 +534,9 @@ export class SiteRepository {
         projectUpdatedAt: true,
         erasureEpoch: true,
         version: true,
+        // Set on a site branch: its main site. Callers that must treat a branch differently (the agent
+        // operations hide one while site branches are off) learn it here, without a read of their own.
+        branchOfSiteId: true,
         pages: {
           select: { pageId: true, snapshot: true },
         },
@@ -557,7 +560,7 @@ export class SiteRepository {
       pages: row.pages.map((p) => ({ pageId: p.pageId, snapshot: p.snapshot })),
     };
 
-    return { project: ProjectModel.create(persistedToProjectSnapshot(rowData)), version: row.version };
+    return { project: ProjectModel.create(persistedToProjectSnapshot(rowData)), version: row.version, mainSiteId: row.branchOfSiteId ?? null };
   }
 
   /**
