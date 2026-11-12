@@ -58,6 +58,9 @@ import 'server-only';
  *   | -------------------------------- | ----------------------------------------------- |
  *   | viewSite                         | its workspace role satisfies `workspace.viewer` |
  *   | editSite, publishSite            | its workspace role satisfies `workspace.admin`  |
+ *   | mergeBranch                      | its workspace role satisfies `workspace.admin`; |
+ *   |                                  | the merge_branch tool also needs a person's     |
+ *   |                                  | approval (src/server/mcp/tools.ts)              |
  *   | manageDomain                     | never (custom domains stay a person's job)      |
  *   | eraseSiteData                    | never (needs the company owner's session)       |
  *   | viewBooks                        | the company holds the `books` app grant AND the |
@@ -145,6 +148,7 @@ export const MACHINE_ACTIONS: ReadonlySet<FramerAction> = new Set<FramerAction>(
   'viewSite',
   'editSite',
   'publishSite',
+  'mergeBranch',
   'viewBooks',
 ]);
 

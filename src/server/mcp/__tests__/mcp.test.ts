@@ -55,6 +55,7 @@ import { __resetStockImageCacheForTests, __resetStockOffersForTests } from '@/li
 import { OperationSchema } from '@/lib/siteOps/types';
 import type { CompanyKey, VerifiedKey } from '@/lib/auth-machine';
 import { createMcpHandler, MAX_BODY_BYTES, PROTOCOL_VERSIONS, type McpDeps } from '../handler';
+import { NO_BRANCHES } from './noBranches';
 import { APPROVAL_TTL_MS, APPROVALS_PER_KEY, ApprovalStore } from '../approvals';
 import { DATA_NOTICE, LISTED_TOOLS, OPERATION_SCHEMAS, UNEXPECTED_FAILURE, type ToolLimits } from '../tools';
 import { ELICITATION_PER_KEY, pendingCount } from '../elicitation';
@@ -169,7 +170,7 @@ function setup(options: { outcome?: CompanyKey; version?: number; deps?: Partial
   const approvals = new ApprovalStore(options.now);
   const handler = createMcpHandler({
     verifyKey,
-    siteOps: { repository, publicBaseHost: 'sites.example', editorHost: 'app.example' },
+    siteOps: { repository, publicBaseHost: 'sites.example', editorHost: 'app.example', branches: NO_BRANCHES },
     approvals,
     ...options.deps,
   });
@@ -573,7 +574,7 @@ describe('generate_page', () => {
 
   it('generates a new page and saves it on the version read', async () => {
     const { repository, state } = fakeRepository(3);
-    const handler = createMcpHandler({ verifyKey: async () => verifiedKey(), siteOps: { repository, anthropic: scriptedAnthropic(page) } });
+    const handler = createMcpHandler({ verifyKey: async () => verifiedKey(), siteOps: { repository, anthropic: scriptedAnthropic(page), branches: NO_BRANCHES } });
     const res = await handler.POST(post(fakeKey(), rpc('tools/call', { name: 'generate_page', arguments: { siteId: 'site-1', expectedVersion: 3, brief: 'A bakery menu', target: { kind: 'newPage', title: 'Menu' } } })));
     const { result } = (await res.json()) as { result: { isError: boolean; structuredContent: Record<string, unknown> } };
     expect(result.isError).toBe(false);
@@ -584,7 +585,7 @@ describe('generate_page', () => {
   it('refuses a stale version before calling the model, and an empty brief', async () => {
     const anthropic = vi.fn(scriptedAnthropic(page));
     const { repository, state } = fakeRepository(5);
-    const handler = createMcpHandler({ verifyKey: async () => verifiedKey(), siteOps: { repository, anthropic } });
+    const handler = createMcpHandler({ verifyKey: async () => verifiedKey(), siteOps: { repository, anthropic, branches: NO_BRANCHES } });
     const res = await handler.POST(post(fakeKey(), rpc('tools/call', { name: 'generate_page', arguments: { siteId: 'site-1', expectedVersion: 3, brief: 'x', target: { kind: 'newPage' } } })));
     const { result } = (await res.json()) as { result: { structuredContent: Record<string, unknown> } };
     expect(errorOf(result)).toMatchObject({ code: 'site_changed', currentVersion: 5 });
@@ -684,7 +685,7 @@ describe('publish approved through the approval link', () => {
     // Another key of the same company: refused, and the approval stays for its own key.
     const other = createMcpHandler({
       verifyKey: async () => verifiedKey('admin', 'key_2'),
-      siteOps: { repository: s.mock as unknown as SiteRepository, publicBaseHost: 'sites.example' },
+      siteOps: { repository: s.mock as unknown as SiteRepository, publicBaseHost: 'sites.example', branches: NO_BRANCHES },
       approvals: s.approvals,
     });
     const res = await other.POST(post(fakeKey(), rpc('tools/call', { name: 'publish', arguments: { siteId: 'site-1', expectedVersion: 3, approvalId: forSite1 } })));

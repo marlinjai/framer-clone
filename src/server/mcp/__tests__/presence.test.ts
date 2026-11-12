@@ -34,6 +34,7 @@ import { presenceSnapshot, resetLivePresenceForTests } from '@/server/sites/live
 import { LIVE_EVENTS, type AgentActivity } from '@/lib/projects/liveEvents';
 import { liveAgentId } from '@/server/siteOps/audit';
 import { createMcpHandler } from '../handler';
+import { NO_BRANCHES } from './noBranches';
 import { resetLivePlansForTests } from '../livePlans';
 import { ApprovalStore } from '../approvals';
 import { deletedPagesOf, focusOf, MISSES_PER_KEY, outcomeOf, REPORTS_PER_KEY, resetPresenceScopeCacheForTests, siteInScope, takeReport } from '../presence';
@@ -105,7 +106,7 @@ function setup(key: VerifiedKey = verifiedKey()) {
   const { repository, state, mock } = fakeRepository();
   const handler = createMcpHandler({
     verifyKey: vi.fn(async () => key),
-    siteOps: { repository, publicBaseHost: 'sites.example', editorHost: 'app.example' },
+    siteOps: { repository, publicBaseHost: 'sites.example', editorHost: 'app.example', branches: NO_BRANCHES },
     approvals: new ApprovalStore(),
   });
   return { handler, state, mock, bearer: fakeKey() };

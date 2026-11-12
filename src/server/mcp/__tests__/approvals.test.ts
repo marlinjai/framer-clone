@@ -34,6 +34,7 @@ import { APPROVAL_TTL_MS, ApprovalStore } from '../approvals';
 import { checkApprover } from '../approvalCheck';
 import { approveConfirmation } from '../approveRoute';
 import { createMcpHandler } from '../handler';
+import { NO_BRANCHES } from './noBranches';
 import * as routeModule from '@/app/api/projects/[projectId]/confirmations/[approvalId]/route';
 
 const fakeKey = () => `${['sk', 'live'].join('_')}_${randomBytes(16).toString('hex')}`;
@@ -88,7 +89,7 @@ function world(now: () => number = Date.now) {
   } as unknown as SiteRepository;
   const store = new ApprovalStore(now);
   const key = fakeKey();
-  const handler = createMcpHandler({ verifyKey: async () => KEY, siteOps: { repository, editorHost: 'app.example' }, approvals: store });
+  const handler = createMcpHandler({ verifyKey: async () => KEY, siteOps: { repository, editorHost: 'app.example', branches: NO_BRANCHES }, approvals: store });
   let id = 1;
   const publishCall = async (args: Record<string, unknown>) => {
     const res = await handler.POST(

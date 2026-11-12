@@ -4,7 +4,7 @@
 //
 // The two buttons of the approval page. Each is a same-origin POST (never a GET,
 // so a link preview or a prefetch cannot decide anything); the route checks the
-// session, publishSite and the request again, and the middleware refuses a write
+// session, the permission (publishSite, or mergeBranch for a merge) and the request again, and the middleware refuses a write
 // from another origin.
 
 import React, { useState } from 'react';
@@ -15,11 +15,14 @@ export default function ApproveButton({
   projectId,
   approvalId,
   label,
+  declinedText,
   decided,
 }: {
   projectId: string;
   approvalId: string;
   label: string;
+  /** What the page says after a decline, in the action's own words. */
+  declinedText: string;
   decided: 'approve' | 'decline' | null;
 }) {
   const [state, setState] = useState<State>(decided ? { kind: 'done', decision: decided } : { kind: 'idle' });
@@ -49,7 +52,7 @@ export default function ApproveButton({
       <p role="status" className="text-sm font-medium">
         {state.decision === 'approve'
           ? 'Approved. Tell the agent; it carries this out on its next call.'
-          : 'Declined. Nothing will be published from this request.'}
+          : declinedText}
       </p>
     );
   }

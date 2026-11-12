@@ -40,7 +40,7 @@ export const APPROVALS_PER_KEY = 5;
 export const APPROVALS_MAX = 5_000;
 
 export interface ApprovalSubject {
-  action: 'publish' | 'rollback';
+  action: 'publish' | 'rollback' | 'merge';
   tenantId: string;
   keyId: string;
   scope: TenantScope;
@@ -50,6 +50,14 @@ export interface ApprovalSubject {
   /** Rollback only: the revision to serve, and the one live when it was asked. */
   revision?: number;
   live?: number | null;
+  /**
+   * Merge only (site branches, docs/plans/2026-11-10-site-branches.md): `siteId` is the site merged into and
+   * `version` its version; these name the branch, its version, and the review token over both sites' versions,
+   * names and erasure epochs, so the approval is for exactly what the person was shown.
+   */
+  branchId?: string;
+  branchVersion?: number;
+  token?: string;
 }
 
 export type ApprovalDecision = 'approve' | 'decline';
@@ -76,7 +84,10 @@ function sameSubject(a: ApprovalSubject, b: ApprovalSubject): boolean {
     a.siteId === b.siteId &&
     a.version === b.version &&
     (a.revision ?? null) === (b.revision ?? null) &&
-    (a.live ?? null) === (b.live ?? null)
+    (a.live ?? null) === (b.live ?? null) &&
+    (a.branchId ?? null) === (b.branchId ?? null) &&
+    (a.branchVersion ?? null) === (b.branchVersion ?? null) &&
+    (a.token ?? null) === (b.token ?? null)
   );
 }
 

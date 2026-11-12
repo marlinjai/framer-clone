@@ -32,6 +32,7 @@ vi.mock('@/server/sites', async (importActual) => ({
 
 import Page from '../page';
 import { getApprovalStore } from '@/server/mcp/approvals';
+import { checkWorkspaceAccess } from '@/lib/auth-check';
 
 function openRequest() {
   return getApprovalStore().open(
@@ -65,6 +66,23 @@ describe('the agent approval page', () => {
     expect(html).toContain('Publish &quot;Bakery&quot; (site site-1) at version 3?');
     expect(html).toContain('Decline');
     expect(getApprovalStore().get(id)?.decision).toBeNull();
+  });
+
+  it('a merge request names the merge, checks the right to merge, and is refused once the branch moved', async () => {
+    const { id } = getApprovalStore().open(
+      { action: 'merge', tenantId: 'tenant-a', keyId: 'key_1', scope: { workspaceId: 'ws_a', tenantGroupId: 'tg_a' }, siteId: 'site-1', version: 3, branchId: 'branch-1', branchVersion: 3, token: 'tok' },
+      'Merge branch "Pricing" (2 changes, branch version 3) into "Bakery" (site site-1, version 3)? Nothing is published.',
+    );
+    const html = await render(id);
+    expect(html).toContain('An agent asks to merge the branch');
+    expect(html).toContain('Merge branch &quot;Pricing&quot;');
+    expect(html).toContain('>Merge the branch<');
+    expect(html).toContain('href="/projects/branch-1/review"');
+    expect(vi.mocked(checkWorkspaceAccess)).toHaveBeenLastCalledWith('owner-a', 'ws_a', 'mergeBranch');
+    expect(getApprovalStore().get(id)?.decision).toBeNull();
+    // The site and the branch share the mocked version: a move of it is a move of what the person was shown.
+    env.version = 4;
+    expect(await render(id)).toContain('The site changed since the agent asked');
   });
 
   it('sends an old sign-in through a fresh one', async () => {

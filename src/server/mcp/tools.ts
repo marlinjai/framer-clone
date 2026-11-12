@@ -38,6 +38,23 @@ import {
   type SiteOpsDeps,
 } from '@/server/siteOps';
 import { GENERIC_LIBRARY_FAILURE } from '@/server/siteOps';
+import {
+  ANSWERS_PER_UPDATE,
+  branchesEnabledFor,
+  branchOfSite,
+  branchStatus,
+  CONFLICTS_LISTED,
+  createBranch,
+  discardBranch,
+  GENERIC_BRANCH_FAILURE,
+  listBranches,
+  mergeBranch,
+  requestReview,
+  updateBranch,
+  type BranchOpsDeps,
+  type BranchOpsResult,
+} from '@/server/siteOps/branches';
+import { BRANCH_NAME_MAX_LENGTH, MAX_OPEN_BRANCHES_PER_SITE } from '@/lib/sites/branches';
 import { MAX_BATCH_OPS, MAX_INSERT_NODES, type SiteOpsAction, type SiteOpsCaller, type SiteOpsError, type SiteOpsResult } from '@/lib/siteOps/types';
 import { OUTLINE_DEFAULT_CHARS, OUTLINE_MAX_CHARS } from '@/lib/siteOps/read';
 import { GENERATION_LIMITS } from '@/lib/ai/pageGen/schema';
@@ -98,8 +115,13 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   description: string;
   args: S;
   annotations: ToolAnnotations;
-  /** Asks the person before it acts (publish, rollback): answered as a stream when the client can show a dialog. */
+  /** Asks the person before it acts (publish, rollback, merge_branch): answered as a stream when the client can show a dialog. */
   confirms?: boolean;
+  /**
+   * A site branches tool (docs/plans/2026-11-10-site-branches.md, slice S6): listed and callable only for a key
+   * whose company has branches switched on (SITE_BRANCHES_COMPANIES). For every other key it does not exist.
+   */
+  branches?: boolean;
   /** Overrides parts of the generated JSON Schema (apply_batch's operations). */
   schemaPatch?: (schema: JsonSchema) => JsonSchema;
   run: (ctx: ToolContext, args: z.infer<S>) => Promise<ToolResult>;
@@ -131,6 +153,8 @@ export const UNEXPECTED_FAILURE =
  */
 const KNOWN_FAILED: ReadonlyArray<string | RegExp> = [
   GENERIC_LIBRARY_FAILURE,
+  GENERIC_BRANCH_FAILURE,
+  /^personal data was erased from this site meanwhile/,
   'the generation was stopped; nothing was saved',
   /^personal data was erased from this site after it was read/,
   /; read the site again and retry$/,
@@ -150,6 +174,30 @@ export function errorResult(error: SiteOpsError | { code: string; message: strin
 
 function fromResult<T>(result: SiteOpsResult<T>, shape: (value: T) => Record<string, unknown> = (v) => v as Record<string, unknown>): ToolResult {
   return result.ok ? toolResult(shape(result.value), false) : errorResult(result.error);
+}
+
+function fromBranchResult<T>(result: BranchOpsResult<T>, shape: (value: T) => Record<string, unknown>): ToolResult {
+  return result.ok ? toolResult(shape(result.value), false) : errorResult(result.error);
+}
+
+/** What the branch operations run on: the endpoint's own, with the editor host the other tools use. */
+function branchDeps(ctx: ToolContext): BranchOpsDeps {
+  return { ...(ctx.deps.branches ?? {}), ...(ctx.deps.branches?.editorHost === undefined ? { editorHost: editorHost(ctx) } : {}) };
+}
+
+/**
+ * Publish and rollback on a branch id: refused before the person is asked anything, naming the branch's
+ * site. Null for a site. Whether the switch is on does not matter: a branch stays a branch.
+ */
+async function refusedAsBranch(ctx: ToolContext, id: string, what: 'published' | 'rolled back'): Promise<ToolResult | null> {
+  const found = await branchOfSite(ctx.caller, { siteId: id }, branchDeps(ctx));
+  if (!found.ok) return errorResult(found.error);
+  if (!found.value) return null;
+  return errorResult({
+    code: 'branch_cannot_publish',
+    message: `"${id}" is a branch of site "${found.value.mainSiteId}", and a branch is never ${what}. ${what === 'published' ? 'Merge it into its site (merge_branch, which the person approves), then publish that site' : 'Only that site has published versions'}`,
+    mainSiteId: found.value.mainSiteId,
+  });
 }
 
 // ---------- rate limits ----------
@@ -253,7 +301,7 @@ async function approvedByPerson(
         subject,
         summary,
         done,
-        'The approvalId given is unknown, expired, already used, or was opened for something else (another key, site, version or revision).',
+        'The approvalId given is unknown, expired, already used, or was opened for something else (another key, site, branch, version or revision).',
       );
     });
   }
@@ -302,7 +350,8 @@ async function allowed(ctx: ToolContext, action: SiteOpsAction): Promise<ToolRes
   } catch {
     return errorResult({ code: 'unavailable', message: 'the permission check could not be made; try again', retryAfterSec: 5 });
   }
-  return errorResult({ code: 'forbidden', message: `this key may not ${action === 'publishSite' ? 'publish or roll back sites' : action}` });
+  const what = action === 'publishSite' ? 'publish or roll back sites' : action === 'mergeBranch' ? 'merge branches into their site' : action;
+  return errorResult({ code: 'forbidden', message: `this key may not ${what}` });
 }
 
 // ---------- argument schemas ----------
@@ -328,6 +377,14 @@ const approvalId = z
   .describe(
     'Only after the person approved through the approval link: the approvalId the previous call of this tool returned. Without it, the call asks the person (a dialog, or a new approval link).',
   );
+
+const branchId = z.string().trim().min(1).max(200).describe('The branch id, from create_branch or list_branches. It is also a site id: every read and write tool takes it as siteId.');
+const reviewToken = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .describe('The `token` of your last branch_status (or update_branch) answer: it names the state of main and the branch you looked at. If either changed since, the call is refused with branch_review_stale and nothing is written.');
 
 const placeSchema: JsonSchema = {
   description: 'Where it goes: into a parent (at an index, appended when absent) or next to a sibling.',
@@ -718,6 +775,8 @@ export const TOOLS: ToolDef[] = [
       if (throttled) return throttled;
       const site = await getSite(ctx.caller, { siteId: args.siteId }, ctx.deps);
       if (!site.ok) return errorResult(site.error);
+      const branch = await refusedAsBranch(ctx, args.siteId, 'published');
+      if (branch) return branch;
       if (site.value.version !== args.expectedVersion) {
         return errorResult({
           code: 'site_changed',
@@ -767,6 +826,8 @@ export const TOOLS: ToolDef[] = [
       if (throttled) return throttled;
       const site = await getSite(ctx.caller, { siteId: args.siteId }, ctx.deps);
       if (!site.ok) return errorResult(site.error);
+      const branch = await refusedAsBranch(ctx, args.siteId, 'rolled back');
+      if (branch) return branch;
       const denied = await allowed(ctx, 'publishSite');
       if (denied) return denied;
       const throttledHistory = readBudget(ctx);
@@ -792,6 +853,204 @@ export const TOOLS: ToolDef[] = [
       );
     },
   }),
+
+  // ---------- site branches (listed only for a company with branches switched on) ----------
+  define({
+    name: 'list_branches',
+    title: 'List branches',
+    description:
+      "A site's branches: the open ones (id, name, status open or ready, its own `version`, whether main changed since it was made or last updated, whether a person approved it, the person's note when it was sent back, whether this key made it) and the most recently merged or discarded ones. A branch is a hidden copy of the site's draft that a person reviews before it is merged; its id is a site id for every read and write tool.",
+    args: z.strictObject({ siteId }),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    branches: true,
+    run: (ctx, args) => read(ctx, async () => fromBranchResult(await listBranches(ctx.caller, args, branchDeps(ctx)), (list) => ({ ...list }))),
+  }),
+  define({
+    name: 'create_branch',
+    title: 'Create a branch',
+    description: [
+      "Make a branch of a site: a copy of the site's draft as it is stored now (not of what is published), where you can work without changing the site.",
+      'Answers branchId and its version. Use branchId as siteId in get_site, get_page, apply_batch, generate_page, announce_sections and preview_url: they work on the branch exactly as on a site, with its own version.',
+      `A site holds at most ${MAX_OPEN_BRANCHES_PER_SITE} open branches (branch_limit), and a name is unique among them (branch_name_taken).`,
+      'A branch is never published. When the work is done, call request_review and give the person the links; merge_branch needs their approval.',
+    ].join(' '),
+    args: z.strictObject({
+      siteId,
+      name: z.string().trim().min(1).max(BRANCH_NAME_MAX_LENGTH).describe(`What the branch is for, as the person reads it in the editor (at most ${BRANCH_NAME_MAX_LENGTH} characters), e.g. "New pricing page".`),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    branches: true,
+    run: (ctx, args) =>
+      limited(ctx.limits.writes, ctx, 'write', async () =>
+        fromBranchResult(await createBranch(ctx.caller, args, branchDeps(ctx)), (made) => ({
+          ...made,
+          message: 'The branch is a copy of the site as it is now. Write to it with branchId as siteId and its version as expectedVersion. Nothing on the site changed.',
+        })),
+      ),
+  }),
+  define({
+    name: 'branch_status',
+    title: 'Read a branch',
+    description: [
+      'What a branch changes against its site (main), whether main changed since, and what stands in the way of a merge.',
+      'Answers `upToDate` (the branch holds everything main has), the counts of what the branch and main changed, `conflicts` (each with id, fingerprint, what it is about, and the values of the fork point, main and the branch; long values as their size), `problems` (why the result would not be a valid site), `mergeable`, and the previewUrl and reviewUrl a person opens.',
+      `At most ${CONFLICTS_LISTED} conflicts are listed (conflictsTotal says how many there are).`,
+      'Also answers `token`: update_branch and merge_branch take it, so they act on exactly the state you read.',
+    ].join(' '),
+    args: z.strictObject({ branchId }),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    branches: true,
+    run: (ctx, args) => read(ctx, async () => fromBranchResult(await branchStatus(ctx.caller, args, branchDeps(ctx)), (status) => ({ ...status }))),
+  }),
+  define({
+    name: 'update_branch',
+    title: 'Update a branch from main',
+    description: [
+      "Bring main's changes into the branch (when branch_status says upToDate is false). Changes that do not touch the same thing merge by themselves, as one new version of the branch.",
+      'When both sides changed the same thing, the call is refused with branch_conflicts and the list: nothing is written to the branch. Answer a conflict by sending its id and fingerprint with pick "main" or "branch" in `answers`; answers are kept between calls, and the update happens once none is open.',
+      'Only answer a conflict when the person told you which side they want or the answer is plain from what they asked for; otherwise leave it and give them the reviewUrl, where they answer it themselves.',
+      'An update changes the branch, so an approval a person gave before it no longer counts.',
+    ].join(' '),
+    args: z.strictObject({
+      branchId,
+      token: reviewToken,
+      answers: z
+        .array(
+          z.strictObject({
+            conflictId: z.string().min(1).max(512).describe("The conflict's id, from branch_status or a branch_conflicts refusal."),
+            fingerprint: z.string().min(1).max(128).describe("The conflict's fingerprint from the same answer: it ties your pick to the values you were shown."),
+            pick: z.enum(['main', 'branch']).describe("Whose value to keep: main's or the branch's."),
+          }),
+        )
+        .max(ANSWERS_PER_UPDATE)
+        .optional()
+        .describe('Answers to conflicts, laid over the ones given before.'),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    branches: true,
+    run: (ctx, args) =>
+      limited(ctx.limits.writes, ctx, 'write', async () =>
+        fromBranchResult(await updateBranch(ctx.caller, args, branchDeps(ctx)), (updated) => ({
+          ...updated,
+          message: updated.updated
+            ? "Main's changes are in the branch, as a new version of it. Look at the result (get_page, preview_url) before you go on."
+            : 'The branch already held everything main has. Nothing was written.',
+        })),
+      ),
+  }),
+  define({
+    name: 'request_review',
+    title: 'Ask for review',
+    description:
+      'Mark a branch ready for review and answer the links for the person: previewUrl (the branch as a visitor would see it) and reviewUrl (what it changes, side by side with main, with Approve, Send back and Merge). Both need their editor sign-in. Give the person both links and say in a sentence what the branch changes. The branch stays editable; an edit after an approval withdraws the approval.',
+    args: z.strictObject({ branchId }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    branches: true,
+    run: (ctx, args) =>
+      limited(ctx.limits.writes, ctx, 'write', async () =>
+        fromBranchResult(await requestReview(ctx.caller, args, branchDeps(ctx)), (asked) => ({
+          ...asked,
+          message: 'The branch is marked ready for review. Give the person previewUrl and reviewUrl. Do not merge unless they ask for it.',
+        })),
+      ),
+  }),
+  define({
+    name: 'merge_branch',
+    title: 'Merge a branch',
+    description: [
+      "Merge a branch into its site: the site's draft becomes the branch's content as one new version, and the branch is closed. Nothing is published: visitors see the merge only after the person publishes the site.",
+      'Only when the person asked for it. The PERSON approves every merge, the same way as publish: the client\'s confirmation dialog, or `approvalRequired` with an `approvalUrl` and a `summary` you give them; after they say they approved, call again with the same arguments and `approvalId`. You cannot approve it yourself.',
+      'Refused before the person is asked when the branch is not mergeable: behind main (branch_behind_main: call update_branch, look at the result, then ask again), conflicts or problems open, or nothing changed.',
+      'A branch that was already merged answers that merge again and writes nothing.',
+    ].join(' '),
+    args: z.strictObject({ branchId, token: reviewToken, approvalId }),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    confirms: true,
+    branches: true,
+    run: async (ctx, args) => {
+      const throttled = readBudget(ctx);
+      if (throttled) return throttled;
+      const deps = branchDeps(ctx);
+      const status = await branchStatus(ctx.caller, { branchId: args.branchId }, deps);
+      if (!status.ok) {
+        // Merged before this call (a retry after a lost answer): the first merge's result, nothing written, nobody asked.
+        if (status.error.code === 'branch_closed' && status.error.branchStatus === 'merged') {
+          const denied = await allowed(ctx, 'mergeBranch');
+          if (denied) return denied;
+          return fromBranchResult(await mergeBranch(ctx.caller, { branchId: args.branchId, token: args.token }, deps), (done) => ({
+            ...done,
+            message: 'This branch was merged before this call; nothing was written again. Nothing was published.',
+          }));
+        }
+        return errorResult(status.error);
+      }
+      const denied = await allowed(ctx, 'mergeBranch');
+      if (denied) return denied;
+      const now = status.value;
+      if (now.token !== args.token) {
+        return errorResult({
+          code: 'branch_review_stale',
+          message: 'main or the branch changed since that token was read; nothing was merged and nobody was asked. Call branch_status again, look at what changed, and use its token',
+        });
+      }
+      if (!now.upToDate) {
+        return errorResult({
+          code: 'branch_behind_main',
+          message: 'main changed since this branch was made or last updated; nothing was merged and nobody was asked. Call update_branch, look at the result, then ask for the merge with the new token',
+          conflictsTotal: now.conflictsTotal,
+        });
+      }
+      if (now.problems.length > 0) {
+        return errorResult({
+          code: 'branch_merge_invalid',
+          message: `the result would not be a valid site, so nothing was merged and nobody was asked: ${now.problems.map((p) => p.message).slice(0, 3).join('; ')}`,
+          problems: now.problems,
+        });
+      }
+      if (now.changeCount === 0) {
+        return errorResult({ code: 'branch_unchanged', message: 'this branch changes nothing against its site, so there is nothing to merge' });
+      }
+      const main = await getSite(ctx.caller, { siteId: now.branch.siteId }, ctx.deps);
+      if (!main.ok) return errorResult(main.error);
+      const count = `${now.changeCount} ${now.changeCount === 1 ? 'change' : 'changes'}`;
+      const summary = `Merge branch "${now.branch.name}" (${count}, branch version ${now.branch.version}) into "${main.value.name}" (site ${now.branch.siteId}, version ${main.value.version})? The site's draft becomes the branch's content and the branch is closed. Nothing is published: visitors see it only after you publish the site.`;
+      const subject: ApprovalSubject = {
+        action: 'merge',
+        tenantId: ctx.key.tenantId,
+        keyId: ctx.key.keyId,
+        scope: ctx.caller.scope,
+        siteId: now.branch.siteId,
+        version: main.value.version,
+        branchId: args.branchId,
+        branchVersion: now.branch.version ?? undefined,
+        token: args.token,
+      };
+      return approvedByPerson(ctx, subject, summary, args.approvalId, 'merged', async () =>
+        fromBranchResult(await mergeBranch(ctx.caller, { branchId: args.branchId, token: args.token }, deps), (done) => ({
+          ...done,
+          message: done.merged
+            ? 'Merged into the site\'s draft as its new version. Nothing was published: the person publishes the site when they want visitors to see it.'
+            : 'This branch was merged before this call; nothing was written again. Nothing was published.',
+        })),
+      );
+    },
+  }),
+  define({
+    name: 'discard_branch',
+    title: 'Discard a branch',
+    description:
+      'Discard a branch this key created: its content is deleted for good and nothing of it reaches the site. Only for your own branch (one this key made with create_branch), and only when the person asked for it or it was a trial of yours they never saw. A branch a person or another key made is refused (forbidden): ask the person to discard it in the editor.',
+    args: z.strictObject({ branchId }),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    branches: true,
+    run: (ctx, args) =>
+      limited(ctx.limits.writes, ctx, 'write', async () =>
+        fromBranchResult(await discardBranch(ctx.caller, args, branchDeps(ctx)), (gone) => ({
+          ...gone,
+          message: gone.discarded ? 'The branch was discarded. The site is unchanged.' : 'This branch had been discarded before this call.',
+        })),
+      ),
+  }),
 ];
 
 // ---------- what tools/list answers ----------
@@ -810,16 +1069,33 @@ function jsonSchemaOf(def: ToolDef): JsonSchema {
   return def.schemaPatch ? def.schemaPatch(schema) : schema;
 }
 
-export const LISTED_TOOLS: ListedTool[] = TOOLS.map((def) => ({
+const listed = (def: ToolDef): ListedTool => ({
   name: def.name,
   title: def.title,
   description: def.description,
   inputSchema: jsonSchemaOf(def),
   annotations: { title: def.title, ...def.annotations },
-}));
+});
 
-export function findTool(name: unknown): ToolDef | undefined {
-  return TOOLS.find((t) => t.name === name);
+/** The tools every key is offered. */
+export const LISTED_TOOLS: ListedTool[] = TOOLS.filter((def) => !def.branches).map(listed);
+/** The site branches tools, offered on top to a key whose company has branches switched on. */
+export const LISTED_BRANCH_TOOLS: ListedTool[] = TOOLS.filter((def) => def.branches).map(listed);
+
+/** What tools/list answers a key: the branch tools only with branches on for its company. */
+export function listedTools(withBranches: boolean): ListedTool[] {
+  return withBranches ? [...LISTED_TOOLS, ...LISTED_BRANCH_TOOLS] : LISTED_TOOLS;
+}
+
+/** Whether the key behind `ctx` is offered the branch tools. */
+export function offersBranches(ctx: Pick<ToolContext, 'caller' | 'deps'>): boolean {
+  return branchesEnabledFor(ctx.caller, ctx.deps.branches ?? {});
+}
+
+/** A tool by name. A branch tool exists only with `withBranches`: for any other key it is an unknown tool. */
+export function findTool(name: unknown, withBranches: boolean): ToolDef | undefined {
+  const tool = TOOLS.find((t) => t.name === name);
+  return tool && (!tool.branches || withBranches) ? tool : undefined;
 }
 
 /** Run a tool on raw arguments: invalid arguments are an `invalid_request` result, a throw a generic failure. */

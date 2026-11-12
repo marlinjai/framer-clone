@@ -1,11 +1,11 @@
 // src/app/projects/[projectId]/confirm/[approvalId]/page.tsx
 //
 // The approval link an agent hands the person when it asks to publish or roll
-// back a site through the Lumitra Sites MCP endpoint and its client has no
+// back a site, or to merge a branch into it, through the Lumitra Sites MCP endpoint and its client has no
 // confirmation dialog (src/server/mcp/approvals.ts). An editor page: the
 // middleware serves it only on the editor host and bounces a visitor without a
 // session to the login. Here the person's verified session is checked against
-// publishSite on the request's workspace (src/server/mcp/approvalCheck.ts), the
+// publishSite (mergeBranch for a merge) on the request's workspace (src/server/mcp/approvalCheck.ts), the
 // person must have signed in within 15 minutes (else they sign in again), the
 // page shows what would go live, and the button approves (ApproveButton posts to
 // /api/projects/<id>/confirmations/<approvalId>, which checks everything again).
@@ -67,21 +67,22 @@ export default async function ConfirmAgentActionPage({ params }: Props) {
   if (checked.status === 'not_found') {
     return (
       <Notice title="This approval link is not valid">
-        It is unknown, expired or already used. Nothing was published. Ask the agent for a new link.
+        It is unknown, expired or already used. Nothing was changed or published. Ask the agent for a new link.
       </Notice>
     );
   }
   if (checked.status === 'forbidden') {
     return (
       <Notice title="You cannot approve this">
-        Only someone who may publish this site can approve it. Nothing was published.
+        Only someone who may do this on the site themselves (publish it, or merge a branch into it) can approve it for
+        an agent. Nothing was changed or published.
       </Notice>
     );
   }
   if (checked.status === 'changed') {
     return (
       <Notice title="The site changed since the agent asked">
-        What you would approve is no longer what the agent would publish. Nothing was approved. Ask the agent to read
+        What you would approve is no longer what the agent would act on. Nothing was approved. Ask the agent to read
         the site again and send a new link.
       </Notice>
     );
@@ -95,7 +96,7 @@ export default async function ConfirmAgentActionPage({ params }: Props) {
         <section role="alert" className="rounded-lg border p-10 text-center">
           <h1 className="text-xl font-semibold tracking-tight">Sign in again to approve</h1>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            An agent asks to publish or roll back a site. Approving needs a sign-in from the last 15 minutes. You are
+            An agent asks to publish or roll back a site, or to merge a branch. Approving needs a sign-in from the last 15 minutes. You are
             signed out once, sign in again, and come back to this page. Nothing has been approved.
           </p>
           <a href={freshSignInUrl(pageUrl)} className="mt-6 inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium hover:bg-accent">
@@ -107,7 +108,8 @@ export default async function ConfirmAgentActionPage({ params }: Props) {
   }
 
   const view = approvalView(checked.approval);
-  const verb = view.action === 'publish' ? 'Publish' : 'Serve an earlier version';
+  const verb = view.action === 'publish' ? 'Publish' : view.action === 'merge' ? 'Merge the branch' : 'Serve an earlier version';
+  const declined = view.action === 'merge' ? 'Declined. Nothing will be merged from this request.' : 'Declined. Nothing will be published from this request.';
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-12">
       <section className="rounded-lg border p-10">
@@ -118,12 +120,25 @@ export default async function ConfirmAgentActionPage({ params }: Props) {
         <p className="mt-4 whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-sm" data-testid="approval-summary">
           {view.summary}
         </p>
+        {view.action === 'merge' && view.branchId ? (
+          <p className="mt-4 text-sm">
+            <a
+              href={`/projects/${encodeURIComponent(view.branchId)}/review`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium underline underline-offset-4"
+            >
+              Open the review of this branch
+            </a>{' '}
+            to see what it changes, side by side with the site, before you decide.
+          </p>
+        ) : null}
         <p className="mt-4 text-xs text-muted-foreground">
           The link works once and expires at {view.expiresAt.slice(11, 16)} UTC. After you approve, the agent carries it
           out on its next call. If you did not ask for this, close the page: nothing happens.
         </p>
         <div className="mt-6">
-          <ApproveButton projectId={projectId} approvalId={approvalId} label={verb} decided={view.decision} />
+          <ApproveButton projectId={projectId} approvalId={approvalId} label={verb} declinedText={declined} decided={view.decision} />
         </div>
       </section>
     </main>

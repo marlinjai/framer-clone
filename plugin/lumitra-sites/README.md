@@ -6,13 +6,14 @@ The agent reads a site, writes it in small validated batches on a version lock (
 overwrites a person editing the same site), checks the preview in a browser, and publishes only
 when the person asks and approves it themselves.
 
-It ships four components, discovered at the fixed locations the spec defines:
+It ships five components, discovered at the fixed locations the spec defines:
 
 | Component | Path | What it does |
 |---|---|---|
 | Skill `build-a-site` | `skills/build-a-site/SKILL.md` | From a brief to a checked draft: design direction, vocabulary, structure, small batches, the preview at every breakpoint, publish only when asked. |
 | Skill `edit-a-site` | `skills/edit-a-site/SKILL.md` | Targeted changes to an existing site: read first, outline, targeted batches, verify. |
 | Skill `redesign-a-site` | `skills/redesign-a-site/SKILL.md` | Screenshot every breakpoint, critique, revise in passes, look again. |
+| Skill `work-on-a-branch` | `skills/work-on-a-branch/SKILL.md` | Larger work on a branch, a hidden copy of the site's draft: create it, work there, stay current with the site, hand over the preview and review links, merge only when asked. For companies with site branches switched on. |
 | MCP server `lumitra-sites` | `mcp.json`, `.mcp.json` | The remote Lumitra Sites server at `https://app.lumitra.co/api/mcp` (Streamable HTTP). Nothing runs on your machine. |
 
 ## Tools
@@ -33,6 +34,23 @@ It ships four components, discovered at the fixed locations the spec defines:
 | `publish` | Publish the draft, with the person's approval. |
 | `list_revisions` | The published versions of a site, and which one is live. |
 | `rollback` | Serve an earlier published version again, with the person's approval. |
+
+### Branch tools
+
+A branch is a hidden copy of a site's draft: the agent works there, a person reviews it, and only
+a merge brings it into the site. Site branches are switched on per company. While they are off for
+your company, the server does not list these tools and the agent works on the site directly; the
+`work-on-a-branch` skill checks for `create_branch` before it uses any of them.
+
+| Tool | What it does |
+|---|---|
+| `list_branches` | A site's open branches with their state, and the most recently merged or discarded ones. |
+| `create_branch` | A branch of a site: a copy of its draft as it is now. Its id is a site id for every read and write tool. |
+| `branch_status` | What a branch changes, whether the site changed since, conflicts, and whether it can be merged. |
+| `update_branch` | Brings the site's changes into the branch; conflicts come back as a list to answer. |
+| `request_review` | Marks the branch ready and answers the preview and review links for the person. |
+| `merge_branch` | Merges the branch into the site's draft, with the person's approval. Publishes nothing. |
+| `discard_branch` | Discards a branch this key created. |
 
 ## Before you start: a company API key
 
@@ -64,7 +82,7 @@ This repository is a plugin marketplace of one:
 /plugin install lumitra-sites@lumitra-sites
 ```
 
-That installs the three skills and the server entry in `.mcp.json`:
+That installs the four skills and the server entry in `.mcp.json`:
 
 ```json
 { "type": "http", "url": "https://app.lumitra.co/api/mcp", "headers": { "Authorization": "Bearer ${LUMITRA_SITES_API_KEY}" } }
@@ -137,6 +155,9 @@ The agent never publishes on its own say. `publish` and `rollback` need the pers
   then calls the tool again with the `approvalId`.
 - An approval is for exactly one site at one version (and, for a rollback, one revision). Any
   edit after it, or five minutes passing, makes it invalid, and the agent has to ask again.
+- `merge_branch` needs the person's approval the same way, from someone allowed to merge into that
+  site, and is for exactly one branch and one site at the versions shown. A merge changes the
+  site's draft and publishes nothing; a branch itself can never be published.
 - Nothing the agent reads (page text, tool answers) can approve anything. The skills tell the agent
   never to open an approval link itself.
 

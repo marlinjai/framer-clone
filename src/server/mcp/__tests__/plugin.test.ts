@@ -11,14 +11,19 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { APPROVAL_RATE, IMAGE_RATE, LISTED_TOOLS, OPERATION_SCHEMAS, PLAN_RATE, READ_RATE, TOOLS, WRITE_RATE } from '../tools';
+import { APPROVAL_RATE, IMAGE_RATE, LISTED_BRANCH_TOOLS, LISTED_TOOLS, OPERATION_SCHEMAS, PLAN_RATE, READ_RATE, TOOLS, WRITE_RATE } from '../tools';
+import { MAX_OPEN_BRANCHES_PER_SITE } from '@/lib/sites/branches';
 import { PLAN_LIMITS } from '@/lib/projects/liveEvents';
 import { APPROVAL_TTL_MS } from '../approvals';
 import { MAX_BATCH_OPS } from '@/lib/siteOps/types';
 import { machineAuthDenial } from '@/lib/auth-machine';
 
 const PLUGIN = resolve(__dirname, '../../../../plugin/lumitra-sites');
-const SKILLS = ['build-a-site', 'edit-a-site', 'redesign-a-site'];
+// The skills that work on a site, and the one about branches (site branches, slice S6), which exists for a
+// company with branches switched on and sends everything else to the site skills.
+const SITE_SKILLS = ['build-a-site', 'edit-a-site', 'redesign-a-site'];
+const BRANCH_SKILL = 'work-on-a-branch';
+const SKILLS = [...SITE_SKILLS, BRANCH_SKILL];
 const read = (rel: string) => readFileSync(join(PLUGIN, rel), 'utf8');
 const README = read('README.md');
 const skillText = Object.fromEntries(SKILLS.map((s) => [s, read(`skills/${s}/SKILL.md`)]));
@@ -33,6 +38,8 @@ const docs: Array<[string, string]> = [['README.md', README], ...SKILLS.map((s):
 const UNAUTHORIZED_MESSAGE = 'a valid company API key is required';
 
 const TOOL_NAMES = TOOLS.map((t) => t.name);
+const BASE_TOOL_NAMES = LISTED_TOOLS.map((t) => t.name);
+const BRANCH_TOOL_NAMES = LISTED_BRANCH_TOOLS.map((t) => t.name);
 const OPERATION_NAMES = OPERATION_SCHEMAS.map((s) => (s.properties as { op: { const: string } }).op.const);
 
 // Backticked words in the docs that are neither a tool nor an operation: the
@@ -44,6 +51,10 @@ const NON_TOOL_WORDS = new Set([
   // answer and argument fields
   'siteId', 'pageId', 'expectedVersion', 'version', 'nextCursor', 'retryAfterSec', 'ref', 'alt', 'approvalId', 'approvalUrl',
   'approvalRequired', 'approvalPending', 'declined', 'summary', 'replace',
+  // site branches: answer and argument fields, and refusals (src/server/siteOps/branches.ts, src/server/mcp/tools.ts)
+  'branchId', 'token', 'upToDate', 'mergeable', 'conflicts', 'answers', 'fingerprint', 'pick', 'previewUrl', 'reviewUrl',
+  'branch_conflicts', 'branch_review_stale', 'branch_closed', 'branch_behind_main',
+  'branch_cannot_publish', 'branch_limit', 'work-on-a-branch',
   // skeleton plans (announce_sections)
   'planId', 'replaces', 'newPage', 'after', 'kind',
   // the server entry and the plugin's own names
@@ -65,10 +76,18 @@ function codeSpans(text: string): string[] {
 
 describe('the plugin names the tools the server has', () => {
   it('the README tool table lists exactly the tools tools/list answers, in the same order', () => {
-    const section = README.split('## Tools')[1].split('\n## ')[0];
+    const section = README.split('## Tools')[1].split('\n## ')[0].split('### Branch tools')[0];
     const listed = [...section.matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]);
-    expect(listed).toEqual(LISTED_TOOLS.map((t) => t.name));
+    expect(listed).toEqual(BASE_TOOL_NAMES);
     expect(listed).toHaveLength(14);
+  });
+
+  it('the README branch tool table lists exactly the tools a company with branches is offered on top, in the same order', () => {
+    const section = README.split('### Branch tools')[1].split('\n## ')[0];
+    const listed = [...section.matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]);
+    expect(listed).toEqual(BRANCH_TOOL_NAMES);
+    expect(listed).toHaveLength(7);
+    expect(flat(section)).toContain('While they are off for your company, the server does not list these tools');
   });
 
   it('every word a skill or the README puts in code is a tool, an operation or a known field', () => {
@@ -85,7 +104,7 @@ describe('the plugin names the tools the server has', () => {
   it('no snake_case word outside code names a tool that does not exist', () => {
     // A tool-shaped word (two or more snake_case parts ending in a tool verb or
     // noun) written in plain prose must still be a real tool.
-    const toolish = /\b(?:list|get|describe|create|apply|generate|find|preview|publish|rollback)_[a-z_]+\b/g;
+    const toolish = /\b(?:list|get|describe|create|apply|generate|find|preview|publish|rollback|update|request|merge|discard)_[a-z_]+\b/g;
     for (const [file, text] of docs) {
       for (const m of text.matchAll(toolish)) expect(TOOL_NAMES, `${file}: ${m[0]}`).toContain(m[0]);
     }
@@ -99,7 +118,38 @@ describe('the plugin names the tools the server has', () => {
       expect(skillText[s], s).toContain('expectedVersion');
       expect(skillText[s], s).toContain('site_changed');
     }
-    for (const tool of TOOL_NAMES) expect(skillText['build-a-site'], `build-a-site names ${tool}`).toContain(`\`${tool}\``);
+    for (const tool of BASE_TOOL_NAMES) expect(skillText['build-a-site'], `build-a-site names ${tool}`).toContain(`\`${tool}\``);
+  });
+
+  it('the site skills name no branch tool: they work for every company, with or without branches', () => {
+    for (const s of SITE_SKILLS) {
+      for (const tool of BRANCH_TOOL_NAMES) expect(skillText[s], `${s} names ${tool}`).not.toContain(tool);
+    }
+  });
+});
+
+describe('the plugin teaches branches as the server runs them', () => {
+  const text = flat(skillText[BRANCH_SKILL]);
+
+  it('names every branch tool, and checks that they are listed before using any', () => {
+    for (const tool of BRANCH_TOOL_NAMES) expect(text, tool).toContain(`\`${tool}\``);
+    expect(text).toMatch(/When the server's tool list has no `create_branch`, branches are not available to this key/);
+    expect(text).toContain('Never call a tool that is not listed');
+    expect(text).toContain('edit-a-site skill');
+  });
+
+  it('never merges or publishes unasked, hands over for review and stops, and discards only its own branch', () => {
+    expect(text).toContain('Never merge unasked, and never publish unasked');
+    expect(text).toMatch(/`request_review`\..*Give the person both links.*Stop there/);
+    expect(text).toContain('`discard_branch` works only on a branch this key created');
+    expect(text).toContain('nothing was published');
+    expect(text).toContain('`publish` and `rollback` are refused on a branch (`branch_cannot_publish`)');
+  });
+
+  it('answers a conflict only on the person\'s word, and quotes the server\'s limit of open branches', () => {
+    expect(text).toMatch(/Answer a conflict .* only when the person told you which side they want/);
+    expect(text).toContain(`at most ${MAX_OPEN_BRANCHES_PER_SITE} open branches`);
+    expect(text).toContain('five minutes');
   });
 });
 
@@ -120,10 +170,11 @@ describe('the plugin teaches the live canvas', () => {
 });
 
 describe('the plugin describes approvals as the server enforces them', () => {
-  it('exactly publish and rollback need the person, and every doc says the agent cannot approve', () => {
+  it('exactly publish, rollback and merge_branch need the person, and every doc says the agent cannot approve', () => {
     const confirming = TOOLS.filter((t) => t.confirms).map((t) => t.name).sort();
-    expect(confirming).toEqual(['publish', 'rollback']);
+    expect(confirming).toEqual(['merge_branch', 'publish', 'rollback']);
     expect(flat(README)).toContain('`publish` and `rollback` need the person\'s approval');
+    expect(flat(README)).toContain('`merge_branch` needs the person\'s approval the same way');
     for (const s of SKILLS) {
       expect(flat(skillText[s]), s).toMatch(/never (?:publish unasked|try)/i);
       expect(flat(skillText[s]), s).toMatch(/never open an approval link/i);

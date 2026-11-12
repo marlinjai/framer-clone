@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "lumitra-sites",
-  "version": "0.3.0",
-  "description": "Build, edit and publish websites in Lumitra Sites (the editor at app.lumitra.co) from an agent: read a site, write it in small validated batches with a version lock, check the preview in a browser, and publish only with the person's own approval. Ships the build-a-site, edit-a-site and redesign-a-site skills and the remote lumitra-sites MCP server.",
+  "version": "0.4.0",
+  "description": "Build, edit and publish websites in Lumitra Sites (the editor at app.lumitra.co) from an agent: read a site, write it in small validated batches with a version lock, check the preview in a browser, and publish only with the person's own approval. Larger work can happen on a branch that a person reviews before it is merged. Ships the build-a-site, edit-a-site, redesign-a-site and work-on-a-branch skills and the remote lumitra-sites MCP server.",
   "author": {
     "name": "Marlin Jai Pohl / Lumitra",
     "url": "https://lumitra.co"
@@ -23,7 +23,8 @@
       "skills": [
         "build-a-site",
         "edit-a-site",
-        "redesign-a-site"
+        "redesign-a-site",
+        "work-on-a-branch"
       ],
       "mcpServers": [
         "lumitra-sites"

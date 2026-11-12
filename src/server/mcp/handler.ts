@@ -41,7 +41,8 @@ import {
   APPROVAL_RATE,
   findTool,
   IMAGE_RATE,
-  LISTED_TOOLS,
+  listedTools,
+  offersBranches,
   PLAN_RATE,
   READ_RATE,
   runTool,
@@ -51,7 +52,7 @@ import {
   type ToolLimits,
   type ToolResult,
 } from './tools';
-import { SERVER_INSTRUCTIONS } from './instructions';
+import { serverInstructions } from './instructions';
 import { siteIdOf, withPresence, type PermittedFn } from './presence';
 import { endSessionPlans, touchPlans } from './livePlans';
 import { getSiteRepository } from '@/server/sites';
@@ -227,7 +228,10 @@ export function createMcpHandler(deps: McpDeps) {
     );
   }
 
-  function initialize(id: JsonRpcId, params: Record<string, unknown>, fingerprint: string) {
+  /** Whether this key's company has site branches switched on: only then do the branch tools exist for it. */
+  const withBranches = (key: VerifiedKey): boolean => offersBranches({ caller: keyCaller(key), deps: deps.siteOps ?? {} });
+
+  function initialize(id: JsonRpcId, params: Record<string, unknown>, fingerprint: string, key: VerifiedKey) {
     const asked = typeof params.protocolVersion === 'string' ? params.protocolVersion : '';
     const version = (PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : PROTOCOL_VERSIONS[0];
     const capabilities = (params.capabilities ?? {}) as Record<string, unknown>;
@@ -240,7 +244,7 @@ export function createMcpHandler(deps: McpDeps) {
         protocolVersion: version,
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions: SERVER_INSTRUCTIONS,
+        instructions: serverInstructions(withBranches(key)),
       }),
       sessionId: issueSessionId({ protocolVersion: version, elicitation, clientName: typeof clientName === 'string' ? clientName : undefined }, fingerprint),
     };
@@ -259,14 +263,14 @@ export function createMcpHandler(deps: McpDeps) {
     const params = message.params ?? {};
     switch (message.method) {
       case 'initialize':
-        return notification ? null : initialize(id, params, fingerprint);
+        return notification ? null : initialize(id, params, fingerprint, key);
       case 'ping':
         return notification ? null : { reply: rpcResult(id, {}) };
       case 'tools/list':
-        return notification ? null : { reply: rpcResult(id, { tools: LISTED_TOOLS }) };
+        return notification ? null : { reply: rpcResult(id, { tools: listedTools(withBranches(key)) }) };
       case 'tools/call': {
         if (notification) return null;
-        const tool = findTool(params.name);
+        const tool = findTool(params.name, withBranches(key));
         if (!tool) return { reply: rpcError(id, INVALID_PARAMS, `unknown tool: ${redactSecrets(String(params.name)).slice(0, ECHO_MAX)}`) };
         const result = await runReported(tool, params.arguments, context(request.signal, key, session), key);
         return { reply: rpcResult(id, result) };
@@ -290,7 +294,7 @@ export function createMcpHandler(deps: McpDeps) {
     const encoder = new TextEncoder();
     const id = message.id ?? null;
     const params = message.params ?? {};
-    const tool = findTool(params.name)!;
+    const tool = findTool(params.name, withBranches(key))!;
     const cancelled = new AbortController();
     const signal = AbortSignal.any([request.signal, cancelled.signal]);
     const stream = new ReadableStream<Uint8Array>({
@@ -371,7 +375,7 @@ export function createMcpHandler(deps: McpDeps) {
     // A single confirming tool call from a client with a dialog: answered as a stream.
     const acceptsStream = (request.headers.get('accept') ?? '').includes('text/event-stream');
     if (!batch && acceptsStream && isRequest(parsed) && parsed.method === 'tools/call' && parsed.id !== undefined && session?.elicitation) {
-      const tool = findTool(parsed.params?.name);
+      const tool = findTool(parsed.params?.name, withBranches(verified));
       if (tool?.confirms) return streamedCall(request, verified, parsed, fingerprint, session);
     }
 
