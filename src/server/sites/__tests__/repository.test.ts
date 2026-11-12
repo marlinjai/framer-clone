@@ -81,7 +81,7 @@ function makeFakePrisma() {
     siteDomain,
     siteRevision,
     // No closed site branch records (src/server/sites/branches/closed.ts): a missing site reads as missing.
-    siteBranch: { findFirst: vi.fn(async () => null as unknown) },
+    siteBranch: { findFirst: vi.fn(async () => null as unknown), updateMany: vi.fn(async () => ({ count: 0 })) },
     // Typed with the options argument (tests read it from the calls); the fake only runs the callback.
     $transaction: vi.fn<(fn: (tx: unknown) => Promise<unknown>, opts?: unknown) => Promise<unknown>>(async (fn): Promise<unknown> => fn(prisma)),
   };

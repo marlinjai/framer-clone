@@ -14,7 +14,7 @@ import type { BranchSummaryJson } from '@/lib/sites/branches';
 import type { DocumentReview } from '@/lib/siteMerge/elementChanges';
 
 const { client, router, panes } = vi.hoisted(() => ({
-  client: { changes: vi.fn(), answers: vi.fn(), update: vi.fn(), approve: vi.fn(), sendBack: vi.fn(), merge: vi.fn() },
+  client: { changes: vi.fn(), changesIfMoved: vi.fn(), answers: vi.fn(), update: vi.fn(), approve: vi.fn(), sendBack: vi.fn(), merge: vi.fn() },
   router: { refresh: vi.fn() },
   panes: [] as Array<{ side: string; outlines: string; focusId: string | null; emptyText: string; hasPage: boolean }>,
 }));
@@ -98,7 +98,7 @@ describe('forward', () => {
     client.changes.mockResolvedValue(review());
     open();
     expect(await screen.findByText('2 pages, 3 elements changed')).toBeTruthy();
-    const nav = screen.getByRole('navigation', { name: 'Changes' });
+    const nav = screen.getByRole('region', { name: 'Questions and changes' });
     expect(within(nav).getByText(/Fresh bread → Fresh rolls/)).toBeTruthy();
     // The branch outlines what it added and changed; main what it removed and changed.
     expect(lastPane('branch').outlines).toMatch(/"title".*\n.*"new"/);
@@ -123,6 +123,8 @@ describe('forward', () => {
     fireEvent.click(button(/looks good/i));
     await waitFor(() => expect(client.approve).toHaveBeenCalledWith(BRANCH, 'tok-1'));
     expect(await screen.findByText(/Marked as looking good/)).toBeTruthy();
+    // What the press does is text the button points at, not only its tooltip.
+    expect(document.getElementById(button('Merge into Bakery').getAttribute('aria-describedby') ?? '')?.textContent).toBe('Merge into Bakery. Nothing is published.');
     fireEvent.click(button('Merge into Bakery'));
     expect(await screen.findByRole('heading', { name: 'Merged into Bakery' })).toBeTruthy();
     expect(screen.getByText(/Nothing was published/)).toBeTruthy();
@@ -157,10 +159,14 @@ describe('what a person may do', () => {
     await screen.findByText(/elements changed/);
     expect(button(/looks good/i).disabled).toBe(true);
     expect(button(/looks good/i).title).toMatch(/may not review/);
-    expect(button('Merge into Bakery').disabled).toBe(true);
-    expect(button('Merge into Bakery').title).toMatch(/Only an admin/);
-    expect(button(/Bakery: Main title/).disabled).toBe(true);
+    expect(button('Update from Bakery first').disabled).toBe(true);
+    expect(button('Update from Bakery first').title).toMatch(/Only an admin/);
+    expect(button(/Bakery: Main title/).getAttribute('aria-disabled')).toBe('true');
     expect(button(/All from Bakery/).title).toMatch(/Only someone who may edit/);
+    // The reasons are on the page as text too: a disabled button's tooltip reaches neither a keyboard nor a touch screen.
+    expect(screen.getByText(/“Looks good” and “Send back” are off: You may not review/)).toBeTruthy();
+    expect(screen.getByText(/The answers are off: Only someone who may edit/)).toBeTruthy();
+    expect(screen.getByText(/Merge is not possible yet: Only an admin/)).toBeTruthy();
   });
 
   it('with the permission service down, every control stays on and the server decides', async () => {
@@ -183,17 +189,21 @@ describe('questions from main', () => {
     client.answers.mockImplementationOnce(() => new Promise((r) => (release = () => r(review({ upToDate: false, conflicts: [two().conflicts[1]], settled: [{ id: 'c1', pick: 'branch', conflict: two().conflicts[0] }] })))));
     open();
     expect(await screen.findByText(/Home: Fresh rolls: text/)).toBeTruthy();
-    expect(button('Merge into Bakery').disabled).toBe(true);
+    expect(button('Update from Bakery first').disabled).toBe(true);
     expect(button('Update the branch').disabled).toBe(true);
+    // Why "Update the branch" is off is text beside it, not only its tooltip.
+    expect(screen.getByText('Every question needs an answer first.')).toBeTruthy();
     fireEvent.click(button(/Branch: Branch title/));
     await waitFor(() => expect(client.answers).toHaveBeenCalledWith(BRANCH, 'tok-1', { c1: { fingerprint: 'fp-c1', pick: 'branch' } }));
     // While it is stored, no other answer can be given.
-    expect(button(/Branch: Branch hours/).disabled).toBe(true);
+    expect(button(/Branch: Branch hours/).getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(button(/Branch: Branch hours/));
     expect(client.answers).toHaveBeenCalledTimes(1);
     await act(async () => release());
     expect(button(/Branch: Branch title/).getAttribute('aria-pressed')).toBe('true');
-    expect(button('Merge into Bakery').disabled).toBe(true);
+    // The answered question stays where it was, first, and the pressed button keeps the keyboard's focus.
+    expect(screen.getAllByRole('listitem').filter((li) => li.hasAttribute('data-conflict')).map((li) => li.getAttribute('data-conflict'))).toEqual(['c1', 'c2']);
+    expect(button('Update from Bakery first').disabled).toBe(true);
   });
 
   it('all from main sends every question in one request, also the answered ones', async () => {
@@ -250,6 +260,52 @@ describe('resume and re-entry', () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
     expect(router.refresh).not.toHaveBeenCalled();
+  });
+
+  it('the regular look asks whether anything moved, with the key of the review it holds, and reads the review only when something did', async () => {
+    client.changes.mockResolvedValue(review({ state: 'state-1' }));
+    client.changesIfMoved.mockResolvedValueOnce({ current: true, state: 'state-1' });
+    open();
+    await screen.findByText(/elements changed/);
+    expect(client.changes).toHaveBeenCalledTimes(1);
+    const look = () =>
+      act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+
+    // Nothing moved: no review comes back, the page keeps what it shows and reloads no picture.
+    await look();
+    expect(client.changesIfMoved).toHaveBeenLastCalledWith(BRANCH, 'state-1');
+    expect(client.changes).toHaveBeenCalledTimes(1);
+    expect(router.refresh).not.toHaveBeenCalled();
+    expect(button(/looks good/i).disabled).toBe(false);
+
+    // Someone approved meanwhile: the answer is the review itself, shown at once, and the next look asks with its key.
+    client.changesIfMoved.mockResolvedValueOnce(review({ state: 'state-2', branch: summary({ approved: true }) }));
+    await look();
+    await screen.findByText(/· Looks good/);
+    client.changesIfMoved.mockResolvedValueOnce({ current: true, state: 'state-2' });
+    await look();
+    expect(client.changesIfMoved).toHaveBeenLastCalledWith(BRANCH, 'state-2');
+    expect(client.changes).toHaveBeenCalledTimes(1);
+
+    // A branch closed elsewhere is heard by the regular look too.
+    client.changesIfMoved.mockRejectedValueOnce(new BranchApiError('branch_closed', 'closed', 410));
+    await look();
+    await waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it('a page that is new as a whole is one line with its number of elements, never a list of them', async () => {
+    const list: DocumentReview = {
+      ...LIST,
+      units: [{ unit: 'page', id: 'team', title: 'Team', change: 'added', slug: { before: null, after: 'team' }, fields: [], elements: [], elementCount: 1200 }],
+    };
+    client.changes.mockResolvedValue(review({ review: list }));
+    open();
+    await screen.findByText('The whole page is new, with 1,200 elements.');
+    expect(screen.getByText('1 page, 1200 elements changed')).toBeTruthy();
+    expect(document.querySelectorAll('[data-element]')).toHaveLength(0);
+    expect(lastPane('branch').outlines).toBe('');
   });
 
   it('a rename moves only the token: the pictures reload once, and not again for the same state', async () => {

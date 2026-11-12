@@ -341,7 +341,12 @@ export const LIVE_EVENTS = {
   genSection: 'gen:section',
   genDone: 'gen:done',
   authExpired: 'auth:expired',
+  /** Site branches: this site is a branch, and it was just merged or discarded. Nothing more can be saved to it. */
+  branchClosed: 'branch:closed',
 } as const;
+
+/** What a tab does in the browser when its branch was closed elsewhere: the branch context reads the record again. */
+export const BRANCH_CLOSED_BROWSER_EVENT = 'lumitra:branch-closed';
 
 /** The feed keeps this many lines (the state event's backfill too). */
 export const LIVE_FEED_MAX = 30;

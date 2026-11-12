@@ -125,6 +125,9 @@ export interface ReviewPaneProps {
   focusId: string | null;
 }
 
+/** What the keyboard could otherwise stop on inside a drawn page. */
+const TABBABLE = 'a[href], area[href], button, input, select, textarea, summary, iframe, audio[controls], video[controls], [contenteditable], [tabindex]';
+
 export const ReviewPane = observer(function ReviewPane({ side, title, page, site, emptyText, outlines, focusId }: ReviewPaneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [mount, setMount] = useState<HTMLDivElement | null>(null);
@@ -143,10 +146,20 @@ export const ReviewPane = observer(function ReviewPane({ side, title, page, site
     const stopSubmit = (e: Event) => e.preventDefault();
     container.addEventListener('click', stopLink, true);
     container.addEventListener('submit', stopSubmit, true);
+    // And not a page to tab through: every link, button and field of the drawn page leaves the tab order, or a
+    // keyboard user would walk two whole pages on every review. The pane itself takes focus and scrolls (below).
+    const quiet = () => {
+      for (const el of container.querySelectorAll<HTMLElement>(TABBABLE)) {
+        if (el.getAttribute('tabindex') !== '-1') el.setAttribute('tabindex', '-1');
+      }
+    };
+    const quieter = new MutationObserver(quiet);
+    quieter.observe(container, { childList: true, subtree: true });
     const stop = mirrorStyles(root, container);
     const stopFonts = hoistFontFaces(container, side);
     setMount(container);
     return () => {
+      quieter.disconnect();
       stop();
       stopFonts();
       container.remove();
@@ -180,11 +193,25 @@ export const ReviewPane = observer(function ReviewPane({ side, title, page, site
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-1" aria-label={title}>
-      <h3 className="truncate text-xs font-medium text-muted-foreground">{title}</h3>
+      <h2 className="truncate text-xs font-medium text-muted-foreground">{title}</h2>
       <div
         ref={hostRef}
         data-review-side={side}
-        className="relative min-h-[120px] flex-1 overflow-hidden rounded-md border border-border bg-muted"
+        // One stop in the tab order per pane: a picture of the page that the keyboard can scroll.
+        tabIndex={0}
+        role="group"
+        aria-label={`${title}. A picture of the page: the arrow keys, Page Up, Page Down, Home and End scroll it.`}
+        onKeyDown={(event) => {
+          const frame = mount?.querySelector<HTMLElement>('[data-preview-frame]');
+          if (!frame) return;
+          const page = Math.round(frame.clientHeight * 0.8);
+          const by: Record<string, number> = { ArrowDown: 80, ArrowUp: -80, PageDown: page, PageUp: -page, Home: -frame.scrollHeight, End: frame.scrollHeight };
+          const delta = by[event.key];
+          if (delta === undefined) return;
+          event.preventDefault();
+          frame.scrollBy({ top: delta });
+        }}
+        className="relative min-h-[120px] flex-1 overflow-hidden rounded-md border border-border bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       {mount
         ? createPortal(

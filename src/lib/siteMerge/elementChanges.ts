@@ -61,7 +61,15 @@ export interface UnitReview {
   slug?: { before: string | null; after: string | null };
   /** The page's or component's own fields that changed (metadata, the slug), outside its elements. */
   fields: FieldChange[];
+  /**
+   * The elements that changed inside a unit that existed before and still does. Empty for a unit that is new
+   * or removed as a whole: every one of its elements would be listed as added (or removed), which says nothing
+   * the unit's own line does not, and made a new page of a thousand elements a thousand list rows and a
+   * thousand outline rules. `elementCount` says how many it holds instead.
+   */
   elements: ElementChange[];
+  /** Set on a unit that is new or removed as a whole: how many elements it holds. */
+  elementCount?: number;
 }
 
 export interface DocumentReview {
@@ -199,11 +207,24 @@ const TREES = new Set(['appComponentTree', 'canvasNodes']);
 const VALUE_HIDDEN = new Set<string>(['apiKeyRef']);
 const HIDDEN = { omitted: true, hidden: true } as const;
 
+/**
+ * A conflict's values as they may be shown: a site field whose value is never shown (the reference to where the
+ * analytics key is kept) is told as changed, without what it holds, in a conflict as in the change list.
+ */
+export function shownConflictValue(unitKind: string, path: readonly string[], value: unknown): unknown {
+  return unitKind === 'site' && path.length > 0 && VALUE_HIDDEN.has(path[0]) ? HIDDEN : shownValue(value);
+}
+
 function ownFields(unit: unknown): Record<string, unknown> {
   if (!isPlainObject(unit)) return {};
   const copy = withoutTimestamps(unit);
   for (const key of TREES) delete copy[key];
   return copy;
+}
+
+/** A unit that is new or removed as a whole: its elements counted, not listed (UnitReview.elements). */
+function whole(elements: ElementChange[]): { elements: ElementChange[]; elementCount: number } {
+  return { elements: [], elementCount: elements.length };
 }
 
 /** The review of everything `to` changes against `from`. */
@@ -229,7 +250,7 @@ export function reviewDocuments(from: MergeDocument, to: MergeDocument): Documen
       change: old ? 'changed' : 'added',
       slug: { before: old ? old.slug : null, after: page.slug },
       fields,
-      elements,
+      ...(old ? { elements } : whole(elements)),
     });
   }
   for (const page of from.pages) {
@@ -241,7 +262,7 @@ export function reviewDocuments(from: MergeDocument, to: MergeDocument): Documen
       change: 'removed',
       slug: { before: page.slug, after: null },
       fields: [],
-      elements: elementChanges(page.snapshot, undefined),
+      ...whole(elementChanges(page.snapshot, undefined)),
     });
   }
 
@@ -253,11 +274,14 @@ export function reviewDocuments(from: MergeDocument, to: MergeDocument): Documen
     const elements = elementChanges(bodyOf(old), bodyOf(definition));
     const fields = old === undefined ? [] : fieldChanges(componentFields(old), componentFields(definition));
     if (old !== undefined && elements.length === 0 && fields.length === 0) continue;
-    units.push({ unit: 'component', id, title: nameOfComponent(definition, id), change: old === undefined ? 'added' : 'changed', fields, elements });
+    units.push({
+      unit: 'component', id, title: nameOfComponent(definition, id), change: old === undefined ? 'added' : 'changed', fields,
+      ...(old === undefined ? whole(elements) : { elements }),
+    });
   }
   for (const [id, definition] of Object.entries(fromComponents)) {
     if (id in toComponents) continue;
-    units.push({ unit: 'component', id, title: nameOfComponent(definition, id), change: 'removed', fields: [], elements: elementChanges(bodyOf(definition), undefined) });
+    units.push({ unit: 'component', id, title: nameOfComponent(definition, id), change: 'removed', fields: [], ...whole(elementChanges(bodyOf(definition), undefined)) });
   }
 
   const shared = (pages: MergeDocument['pages'], other: Map<string, unknown>) => pages.map((p) => p.pageId).filter((id) => other.has(id));

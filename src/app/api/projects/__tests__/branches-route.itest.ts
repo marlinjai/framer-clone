@@ -120,6 +120,24 @@ describe('the guard chain', () => {
     expect(await prisma.siteBranch.count({ where: { siteId: us.mainId } })).toBe(0);
   });
 
+  it('discards a branch with the switch off, behind every other guard, and nothing else works then', async () => {
+    const made = await create(us.mainId, { name: 'To end' });
+    const branchId = (await made.json()).branch.branchId as string;
+    delete process.env.SITE_BRANCHES_COMPANIES;
+    expect((await one('GET', us.mainId, branchId)).status).toBe(404);
+    expect((await one('PATCH', us.mainId, branchId, { name: 'Renamed' })).status).toBe(404);
+    authMock.mockResolvedValueOnce({ authenticated: false, error: 'Forbidden', status: 403 });
+    expect((await one('DELETE', us.mainId, branchId)).status).toBe(403);
+    sessionMock.mockResolvedValueOnce(memberOf(them));
+    expect((await one('DELETE', us.mainId, branchId)).status).toBe(404);
+    expect(await prisma.site.count({ where: { id: branchId } })).toBe(1);
+    const discarded = await one('DELETE', us.mainId, branchId);
+    expect(discarded.status).toBe(200);
+    expect((await discarded.json()).discarded).toBe(true);
+    expect(await prisma.site.count({ where: { id: branchId } })).toBe(0);
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } })).status).toBe('discarded');
+  });
+
   it('answers 404 on a published host, 401 without a session, 403 without the permission', async () => {
     expect((await list(us.mainId, 'bakery.sites.lumitra.co')).status).toBe(404);
     sessionMock.mockResolvedValueOnce(null);

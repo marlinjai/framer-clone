@@ -8,7 +8,7 @@
 // every route, published sites included.
 
 import { isPreviewHost } from '@/lib/sites/previewHost';
-import { resolvePreviewSite } from '@/server/sites/branches/previewLinks';
+import { resolvePreviewFavicon } from '@/server/sites/branches/previewLinks';
 import { resolveSiteAndPrimaryHost } from '@/server/sites/requestSite';
 import { iconHref } from '@/lib/site/publishedHead';
 
@@ -26,9 +26,10 @@ async function previewFavicon(host: string | null): Promise<Response> {
   const headers = { 'cache-control': 'private, no-store', 'x-robots-tag': 'noindex, nofollow, noarchive', 'referrer-policy': 'no-referrer' };
   let icon: string | null | undefined;
   try {
-    const site = await resolvePreviewSite(host);
+    // The link and the branch's settings only: the page beside this request has loaded the branch already.
+    const site = await resolvePreviewFavicon(host);
     if (!site) return new Response(null, { status: 404, headers });
-    icon = iconHref(site.siteSettings.faviconUrl);
+    icon = iconHref(site.faviconUrl);
   } catch (err) {
     console.error('favicon.ico: could not resolve the preview.', err);
     return new Response(null, { status: 503, headers });

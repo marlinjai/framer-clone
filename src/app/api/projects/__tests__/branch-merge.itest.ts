@@ -20,7 +20,7 @@ import { getPrismaClient } from '@/server/db';
 import type { TenantScope } from '@/server/sites';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
 import { getSiteBranchRepository } from '@/server/sites/branches/repository';
-import { SiteBranchMergeService } from '@/server/sites/branches/merge';
+import { getSiteBranchMergeService, SiteBranchMergeService } from '@/server/sites/branches/merge';
 import { getSiteRepository } from '@/server/sites/repository';
 import { subscribeSite } from '@/server/sites/liveBus';
 import { POST as createPOST } from '../[projectId]/branches/route';
@@ -230,11 +230,16 @@ describe('forward', () => {
     expect(behind.branch.mainMoved).toBe(true);
     const first = (await (await merge(mainOnly, { token: behind.token })).json()).error;
     expect(first.code).toBe('branch_updated_from_main');
-    // The token the update answered is the one a fresh review gives, its name change included, and it merges.
+    // The token the update answered is the one a fresh review gives, its name change included. The branch now
+    // holds main's name and nothing of its own, so there is nothing to merge; with a change of its own it merges
+    // and main keeps its name.
     const fresh = await review(mainOnly);
     expect(fresh.token).toBe(first.token);
     expect(fresh.branch.mainMoved).toBe(false);
-    expect((await merge(mainOnly, { token: first.token })).status).toBe(200);
+    expect(fresh.unchanged).toBe(true);
+    expect((await (await merge(mainOnly, { token: first.token })).json()).error.code).toBe('branch_unchanged');
+    await edit(us, mainOnly, { home: 'Fresh bread, daily', about: 'Since 1990' });
+    expect((await merge(mainOnly, { token: (await review(mainOnly)).token })).status).toBe(200);
     expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId } })).name).toBe('Main name');
 
     // Both renamed: a conflict, never one name dropped without a word.
@@ -550,6 +555,113 @@ describe('re-entry after completion or failure', () => {
   });
 });
 
+describe('what the whole-feature review found', () => {
+  it('renaming the site on an approved branch takes the approval back: it was given for the name the reviewer saw', async () => {
+    const branchId = await createBranch(us, 'Approved, then renamed');
+    await edit(us, branchId, { home: 'Approved bread', about: 'Since 1990' });
+    await getSiteBranchRepository().changeBranch(us.scope, us.mainId, branchId, { ready: true }, { kind: 'user', id: 'author' });
+    expect((await approvePOST(request('POST', `/api/projects/${branchId}/branch/approve`, { token: (await review(branchId)).token }), ctx(branchId))).status).toBe(200);
+    expect((await review(branchId)).branch.approved).toBe(true);
+    await getSiteRepository().renameSite(us.scope, branchId, 'Bakery, renamed after approval');
+    expect((await review(branchId)).branch.approved).toBe(false);
+    // Renaming main touches no branch's approval.
+    expect((await approvePOST(request('POST', `/api/projects/${branchId}/branch/approve`, { token: (await review(branchId)).token }), ctx(branchId))).status).toBe(200);
+    await getSiteRepository().renameSite(us.scope, us.mainId, 'Main, renamed');
+    expect((await review(branchId)).branch.approved).toBe(true);
+  });
+
+  it('a site still served from its working copy (published before versions were frozen) takes no merge and no undo until it is published once', async () => {
+    const branchId = await createBranch(us, 'On an old live site');
+    await edit(us, branchId, { home: 'Would go live', about: 'Since 1990' });
+    await prisma.site.update({ where: { id: us.mainId }, data: { status: 'published', publishedRevisionId: null } });
+    const version = (await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true } })).version;
+    const res = await merge(branchId, { token: (await review(branchId)).token });
+    expect(res.status).toBe(409);
+    const error = (await res.json()).error;
+    expect(error.code).toBe('site_needs_republish');
+    expect(error.message).toMatch(/Publish the site once, then merge/);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true } })).version).toBe(version);
+    expect(await textOf(us.mainId, 'home')).not.toBe('Would go live');
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId } })).status).toBe('open');
+    // A draft site, as every site made today is until its first publish, merges.
+    await prisma.site.update({ where: { id: us.mainId }, data: { status: 'draft' } });
+    expect((await merge(branchId, { token: (await review(branchId)).token })).status).toBe(200);
+  });
+
+  it('a conflict on the analytics key reference names the field and never shows what it holds', async () => {
+    const branchId = await createBranch(us, 'Key reference');
+    await prisma.site.update({ where: { id: branchId }, data: { apiKeyRef: 'path/on/the/branch' } });
+    await prisma.site.update({ where: { id: us.mainId }, data: { apiKeyRef: 'path/on/main', version: { increment: 1 } } });
+    const seen = await review(branchId);
+    const conflict = seen.conflicts.find((c: { path: string[] }) => c.path[0] === 'apiKeyRef');
+    expect(conflict).toBeDefined();
+    expect(conflict.main).toEqual({ omitted: true, hidden: true });
+    expect(conflict.branch).toEqual({ omitted: true, hidden: true });
+    expect(JSON.stringify(seen)).not.toContain('path/on/');
+  });
+
+  it('approve, send back and merge refuse a large body before reading it; update and answers still take their answers', async () => {
+    const branchId = await createBranch(us, 'Body sizes');
+    await edit(us, branchId, { home: 'Sized bread', about: 'Since 1990' });
+    const big = { token: (await review(branchId)).token, note: 'x'.repeat(40_000) };
+    for (const post of [approvePOST, sendBackPOST, mergePOST]) {
+      const res = await post(request('POST', `/api/projects/${branchId}/branch/x`, big), ctx(branchId));
+      expect(res.status).toBe(413);
+    }
+    const answers = await answersPOST(request('POST', `/api/projects/${branchId}/branch/answers`, { token: big.token, resolutions: {}, pad: 'x'.repeat(40_000) }), ctx(branchId));
+    expect(answers.status).not.toBe(413);
+  });
+});
+
+describe('a tab open on the branch hears that it was closed', () => {
+  it('a merge and a discard each announce it on the branch\'s own stream, once, after the commit', async () => {
+    const heard: Array<[string, unknown]> = [];
+    const mergedId = await createBranch(us, 'To merge');
+    await edit(us, mergedId, { home: 'Merged bread', about: 'Since 1990' });
+    const discardedId = await createBranch(us, 'To discard');
+    const stop = [mergedId, discardedId].map((id) => subscribeSite(id, (event, data) => event === LIVE_EVENTS.branchClosed && heard.push([id, data])));
+    expect((await merge(mergedId, { token: (await review(mergedId)).token })).status).toBe(200);
+    await getSiteBranchRepository().discardBranch(us.scope, us.mainId, discardedId, { kind: 'user', id: 'u' });
+    // A repeat of either writes nothing and says nothing again.
+    await getSiteBranchRepository().discardBranch(us.scope, us.mainId, discardedId, { kind: 'user', id: 'u' });
+    stop.forEach((off) => off());
+    expect(heard).toEqual([
+      [mergedId, { status: 'merged' }],
+      [discardedId, { status: 'discarded' }],
+    ]);
+  });
+});
+
+describe('a branch that changes nothing', () => {
+  it('is not merged, by the route as by the screen: nothing is written, it stays open, and the merge before it can still be undone', async () => {
+    const first = await createBranch(us, 'First');
+    await edit(us, first, { home: 'First bread', about: 'Since 1990' });
+    expect((await merge(first, { token: (await review(first)).token })).status).toBe(200);
+    const kept = await prisma.siteBranch.findUniqueOrThrow({ where: { id: first }, select: { mainBeforeExpiresAt: true } });
+    expect(kept.mainBeforeExpiresAt).not.toBeNull();
+    const version = (await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true } })).version;
+
+    const empty = await createBranch(us, 'Nothing yet');
+    const read = await review(empty);
+    expect(read.unchanged).toBe(true);
+    const res = await merge(empty, { token: read.token });
+    expect(res.status).toBe(409);
+    const error = (await res.json()).error;
+    expect(error.code).toBe('branch_unchanged');
+    expect(error.message).toMatch(/nothing to merge/);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: us.mainId }, select: { version: true } })).version).toBe(version);
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: empty } })).status).toBe('open');
+    // The copy kept for undoing the first merge was not replaced by a merge that did nothing.
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: first }, select: { mainBeforeExpiresAt: true } })).mainBeforeExpiresAt).toEqual(kept.mainBeforeExpiresAt);
+
+    // With a change it merges, and says it is not unchanged.
+    await edit(us, empty, { home: 'Second bread', about: 'Since 1990' });
+    const again = await review(empty);
+    expect(again.unchanged).toBe(false);
+    expect((await merge(empty, { token: again.token })).status).toBe(200);
+  });
+});
+
 describe('isolation', () => {
   it('answers another company’s branch like a missing one on every review route, and writes nothing', async () => {
     sessionMock.mockResolvedValue(memberOf(them));
@@ -584,6 +696,7 @@ describe('isolation', () => {
     sessionMock.mockResolvedValue(memberOf(them));
     authMock.mockImplementation(async () => ({ authenticated: true, userId: `user-${them.companyId}` }));
     const theirs = await createBranch(them, 'Theirs, merged');
+    await edit(them, theirs, { home: 'Their bread', about: 'Since 1990' });
     const { token } = await review(theirs);
     expect((await merge(theirs, { token })).status).toBe(200);
 
@@ -732,6 +845,62 @@ describe('the review (S5): the change list and answers saved as given', () => {
     expect((await update(branchId, { token: seen.token })).status).toBe(200);
     expect(await textOf(branchId, 'home')).toBe('Branch home');
     expect(await textOf(branchId, 'about')).toBe('Branch about');
+  });
+
+  it('a page that holds the review is told "current" without a new computation, and gets the review again whenever anything it shows moved', async () => {
+    const branchId = await createBranch(us, 'Watching');
+    await edit(us, branchId, { home: 'Branch home', about: 'Branch about' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Main about' });
+    const ask = async (state: string) =>
+      (await changesGET(request('GET', `/api/projects/${branchId}/branch/changes?ifState=${encodeURIComponent(state)}`), ctx(branchId))).json();
+    /** Asks with the key held: the new review when something moved, which is then the one held. */
+    let held = await review(branchId);
+    expect(held.state).toMatch(/^[\w-]{32}$/);
+    const moved = async (what: string) => {
+      const next = await ask(held.state);
+      expect(next.current, what).toBeUndefined();
+      expect(next.state, what).not.toBe(held.state);
+      held = next;
+      // And the review that came back is itself current.
+      expect(await ask(held.state), what).toEqual({ current: true, state: held.state });
+    };
+
+    // Nothing moved: no review, and the documents are not read (the merge service's read is not called).
+    const service = getSiteBranchMergeService();
+    const readState = vi.spyOn(service as unknown as { readState: () => Promise<unknown> }, 'readState');
+    expect(await ask(held.state)).toEqual({ current: true, state: held.state });
+    expect(readState).not.toHaveBeenCalled();
+    readState.mockRestore();
+    // A key that is none (an older page, a made-up one) gets the review.
+    expect((await ask('nonsense')).token).toBe(held.token);
+
+    // An answer stored from another tab: same token, another review.
+    const [first] = held.conflicts;
+    const answered = await (await answers(branchId, { token: held.token, resolutions: { [first.id]: { fingerprint: first.fingerprint, pick: 'branch' } } })).json();
+    await moved('an answer');
+    // The answer's own reply is the review of what is stored now: it carries the current key and the same content.
+    expect(answered.state).toBe(held.state);
+    expect(answered.settled).toEqual(held.settled);
+    expect(answered.conflicts).toEqual(held.conflicts);
+    expect(answered.review).toEqual(held.review);
+
+    expect((await approve(branchId, { token: held.token })).status).toBe(200);
+    await moved('an approval');
+    expect(held.branch.approved).toBe(true);
+    expect((await sendBack(branchId, { token: held.token, note: 'Footer again' })).status).toBe(200);
+    await moved('a send back');
+    expect(held.branch.reviewNote).toBe('Footer again');
+    await edit(us, branchId, { home: 'Branch home 2', about: 'Branch about' });
+    await moved('a save of the branch');
+    await edit(us, us.mainId, { home: 'Main home 2', about: 'Main about' });
+    await moved('a save of main');
+    await prisma.site.update({ where: { id: us.mainId }, data: { name: 'Bakery & Cafe' } });
+    await moved('a rename of main');
+
+    // A closed branch says so to the regular look too, as the review does.
+    await getSiteBranchRepository().discardBranch(us.scope, us.mainId, branchId, { kind: 'user', id: 'u' });
+    const closed = await changesGET(request('GET', `/api/projects/${branchId}/branch/changes?ifState=${held.state}`), ctx(branchId));
+    expect(closed.status).toBe(410);
   });
 
   it('two answers stored at once both land: a draft changed by the other is no stale review', async () => {

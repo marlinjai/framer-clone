@@ -28,25 +28,32 @@ beforeEach(() => {
 });
 
 describe('site images on a preview host', () => {
-  it('serves the image of the previewed branch\'s site, never stored, never indexed, same origin only', async () => {
+  it('serves the image of the previewed branch\'s site, asked for again every time, never indexed, same origin only', async () => {
     const res = await get(PREVIEW);
     expect(res.status).toBe(200);
     expect(image).toHaveBeenCalledWith('main-1', SHA);
     expect(published).not.toHaveBeenCalled();
-    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    // Kept by the visitor's own browser only, and never used without asking again.
+    expect(res.headers.get('cache-control')).toBe('private, no-cache');
+    expect(res.headers.get('etag')).toBe(`"${SHA}"`);
     expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow, noarchive');
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
     expect(res.headers.get('cross-origin-resource-policy')).toBe('same-origin');
     const cached = await get(PREVIEW, { 'if-none-match': `"${SHA}"` });
     expect(cached.status).toBe(304);
-    expect(cached.headers.get('cache-control')).toBe('private, no-store');
+    expect(cached.headers.get('cache-control')).toBe('private, no-cache');
+    // The link was resolved for the 304 too: asking again is what ends a picture with its link.
+    expect(preview).toHaveBeenCalledTimes(2);
   });
 
-  it('answers 404, not stored either, once the link names nothing', async () => {
+  it('answers 404, not stored either, once the link names nothing, also to a browser that holds the picture', async () => {
     preview.mockResolvedValue(null);
     const res = await get(PREVIEW);
     expect(res.status).toBe(404);
     expect(res.headers.get('cache-control')).toBe('private, no-store');
+    const held = await get(PREVIEW, { 'if-none-match': `"${SHA}"` });
+    expect(held.status).toBe(404);
+    expect(held.headers.get('cache-control')).toBe('private, no-store');
     expect(image).not.toHaveBeenCalled();
   });
 

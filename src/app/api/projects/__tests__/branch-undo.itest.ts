@@ -399,6 +399,40 @@ describe('re-entry', () => {
     expect((await (await undo(us.mainId, branchId)).json()).error.message).toMatch(/kept for 30 days/);
   });
 
+  it('the kept copy also goes when the editor is opened on the site, on a branch of it, or on the merged branch\'s old address, with the switch on or off', async () => {
+    const kept = async (branchId: string) =>
+      prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId }, select: { mainBeforeDocument: true, mainBeforeExpiresAt: true, mainBeforeEnded: true } });
+    const gone = { mainBeforeDocument: null, mainBeforeExpiresAt: null, mainBeforeEnded: 'expired' };
+    const expire = (branchId: string) => prisma.siteBranch.update({ where: { id: branchId }, data: { mainBeforeExpiresAt: new Date(Date.now() - 1000) } });
+
+    // A copy inside its 30 days is left alone by every one of them.
+    const first = await mergedBranch('Summer sale', { home: 'Summer bread', about: 'Since 1990' });
+    await editorBranchState(us.scope, us.companyId, us.mainId);
+    await closedBranchNotice(us.scope, us.companyId, first);
+    expect((await kept(first)).mainBeforeDocument).not.toBeNull();
+
+    await expire(first);
+    await editorBranchState(us.scope, us.companyId, us.mainId);
+    expect(await kept(first)).toEqual(gone);
+
+    const second = await mergedBranch('Autumn sale', { home: 'Autumn bread', about: 'Since 1990' });
+    await expire(second);
+    const { branch } = await getSiteBranchRepository().createBranch(us.scope, us.mainId, { name: 'Open one', actor: USER });
+    await editorBranchState(us.scope, us.companyId, branch.branchId);
+    expect(await kept(second)).toEqual(gone);
+
+    const third = await mergedBranch('Winter sale', { home: 'Winter bread', about: 'Since 1990' });
+    await expire(third);
+    expect(await closedBranchNotice(us.scope, us.companyId, third)).toMatchObject({ undoUntil: null });
+    expect(await kept(third)).toEqual(gone);
+
+    const fourth = await mergedBranch('Spring sale', { home: 'Spring bread', about: 'Since 1990' });
+    await expire(fourth);
+    process.env.SITE_BRANCHES_COMPANIES = '';
+    expect(await editorBranchState(us.scope, us.companyId, us.mainId)).toBeNull();
+    expect(await kept(fourth)).toEqual(gone);
+  });
+
   it('a kept copy that holds a part the editor cannot load is not put back: refused, nothing written', async () => {
     const branchId = await mergedBranch('Summer sale', { home: 'Summer bread', about: 'Since 1990' });
     const record = await prisma.siteBranch.findUniqueOrThrow({ where: { id: branchId }, select: { mainBeforeDocument: true } });

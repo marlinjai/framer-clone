@@ -5,14 +5,19 @@ import { conflictText, escapeId, fieldText, outlineSheet, totalsText, valueText 
 import type { DocumentReview, UnitReview } from '@/lib/siteMerge/elementChanges';
 
 describe('valueText', () => {
-  it('reads text, sizes, hidden values and short JSON', () => {
+  it('reads text, sizes and hidden values, and never shows raw data', () => {
     expect(valueText('Hello')).toBe('Hello');
     expect(valueText('')).toBe('empty');
     expect(valueText(null)).toBe('nothing');
     expect(valueText(12)).toBe('12');
     expect(valueText({ omitted: true, characters: 12345 })).toBe('12,345 characters, too long to show here');
     expect(valueText({ omitted: true, hidden: true })).toBe('not shown');
-    expect(valueText({ a: 'x'.repeat(400) }).length).toBe(160);
+    expect(valueText({ color: 'red', fontSize: 12 })).toBe('color, fontSize');
+    expect(valueText({ a: 1, b: 2, c: 3, d: 4, e: 5 })).toBe('a, b, c and 2 more');
+    expect(valueText({})).toBe('empty');
+    expect(valueText(['x'])).toBe('1 item');
+    expect(valueText([1, 2, 3])).toBe('3 items');
+    expect(valueText({ a: 'x'.repeat(400) })).not.toContain('{');
   });
 });
 
@@ -32,7 +37,7 @@ describe('conflictText', () => {
   };
   it('names the page, the element and the field', () => {
     expect(conflictText({ id: 'c', kind: 'value', unit: { kind: 'node', id: 'h', container: 'page:home' }, path: ['props', 'children'], fingerprint: 'f', options: ['main', 'branch'] }, review)).toBe('Home: Welcome: text');
-    expect(conflictText({ id: 'c', kind: 'removed', unit: { kind: 'page', id: 'home' }, path: [], fingerprint: 'f', options: ['main', 'branch'] }, review)).toBe('Home: removed on one side, changed on the other');
+    expect(conflictText({ id: 'c', kind: 'removed', unit: { kind: 'page', id: 'home' }, path: [], fingerprint: 'f', options: ['main', 'branch'] }, review)).toBe('Home: removed in one place, changed in the other');
     expect(conflictText({ id: 'c', kind: 'value', unit: { kind: 'site', id: 'site' }, path: ['name'], fingerprint: 'f', options: ['main', 'branch'] }, review)).toBe('Site: name');
   });
 });
