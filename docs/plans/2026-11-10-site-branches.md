@@ -444,22 +444,60 @@ Marlin took all four recommendations on 2026-11-11: (1) no tier logic, one const
 
 ## 12. S9: the production proof, prepared on 2026-11-12
 
-Nothing in this section has been done on production. It records what production looks like, what the proof will do step by step, how each step is taken back, and the one decision that is Marlin's.
+Nothing in this section has been done on production. It records what production looks like, everything a deploy would carry and what it depends on, what the proof will do step by step, how each step is taken back, and the decisions that are Marlin's.
 
 ### Production as read on 2026-11-12 (read only)
 
-- **What runs:** the image built from main at `7b32ea16`, deployed by hand on 2026-11-09 (`gh workflow run deploy --ref main`; the workflow has no push trigger). Main has moved on since: the whole of site branches (S1 to S7, S8 once #376 merges) and other work that is merged and not deployed yet (the FX engine F1 to F4, the contact person on invoices, the buyer's mail as a job, the replay of a settled edit, two test and workflow changes).
+- **What runs:** the image built from main at `7b32ea16`, deployed by hand on 2026-11-09 (`gh workflow run deploy --ref main`; the workflow has no push trigger).
 - **Site branches are absent there:** `GET /api/projects/<id>/branches` answers the framework's own 404 page, not the application's JSON 404, so the route does not exist in that build. `SITE_BRANCHES_COMPANIES` is not among the application's variables in Coolify.
 - **Database:** none of the three site branches migrations is applied (`20261111000000_site_branches`, `20261112000000_site_branch_merge_undo`, `20261112120000_site_branch_previews`). All three are additive; the start sequence applies them on the first start of the new image (`prisma migrate deploy`).
 - **The company and its sites:** the automation profile is signed in on `app.lumitra.co` with Lumitra as the active company (id `019ec2f2-f19e-70f4-a889-8afb34c314ca`; the profile also belongs to two other companies, which stay off). Lumitra has two sites: "Lumitra (new landing page)", published, and "MCP end-to-end test", a draft.
 - **The wildcard:** a label never used before is served with the certificate `*.sites.lumitra.co` (decision 80), and the application routes any label under `sites.lumitra.co`.
 
-### What turning it on consists of
+### What a deploy of main carries besides site branches (inventory of 2026-11-12, nothing applied)
 
-1. **Deploy main** (after #376 and the fixes of the whole-feature reviews are merged): `gh workflow run deploy --ref main`, which builds the image, lets Coolify start it and waits for `/api/health/db`. This ships everything listed above, not only site branches, and applies the three migrations. With the switch unset the feature stays invisible: this step alone changes nothing a person or a visitor can see of branches.
-2. **Check the deploy with the switch still off:** the dashboard and both sites open as before, `GET /api/projects/<id>/branches` now answers the application's JSON 404, the published landing page renders unchanged, the MCP tool list has no branch tool.
-3. **Set `SITE_BRANCHES_COMPANIES=019ec2f2-f19e-70f4-a889-8afb34c314ca`** on the application in Coolify (Lumitra's own company only, never `*`) and restart it. An identifier, not a secret.
-4. **Run the proof below**, in the headless automation browser and with an agent key of the Lumitra company through the secrets proxy.
+Production runs `7b32ea16`; main is at `2222c27e`, 25 commits on, plus S8 once #376 merges. The application is deployed as one image from main, so turning site branches on cannot be had without everything below. **Switching site branches off again takes back none of it.**
+
+**Migrations the first start of the new image would apply, in this order** (the start sequence of `deploy/README.md`; a failure in any stops the start and Coolify keeps serving the old container):
+
+| # | Migration | Database | Owner | What it does | If it fails, and taking it back |
+|---|---|---|---|---|---|
+| 1 | `20261111000000_site_branches` (Prisma) | the sites database | site branches | One nullable column on `sites`, the table `site_branches`, a unique index on `sites(id, workspace_id)`, two foreign keys, check constraints and triggers. Builds an index and validates checks on `sites`, so it holds a short lock on that table. | Prisma marks it failed and every later start refuses to migrate until it is resolved by hand (`migrate resolve`, `deploy/README.md`, "Migration rollbacks"). Additive: older code ignores it; not reversed. |
+| 2 | `20261112000000_site_branch_merge_undo` (Prisma) | the sites database | site branches | Four nullable columns on `site_branches`. | As 1. |
+| 3 | `20261112120000_site_branch_previews` (Prisma, with #376) | the sites database | site branches | One table, one unique index on `site_branches`. | As 1. |
+| 4 | `030_books_contact_person` (commerce tenant fleet) | every company's commerce schema (`tg_<id>`), through the owner role | Books contact person (#370) | Two nullable columns with a check each, on `customer` and `sales_document`, with a five second lock wait per table. Runs for every company, not only Lumitra. | A lock wait over five seconds on any company's tables fails the start. Additive, no row rewritten. Not reversed. |
+
+**A dependency that is not a migration of this application, and blocks the deploy today.** #370 raises `@marlinjai/contacts-core` from 0.4.0 to 0.5.0. That version needs the shared contacts database at its migration `0003_contact_affiliations`. Read in the code, not assumed:
+
+- This application never applies contacts migrations. It opens the contacts database with `createContactsDb`, whose `ready()` compares the applied migrations with the ones the package ships and throws `ContactsLayoutError` when one is missing. So the new image on a contacts database still at `0002` fails **every** Books call that reads or writes a contact (customers, recipients, issuing an invoice), not only the new contact person screens. Books is in use on production.
+- `0003` is applied by the receipts application at its start. Its pull request (receipts #253) is a draft with the `hold` label, on purpose: receipts deploys on every merge, so merging it is the live migration.
+- The contacts plan (`docs/plans/2026-11-11-contact-affiliations.md` in the contacts repository, section 2) puts a production gate in front of that: a verified same-day backup of the contacts database, the migration and backfill run on a restored copy with matching counts, and Marlin's yes; then receipts first, Books after. The runbook with the restored-copy evidence is merged there (`f661235`).
+
+**So the order is fixed, and each step keeps its own gate:** (1) the contacts gate and the release of receipts #253, owned by the contacts and receipts work; (2) only then a deploy of this application's main; (3) only then the switch for the Lumitra company; (4) only then the proof, which writes to production. A go for one is not a go for the next.
+
+**The other work in the image, each to be confirmed by its owner before step 2:**
+
+| Work | Commits | Owner | What changes on production without any switch |
+|---|---|---|---|
+| Books contact person | #370 | Books customer management | New screens and routes; **every invoice issued from then on stores its recipient snapshot as version 2** (`buildCustomerSnapshot` always writes `v: 2`), with or without a contact person. |
+| Buyer's mail as a job consumer (shop backbone B5) | #364 | shop backbone | How the receipt mail of a paid order is sent changes (a job consumer and a backfill of open letters replace the earlier runtime). Affects real buyers' mails. |
+| FX engine F1 to F4 | #365, #368, #369, #373 | Lumitra FX in Sites | **Published pages change**: a page with a stored FX scene draws it through a lazy island; new client dependencies (three, react-three-fiber, postprocessing). |
+| Replay of a settled edit on an agent's write | #358 | live agent canvas | Editor behaviour when an agent writes while a person edits. |
+| Site branches S1 to S8 | #360, #361, #366, #367, #371, #372, #374, #376 | site branches | Nothing visible while the switch is unset. The save, the erase of personal data and the site listings carry branch-aware code paths that run for every company (a site with no branch takes the same path as before; covered by the existing suites). |
+| Tests and workflow only | #362, #363, score commits | several | Nothing at run time. |
+
+**What rolling the image back would and would not undo** (the previous image is `ghcr.io/marlinjai/framer-clone:7b32ea163bef2e1edb5fe0d249f1fc0875d24280`):
+
+- Site branches: clean, with the two conditions of section 9 (merge or discard open branches first; no erase of personal data while rolled back).
+- Books: **not clean once a single invoice has been issued on the new image.** The deployed code parses an invoice's recipient snapshot with version 1 only (`v: z.literal(1)` in `src/server/books/snapshots.ts` at `7b32ea16`), and the new code writes version 2 into every issued invoice. An issued invoice cannot be changed, so after a rollback the old code could not read those invoices until it is rolled forward again. Whether the old code tolerates a customer or draft that carries a contact person, and the contacts database at `0003`, is the Books and contacts owners' to confirm; the contacts plan says a database ahead of an application is fine and that its mirror triggers make a package rollback safe.
+- The buyer's mail and FX: their owners' to state.
+- The migrations: none is reversed; all are additive.
+
+### What turning site branches on consists of, once the deploy above has happened
+
+1. **Check the deploy with the switch still off:** the dashboard and both sites open as before, `GET /api/projects/<id>/branches` answers the application's JSON 404, the published landing page renders unchanged, the MCP tool list has no branch tool, Books lists its customers.
+2. **Set `SITE_BRANCHES_COMPANIES=019ec2f2-f19e-70f4-a889-8afb34c314ca`** on the application in Coolify (Lumitra's own company only, never `*`) and restart it. An identifier, not a secret.
+3. **Run the proof below**, in the headless automation browser and with an agent key of the Lumitra company through the secrets proxy.
 
 ### The proof, step by step
 
@@ -477,22 +515,24 @@ Everything is done on **a new draft site made for the proof**, "Branch proof 202
 | 8 | **A reviewer without edit rights:** a second login that may view and review but not edit opens the review of a third branch. | "Looks good" and "Send back" work, the conflict answers and "Share preview" are off with the reason, the routes answer 403 when called directly. Needs a member of the Lumitra company with that role; if the company has none, one is added for the proof and removed after it (asked for with the go). |
 | 9 | **The public preview link:** on "Proof C", Share preview, 1 day. Open the address in a clean browser profile with no login. | The page shows the branch with the band; response headers `x-robots-tag: noindex, nofollow, noarchive`, `cache-control: private, no-store`, `referrer-policy: no-referrer`; `robots.txt` disallows all; the form says nothing is sent; a `POST` to `/api/forms/submit` on that host answers 404; the certificate presented is `*.sites.lumitra.co`. Revoke: the address answers 404 at once. Make a new one, discard the branch: 404. |
 | 10 | Discard what is left open, and check the published landing page and its sitemap once more. | No open branch on the proof site; the landing page, its address and its published version number are as before step 1. |
-| 11 | Turn the switch off and on once (step 3 reversed and repeated). | Off: no switcher, the branch routes and tools answer 404, a preview address answers 404, main opens and saves as before. On: everything is back. |
+| 11 | Turn the switch off and on once (step 2 of turning it on, reversed and repeated). | Off: no switcher, the branch routes and tools answer 404, a preview address answers 404, main opens and saves as before. On: everything is back. |
 
 The proof site stays as a draft afterwards (deleting it is not needed and is not done without a word); its closed branches keep no content.
 
-### Taking it back
+### Taking site branches back
 
 | What | How | Effect |
 |---|---|---|
-| The switch | Remove `SITE_BRANCHES_COMPANIES` in Coolify and restart. Under five minutes. | Branches are hidden, not deleted; every preview address answers 404; main, saving and publishing are unaffected (section 9). Setting it again brings everything back. |
-| The deploy | Point the Coolify application at the previous image, `ghcr.io/marlinjai/framer-clone:7b32ea163bef2e1edb5fe0d249f1fc0875d24280` (every deploy pushes the commit's own tag beside `latest`), and redeploy. | Older code ignores the new columns and tables. Before doing this with open branches, merge or discard them (older code would list each as a draft site, section 9), and run no erase of personal data while rolled back. |
-| The migrations | Not reversed: additive, ignored by older code. | None. |
+| The switch | Remove `SITE_BRANCHES_COMPANIES` in Coolify and restart. Under five minutes. | Branches are hidden, not deleted; every preview address answers 404; main, saving and publishing are unaffected (section 9). Setting it again brings everything back. **It takes back site branches only, nothing else the deploy shipped.** |
 | A bad merge during the proof | "Undo this merge". | It is on the proof site only. |
+| The image | See "What rolling the image back would and would not undo" above. | Not a clean way back for Books once an invoice was issued. |
 
-### For Marlin
+### For Marlin, when its turn comes
 
-One line, with the default and the way back: **deploy main to production and turn site branches on for the Lumitra company only (`SITE_BRANCHES_COMPANIES` set to Lumitra's id), then run the eleven-step proof on a new draft site; default is not to do it until you say go; the switch comes off again in under five minutes by removing the variable, and the previous image is one redeploy away.** The deploy also ships the other merged work listed above, each of which its own owner would otherwise deploy.
+Site branches ask for two things, each a separate yes, and neither is asked while the contacts gate is open:
+
+1. **The deploy of main**, after the contacts database is at `0003` and receipts is released, and after the Books, shop and FX owners have each confirmed their part of the image: the default is not to deploy; it applies the four additive migrations above for every company; the image can be rolled back for site branches, and for Books only until the first invoice is issued on it.
+2. **The switch for the Lumitra company and the proof**, which makes a new draft site and writes to it on production: the default is off; it comes off again in under five minutes by removing the variable.
 
 ## Sources
 
