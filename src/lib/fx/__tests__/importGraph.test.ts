@@ -115,6 +115,7 @@ describe('the render-free entry (format.ts)', () => {
       'presets/index.ts',
       'presets/preset-bokeh-focuspull.json',
       'presets/preset-godrays-hero.json',
+      'presets/preset-gold-noise-gradient.json',
       'presets/preset-noise-gradient.json',
       'registry.ts',
       'schemas.ts',

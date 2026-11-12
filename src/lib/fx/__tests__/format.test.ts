@@ -20,7 +20,7 @@ import {
 } from '../format';
 
 import demoPhase2 from './fixtures/demo-phase-2.json';
-import hubHero from './fixtures/hub-hero.json';
+import hubHero from '../presets/preset-gold-noise-gradient.json';
 import v7 from './fixtures/v7.json';
 import bokehFocuspull from '../presets/preset-bokeh-focuspull.json';
 import godraysHero from '../presets/preset-godrays-hero.json';

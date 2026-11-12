@@ -22,7 +22,6 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, type Browser, type Page } from 'playwright';
 import type { PNG } from 'pngjs';
-import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';
 import { PRESETS, deserializeScene, serializeScene } from '@/lib/fx/format';
 import { parseFxProp, storedFxProp } from '@/lib/fxScene/fxScene';
 import {
@@ -46,7 +45,8 @@ import { fxSceneEntries } from './lib/universe';
 const preset = (id: string): OracleScene => serializeScene(PRESETS.find((p) => p.id === id)!.load()) as unknown as OracleScene;
 
 const SCENES: Readonly<Record<string, OracleScene>> = {
-  'hub-hero': hubHero as unknown as OracleScene,
+  // The lumitra.co hub hero is the engine's first preset.
+  'hub-hero': preset('gold-noise-gradient'),
   'godrays-hero': preset('godrays-hero'),
   'noise-gradient': preset('noise-gradient'),
 };

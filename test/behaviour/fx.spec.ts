@@ -10,7 +10,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserContext, type BrowserContextOptions, type BrowserType, type Page } from 'playwright';
 import { PNG } from 'pngjs';
-import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';
 import { PRESETS, serializeScene } from '@/lib/fx/format';
 import { png } from '@/lib/images/__tests__/fixtures';
 import { FX_ATTR, FX_MARKER, FX_PROP } from '@/lib/fxScene/marker';
@@ -19,6 +18,8 @@ import { publishPages, publishPagesWithImages } from './site';
 
 /** A preset as it is stored: the values `serializeScene` writes. */
 const preset = (id: string) => serializeScene(PRESETS.find((p) => p.id === id)!.load());
+/** The lumitra.co hub hero, the engine's first preset. */
+const hubHero = preset('gold-noise-gradient');
 const godraysHero = preset('godrays-hero');
 const bokehFocuspull = preset('bokeh-focuspull');
 

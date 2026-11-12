@@ -162,15 +162,12 @@ describe('FX2: the app reaches the engine only through its public entry', () => 
     expect(rules(APP_FILE, `import type { SceneConfig } from '@/lib/fx/types';`)).toEqual(['FX2']);
   });
 
-  it('lets a file under test import the engine\'s test scenes, and nothing else from inside it', () => {
+  it('gives a file under test no way into the engine but its public entries', () => {
     const SPEC = 'test/behaviour/fx.spec.ts';
-    expect(rules(SPEC, `import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';`)).toEqual([]);
     expect(rules(SPEC, `import { PRESETS } from '@/lib/fx/format';`)).toEqual([]);
     expect(rules(SPEC, `import preset from '@/lib/fx/presets/preset-godrays-hero.json';`)).toEqual(['FX2']);
+    expect(rules(SPEC, `import scene from '@/lib/fx/__tests__/fixtures/v7.json';`)).toEqual(['FX2']);
     expect(rules(SPEC, `import { LumitraScene } from '@/lib/fx/LumitraScene';`)).toEqual(['FX2']);
-    expect(rules(SPEC, `import x from '@/lib/fx/__tests__/scene.test';`)).toEqual(['FX2']);
-    // App code gets no such exception.
-    expect(rules(APP_FILE, `import hubHero from '@/lib/fx/__tests__/fixtures/hub-hero.json';`)).toEqual(['FX2']);
   });
 
   it('is clean over the test roots too', () => {

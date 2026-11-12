@@ -6,8 +6,10 @@
  * Export writes) so the gallery doubles as a self-documenting set of
  * examples a future site can copy and tweak.
  *
- * Three opening presets, each highlighting a different headline effect:
+ * Four presets. The first is the lumitra.co hero; the others each highlight a
+ * different headline effect:
  *
+ *   - gold-noise-gradient  the lumitra.co hub hero (gold noise field, grain)
  *   - godrays-hero       the v7 hero (rays + bloom + chromatic + vignette)
  *   - noise-gradient     calm mesh gradient + noise field + grain
  *   - bokeh-focuspull    the Phase 3 depth showcase (animated radius -> 0)
@@ -20,6 +22,7 @@
 import { deserializeScene } from "../serialize";
 import type { SceneConfig } from "../types";
 
+import goldNoiseGradient from "./preset-gold-noise-gradient.json";
 import godraysHero from "./preset-godrays-hero.json";
 import noiseGradient from "./preset-noise-gradient.json";
 import bokehFocuspull from "./preset-bokeh-focuspull.json";
@@ -36,6 +39,14 @@ export interface PresetMeta {
 }
 
 export const PRESETS: PresetMeta[] = [
+  {
+    // The lumitra.co hub hero, unchanged: lumitra-web `src/scenes/hub-hero.json`
+    // at commit 8a77254. The pixel oracle compares this scene.
+    id: "gold-noise-gradient",
+    label: "Gold Noise Gradient",
+    blurb: "The lumitra.co hero: a slow gold noise field on black, soft grain.",
+    load: () => deserializeScene(goldNoiseGradient),
+  },
   {
     id: "godrays-hero",
     label: "God Rays Hero",
