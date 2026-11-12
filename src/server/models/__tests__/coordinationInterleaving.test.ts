@@ -177,13 +177,10 @@ describe('every interleaving of an upload and a cleanup of the same blob keeps e
     expect(up.runs).toBeGreaterThan(100);
   });
 
-  it('two sites upload the same content while a cleanup runs (sampled orderings)', async () => {
-    // 6 + 6 + 5 steps is too many orderings to visit all; every ordering of the cleanup against each single uploader is
-    // covered above, so here a bounded prefix of the tree is walked.
-    let runs = 0;
-    const r = await explore(() => { const w = newWorld(); return { world: w, actors: [uploader('u1', 'site-b', w), uploader('u2', 'site-c', w), eraser('del', () => [servedKey()], w)] }; }, (w) => { runs++; return check(w, ['site-b', 'site-c']); }, { maxRuns: 30_000, stopAtFirstViolation: true }).catch(() => null);
-    expect(r === null || r.violations.length === 0).toBe(true);
-    expect(runs).toBeGreaterThan(1000);
+  it('two sites upload the same content while a cleanup runs (6,000 seeded random walks of the 15 steps)', async () => {
+    const r = await explore(() => { const w = newWorld(); return { world: w, actors: [uploader('u1', 'site-b', w), uploader('u2', 'site-c', w), eraser('del', () => [servedKey()], w)] }; }, (w) => check(w, ['site-b', 'site-c']), { sample: { runs: 6000, seed: 7 } });
+    expect(r.runs).toBe(6000);
+    expect(summarize(r)).toBe('');
   }, 300_000);
 });
 
@@ -389,7 +386,22 @@ describe('fencing, the late-landing delete, and the lease rule', () => {
     const stillThere: BlobDeleter = { snapshot: async () => [], removeSnapshot: async () => {}, hasBlob: async () => true };
     const r2 = await deleteBlobsCoordinated([servedKey()], { coordinator: m, storage: stillThere, now: () => new Date(t0.getTime() + 11 * 60_000) });
     expect(r2.retry[0].reason).toBe('still-present');
-    expect(m.tombstones.has(servedKey())).toBe(true);
+    // A copy that is still listed releases OUR tombstone, so uploads are not blocked for the whole lease.
+    expect(m.tombstones.has(servedKey())).toBe(false);
+  });
+
+  it('a copy that appears after the snapshot is reported, its tombstone is released at once, and the next cleanup removes it', async () => {
+    const m = new MemorySiteModels();
+    const st = new IdStorage();
+    const base = plainDeleter(st);
+    const leaky: BlobDeleter = { ...base, snapshot: async () => [], removeSnapshot: async () => { st.putIfAbsent(servedKey()); } }; // an abandoned upload's copy shows up
+    const r1 = await deleteBlobsCoordinated([servedKey()], { coordinator: m, storage: leaky, now: () => t0 });
+    expect(r1.retry).toEqual([{ key: servedKey(), reason: 'still-present' }]);
+    expect(m.tombstones.size).toBe(0);
+    expect(await m.beginUpload({ record: record('s'), limits, attempt: 'u', now: t0, pendingTtlMs: 1000 })).toMatchObject({ ok: true });
+    await m.abandonUpload('s', SERVED, 'u');
+    const r2 = await deleteBlobsCoordinated([servedKey()], { coordinator: m, storage: base, now: () => t0 });
+    expect(r2.deleted).toEqual([servedKey()]);
   });
 
   it('keeps a referenced blob, reports a retry for another cleanup\'s live tombstone, and refuses foreign keys', async () => {

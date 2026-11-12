@@ -141,6 +141,7 @@ async function runDelete(key: string, attempt: string, snapshot: unknown, deps: 
   try {
     await deps.storage.removeSnapshot(key, snapshot);
   } catch {
+    // The delete may have partly happened: the tombstone stays so nothing is uploaded under it, and a reconciler retries.
     report.retry.push({ key, reason: 'delete-failed' });
     return;
   }
@@ -151,7 +152,14 @@ async function runDelete(key: string, attempt: string, snapshot: unknown, deps: 
     report.retry.push({ key, reason: 'still-present' });
     return;
   }
-  if (present) { report.retry.push({ key, reason: 'still-present' }); return; }
+  if (present) {
+    // A copy appeared after the snapshot (an upload that abandoned after putting) or is a fresh one after a takeover. Never
+    // take a second snapshot under this tombstone (a stalled cleaner could then delete a fresh copy): release the tombstone,
+    // if it is still ours, so uploads are not blocked for the lease, and let a later cleanup start again with a new snapshot.
+    await deps.coordinator.completeDelete(key, attempt).catch(() => false);
+    report.retry.push({ key, reason: 'still-present' });
+    return;
+  }
   try {
     if (await deps.coordinator.completeDelete(key, attempt)) report.deleted.push(key);
     // The tombstone is no longer ours: a takeover finished this cleanup (or is running it). Nothing for us to retry.
