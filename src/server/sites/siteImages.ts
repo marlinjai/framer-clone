@@ -159,7 +159,9 @@ async function lockSiteImages(tx: Prisma.TransactionClient, siteId: string): Pro
  * not the site, so every site of the workspace counts them, which can only keep
  * an image longer), and every copy of the site a branch keeps: each open branch's
  * settings, definitions and pages, and every branch's fork point and kept
- * pre-merge copy (a merge or its undo may write them back). A text search for the
+ * pre-merge copy (a merge or its undo may write them back; a kept copy whose
+ * 30 days are over can no longer be written back and does not count, whether
+ * or not it has been cleared yet). A text search for the
  * path, so a field added later is covered without a change here. `siteId` is a
  * main site: the one that owns the images.
  */
@@ -183,7 +185,10 @@ async function referencedHashes(tx: Prisma.TransactionClient, siteId: string): P
       SELECT regexp_matches(bp.snapshot::text, ${pattern}, 'g')
         FROM public.site_pages bp JOIN public.sites b ON b.id = bp.site_id WHERE b.branch_of_site_id = ${siteId}
       UNION ALL
-      SELECT regexp_matches(coalesce(r.base_document::text, '') || ' ' || coalesce(r.main_before_document::text, ''), ${pattern}, 'g')
+      SELECT regexp_matches(
+          coalesce(r.base_document::text, '') || ' ' ||
+          CASE WHEN r.main_before_expires_at > (now() AT TIME ZONE 'UTC') THEN coalesce(r.main_before_document::text, '') ELSE '' END,
+          ${pattern}, 'g')
         FROM public.site_branches r WHERE r.site_id = ${siteId}
       UNION ALL
       SELECT regexp_matches(c.inverse_payload::text, ${pattern}, 'g')

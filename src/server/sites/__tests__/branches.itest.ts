@@ -29,7 +29,7 @@ import {
   SiteNotFoundError,
   type TenantScope,
 } from '@/server/sites';
-import { SiteBranchRepository, isIdClash } from '@/server/sites/branches/repository';
+import { CLOSED_RECORDS_KEPT, SiteBranchRepository, isIdClash } from '@/server/sites/branches/repository';
 import { parseRevisionDocument } from '@/server/sites/revision';
 import { SiteImageError, deleteSiteImage, listSiteImages, readSiteImage, storeSiteImage } from '@/server/sites/siteImages';
 import { MAX_OPEN_BRANCHES_PER_SITE } from '@/lib/sites/branches';
@@ -385,6 +385,119 @@ describe('the branch record constraints', () => {
   });
 });
 
+describe('the backstops added after the whole-feature review', () => {
+  const now = new Date();
+  const record = (over: Record<string, unknown>) =>
+    prisma.siteBranch.create({
+      data: {
+        id: randomUUID(), siteId: mainId, workspaceId: scope.workspaceId, tenantGroupId: TENANT_GROUP,
+        name: `Raw ${randomUUID().slice(0, 6)}`, createdByKind: 'user', createdBy: ALICE.id, ...over,
+      } as never,
+    });
+
+  it('a record on a branch instead of a main site is refused, on insert and on a move', async () => {
+    const { branch } = await create();
+    expect(await refusal(() => record({ siteId: branch.branchId }))).toContain('never on another branch');
+    const other = await record({ status: 'discarded' });
+    expect(
+      await refusal(() => prisma.$executeRaw`UPDATE public.site_branches SET site_id = ${branch.branchId} WHERE id = ${other.id}`),
+    ).toContain('never on another branch');
+  });
+
+  it('a record whose content row is a site of another workspace is refused by the second key', async () => {
+    // A site of another workspace, with the id a record of ours would point at.
+    const id = randomUUID();
+    await prisma.site.create({
+      data: { id, workspaceId: foreign.workspaceId, tenantGroupId: OTHER_GROUP, name: 'theirs', projectCreatedAt: now, projectUpdatedAt: now },
+    });
+    expect(await refusal(() => record({ id, branchSiteId: id }))).toMatch(/P2003|site_branches_branch_site_id_workspace_id_fkey/);
+    // Deleting a content row still clears the pointer only: the record keeps its workspace and closes.
+    const { branch } = await create();
+    await prisma.site.delete({ where: { id: branch.branchId } });
+    expect(await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } })).toMatchObject({
+      branchSiteId: null, workspaceId: scope.workspaceId, status: 'discarded',
+    });
+  });
+
+  it('the fork point name is kept beside the document by the database, through every write of it', async () => {
+    const { branch } = await create();
+    const baseName = async () =>
+      (await prisma.$queryRaw<{ base_name: string | null }[]>`SELECT base_name FROM public.site_branches WHERE id = ${branch.branchId}`)[0].base_name;
+    expect(await baseName()).toBe('Bakery');
+    expect((await branches.getBranch(scope, mainId, branch.branchId)).mainMoved).toBe(false);
+    // A rename of the site moves no version: the branch is behind by the name alone.
+    await prisma.site.update({ where: { id: mainId }, data: { name: 'Bakery & Cafe' } });
+    expect((await branches.getBranch(scope, mainId, branch.branchId)).mainMoved).toBe(true);
+    expect((await branches.listBranches(scope, mainId)).open[0].mainMoved).toBe(true);
+    expect((await branches.siteBranchContext(scope, branch.branchId))).toMatchObject({ kind: 'branch', branch: { mainMoved: true } });
+    // Any write of the fork document moves the stored name with it.
+    const doc = (await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } })).baseDocument as Record<string, unknown>;
+    await prisma.siteBranch.update({ where: { id: branch.branchId }, data: { baseDocument: { ...doc, name: 'Bakery & Cafe' } as never } });
+    expect(await baseName()).toBe('Bakery & Cafe');
+    expect((await branches.getBranch(scope, mainId, branch.branchId)).mainMoved).toBe(false);
+    await branches.discardBranch(scope, mainId, branch.branchId, ALICE);
+    expect(await baseName()).toBeNull();
+  });
+});
+
+describe('closed records are bounded', () => {
+  it(`keeps the ${CLOSED_RECORDS_KEPT} most recent closed records, a live undo copy and the branch an undone merge went to`, async () => {
+    const closed = (over: Record<string, unknown> = {}) => ({
+      id: randomUUID(), siteId: mainId, workspaceId: scope.workspaceId, tenantGroupId: TENANT_GROUP, name: 'Old',
+      status: 'discarded' as const, createdByKind: 'user', createdBy: ALICE.id, ...over,
+    });
+    // Older than everything else: a merged record whose undo copy is live, a branch that an undone merge went
+    // to with the record naming it, and one plain old record.
+    const keptForUndo = closed({ status: 'merged', mainBeforeDocument: { name: 'Bakery' }, mainBeforeExpiresAt: new Date(Date.now() + 86_400_000) });
+    const wentTo = closed();
+    const undone = closed({ status: 'merged', undoneIntoBranchId: wentTo.id });
+    const plain = closed();
+    const expiredUndo = closed({ status: 'merged', mainBeforeDocument: { name: 'Bakery' }, mainBeforeExpiresAt: new Date(Date.now() - 1000) });
+    await prisma.siteBranch.createMany({ data: [keptForUndo, wentTo, undone, plain, expiredUndo] as never });
+    const july = Array.from({ length: CLOSED_RECORDS_KEPT - 2 }, () => closed());
+    await prisma.siteBranch.createMany({ data: july as never });
+    // When each was closed, set in SQL (Prisma stamps `updated_at` itself on a write).
+    const aged = (ids: string[], at: string) =>
+      prisma.$executeRaw`
+        UPDATE public.site_branches SET updated_at = ${at}::timestamp,
+          merged_at = CASE WHEN status = 'merged' THEN ${at}::timestamp END,
+          discarded_at = CASE WHEN status = 'discarded' THEN ${at}::timestamp END
+        WHERE id = ANY(${ids})`;
+    await aged([keptForUndo.id, wentTo.id, plain.id, expiredUndo.id], '2026-01-01 00:00:00');
+    await aged([undone.id], '2026-06-01 00:00:00');
+    await aged(july.map((r) => r.id), '2026-07-01 00:00:00');
+
+    // Listing, however often, deletes nothing: only closing a branch prunes. (It clears the expired copy, which
+    // touches that record; a record's age is when it was closed, so that does not make it a recent one.)
+    await branches.listBranches(scope, mainId);
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: expiredUndo.id } })).mainBeforeDocument).toBeNull();
+    expect(await prisma.siteBranch.count({ where: { siteId: mainId } })).toBe(CLOSED_RECORDS_KEPT + 3);
+
+    const { branch } = await create();
+    await branches.discardBranch(scope, mainId, branch.branchId, ALICE);
+    const left = new Set((await prisma.siteBranch.findMany({ where: { siteId: mainId }, select: { id: true } })).map((r) => r.id));
+    // The newest prunable ones stay (the one just discarded, the 48 of July, the undone merge of June); the two
+    // plain old ones go, the expired undo copy with them, and the two protected ones stay beyond the count.
+    expect(left.has(branch.branchId)).toBe(true);
+    expect(left.has(undone.id)).toBe(true);
+    expect(left.has(keptForUndo.id)).toBe(true);
+    expect(left.has(wentTo.id)).toBe(true);
+    expect(left.has(plain.id)).toBe(false);
+    expect(left.has(expiredUndo.id)).toBe(false);
+    expect(left.size).toBe(CLOSED_RECORDS_KEPT + 2);
+    // A pruned record's old address is a missing site, not a closed branch.
+    await expect(branches.siteBranchContext(scope, plain.id)).rejects.toBeInstanceOf(SiteNotFoundError);
+    // Another site's records are never counted or touched.
+    const otherMain = randomUUID();
+    await latestVersionRepository().saveProject(scope, project(otherMain, 'Erika Muster'), { companyId: COMPANY });
+    const theirs = closed({ siteId: otherMain });
+    await prisma.siteBranch.create({ data: theirs as never });
+    const again = await create('Another');
+    await branches.discardBranch(scope, mainId, again.branch.branchId, ALICE);
+    expect(await prisma.siteBranch.count({ where: { id: theirs.id } })).toBe(1);
+  });
+});
+
 describe('one change, both or neither', () => {
   it('a rename and ready in one request: a name clash changes neither', async () => {
     const { branch: a } = await create('First');
@@ -593,6 +706,24 @@ describe('uploaded images belong to main', () => {
     await branches.discardBranch(scope, mainId, branch.branchId, ALICE);
     await expect(deleteSiteImage(mainId, image.sha256, prisma)).resolves.toBeUndefined();
   });
+
+  it('a copy kept for the undo of a merge keeps its images in use for its 30 days, and no longer after them', async () => {
+    const owner = { id: mainId, workspaceId: scope.workspaceId, tenantGroupId: TENANT_GROUP };
+    const { image } = await storeSiteImage(owner, png(48, 48), 'favicon', ALICE.id, prisma);
+    const { branch } = await create();
+    await prisma.$transaction((tx) =>
+      branches.closeRecord(tx, branch.branchId, {
+        status: 'merged', mergedBy: ALICE.id, mergedAt: new Date(),
+        mainBeforeDocument: { name: 'Bakery', siteSettings: { faviconUrl: image.path } },
+        mainBeforeExpiresAt: new Date(Date.now() + 60_000),
+      }),
+    );
+    await expect(deleteSiteImage(mainId, image.sha256, prisma)).rejects.toMatchObject({ code: 'image_in_use' });
+    // Past its date and not cleared yet (nobody listed the branches): the undo would refuse it, so it holds nothing.
+    await prisma.siteBranch.update({ where: { id: branch.branchId }, data: { mainBeforeExpiresAt: new Date(Date.now() - 1000) } });
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } })).mainBeforeDocument).not.toBeNull();
+    await expect(deleteSiteImage(mainId, image.sha256, prisma)).resolves.toBeUndefined();
+  });
 });
 
 describe('an erase of personal data reaches every copy a branch keeps', () => {
@@ -648,6 +779,32 @@ describe('an erase of personal data reaches every copy a branch keeps', () => {
     await expect(
       repo.saveProject(scope, project(branch.branchId, VALUE, { erasureEpoch: epochBefore }), { mustExist: true, expectedVersion: after.version }),
     ).rejects.toMatchObject({ code: 'erased_since_load' });
+  });
+
+  it('a kept pre-merge copy past its 30 days is not searched, and the erase removes it with whatever it held', async () => {
+    const repo = latestVersionRepository();
+    const { branch } = await create('Old merge');
+    await prisma.$transaction((tx) =>
+      branches.closeRecord(tx, branch.branchId, {
+        status: 'merged', mergedBy: ALICE.id, mergedAt: new Date(),
+        mainBeforeDocument: { name: `Bakery of ${VALUE}` }, mainBeforeExpiresAt: new Date(Date.now() - 1000),
+      }),
+    );
+    await repo.saveProject(scope, project(mainId, VALUE), { mustExist: true });
+    const query = { value: VALUE, caseSensitive: false };
+    const preview = await repo.searchPersonalData(scope, mainId, query);
+    expect(preview.matches.some((m) => m.location.kind === 'merge-undo')).toBe(false);
+    // A search writes nothing: the expired copy is still stored.
+    expect((await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } })).mainBeforeDocument).not.toBeNull();
+    const erased = await repo.erasePersonalData(scope, mainId, {
+      query, replacement: '[entfernt]', token: preview.token,
+      chosen: preview.matches.filter((m) => m.blocked === null).map((m) => m.id), erasedBy: ALICE.id,
+    });
+    expect(erased.remaining).toBe(0);
+    expect(await prisma.siteBranch.findUniqueOrThrow({ where: { id: branch.branchId } })).toMatchObject({
+      mainBeforeDocument: null, mainBeforeExpiresAt: null, mainBeforeEnded: 'expired',
+    });
+    expect(JSON.stringify(await prisma.siteBranch.findMany({ where: { siteId: mainId } }))).not.toContain(VALUE);
   });
 
   it('an erased name that would equal another open branch name gets a number instead of failing', async () => {

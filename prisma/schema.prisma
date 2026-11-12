@@ -372,6 +372,9 @@ model SiteBranch {
 
   baseVersion  Int?  @map("base_version")
   baseDocument Json? @map("base_document")
+  // The database also keeps `base_name`, a stored generated column (`base_document->>'name'`, migration
+  // 20261112180000_site_branch_backstops), read by raw SQL only. Prisma cannot write a generated column, so
+  // it is not a field here.
 
   // The review in progress: conflict answers keyed to the values they were given for (S3, S5).
   mergeDraft Json? @map("merge_draft")
@@ -412,6 +415,9 @@ model SiteBranch {
   // Composite, as on `sites.branch_of_site_id`: a record of another workspace's site cannot exist.
   site       Site  @relation("SiteBranchMain", fields: [siteId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
   // SET NULL: whatever deletes the content row, the record reads as closed rather than pointing at nothing.
+  // The database holds a second key beside this one, (branch_site_id, workspace_id) to sites(id, workspace_id)
+  // with SET NULL on branch_site_id only (migration 20261112180000_site_branch_backstops): Prisma cannot write
+  // that column list, so the content row's workspace is enforced there and not named here.
   branchSite Site? @relation("SiteBranchRow", fields: [branchSiteId], references: [id], onDelete: SetNull)
 
   // The public preview link (S8), at most one per branch.

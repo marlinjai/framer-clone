@@ -40,8 +40,11 @@ function notFound(): Response {
  * This route is outside the middleware's matcher, so a preview host gets here what the middleware sets on its
  * pages: never stored, never indexed, never sent on as a referrer.
  */
-function asPreview(response: Response): Response {
-  response.headers.set('cache-control', 'private, no-store');
+function asPreview(response: Response, image = false): Response {
+  // An image itself may stay in the visitor's own browser, but is asked for again every time (`no-cache`): the
+  // answer is then a 304 without the bytes, given only after the link was resolved for that request, so a
+  // revoked or expired link still ends every picture at once. Everything else is never stored.
+  response.headers.set('cache-control', image ? 'private, no-cache' : 'private, no-store');
   response.headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
   response.headers.set('referrer-policy', 'no-referrer');
   return response;
@@ -66,7 +69,7 @@ export async function GET(request: Request, { params }: Ctx): Promise<Response> 
   }
   if (!siteId) return preview ? asPreview(notFound()) : notFound();
   const headersFor = (sha: string, type: string) => siteImageHeaders(sha, type, visibility);
-  const answer = (response: Response) => (preview ? asPreview(response) : response);
+  const answer = (response: Response) => (preview ? asPreview(response, response.status === 200 || response.status === 304) : response);
 
   if (matchesEtag(request.headers.get('if-none-match'), named.sha256)) {
     const type = await readSiteImageType(siteId, named.sha256);

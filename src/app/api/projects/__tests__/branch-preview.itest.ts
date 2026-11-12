@@ -18,7 +18,7 @@ import type { TenantScope } from '@/server/sites';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
 import { getSiteBranchRepository } from '@/server/sites/branches/repository';
 import { getSiteBranchMergeService } from '@/server/sites/branches/merge';
-import { previewTokenHash, resolvePreviewLink, resolvePreviewSite } from '@/server/sites/branches/previewLinks';
+import { forgetPreviewMemory, previewTokenHash, resolvePreviewFavicon, resolvePreviewLink, resolvePreviewSite } from '@/server/sites/branches/previewLinks';
 import { resolveStorefrontCommerceForRead } from '@/server/commerce/storefrontTenant';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { resolveStorefrontCommerce } from '@/server/commerce/storefrontTenant';
@@ -124,6 +124,7 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
+  forgetPreviewMemory();
   us = await makeCompany();
   them = await makeCompany();
   process.env.SITE_BRANCHES_COMPANIES = `${us.companyId},${them.companyId}`;
@@ -238,6 +239,109 @@ describe('backtrack and revise', () => {
     expect(await resolvePreviewSite(oldHost)).toBeNull();
     expect(textOf(await resolvePreviewSite(newHost), 'home')).toBe('Summer bread');
     expect(await prisma.siteBranchPreview.count({ where: { branchId } })).toBe(1);
+  });
+});
+
+describe('what the process remembers of a preview never keeps one alive', () => {
+  /**
+   * How many reads a call starts on the client it is given: each model call, and each transaction as one. The
+   * resolvers take their client as an argument, so a counting stand-in in front of the real one sees them all.
+   */
+  async function reads(run: (client: PrismaClient) => Promise<unknown>): Promise<number> {
+    let n = 0;
+    const counted = <T extends object>(target: T): T =>
+      new Proxy(target, {
+        get(t, key) {
+          const value = Reflect.get(t, key);
+          return typeof value === 'function'
+            ? (...args: unknown[]) => {
+                n += 1;
+                return (value as (...a: unknown[]) => unknown).apply(t, args);
+              }
+            : value;
+        },
+      });
+    const client = new Proxy(prisma, {
+      get(t, key) {
+        if (key === 'site') return counted(t.site);
+        if (key === 'siteBranchPreview') return counted(t.siteBranchPreview);
+        if (key === '$transaction') {
+          return (...args: unknown[]) => {
+            n += 1;
+            return (t.$transaction as (...a: unknown[]) => unknown)(...args);
+          };
+        }
+        return Reflect.get(t, key);
+      },
+    });
+    await run(client);
+    return n;
+  }
+
+  it('an address that names no link is read once, then not again for 30 seconds, and a real link is read every time', async () => {
+    const branchId = await newBranch();
+    const host = await linkHost(branchId);
+    const made = `preview-${'a2'.repeat(16)}.${SITES_BASE}`;
+    const t0 = new Date();
+    expect(await reads((db) => resolvePreviewLink(made, db, t0))).toBe(1);
+    expect(await reads((db) => resolvePreviewLink(made, db, new Date(t0.getTime() + 29_000)))).toBe(0);
+    expect(await reads((db) => resolvePreviewLink(made, db, new Date(t0.getTime() + 31_000)))).toBe(1);
+    // A link that exists is never remembered: each request reads it, so its end is seen at once.
+    expect(await reads((db) => resolvePreviewLink(host, db))).toBe(1);
+    expect(await reads((db) => resolvePreviewLink(host, db))).toBe(1);
+    await revoke(us.mainId, branchId);
+    expect(await resolvePreviewLink(host)).toBeNull();
+    // The revoked address is a dead one from here on, and the branch's new link is not held back by it.
+    expect(await reads((db) => resolvePreviewLink(host, db))).toBe(0);
+    expect(textOf(await resolvePreviewSite(await linkHost(branchId)), 'home')).toBe('Summer bread');
+  });
+
+  it('a second view of the same version does not load the branch again; a save, a rename, an erase epoch and the end of the link all show at once', async () => {
+    const branchId = await newBranch();
+    const host = await linkHost(branchId);
+    // First view: the link, the row, and the branch in one snapshot. Second: the link and the row only.
+    expect(await reads((db) => resolvePreviewSite(host, db))).toBe(3);
+    expect(await reads((db) => resolvePreviewSite(host, db))).toBe(2);
+    const first = await resolvePreviewSite(host);
+
+    await edit(us, branchId, 'Autumn bread');
+    const second = await resolvePreviewSite(host);
+    expect(textOf(second, 'home')).toBe('Autumn bread');
+    expect(second?.revision).not.toBe(first?.revision);
+
+    // A rename of the site on the branch moves no version: the name is read every time.
+    await prisma.site.update({ where: { id: branchId }, data: { name: 'Bakery & Cafe' } });
+    expect((await resolvePreviewSite(host))?.name).toBe('Bakery & Cafe');
+
+    // An erase of personal data moves the epoch (and rewrites the pages): never the content from before it.
+    await prisma.site.update({ where: { id: branchId }, data: { erasureEpoch: { increment: 1 } } });
+    const home = await prisma.sitePage.findUniqueOrThrow({ where: { siteId_pageId: { siteId: branchId, pageId: 'home' } }, select: { snapshot: true } });
+    await prisma.sitePage.update({
+      where: { siteId_pageId: { siteId: branchId, pageId: 'home' } },
+      data: { snapshot: JSON.parse(JSON.stringify(home.snapshot).replaceAll('Autumn bread', '[entfernt]')) },
+    });
+    expect(textOf(await resolvePreviewSite(host), 'home')).toBe('[entfernt]');
+
+    // The remembered content is behind the link, never in place of it.
+    await prisma.siteBranchPreview.update({ where: { branchId }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    expect(await resolvePreviewSite(host)).toBeNull();
+    await prisma.siteBranchPreview.update({ where: { branchId }, data: { expiresAt: new Date(Date.now() + 60_000) } });
+    process.env.SITE_BRANCHES_COMPANIES = them.companyId;
+    expect(await resolvePreviewSite(host)).toBeNull();
+    process.env.SITE_BRANCHES_COMPANIES = us.companyId;
+    await getSiteBranchRepository().discardBranch(us.scope, us.mainId, branchId, USER);
+    expect(await resolvePreviewSite(host)).toBeNull();
+  });
+
+  it('the favicon of a preview reads the link and the settings, never the pages, and ends with the link', async () => {
+    const branchId = await newBranch();
+    const host = await linkHost(branchId);
+    expect(await resolvePreviewFavicon(host)).toEqual({ faviconUrl: '' });
+    await prisma.site.update({ where: { id: branchId }, data: { siteSettings: { faviconUrl: '/site-images/icon.png' } } });
+    expect(await resolvePreviewFavicon(host)).toEqual({ faviconUrl: '/site-images/icon.png' });
+    expect(await reads((db) => resolvePreviewFavicon(host, db))).toBe(2);
+    await revoke(us.mainId, branchId);
+    expect(await resolvePreviewFavicon(host)).toBeNull();
   });
 });
 
@@ -359,10 +463,29 @@ describe('bounds and isolation', () => {
     const branchId = await newBranch();
     const host = await linkHost(branchId);
     process.env.SITE_BRANCHES_COMPANIES = them.companyId;
-    for (const call of [read, make, revoke]) expect((await call(us.mainId, branchId)).status).toBe(404);
+    for (const call of [read, make]) expect((await call(us.mainId, branchId)).status).toBe(404);
     expect(await resolvePreviewSite(host)).toBeNull();
+    expect(await prisma.siteBranchPreview.count({ where: { branchId } })).toBe(1);
     process.env.SITE_BRANCHES_COMPANIES = us.companyId;
     expect(textOf(await resolvePreviewSite(host), 'home')).toBe('Summer bread');
+  });
+
+  it('a link can be revoked with the switch off, and then stays gone when the switch returns', async () => {
+    const branchId = await newBranch();
+    const host = await linkHost(branchId);
+    process.env.SITE_BRANCHES_COMPANIES = '';
+    // Every other guard still holds with the switch off: the session, the permission, the company.
+    authMock.mockImplementationOnce(async () => ({ authenticated: false, status: 403, error: 'forbidden' }));
+    expect((await revoke(us.mainId, branchId)).status).toBe(403);
+    sessionMock.mockResolvedValueOnce(memberOf(them));
+    expect((await revoke(us.mainId, branchId)).status).toBe(404);
+    expect(await prisma.siteBranchPreview.count({ where: { branchId } })).toBe(1);
+    const revoked = await revoke(us.mainId, branchId);
+    expect(revoked.status).toBe(200);
+    expect((await revoked.json()).revoked).toBe(true);
+    expect(await prisma.siteBranchPreview.count({ where: { branchId } })).toBe(0);
+    process.env.SITE_BRANCHES_COMPANIES = us.companyId;
+    expect(await resolvePreviewSite(host)).toBeNull();
   });
 
   it('a site not linked to its company yet gets no link that could never show anything, and one stamped later does', async () => {

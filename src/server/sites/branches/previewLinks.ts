@@ -14,9 +14,14 @@ import 'server-only';
 //   - A branch has at most one link. Making a new one replaces the old address,
 //     revoking deletes it, and closing the branch (merge, discard) deletes it in
 //     the same transaction (SiteBranchRepository.closeRecord).
-//   - Resolving is one indexed read per request, never cached: a revoked or
-//     expired link, a closed branch and the per-company switch going off all
-//     end the preview on the next request.
+//   - A link is resolved by one indexed read on every request and that answer
+//     is never cached: a revoked or expired link, a closed branch and the
+//     per-company switch going off all end the preview on the next request.
+//     Two things are remembered in this process, neither of which can keep a
+//     link alive (plan decisions 88 and 89): that a token names NO link (for
+//     30 seconds, so a dead address asked again and again reads nothing), and
+//     a branch's content under its exact version, which is only ever handed
+//     out after the link was resolved for that request.
 //
 // What a preview may do is decided elsewhere: the middleware gives a preview
 // host GET on the site pages and nothing else (src/middleware.ts,
@@ -226,10 +231,54 @@ export class SiteBranchPreviewLinks {
 /** A branch's working copy in the shape the published renderer takes, marked as a preview. */
 export type PreviewSite = PublishedSite & { preview: PreviewOf };
 
+/** What of a preview depends on the branch's content alone: everything a save of the branch moves a version for. */
+type PreviewContent = Pick<PublishedSite, 'workspaceId' | 'tenantGroupId' | 'pages' | 'redirects' | 'siteSettings' | 'components'> & {
+  /** `<version>:<erasure epoch>` of the branch's content row. */
+  stamp: string;
+};
+
+/**
+ * The content of the branches last previewed, one entry per branch, under the version it was read at. A page
+ * view of a preview used to load and parse the whole branch every time, although its visitors look at the same
+ * version again and again. Only content is kept here, never whether a link is live: every request resolves its
+ * link first, and an entry is used only when the branch's row still carries the same version and erasure
+ * epoch (both move with every write of the content; an erase of personal data moves both).
+ */
+const PREVIEW_CONTENT_KEPT = 8;
+const PREVIEW_CONTENT_TTL_MS = 5 * 60_000;
+const previewContent = new Map<string, { content: PreviewContent; until: number }>();
+
+function keptContent(branchId: string, stamp: string, now: number): PreviewContent | null {
+  const entry = previewContent.get(branchId);
+  if (!entry) return null;
+  if (entry.until <= now || entry.content.stamp !== stamp) {
+    previewContent.delete(branchId);
+    return null;
+  }
+  return entry.content;
+}
+
+function keepContent(branchId: string, content: PreviewContent, now: number): void {
+  previewContent.delete(branchId);
+  while (previewContent.size >= PREVIEW_CONTENT_KEPT) {
+    const oldest = previewContent.keys().next().value;
+    if (oldest === undefined) break;
+    previewContent.delete(oldest);
+  }
+  previewContent.set(branchId, { content, until: now + PREVIEW_CONTENT_TTL_MS });
+}
+
+/** Forget what this process remembers of previews (tests; nothing in production needs it). */
+export function forgetPreviewMemory(): void {
+  previewContent.clear();
+  unknownTokens.clear();
+}
+
 /**
  * The preview a request host names, or null: a host of another shape, an unknown token, an expired link, a
- * closed branch, a company with site branches off. One indexed read by the token's hash, then the branch's
- * working copy in one snapshot. A public, anonymous read, and never cached.
+ * closed branch, a company with site branches off. The link is resolved by one indexed read on every request;
+ * the branch's content is then read in one snapshot, or taken from this process when the branch still carries
+ * the version it was read at. A public, anonymous read.
  *
  * The site it returns is the BRANCH's content under MAIN's id: the catalogue's hidden-product rules and the
  * uploaded images are per site and belong to main. Its `revision` names the branch and its version, so nothing
@@ -243,49 +292,85 @@ export async function resolvePreviewSite(
 ): Promise<PreviewSite | null> {
   const link = await resolvePreviewLink(host, prisma, now);
   if (!link) return null;
-  const branch = { id: link.branchId, siteId: link.siteId, name: link.branchName, branchSiteId: link.branchSiteId };
+  const where = { id: link.branchSiteId, workspaceId: link.workspaceId, branchOfSiteId: link.siteId };
 
-  // One snapshot, as the published resolver reads: the row and its pages never from two different saves.
-  const site = await prisma.$transaction(
-    (tx) =>
-      tx.site.findFirst({
-        where: { id: branch.branchSiteId, workspaceId: link.workspaceId, branchOfSiteId: branch.siteId },
-        select: {
-          workspaceId: true,
-          tenantGroupId: true,
-          companyId: true,
-          name: true,
-          description: true,
-          redirects: true,
-          siteSettings: true,
-          components: true,
-          version: true,
-          erasureEpoch: true,
-          pages: { select: { pageId: true, slug: true, snapshot: true } },
-        },
-      }),
-    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 5_000, timeout: 30_000 },
-  );
-  if (!site) return null;
+  // The row without its pages: what the content is keyed by, and the site's name, which a rename writes
+  // without moving the version (so it is read every time and never taken from the kept content).
+  const row = await prisma.site.findFirst({ where, select: { name: true, version: true, erasureEpoch: true } });
+  if (!row) return null;
+  let name = row.name;
+  let content = keptContent(link.branchId, `${row.version}:${row.erasureEpoch}`, now.getTime());
+  if (!content) {
+    // One snapshot, as the published resolver reads: the row and its pages never from two different saves.
+    const site = await prisma.$transaction(
+      (tx) =>
+        tx.site.findFirst({
+          where,
+          select: {
+            workspaceId: true,
+            tenantGroupId: true,
+            name: true,
+            redirects: true,
+            siteSettings: true,
+            components: true,
+            version: true,
+            erasureEpoch: true,
+            pages: { select: { pageId: true, slug: true, snapshot: true } },
+          },
+        }),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 5_000, timeout: 30_000 },
+    );
+    if (!site) return null;
+    name = site.name;
+    content = {
+      stamp: `${site.version}:${site.erasureEpoch}`,
+      workspaceId: site.workspaceId,
+      tenantGroupId: site.tenantGroupId,
+      pages: site.pages.map((p) => ({ pageId: p.pageId, slug: p.slug, snapshot: p.snapshot as unknown as PageSnapshotOut })),
+      redirects: parseSiteRedirects(site.redirects),
+      siteSettings: normalizeSiteSettings(site.siteSettings),
+      components: parseComponents(site.components ?? {}).definitions,
+    };
+    keepContent(link.branchId, content, now.getTime());
+  }
 
   return {
-    siteId: branch.siteId,
-    workspaceId: site.workspaceId,
-    tenantGroupId: site.tenantGroupId,
+    siteId: link.siteId,
+    workspaceId: content.workspaceId,
+    tenantGroupId: content.tenantGroupId,
     companyId: link.companyId,
-    name: site.name,
+    name,
     analyticsProjectId: null,
     ingestionEndpoint: null,
     apiKeyRef: null,
     lumitraEnabled: false,
-    pages: site.pages.map((p) => ({ pageId: p.pageId, slug: p.slug, snapshot: p.snapshot as unknown as PageSnapshotOut })),
-    redirects: parseSiteRedirects(site.redirects),
-    siteSettings: normalizeSiteSettings(site.siteSettings),
-    components: parseComponents(site.components ?? {}).definitions,
+    pages: content.pages,
+    redirects: content.redirects,
+    siteSettings: content.siteSettings,
+    components: content.components,
     revisionNumber: null,
-    revision: `preview:${branch.id}:${site.version}:${site.erasureEpoch}`,
-    preview: { branchId: branch.id, branchName: branch.name, expiresAt: link.expiresAt.toISOString() },
+    revision: `preview:${link.branchId}:${content.stamp}`,
+    preview: { branchId: link.branchId, branchName: link.branchName, expiresAt: link.expiresAt.toISOString() },
   };
+}
+
+/**
+ * The favicon a preview host shows, or null (no live link, or the branch sets none): the link and the branch's
+ * settings, without its pages. The browser asks for the icon beside every page; loading the whole branch a
+ * second time for it doubled the cost of a page view.
+ */
+export async function resolvePreviewFavicon(
+  host: string | null | undefined,
+  prisma: PrismaClient = getPrismaClient(),
+  now: Date = new Date(),
+): Promise<{ faviconUrl: string } | null> {
+  const link = await resolvePreviewLink(host, prisma, now);
+  if (!link) return null;
+  const row = await prisma.site.findFirst({
+    where: { id: link.branchSiteId, workspaceId: link.workspaceId, branchOfSiteId: link.siteId },
+    select: { siteSettings: true },
+  });
+  return row ? { faviconUrl: normalizeSiteSettings(row.siteSettings).faviconUrl } : null;
 }
 
 /** A live preview link and what it is of, without the branch's content. */
@@ -302,6 +387,18 @@ export interface PreviewLinkTarget {
 }
 
 /**
+ * Token hashes that named no link when last asked, with the time until which that is believed. A dead address
+ * (a revoked link still open in a tab, with its thirty pictures; a made-up one asked in a loop) then costs no
+ * read for 30 seconds. Only "no such row" is remembered: a link that exists is read on every request, so
+ * revoking, expiry, a closed branch and the switch are never delayed. A token is 160 random bits made here at
+ * the moment its link is made, so a hash remembered as unknown cannot become a link later. Bounded, as the
+ * published resolver's own memory of unknown hosts is: at the limit the oldest entry goes.
+ */
+const UNKNOWN_TOKEN_TTL_MS = 30_000;
+const UNKNOWN_TOKENS_KEPT = 1_000;
+const unknownTokens = new Map<string, number>();
+
+/**
  * The live link a request host names, or null, by one indexed read and without loading the branch: what the
  * image route and the catalogue reads need (a page with thirty pictures asks thirty times), and the first step
  * of {@link resolvePreviewSite}. Null for a host of another shape, the editor host (with no EDITOR_HOST, in
@@ -316,8 +413,14 @@ export async function resolvePreviewLink(
   if (isEditorHost(host)) return null;
   const token = previewTokenOfHost(host);
   if (!token || !PREVIEW_TOKEN_PATTERN.test(token)) return null;
+  const tokenHash = previewTokenHash(token);
+  const unknownUntil = unknownTokens.get(tokenHash);
+  if (unknownUntil !== undefined) {
+    if (unknownUntil > now.getTime()) return null;
+    unknownTokens.delete(tokenHash);
+  }
   const link = await prisma.siteBranchPreview.findUnique({
-    where: { tokenHash: previewTokenHash(token) },
+    where: { tokenHash },
     select: {
       expiresAt: true,
       workspaceId: true,
@@ -325,7 +428,16 @@ export async function resolvePreviewLink(
       branch: { select: { id: true, siteId: true, name: true, status: true, branchSiteId: true, companyId: true, site: { select: { companyId: true } } } },
     },
   });
-  if (!link || link.expiresAt.getTime() <= now.getTime()) return null;
+  if (!link) {
+    while (unknownTokens.size >= UNKNOWN_TOKENS_KEPT) {
+      const oldest = unknownTokens.keys().next().value;
+      if (oldest === undefined) break;
+      unknownTokens.delete(oldest);
+    }
+    unknownTokens.set(tokenHash, now.getTime() + UNKNOWN_TOKEN_TTL_MS);
+    return null;
+  }
+  if (link.expiresAt.getTime() <= now.getTime()) return null;
   const { branch } = link;
   if ((branch.status !== 'open' && branch.status !== 'ready') || !branch.branchSiteId) return null;
   // The branch's company as it is today: the record copies it when the branch is made, and a site stamped with

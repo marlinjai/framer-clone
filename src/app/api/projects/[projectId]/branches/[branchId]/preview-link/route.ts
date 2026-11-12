@@ -75,7 +75,8 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
 }
 
 async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
-  const guarded = await guardBranchRoute(req, 'editSite');
+  // Ending something works with site branches switched off too (routeGuard, step 3).
+  const guarded = await guardBranchRoute(req, 'editSite', { endsOnly: true });
   if (!guarded.ok) return guarded.response;
   const { projectId, branchId } = await params;
   try {
