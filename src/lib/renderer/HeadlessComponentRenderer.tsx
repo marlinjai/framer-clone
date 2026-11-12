@@ -28,6 +28,8 @@ import { detachedExpansion } from './detachedExpansion';
 import { effectDomForBreakpoint, hoverPresetClass, resolveEffects, storedEffectsOf } from '@/lib/effects/effects';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { childrenWithRepeats } from './repeatChildren';
+import { FX_PROP, isFxScene } from '@/lib/fxScene/marker';
+import { FxPreviewLayer } from '@/components/fx/FxLayer';
 import { SurfaceDomContext, withSurfaceDom } from '@/lib/behaviour/surfaceDom';
 import { ShopRepeatCopyContext } from '@/lib/commerce/shopRuntime';
 
@@ -137,7 +139,13 @@ const HeadlessComponentRenderer = observer(({
   );
 
   // A child repeated for a list is drawn once per item (src/lib/components/repeat.ts).
-  const children = childrenWithRepeats(component.children, activeScope, renderNode, false);
+  const ownChildren = childrenWithRepeats(component.children, activeScope, renderNode, false);
+  // An FX scene box (src/lib/fxScene): in a preview frame its scene is drawn as on the
+  // published page, in a layer behind the content (src/components/fx/FxLayer.tsx).
+  // Anywhere else the layer renders nothing and the box is the plain box.
+  const children = isFxScene(component.props, component.type)
+    ? [<FxPreviewLayer key="fx-scene" stored={(component.props as Record<string, unknown>)[FX_PROP]} ownPosition={styleWithFx.position} />, ...ownChildren]
+    : ownChildren;
 
   return createComponentElement(component, finalProps, children, (resolvedAttributes as any).children, {
     identity: { breakpointId, componentId: component.id, copy: inRepeatCopy },

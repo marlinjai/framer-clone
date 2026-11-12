@@ -222,7 +222,7 @@ describe('the repository as it is', () => {
 
   // The render entry (`@/lib/fx`) loads three.js. Exactly one file outside the
   // engine imports it, the lazy mount module, and that module is reached only by
-  // a dynamic import(): so three.js is in a chunk of its own, fetched where a
+  // a dynamic import() (the published island, and the editor's FX layer): so three.js is in a chunk of its own, fetched where a
   // scene is drawn, and in no page's own bundle. The real chunks are measured in
   // test/behaviour/fx.spec.ts; this keeps the reason they are small.
   const resolve = (specifier: string, from: string): string | null => {
@@ -260,10 +260,13 @@ describe('the repository as it is', () => {
   );
 
   it(
-    'reaches the lazy mount module by dynamic import only, from the published island',
+    'reaches the lazy mount module by dynamic import only: from the published island, and from the editor\'s layer for its canvas and preview',
     () => {
-      const importers = importersOf(path.join(REPO_ROOT, MOUNT));
-      expect(importers).toEqual([{ file: 'src/lib/renderer/server/FxIsland.tsx', dynamic: true }]);
+      const importers = importersOf(path.join(REPO_ROOT, MOUNT)).sort((a, b) => a.file.localeCompare(b.file));
+      expect(importers).toEqual([
+        { file: 'src/components/fx/FxLayer.tsx', dynamic: true },
+        { file: 'src/lib/renderer/server/FxIsland.tsx', dynamic: true },
+      ]);
     },
     SCAN_TIMEOUT_MS,
   );

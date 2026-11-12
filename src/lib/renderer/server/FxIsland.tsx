@@ -33,69 +33,17 @@
 
 import { useEffect } from 'react';
 import { FX_INDEX_ATTR, FX_STATE_ATTR, type FxState } from '@/lib/fxScene/marker';
+import { FX_REDUCED_MOTION_QUERY, FX_SETTLE_DELAY_MS, FX_WARNING, fxStartDecision, whenStarted, type FxStartSettings } from '@/lib/fxScene/start';
 
 /** The shape of one program entry the island itself reads (the rest is the mount's). */
-export interface FxProgramEntry {
-  start: 'settled' | 'visible' | 'immediate';
-  calm: 'background' | 'frame';
-}
+export type FxProgramEntry = FxStartSettings;
 
-/** After the page's `load` event: what lumitra.co waits before its hero starts. */
-export const FX_SETTLE_DELAY_MS = 1500;
+export { FX_SETTLE_DELAY_MS };
 
-const WARNING = 'An FX scene could not be drawn here; the page shows its background instead.';
+const WARNING = FX_WARNING;
 
 function setState(box: Element, state: FxState): void {
   box.setAttribute(FX_STATE_ATTR, state);
-}
-
-/** One throwaway context, released at once, so the probe holds no slot of the browser's limit. */
-function hasWebGL(): boolean {
-  try {
-    const canvas = document.createElement('canvas');
-    const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as WebGLRenderingContext | null;
-    if (!gl) return false;
-    gl.getExtension('WEBGL_lose_context')?.loseContext();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Calls `go` when the scene may start; returns a cancel. */
-function whenStarted(box: Element, start: FxProgramEntry['start'], go: () => void): () => void {
-  if (start === 'immediate') {
-    go();
-    return () => {};
-  }
-  if (start === 'visible') {
-    if (typeof IntersectionObserver === 'undefined') {
-      go();
-      return () => {};
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        observer.disconnect();
-        go();
-      },
-      // One viewport height above and below: the scene is ready as the box scrolls in.
-      { rootMargin: '100% 0px' },
-    );
-    observer.observe(box);
-    return () => observer.disconnect();
-  }
-  let timer: number | undefined;
-  const arm = () => {
-    timer = window.setTimeout(go, FX_SETTLE_DELAY_MS);
-  };
-  // `load` may have fired before this effect ran (a late hydration).
-  if (document.readyState === 'complete') arm();
-  else window.addEventListener('load', arm, { once: true });
-  return () => {
-    window.removeEventListener('load', arm);
-    if (timer !== undefined) window.clearTimeout(timer);
-  };
 }
 
 /** Runs the page's FX program once; returns the teardown. */
@@ -117,11 +65,13 @@ function run(program: readonly FxProgramEntry[]): () => void {
   const box = owner;
   const scene = entry;
 
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches && scene.calm === 'background') {
+  // Steps 2 and 3, shared with the editor's preview (src/lib/fxScene/start.ts).
+  const decision = fxStartDecision(scene);
+  if (decision === 'calm') {
     setState(box, 'calm');
     return () => {};
   }
-  if (!hasWebGL()) {
+  if (decision === 'off') {
     setState(box, 'off');
     console.warn(WARNING, 'WebGL is not available.');
     return () => {};
@@ -177,7 +127,7 @@ export default function FxIsland({ program }: { program: readonly FxProgramEntry
     // The preference can change while the page is open: run the program again, so
     // a waiting or live scene follows its `calm` setting (a background scene is
     // dropped, a frame scene is remounted with the new preference).
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const reduced = window.matchMedia(FX_REDUCED_MOTION_QUERY);
     const onPreference = () => {
       if (!stop) return;
       stop();

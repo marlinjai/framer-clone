@@ -78,10 +78,22 @@ const BLEND_OPTIONS: { value: BlendMode; label: string }[] = [
   { value: 'overlay', label: 'Overlay' },
 ];
 
+/** Why the live scene is not drawn on the canvas, with the way on (EditorUIStore `fxLiveStatus`). */
+const LIVE_OFF: Readonly<Record<string, string>> = {
+  'no-webgl':
+    'This browser cannot draw the scene here (WebGL is not available or is switched off), so the canvas keeps showing the box background. A visitor in the same situation sees that background too. Try another browser to tune the scene.',
+  'renderer-error': 'The scene stopped while it was being drawn. Turn Live off and on to start it again; if it stops again, hide the layer you changed last.',
+  'context-lost': 'The browser took the graphics context away (too many are open, or the graphics driver restarted). Turn Live off and on to start the scene again.',
+  refused: 'This scene cannot be drawn as it is stored. Replace it with a preset, or undo the last change.',
+  engine: 'The part of the editor that draws scenes did not load. Check the connection, then turn Live off and on.',
+};
+
 /** "eyebrowText" reads as "Eyebrow text". */
 function settingLabel(key: string, schema: ParamSchema): string {
   const raw = schema.label ?? key.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+  // A single letter stays a capital: "colorA" reads as "Color A".
+  const words = raw.split(' ').map((word, index) => (index === 0 ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word.length === 1 ? word.toUpperCase() : word.toLowerCase()));
+  return words.join(' ');
 }
 
 /** A kind's label as the engine has it, with a capital: two of them ("halftone", "pixelate") come without. */
@@ -383,6 +395,36 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     }
   };
 
+  // "Live": the scene drawn on the canvas, for this box, in one breakpoint frame.
+  const fxLive = editorUI.fxLive;
+  const live = fxLive?.componentId === component.id;
+  const liveNote = () => {
+    if (!live) {
+      return (
+        <p className={HINT}>
+          The canvas shows the box with its own background. Turn Live on to draw the scene there while you tune it: in one breakpoint at a time, the one you pick the box in.
+        </p>
+      );
+    }
+    const status = editorUI.fxLiveStatus;
+    if (status.state === 'off') {
+      return (
+        <p role="alert" className={ERROR}>
+          {LIVE_OFF[status.reason] ?? LIVE_OFF['renderer-error']}
+        </p>
+      );
+    }
+    const frame = fxLive?.frameId ? editorUI.currentPage?.viewportNodes.find((v) => v.breakpointId === fxLive.frameId)?.label : undefined;
+    const where = frame ? `in ${frame}` : 'on the canvas';
+    return (
+      <p role="status" className={HINT}>
+        {status.state === 'live'
+          ? `The scene is drawn ${where}, and every change here shows at once. Pick the box in another breakpoint to draw it there. With reduced motion asked for on this device it is one still frame.`
+          : `Starting the scene ${where}...`}
+      </p>
+    );
+  };
+
   const copyJson = async () => {
     const text = fxSceneJson(stored);
     if (text === null) return;
@@ -442,6 +484,14 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
         The scene is drawn behind what is in this box. Where it cannot be drawn (no JavaScript, an old browser) a visitor sees the box&apos;s own background, set under Styles,
         so pick one that works with the content.
       </p>
+
+      <PropertyRow label="Live" hint="Draw the scene on the canvas, in one breakpoint at a time">
+        <PropertySwitch
+          checked={live}
+          onCheckedChange={(on) => (on ? editorUI.startFxLive(component.id, editorUI.selectedViewportNode?.breakpointId ?? null) : editorUI.stopFxLive())}
+        />
+      </PropertyRow>
+      {liveNote()}
 
       {presetPicker('Replace with a preset')}
       <PropertySelect label="Starts" value={fx.start} options={START_OPTIONS} onChange={(value) => apply(setFxStart(stored, value as FxStart))} />

@@ -19,8 +19,12 @@
 // has a trigger, runs on this frame with real pointer and focus. There is no gate: the
 // frame is drawn by script, so it never has a no-JavaScript form to show. An edit gives
 // a new program, and the runtime starts again from the first values.
+//
+// An FX scene (src/lib/fxScene) is drawn here as on the published page: one per frame,
+// started as the page starts it, with the box's own background where it is not drawn
+// (src/components/fx/FxLayer.tsx).
 'use client';
-import React, { useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import HeadlessPageRenderer from '@/lib/renderer/HeadlessPageRenderer';
 import { FX_ATTR } from '@/lib/effects/effects';
@@ -42,6 +46,8 @@ import type { PageModelType } from '@/models/PageModel';
 import { surfaceBehaviour } from '@/lib/behaviour/surfaceBehaviour';
 import { SurfaceDomContext, useStableSurfaceDom } from '@/lib/behaviour/surfaceDom';
 import { useSurfaceRuntime } from '@/lib/behaviour/useSurfaceRuntime';
+import { FxPreviewContext } from '@/components/fx/FxLayer';
+import { FxClaim } from '@/lib/fxScene/claim';
 
 export interface PreviewFrameProps {
   page: PageModelType;
@@ -72,6 +78,8 @@ const PREVIEW_ROOTS = [PREVIEW_ROOT];
 const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, theme, onSitePath }: PreviewFrameProps) => {
   const frameRef = useRef<HTMLDivElement>(null);
   const { editorUI } = useStore();
+  // One FX scene is drawn per frame, as one is per published page (src/components/fx/FxLayer.tsx).
+  const [fxClaim] = useState(() => new FxClaim());
 
   const viewportNodes = page.sortedViewportNodes;
   const breakpointId = pickBreakpointForWidth(
@@ -159,7 +167,9 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
         problems={behaviour.problems}
       />
       <SurfaceDomContext.Provider value={dom}>
-        <HeadlessPageRenderer page={page} breakpointId={breakpointId} theme={theme} />
+        <FxPreviewContext.Provider value={fxClaim}>
+          <HeadlessPageRenderer page={page} breakpointId={breakpointId} theme={theme} />
+        </FxPreviewContext.Provider>
       </SurfaceDomContext.Provider>
     </div>
   );

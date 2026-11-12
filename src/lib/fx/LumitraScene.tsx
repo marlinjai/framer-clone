@@ -78,7 +78,17 @@ interface LumitraSceneProps {
    * lost. A host that shows its own background instead removes the scene then.
    */
   onFail?: (reason: SceneFailure) => void;
+  /**
+   * Size the canvas from its container's layout size (`offsetWidth`, `offsetHeight`)
+   * instead of its rectangle on screen. A host that is scaled by a CSS transform (an
+   * editor canvas at a zoom) sets this: the rectangle is the scaled size there, and
+   * a canvas sized from it is drawn too large or too small inside the same transform.
+   */
+  layoutSize?: boolean;
 }
+
+/** The canvas measured by its layout size, see `layoutSize`. */
+const LAYOUT_SIZE = { offsetSize: true } as const;
 
 /** Why a scene stopped drawing, see `onFail`. */
 export type SceneFailure = "no-webgl" | "renderer-error" | "context-lost";
@@ -171,7 +181,7 @@ class WebGLErrorBoundary extends Component<
   }
 }
 
-export function LumitraScene({ config, className, fallback, onFirstFrame, onFail }: LumitraSceneProps) {
+export function LumitraScene({ config, className, fallback, onFirstFrame, onFail, layoutSize = false }: LumitraSceneProps) {
   const [objects, setObjects] = useState<Record<string, Object3D>>({});
   const reduce = useMemo(() => readPrefersReducedMotion(), []);
 
@@ -252,6 +262,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
         <WebGLErrorBoundary onError={() => fail("renderer-error")}>
           <Canvas
             dpr={dprClamp}
+            resize={layoutSize ? LAYOUT_SIZE : undefined}
             // Reduced motion means one still frame. Every layer already pins its
             // own clock under `reduce`, but a post pass with a clock of its own
             // (the grain's noise is new on every frame) kept the picture moving.

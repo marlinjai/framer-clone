@@ -31,6 +31,8 @@ import { ShopRepeatCopyContext } from '@/lib/commerce/shopRuntime';
 import { DraftSections, useDraftHook } from '@/components/ai/PageGenDraftLayer';
 import { SkeletonGroupView, useSkeletonGroups, withSkeletons } from '@/components/live/SkeletonLayer';
 import { REVEAL_ATTR } from '@/lib/live/reveal';
+import { FX_PROP, isFxScene } from '@/lib/fxScene/marker';
+import { FxCanvasLayer } from '@/components/fx/FxLayer';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -398,11 +400,29 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     <DraftSections key="pagegen-draft" breakpointId={breakpointId} allBreakpoints={allBreakpoints} scope={activeScope} />
   ) : null;
   const drawnChildren = draftHook === 'replaceChildren' ? [draft] : draftHook === 'insert' ? [...ownChildren, draft] : ownChildren;
-  const children = skeletonGroups
+  const contentChildren = skeletonGroups
     ? withSkeletons(drawnChildren, skeletonGroups, (group) => (
         <SkeletonGroupView key={`live-skeletons:${group.after ?? 'end'}`} group={group} breakpointId={breakpointId} allBreakpoints={allBreakpoints} />
       ))
     : drawnChildren;
+  // An FX scene box with "Live" on, in the one frame it is live in (src/components/fx/FxLayer.tsx):
+  // the scene's layer is one more child, behind the content. Not while the box's own text is
+  // being typed (the text box replaces its content, layer included), and not under the preview
+  // over the editor, which draws the scene itself: one WebGL context at a time.
+  const fxLive = editorUI.fxLive;
+  const drawsFx =
+    !!fxLive &&
+    fxLive.componentId === component.id &&
+    (fxLive.frameId === null || fxLive.frameId === frameId) &&
+    !isEditing &&
+    !editorUI.previewOpen &&
+    isFxScene(component.props, component.type);
+  const children = drawsFx
+    ? [
+        <FxCanvasLayer key="fx-live" stored={(component.props as Record<string, unknown>)[FX_PROP]} ownPosition={effectiveStyle.position} />,
+        ...contentChildren,
+      ]
+    : contentChildren;
 
   if (placement) finalProps[DATA_PLACEMENT_ROOT] = `${frameId}-${component.id}`;
 

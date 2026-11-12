@@ -17,6 +17,7 @@ import { LiveRevealStore } from '@/lib/live/revealStore';
 import { LivePlansStore } from '@/lib/live/plansStore';
 import { LivePresenceStore } from '@/lib/live/presenceStore';
 import { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
+import { FxClaim } from '@/lib/fxScene/claim';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -105,6 +106,20 @@ export interface ComponentReturn {
 }
 
 // EditorUI store - manages all UI state and current selections
+/** The FX scene box drawn live on the canvas, and the frame it is drawn in (see `fxLive`). */
+export interface FxLive {
+  componentId: string;
+  frameId: string | null;
+}
+
+/**
+ * What the live FX scene is doing: nothing asked (`idle`), being fetched and set up
+ * (`loading`), drawn (`live`), or not drawn, with the reason (`off`: the engine's own
+ * failure names, `refused` for a scene the reader refuses, `engine` when the engine's
+ * code did not arrive, `no-webgl` when this browser cannot draw it).
+ */
+export type FxLiveStatus = { state: 'idle' | 'loading' | 'live' } | { state: 'off'; reason: string };
+
 const EditorUIStore = types.model('EditorUI', {
   // Current project selection (domain reference)
   currentProject: types.maybe(types.safeReference(ProjectModel)),
@@ -213,6 +228,16 @@ const EditorUIStore = types.model('EditorUI', {
   componentTrail: [] as readonly ComponentReturn[],
   // The component dialog open over the editor, if any. Editor session only.
   componentRequest: null as ComponentRequest | null,
+  // The FX scene drawn live on the canvas (src/components/fx/FxLayer.tsx), if any: the
+  // box, and the breakpoint frame it is drawn in (`null`: wherever the box is drawn
+  // first, for a box that was not picked in a frame). The canvas shows several
+  // breakpoints side by side and a browser allows only a handful of WebGL contexts,
+  // so one scene is live in one frame at a time. Editor session only.
+  fxLive: undefined as FxLive | undefined,
+  // What that scene is doing, for the FX section of the panel.
+  fxLiveStatus: { state: 'idle' } as FxLiveStatus,
+  // Which rendered element draws it: one node can be drawn many times in one frame.
+  fxLiveClaim: new FxClaim(),
   // Registered by Canvas while it is mounted.
   canvasCamera: undefined as CanvasCamera | undefined,
   // The page generator's draft (src/lib/ai/pageGen/draft.ts): the sections of a
@@ -360,6 +385,23 @@ const EditorUIStore = types.model('EditorUI', {
     self.previewColorMode = mode === 'dark' ? 'dark' : 'light';
   },
 
+  /** Draw this FX scene box live on the canvas, in this frame (`null`: wherever it is drawn first). */
+  startFxLive(componentId: string, frameId: string | null) {
+    self.fxLive = { componentId, frameId };
+    self.fxLiveStatus = { state: 'loading' };
+  },
+
+  /** Back to the box's own background on the canvas. */
+  stopFxLive() {
+    self.fxLive = undefined;
+    self.fxLiveStatus = { state: 'idle' };
+  },
+
+  /** The live layer says what it is doing (src/components/fx/FxLayer.tsx). */
+  reportFxLive(status: FxLiveStatus) {
+    if (self.fxLive) self.fxLiveStatus = status;
+  },
+
   /** Shows or hides the preview over the editor (PreviewOverlay). */
   setPreviewOpen(open: boolean) {
     self.previewOpen = open;
@@ -386,6 +428,8 @@ const EditorUIStore = types.model('EditorUI', {
       self.hoverComponent = undefined;
       self.componentTrail = [];
       self.componentRequest = null;
+      self.fxLive = undefined;
+      self.fxLiveStatus = { state: 'idle' };
     }
     self.currentProject = project;
   },
@@ -468,6 +512,11 @@ const EditorUIStore = types.model('EditorUI', {
     const target = component && selectionTarget(component);
     self.selectedComponent = target;
     self.selectedComponents.replace(target ? [target] : []);
+    // The live FX scene follows its box to the frame it is picked in: one frame at a time.
+    if (self.fxLive && target && self.fxLive.componentId === target.id && breakpointId && self.fxLive.frameId !== breakpointId) {
+      self.fxLive = { componentId: target.id, frameId: breakpointId };
+      self.fxLiveStatus = { state: 'loading' };
+    }
     
     if (breakpointId && self.currentPage) {
       // Component within a viewport - find the viewport node
