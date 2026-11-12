@@ -1,7 +1,7 @@
 {
   "comparedWith": {
     "file": "docs/primitives-score/latest.json",
-    "generatedAt": "2026-11-12T01:27:58.787Z",
+    "generatedAt": "2026-11-12T02:16:29.842Z",
     "included": 1845
   },
   "framerPlugin": {
@@ -10430,7 +10430,9 @@
       "id": "scene:godrays-hero",
       "verdict": "unknown",
       "reason": "an FX scene of this app's own engine, which this mapping has not settled",
-      "symbols": [],
+      "symbols": [
+        "ComponentNode"
+      ],
       "ourRenderer": true,
       "ourPanel": false
     },
@@ -10440,7 +10442,9 @@
       "id": "scene:hub-hero",
       "verdict": "unknown",
       "reason": "an FX scene of this app's own engine, which this mapping has not settled",
-      "symbols": [],
+      "symbols": [
+        "ComponentNode"
+      ],
       "ourRenderer": true,
       "ourPanel": false
     },
@@ -10450,7 +10454,9 @@
       "id": "scene:noise-gradient",
       "verdict": "unknown",
       "reason": "an FX scene of this app's own engine, which this mapping has not settled",
-      "symbols": [],
+      "symbols": [
+        "ComponentNode"
+      ],
       "ourRenderer": true,
       "ourPanel": false
     },
