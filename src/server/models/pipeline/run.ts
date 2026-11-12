@@ -20,7 +20,10 @@ export const WORKER_LIMITS = { timeoutMs: 20_000, heapMb: 512, concurrent: 2 } a
 // A process-wide queue: uploads wait for a slot instead of each starting a worker of their own.
 let running = 0;
 const waiting: (() => void)[] = [];
+/** Each waiting upload holds its bytes (up to 50 MB), so the queue is short: past it the answer is "busy", not a longer wait. */
+const MAX_WAITING = 16;
 async function slot(): Promise<() => void> {
+  if (running >= WORKER_LIMITS.concurrent && waiting.length >= MAX_WAITING) throw new ModelRefusalError('busy', 'many models are being processed right now, try again in a moment', 503);
   if (running >= WORKER_LIMITS.concurrent) await new Promise<void>((resolve) => waiting.push(resolve));
   else running++;
   return () => { const next = waiting.shift(); if (next) next(); else running--; };
@@ -33,7 +36,8 @@ export interface RunOptions {
   heapMb?: number;
 }
 
-interface Message { ok: boolean; result?: unknown; error?: { code: string; message: string; status: 413 | 422 | 500 } }
+type Status = 413 | 422 | 500 | 503;
+interface Message { ok: boolean; result?: unknown; error?: { code: string; message: string; status: Status } }
 
 export async function runInWorker<T>(task: 'validate' | 'reencode', bytes: Uint8Array, limits: unknown, options: RunOptions = {}): Promise<T> {
   const release = await slot();
@@ -51,7 +55,8 @@ function runWorker<T>(task: 'validate' | 'reencode', bytes: Uint8Array, limits: 
       resourceLimits: { maxOldGenerationSizeMb: heapMb, maxYoungGenerationSizeMb: Math.min(64, Math.ceil(heapMb / 8)), stackSizeMb: 4 },
     });
     let settled = false;
-    const settle = (fn: () => void) => { if (settled) return; settled = true; clearTimeout(timer); void worker.terminate(); fn(); };
+    // The slot is freed only once the thread has really stopped, so a timed-out worker's memory is gone before the next starts.
+    const settle = (fn: () => void) => { if (settled) return; settled = true; clearTimeout(timer); worker.terminate().then(fn, fn); };
     const timer = setTimeout(() => settle(() => reject(new ModelRefusalError('timeout', `processing took longer than ${timeoutMs / 1000} seconds`, 413))), timeoutMs);
     worker.once('message', (m: Message) => settle(() => {
       if (m.ok) resolve(m.result as T);

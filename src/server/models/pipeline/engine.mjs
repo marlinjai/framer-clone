@@ -115,7 +115,7 @@ async function textureSizes(images, limits) {
   for (const [i, bytes] of images.entries()) {
     let meta;
     try { meta = await sharp(bytes, { limitInputPixels: limits.textureSide * limits.textureSide }).metadata(); }
-    catch { throw new ModelRefusal('model-too-complex', `texture ${i} is too large or cannot be read`); }
+    catch { throw new ModelRefusal('invalid-model', `texture ${i} cannot be read as an image`, 422); }
     if (!['png', 'jpeg', 'webp'].includes(meta.format) || (meta.pages ?? 1) !== 1) throw new ModelRefusal('model-too-complex', `texture ${i} is a ${meta.format ?? 'unknown'} image: only single png, jpeg or webp images are accepted`, 422);
     if (!meta.width || !meta.height) throw new ModelRefusal('model-too-complex', `texture ${i} has no readable size`, 422);
     side = Math.max(side, meta.width, meta.height);
@@ -136,7 +136,8 @@ function trianglesOf(doc) {
       const position = prim.getAttribute('POSITION');
       const n = indices ? indices.getCount() : position ? position.getCount() : 0;
       const mode = prim.getMode();
-      triangles += mode === 4 ? Math.floor(n / 3) : mode === 5 || mode === 6 ? Math.max(0, n - 2) : 0;
+      // Points and lines are counted as triangles' worth of primitives, so a 5-million-point cloud is not free.
+      triangles += mode === 4 ? Math.floor(n / 3) : mode === 5 || mode === 6 ? Math.max(0, n - 2) : mode === 0 ? n : mode === 1 ? Math.floor(n / 2) : mode === 2 ? n : mode === 3 ? Math.max(0, n - 1) : 0;
     }
     perMesh.set(mesh, triangles);
   }
@@ -183,14 +184,17 @@ export async function validateModel(bytes) {
   let report;
   try {
     report = await validator.validateBytes(bytes, {
-      maxIssues: 1000,
+      // Unlimited: an issue limit also counts infos and hints, so a valid, noisy export would trip it. The input is
+      // already bounded (JSON size, counts) and so is the run (the worker's time cap). A report that is somehow cut
+      // off is still refused below.
+      maxIssues: 0,
       externalResourceFunction: () => Promise.reject(new Error('external resources are refused')),
     });
   } catch (err) {
     return { ok: false, message: `the file could not be read (${String(err?.message ?? err).slice(0, 120)})` };
   }
   // A report that stopped at its issue limit has not been read to the end: later errors are unseen, so it is not a pass.
-  if (report.issues.truncated) return { ok: false, message: 'the file has more than 1000 problems and was not checked to the end' };
+  if (report.issues.truncated) return { ok: false, message: 'the validator report was cut off, so the file was not checked to the end' };
   if (report.issues.numErrors > 0) {
     const first = report.issues.messages.find((m) => m.severity === 0);
     return { ok: false, message: `${first?.code ?? 'INVALID'}${first?.pointer ? ` at ${first.pointer}` : ''}: ${first?.message ?? 'invalid glTF'}`.slice(0, 300) };
@@ -204,9 +208,15 @@ export async function reencodeModel(bytes, limits) {
   await MeshoptDecoder.ready;
   await MeshoptEncoder.ready;
 
-  let json;
-  try { ({ json } = await gltf.binaryToJSON(bytes)); }
-  catch { throw new ModelRefusal('invalid-model', 'the file could not be read', 422); }
+  // A GLB, or a glTF text file whose buffers and images are `data:` addresses (the structure guard has refused
+  // anything that points outside the file). Both are read the same way from here on.
+  let jsonDoc;
+  try {
+    jsonDoc = bytes[0] === 0x7b
+      ? { json: JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)), resources: {} }
+      : await gltf.binaryToJSON(bytes);
+  } catch { throw new ModelRefusal('invalid-model', 'the file could not be read', 422); }
+  const json = jsonDoc.json;
   const used = [...(json.extensionsUsed ?? []), ...(json.extensionsRequired ?? [])];
   if (used.includes('KHR_draco_mesh_compression')) {
     throw new ModelRefusal('model-too-complex', 'Draco-compressed models are not supported yet: export the model without compression, or with meshopt', 422);
@@ -215,7 +225,7 @@ export async function reencodeModel(bytes, limits) {
   declaredDecodedBytes(json, limits);
 
   let doc;
-  try { doc = await gltf.readBinary(bytes); }
+  try { doc = await gltf.readJSON(jsonDoc); }
   catch { throw new ModelRefusal('invalid-model', 'the file could not be decoded', 422); }
   const input = await measure(doc, limits);
 

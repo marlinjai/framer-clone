@@ -176,7 +176,8 @@ describe('the safe re-encoder: refusals and decompression bombs', () => {
     doc.getRoot().listTextures()[0].setImage(new Uint8Array(png));
     const started = Date.now();
     const e = await refusal(safeReencoder().reencode(await io.writeBinary(doc)));
-    expect(e.code).toBe('model-too-complex');
+    // The header is read, never decoded: it is refused as oversized, or as unreadable if the decoder rejects the forged header first.
+    expect(['model-too-complex', 'invalid-model']).toContain(e.code);
     expect(Date.now() - started).toBeLessThan(20_000);
   }, SLOW);
 
@@ -286,6 +287,60 @@ describe('review findings', () => {
     const r = await acceptModelUpload(await model(), 's', 'u', d);
     expect(r).toMatchObject({ ok: false, status: 500 });
     if (!r.ok) expect(r.message).toMatch(/Try again/);
+  }, SLOW);
+});
+
+describe('second review findings', () => {
+  /** A .gltf text file: the same model with its buffer embedded as a data address. */
+  async function gltfText(): Promise<Uint8Array> {
+    const doc = await io.readBinary(await model());
+    const jsonDoc = await io.writeJSON(doc);
+    const uri = jsonDoc.json.buffers![0].uri!;
+    const bytes = jsonDoc.resources[uri];
+    jsonDoc.json.buffers![0].uri = `data:application/octet-stream;base64,${Buffer.from(bytes).toString('base64')}`;
+    return enc.encode(JSON.stringify(jsonDoc.json));
+  }
+
+  it('re-encodes a .gltf with an embedded buffer end to end, to a GLB that passes the guard and the validator', async () => {
+    const text = await gltfText();
+    expect(checkGlb(text).ok).toBe(true);
+    expect(await khronosValidator().validate(text)).toEqual({ ok: true });
+    const out = await safeReencoder().reencode(text);
+    expect(out.input.triangles).toBe(1);
+    expect(checkGlb(out.bytes).ok).toBe(true);
+    expect((checkGlb(out.bytes) as { summary: { container: string } }).summary.container).toBe('glb');
+    expect(await khronosValidator().validate(out.bytes)).toEqual({ ok: true });
+  }, SLOW);
+
+  it('does not refuse a valid but noisy export for having many infos', async () => {
+    const noisy = rewriteJson(await model(), (j) => { for (let i = 0; i < 1500; i++) j.nodes.push({}); });
+    expect(await khronosValidator().validate(noisy)).toEqual({ ok: true });
+  }, SLOW);
+
+  it('counts points and lines too, so a point cloud cannot hide', async () => {
+    const doc = new Document();
+    const buffer = doc.createBuffer();
+    const position = doc.createAccessor().setType('VEC3').setArray(new Float32Array(300_000 * 3).map((_, i) => i % 7)).setBuffer(buffer);
+    const mesh = doc.createMesh().addPrimitive(doc.createPrimitive().setMode(0).setAttribute('POSITION', position));
+    const scene = doc.createScene();
+    for (let i = 0; i < 3; i++) scene.addChild(doc.createNode().setMesh(mesh));
+    const out = await safeReencoder().reencode(await io.writeBinary(doc));
+    expect(out.input.triangles).toBe(900_000);
+    expect(decodedProblem(out.input)).toMatch(/triangles/);
+  }, SLOW);
+
+  it('answers a corrupt image as unreadable (422), not as too large', async () => {
+    const doc = await io.readBinary(await model({ width: 8, height: 8 }));
+    doc.getRoot().listTextures()[0].setImage(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])).setMimeType('image/png');
+    const e = await refusal(safeReencoder().reencode(await io.writeBinary(doc)));
+    expect(e).toMatchObject({ status: 422, code: 'invalid-model' });
+  }, SLOW);
+
+  it('says busy (503) instead of queueing without end', async () => {
+    const spin = new URL('./fixtures/spin.mjs', import.meta.url);
+    const calls = Array.from({ length: 2 + 16 + 3 }, () => runInWorker('validate', new Uint8Array(1), {}, { script: spin, timeoutMs: 300 }).then(() => 'ok', (e: ModelRefusalError) => e.code));
+    const codes = await Promise.all(calls);
+    expect(codes.filter((c) => c === 'busy').length).toBe(3);
   }, SLOW);
 });
 
