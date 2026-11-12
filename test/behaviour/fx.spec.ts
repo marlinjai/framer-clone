@@ -7,6 +7,10 @@
 // React, in both engines, with a real WebGL context. No engine is skipped: a
 // browser without WebGL here fails the test.
 
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserContext, type BrowserContextOptions, type BrowserType, type Page } from 'playwright';
 import { PNG } from 'pngjs';
@@ -15,6 +19,7 @@ import { png } from '@/lib/images/__tests__/fixtures';
 import { FX_ATTR, FX_MARKER, FX_PROP } from '@/lib/fxScene/marker';
 import { node, type StoredNode } from './pages';
 import { publishPages, publishPagesWithImages } from './site';
+import { collectFxProof, problemsOfDrawnScene, problemsOfNoScene } from '../fx-proof/proof';
 
 /** A preset as it is stored: the values `serializeScene` writes. */
 const preset = (id: string) => serializeScene(PRESETS.find((p) => p.id === id)!.load());
@@ -621,6 +626,55 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     expect(fxWarnings()[0]).toContain('context-lost');
   });
 
+  // The proof slice F7 runs after a deploy (test/fx-proof/proof.ts), rehearsed here on this build: the same
+  // collector that will read the live addresses must read these pages right, and must be able to say no.
+  describe('the deploy proof, rehearsed', () => {
+    it('a page with a scene: live, one context, the engine fetched, nothing reported', async () => {
+      const proof = await collectFxProof(browser, `${origin}/fx-immediate`);
+      expect(problemsOfDrawnScene(proof)).toEqual([]);
+      expect(proof.boxes).toEqual([{ state: 'live', canvas: true, layer: true }]);
+      expect(proof.liveContexts).toBe(1);
+      // The probe's throwaway context is counted among those made, and released.
+      expect(proof.madeContexts).toBeGreaterThanOrEqual(1);
+      // The engine as sent: inside the bundle budget, which counts every script a scene adds.
+      expect(proof.engineWireBytes).toBeGreaterThan(100_000);
+      expect(proof.engineWireBytes).toBeLessThanOrEqual(FX_BUDGET_BYTES);
+      expect(proof.cspViolations).toEqual([]);
+    });
+
+    it('a page without a scene: no context, no engine, no scene format', async () => {
+      const proof = await collectFxProof(browser, `${origin}/fx-none`);
+      expect(problemsOfNoScene(proof)).toEqual([]);
+      expect(proof.boxes).toEqual([]);
+      expect(proof.madeContexts).toBe(0);
+      expect(proof.scripts.length).toBeGreaterThan(0);
+      expect(proof.scripts.filter((script) => script.engine || script.format)).toEqual([]);
+    });
+
+    it('reduced motion: the background as calm state draws nothing, a frame as calm state draws', async () => {
+      const calm = await collectFxProof(browser, `${origin}/fx-immediate`, { reducedMotion: true });
+      expect(calm.boxes).toEqual([{ state: 'calm', canvas: false, layer: false }]);
+      expect(problemsOfNoScene(calm)).toEqual([]);
+      const frame = await collectFxProof(browser, `${origin}/fx-frame`, { reducedMotion: true });
+      expect(problemsOfDrawnScene(frame)).toEqual([]);
+    });
+
+    it('two scenes on a page: the first draws, the second holds no canvas, at a phone width too', async () => {
+      const proof = await collectFxProof(browser, `${origin}/fx-two`, { viewport: { width: 390, height: 844 } });
+      expect(problemsOfDrawnScene(proof)).toEqual([]);
+      expect(proof.boxes.map((box) => box.state)).toEqual(['live', 'calm']);
+    });
+
+    it('the proof can say no: each wrong page is named for what is wrong with it', async () => {
+      // A page without a scene is not a drawn scene, a drawn scene is not a page without one,
+      // a refused scene is not drawn, and an address that does not exist is not a page.
+      expect(problemsOfDrawnScene(await collectFxProof(browser, `${origin}/fx-none`)).join(' ')).toMatch(/has no FX scene box/);
+      expect(problemsOfNoScene(await collectFxProof(browser, `${origin}/fx-immediate`)).join(' ')).toMatch(/an FX scene is drawn.*the engine was fetched/);
+      expect(problemsOfDrawnScene(await collectFxProof(browser, `${origin}/fx-refused`, { settleMs: 3000 })).join(' ')).toMatch(/not started, not live/);
+      expect(problemsOfDrawnScene(await collectFxProof(browser, `${origin}/no-such-page`, { settleMs: 1000 })).join(' ')).toMatch(/answered 404/);
+    });
+  });
+
   it('keeps to one WebGL context on a page with two scenes: the first draws, the second stays calm', async () => {
     await page.goto(`${origin}/fx-two`);
     await waitForState('live');
@@ -839,4 +893,45 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       expect(addedBytes).toBeGreaterThan(FX_BUDGET_BYTES * 0.8);
     });
   }
+});
+
+// The command that is run after a deploy (test/fx-proof/run.ts), once, as it will be run: both engines, a desktop
+// and a phone width, with and without reduced motion, and the two-address comparison. Here the addresses are
+// this build's; after a deploy they are a sites.lumitra.co test page and, for the comparison, lumitra.co.
+describe('the deploy proof command', () => {
+  it('reads every address in both engines, finds nothing wrong, and writes its readings and pictures', async () => {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-proof-'));
+    const run = spawnSync(
+      'pnpm',
+      ['exec', 'tsx', 'test/fx-proof/run.ts', '--fx', `${origin}/fx-frame`, '--plain', `${origin}/fx-none`, '--compare', `${origin}/fx-frame`, '--out', out],
+      { encoding: 'utf8', timeout: 280_000 },
+    );
+    expect(run.status, run.stderr.slice(-2000)).toBe(0);
+    const report = JSON.parse(fs.readFileSync(path.join(out, 'proof.json'), 'utf8')) as {
+      readings: { engine: string; width: string; page: string; reducedMotion: boolean; problems: string[] }[];
+      comparisons: { engine: string; width: string; same: boolean; differing: number }[];
+    };
+    // Two engines, two widths, with and without reduced motion, two pages.
+    expect(report.readings).toHaveLength(16);
+    expect(report.readings.filter((reading) => reading.problems.length > 0)).toEqual([]);
+    expect(new Set(report.readings.map((reading) => `${reading.engine} ${reading.width}`)).size).toBe(4);
+    expect(report.comparisons).toHaveLength(4);
+    expect(report.comparisons.every((comparison) => comparison.same && comparison.differing === 0)).toBe(true);
+    expect(fs.readdirSync(out).filter((name) => name.endsWith('.png'))).toHaveLength(8);
+    fs.rmSync(out, { recursive: true, force: true });
+  }, 300_000);
+
+  it('says how it is used, and fails, when it is given no addresses', () => {
+    const run = spawnSync('pnpm', ['exec', 'tsx', 'test/fx-proof/run.ts'], { encoding: 'utf8', timeout: 60_000 });
+    expect(run.status).toBe(2);
+    expect(run.stderr).toMatch(/usage: tsx test\/fx-proof\/run\.ts --fx/);
+  });
+
+  it('fails, naming what is wrong, when the page with a scene is not one', () => {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-proof-'));
+    const run = spawnSync('pnpm', ['exec', 'tsx', 'test/fx-proof/run.ts', '--fx', `${origin}/fx-none`, '--plain', `${origin}/fx-none`, '--out', out], { encoding: 'utf8', timeout: 280_000 });
+    expect(run.status).toBe(1);
+    expect(run.stdout).toMatch(/has no FX scene box/);
+    fs.rmSync(out, { recursive: true, force: true });
+  }, 300_000);
 });

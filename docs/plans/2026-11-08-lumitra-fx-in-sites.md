@@ -804,3 +804,65 @@ Tests:
 
 The plan's check names an agent `set_node`; there is no operation of that name. The same check runs against
 `setFxScene` and `insertNodes`, the two operations that can carry a scene.
+
+### F7 and F8, prepared offline (2026-11-12)
+
+Nothing here touches production. It is what could be made ready without a deploy, so that the proof after one is a
+single run with a known procedure.
+
+- **`test/fx-proof/proof.ts`, `collectFxProof`:** for one address, in a fresh browser context, everything F7 asks to be
+  recorded: the state of every FX box, the WebGL contexts the page holds (counted where contexts are made, installed
+  before the page loads), every script file fetched with its size as text and as sent, which of them carry the engine
+  or the scene format, Content Security Policy violations, console errors and FX warnings. `problemsOfDrawnScene` and
+  `problemsOfNoScene` say whether a reading is what it must be.
+- **`compareFxAddresses`:** F8's comparison. The scene at two addresses at the still frame (reduced motion asked for,
+  the clock stopped before the page loads), everything on the page hidden but the canvas, the two pictures compared
+  with the oracle's own tolerance. It refuses two canvases of different sizes, because then nothing can be compared.
+- **`test/fx-proof/run.ts`, the command:** `pnpm tsx test/fx-proof/run.ts --fx <address with a scene> --plain <address
+  without one> [--compare <address>]`. Chromium and WebKit, a desktop and a phone width, with and without reduced
+  motion: 16 readings, and with `--compare` four comparisons with their pictures. It only reads pages. Exit code 0
+  means every reading is as it must be.
+- **Rehearsed on a real production build** inside the two existing FX browser specs (no new spec): the collector on
+  pages with a scene, without one, with two, under reduced motion in both calm states, and on four wrong pages that it
+  must name; the comparison on the same scene at two addresses (0 pixels differ), under content that covers it (still
+  0), on a changed scene (over the tolerance) and on a box of another size (refused); and the command itself, run as it
+  will be run, in both engines.
+
+Decided here, say so if you disagree:
+
+- **The proof runs as a Playwright command, not through the `dev-browser` skill** as the plan's "Visual verification"
+  says. It needs a script installed before the page loads (the context counter and the stopped clock), reduced motion
+  emulated, and two browser engines, and a published page needs no sign-in. `dev-browser` stays the tool for looking
+  at the page beside lumitra.co and for the side by side recording of F8.
+
+Found by rehearsing, fixed: run through `tsx`, the functions handed to the page are compiled with a helper that does
+not exist in a page, so the counter was never installed and every reading failed. Reading the code did not show it;
+running the command did.
+
+**The procedure after a deploy** (each numbered step that writes to production is named to Marlin first):
+
+1. The deploy itself, with its gates, as recorded above under "What a deploy of main would ship". Not this slice's to
+   start.
+2. **Production write:** a test site on a `sites.lumitra.co` address with two pages: one with an FX scene box (the
+   default preset, a heading over it) and one without. Built through the agent endpoint with the company key
+   (`insertNodes` with preset `fxScene`), or in the editor.
+3. **Production write, needs a person's approval** (agent plugin plan, decision 6): publishing that test site.
+4. Read only: `pnpm tsx test/fx-proof/run.ts --fx <the page with the scene> --plain <the page without>`. The readings
+   go into this log: context count, the chunk list with and without a scene, the engine's size as sent, reduced motion,
+   Content Security Policy violations.
+5. Read only: the page looked at beside lumitra.co at a desktop and a phone width through `dev-browser`, screenshots
+   into this log.
+6. F8, once the FX hero is in the new lumitra.co site (the dogfood work's draft, with its owner): the same command with
+   `--compare https://lumitra.co/` at a window width where both hero boxes have the same size.
+
+What stays unknown until then, and cannot be learned offline:
+
+- **Whether live lumitra.co matches.** F4 compared this app with the engine's source as lumitra-web runs it, with the
+  tuning panel and the frame rate monitor replaced by stand-ins. lumitra.co runs the real ones, on its own React and
+  Next versions.
+- **Whether lumitra.co draws the still frame at all under reduced motion,** which the comparison needs. If it shows
+  its painted background instead, F8's pixel comparison has nothing to read there and the side by side recording is
+  the evidence.
+- **The production Content Security Policy** (report-only today) and the sizes as the production server compresses
+  them. The rehearsal ran on a local production build.
+
