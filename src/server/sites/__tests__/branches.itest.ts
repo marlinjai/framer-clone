@@ -220,7 +220,7 @@ describe('a closed branch to an agent', () => {
     const { branch } = await create('Agent work');
     await branches.discardBranch(scope, mainId, branch.branchId, ALICE);
     const caller = { scope, companyId: COMPANY, actor: { kind: 'key' as const, id: 'key_1' }, can: () => true };
-    const read = await getSite(caller, { siteId: branch.branchId }, { repository: latestVersionRepository() });
+    const read = await getSite(caller, { siteId: branch.branchId }, { repository: latestVersionRepository(), branches: { enabled: () => true } });
     expect(read).toMatchObject({ ok: false, error: { code: 'site_not_found' } });
     expect(!read.ok && read.error.message).toContain(`was discarded and is closed: nothing can be read from or written to it. Its site is "${mainId}"`);
   });
