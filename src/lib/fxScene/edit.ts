@@ -72,11 +72,12 @@ export function fxPresetOptions(): FxPresetOption[] {
   return PRESETS.map(({ id, label, blurb }) => ({ id, label, blurb }));
 }
 
-function finish(next: ParsedFx): FxEdit {
+/** `earlier` are the repairs the first read of the stored prop reported: the edit saves them, so it reports them too. */
+function finish(next: ParsedFx, earlier: readonly string[] = []): FxEdit {
   const stored = storedFxProp(next);
   const checked = parseFxProp(stored);
   if (!checked.ok) return checked;
-  return { ok: true, stored: storedFxProp(checked.fx), fx: checked.fx, notes: checked.notes };
+  return { ok: true, stored: storedFxProp(checked.fx), fx: checked.fx, notes: [...new Set([...earlier, ...checked.notes])] };
 }
 
 /** Read `current`, apply `change` to the scene, and check the result. */
@@ -84,7 +85,7 @@ function change(current: unknown, apply: (fx: ParsedFx) => ParsedFx | string): F
   const read = parseFxProp(current);
   if (!read.ok) return read;
   const next = apply(read.fx);
-  return typeof next === 'string' ? { ok: false, message: next } : finish(next);
+  return typeof next === 'string' ? { ok: false, message: next } : finish(next, read.notes);
 }
 
 const withScene = (fx: ParsedFx, scene: SceneConfig): ParsedFx => ({ ...fx, scene });

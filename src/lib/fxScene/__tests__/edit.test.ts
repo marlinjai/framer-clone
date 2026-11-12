@@ -182,6 +182,14 @@ describe('a change with consequences elsewhere in the scene', () => {
     expect(layer(stored, rays.id).params.sourceLayerId).toBe(source);
   });
 
+  it('an edit reports the repair the first read of the stored prop made, not only its own', () => {
+    const repaired = { ...start('godrays-hero'), start: 'whenever' };
+    expect(parseFxProp(repaired)).toMatchObject({ ok: true, notes: [expect.any(String)] });
+    const edit = ok(setFxBackground(repaired, '#101010'));
+    expect(edit.stored.start).toBe('settled');
+    expect(edit.notes).toHaveLength(1);
+  });
+
   it('a box whose scene is refused or missing gets a way forward: a preset', () => {
     for (const broken of [undefined, null, 'x', { version: 9 }, { version: 1, scene: { layers: 'no' } }]) {
       expect(setFxStart(broken, 'visible').ok).toBe(false);

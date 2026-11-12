@@ -46,6 +46,9 @@ import { editorSiteImageUrl } from '@/lib/site/siteImages';
 export const FxPreviewContext = React.createContext<FxClaim | null>(null);
 
 // useLayoutEffect warns during server rendering; nothing here draws on a server.
+/** Whether the box's inline position is the author's own. An authored `static` is not: the hold changes it, and gives it back. */
+const isOwn = (position: unknown) => position != null && position !== '' && position !== 'static';
+
 const useBeforePaint = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 const LAYER_STYLE: React.CSSProperties = {
@@ -97,17 +100,36 @@ function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId,
   const [status, setStatus] = useState<LayerStatus>({ state: idle });
   const handle = useRef<{ update: (stored: unknown) => void; teardown: () => void } | null>(null);
   const latest = useRef({ stored, projectId, onStatus, ownPosition });
-  latest.current = { stored, projectId, onStatus, ownPosition };
+  // What asynchronous callbacks read: the last COMMITTED values, never those of a render React may still discard.
+  // Declared first, so it runs before the effects below in the same commit.
+  useBeforePaint(() => {
+    latest.current = { stored, projectId, onStatus, ownPosition };
+  });
 
   // The box holds the layer: a stacking context, and a position when it has none
   // (src/lib/fxScene/box.ts). Again whenever the box's own position changes, so a
   // position the author sets or takes away while the scene is live is respected.
-  const hasOwnPosition = ownPosition != null && ownPosition !== '';
+  const hasOwnPosition = isOwn(ownPosition);
+  const held = useRef<((positionIsOwned?: boolean) => void) | null>(null);
+  const heldFor = useRef({ draws, hasOwnPosition });
   useBeforePaint(() => {
     const box = layerRef.current?.parentElement;
     if (!draws || !box) return;
-    const release = holdFxBox(box);
-    return () => release(latest.current.ownPosition != null && latest.current.ownPosition !== '');
+    held.current = holdFxBox(box);
+    return () => {
+      held.current?.(isOwn(latest.current.ownPosition));
+      held.current = null;
+    };
+  }, [draws]);
+  // The box's own position set or taken away while the scene is live: hold the box again on the new footing.
+  // The old hold leaves the position alone, because the renderer has already set the new one.
+  useBeforePaint(() => {
+    const before = heldFor.current;
+    heldFor.current = { draws, hasOwnPosition };
+    const box = layerRef.current?.parentElement;
+    if (!draws || !box || before.draws !== draws || before.hasOwnPosition === hasOwnPosition) return;
+    held.current?.(true);
+    held.current = holdFxBox(box);
   }, [draws, hasOwnPosition]);
 
   useEffect(() => {

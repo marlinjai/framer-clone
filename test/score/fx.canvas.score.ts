@@ -102,6 +102,8 @@ async function canvasCell(browser: Browser, bundle: string, scene: unknown): Pro
     if (!placed.contentOnTop) return fail('the drawing covers the content of the box');
     // The fade has ended and the frame is on screen.
     await expect.poll(() => view.locator(`${BOX} [data-fc-fx-layer]`).first().evaluate((layer) => getComputedStyle(layer).opacity), { timeout: 5000 }).toBe('1');
+    // The screenshot is the page clipped to the canvas, so the heading over the scene is hidden first: its text must not supply the colours.
+    await view.evaluate(() => ((document.querySelector('[data-inner-component-id="fx-title"]') as HTMLElement).style.visibility = 'hidden'));
     const seen = colours(PNG.sync.read(await view.locator(`${BOX} canvas`).first().screenshot()));
     if (seen < 50) return fail(`the drawing is a blank or flat frame (${seen} colours)`);
 
@@ -136,6 +138,12 @@ describe('FX scene promises: the canvas', () => {
     for (const name of Object.keys(canvas)) expect(rows.has(name), name).toBe(true);
     writeOut('fx-scenes-canvas', { canvas });
   }, 600_000);
+
+  it('the picture check can fail: a flat frame has too few colours to pass', () => {
+    const flat = new PNG({ width: 64, height: 64 });
+    flat.data.fill(255);
+    expect(colours(PNG.sync.read(PNG.sync.write(flat)))).toBeLessThan(50);
+  });
 
   it('the probe can fail: a scene the reader refuses is not drawn, and the cell says so', async () => {
     const cell = await canvasCell(browser, bundle, { background: '#000000', layers: 'none' });
