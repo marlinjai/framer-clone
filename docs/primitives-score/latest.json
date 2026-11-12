@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-12T02:32:37.462Z",
+  "generatedAt": "2026-11-12T03:30:01.984Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 515,
+  "durationSeconds": 565,
   "matrix": {
     "surfaces": {
       "format": {
@@ -21,14 +21,14 @@
         "total": 1845
       },
       "canvas": {
-        "pass": 1745,
-        "fail": 100,
+        "pass": 1748,
+        "fail": 97,
         "notTested": 0,
         "total": 1845
       },
       "panel": {
-        "pass": 1241,
-        "fail": 604,
+        "pass": 1244,
+        "fail": 601,
         "notTested": 0,
         "total": 1845
       },
@@ -567,14 +567,14 @@
           "total": 3
         },
         "canvas": {
-          "pass": 0,
-          "fail": 3,
+          "pass": 3,
+          "fail": 0,
           "notTested": 0,
           "total": 3
         },
         "panel": {
-          "pass": 0,
-          "fail": 3,
+          "pass": 3,
+          "fail": 0,
           "notTested": 0,
           "total": 3
         },
@@ -5177,9 +5177,9 @@
       "page-item:theme:document-background": "pass pass pass pass theme",
       "page-item:theme:document-color": "pass pass pass pass theme",
       "page-item:theme:document-font": "pass pass pass pass theme",
-      "fx-scene:scene:hub-hero": "pass pass fx-scene fx-scene fx-scene",
-      "fx-scene:scene:godrays-hero": "pass pass fx-scene fx-scene fx-scene",
-      "fx-scene:scene:noise-gradient": "pass pass fx-scene fx-scene fx-scene"
+      "fx-scene:scene:hub-hero": "pass pass pass pass fx-scene",
+      "fx-scene:scene:godrays-hero": "pass pass pass pass fx-scene",
+      "fx-scene:scene:noise-gradient": "pass pass pass pass fx-scene"
     }
   },
   "corpus": {
@@ -8435,8 +8435,8 @@
   },
   "roundTrip": {
     "nodesToJsxToNodes": {
-      "pass": 146,
-      "total": 150
+      "pass": 147,
+      "total": 151
     },
     "jsxToNodesToRender": {
       "pass": 19,
@@ -8743,6 +8743,11 @@
       },
       {
         "id": "preset: mapEmbed",
+        "direction": "nodes-jsx-nodes",
+        "pass": true
+      },
+      {
+        "id": "preset: fxScene",
         "direction": "nodes-jsx-nodes",
         "pass": true
       },
@@ -9543,16 +9548,6 @@
       "cost": 9
     },
     {
-      "id": "fx-scene",
-      "description": "An FX scene (a box that draws a Lumitra FX scene behind its content) that this surface does not handle yet: the canvas, the properties panel and the generator come with later slices of the FX plan.",
-      "matrixCells": 9,
-      "corpusChecks": 0,
-      "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 9
-    },
-    {
       "id": "import-dynamic-logic",
       "description": "JSX that is a program, not markup: reported as left over by the static import, as the plan requires.",
       "matrixCells": 0,
@@ -9593,6 +9588,16 @@
       "onlyGapOf": [],
       "roundTripCases": 4,
       "cost": 4
+    },
+    {
+      "id": "fx-scene",
+      "description": "An FX scene (a box that draws a Lumitra FX scene behind its content) that this surface does not handle yet. Stored, published, drawn on the canvas and edited in the properties panel; the generator comes with slice F6 of the FX plan (docs/plans/2026-11-08-lumitra-fx-in-sites.md).",
+      "matrixCells": 3,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 3
     },
     {
       "id": "renderer-drops-value",

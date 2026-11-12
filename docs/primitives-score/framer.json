@@ -1,7 +1,7 @@
 {
   "comparedWith": {
     "file": "docs/primitives-score/latest.json",
-    "generatedAt": "2026-11-12T02:32:37.462Z",
+    "generatedAt": "2026-11-12T03:30:01.984Z",
     "included": 1845
   },
   "framerPlugin": {
@@ -19,7 +19,7 @@
     },
     "framerTyped": 549,
     "ourRenderer": 1796,
-    "ourPanel": 1241,
+    "ourPanel": 1244,
     "documentedNotMeasured": 83
   },
   "byKind": [
@@ -307,7 +307,7 @@
       },
       "framerTyped": 0,
       "ourRenderer": 3,
-      "ourPanel": 0,
+      "ourPanel": 3,
       "framerTypedOursFails": 0,
       "oursPassesFramerUntyped": 3,
       "framerTypedPanelFails": 0
@@ -10434,7 +10434,7 @@
         "ComponentNode"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "fx-scene:scene:hub-hero",
@@ -10446,7 +10446,7 @@
         "ComponentNode"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "fx-scene:scene:noise-gradient",
@@ -10458,7 +10458,7 @@
         "ComponentNode"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-element-attribute:a.download",
