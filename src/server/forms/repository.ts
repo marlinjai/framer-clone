@@ -122,7 +122,8 @@ async function withNotifications(db: Kysely<CommerceDB>, tenantId: string, submi
   const byId = new Map(rows.map((r) => [r.submission_id, r]));
   return submissions.map((s) => {
     const n = byId.get(s.id);
-    return n ? { ...s, notification: { status: n.status, reason: n.last_error, recipient: n.recipient } } : s;
+    return n ? { ...s, // The column is TEXT with a CHECK on exactly these values (031_form_notification), so the generated type is a plain string.
+      notification: { status: n.status as FormNotificationView['status'], reason: n.last_error, recipient: n.recipient } } : s;
   });
 }
 
