@@ -117,6 +117,12 @@ export interface BranchReview {
   review: DocumentReview;
   /** The versions the review was computed from: a page drawn from older reads reloads (S5). */
   versions: { main: number; branch: number };
+  /**
+   * A short key over everything this review was computed from: the token's state and the record as last
+   * written (its answers, its ready and approval marks, its name and note). A page that holds a review asks
+   * with it, and is told `current` by a read of three small rows instead of a new computation.
+   */
+  state: string;
   /** Why the result would not be a valid site, once no conflict is open. */
   problems: Array<{ code: string; message: string; pageId?: string; componentId?: string }>;
 }
@@ -147,6 +153,8 @@ interface Stamp {
   mergedMainVersion: number | null;
   /** On a merged branch whose merge was undone: the branch that took the merged work. */
   undoneIntoBranchId: string | null;
+  /** When the record was last written: every change of its answers and its review marks moves it. */
+  recordUpdatedAt: Date;
 }
 
 /** A stamp of an open branch, with the three documents read in the same snapshot. */
@@ -171,6 +179,11 @@ export function reviewToken(stamp: Pick<Stamp, 'baseVersion' | 'mainVersion' | '
     )
     .digest('base64url')
     .slice(0, 32);
+}
+
+/** The key of {@link BranchReview.state}: the token and the moment the record was last written. Not a secret. */
+export function reviewStateKey(token: string, recordUpdatedAt: Date): string {
+  return createHash('sha256').update(JSON.stringify([token, recordUpdatedAt.getTime()])).digest('base64url').slice(0, 32);
 }
 
 /** A draft's answers, read defensively: anything malformed (or a draft from before this shape) reads as none. */
@@ -263,7 +276,7 @@ export class SiteBranchMergeService {
   private async stamp(client: Prisma.TransactionClient | PrismaClient, scope: TenantScope, branchId: string): Promise<Stamp> {
     const record = await client.siteBranch.findFirst({
       where: { id: branchId, workspaceId: scope.workspaceId },
-      select: { siteId: true, status: true, name: true, baseVersion: true, mergeDraft: true, mergedMainVersion: true, undoneIntoBranchId: true },
+      select: { siteId: true, status: true, name: true, baseVersion: true, mergeDraft: true, mergedMainVersion: true, undoneIntoBranchId: true, updatedAt: true },
     });
     if (!record) throw new SiteNotFoundError(branchId);
     const main = await client.site.findFirst({
@@ -293,6 +306,7 @@ export class SiteBranchMergeService {
       mergeDraft: record.mergeDraft,
       mergedMainVersion: record.mergedMainVersion,
       undoneIntoBranchId: record.status === 'merged' ? record.undoneIntoBranchId : null,
+      recordUpdatedAt: record.updatedAt,
     };
   }
 
@@ -360,16 +374,18 @@ export class SiteBranchMergeService {
     stamp: Stamp,
     kept: Record<string, { fingerprint: string; pick: MergeSide }>,
     checked = false,
-  ): Promise<boolean> {
+  ): Promise<{ kept: boolean; recordUpdatedAt: Date }> {
     const same = stableStringify(draftAnswers(stamp.mergeDraft)) === stableStringify(kept);
-    if (same && !checked) return true;
+    if (same && !checked) return { kept: true, recordUpdatedAt: stamp.recordUpdatedAt };
     return this.prisma.$transaction(async (tx) => {
       await this.lockPair(tx, scope, stamp);
       const now = await this.stamp(tx, scope, stamp.branchId);
-      if (reviewToken(now) !== reviewToken(stamp) || stableStringify(now.mergeDraft) !== stableStringify(stamp.mergeDraft)) return false;
-      if (same) return true;
-      await tx.siteBranch.update({ where: { id: stamp.branchId }, data: { mergeDraft: draftOf(kept) } });
-      return true;
+      if (reviewToken(now) !== reviewToken(stamp) || stableStringify(now.mergeDraft) !== stableStringify(stamp.mergeDraft)) {
+        return { kept: false, recordUpdatedAt: now.recordUpdatedAt };
+      }
+      if (same) return { kept: true, recordUpdatedAt: now.recordUpdatedAt };
+      const written = await tx.siteBranch.update({ where: { id: stamp.branchId }, data: { mergeDraft: draftOf(kept) }, select: { updatedAt: true } });
+      return { kept: true, recordUpdatedAt: written.updatedAt };
     });
   }
 
@@ -388,40 +404,61 @@ export class SiteBranchMergeService {
     return now;
   }
 
-  /** The review of a branch. A read: it writes nothing but the pruning of answers that no longer apply. */
-  async changes(scope: TenantScope, branchId: string): Promise<BranchReview> {
+  /**
+   * The key of a branch's review as it would be computed now, by the stamp alone: three small rows, no
+   * document. Equal to the `state` of a review a page holds: that review is still the one. A closed branch
+   * throws as the review does.
+   */
+  async reviewState(scope: TenantScope, branchId: string): Promise<string> {
     assertScope(scope);
+    const stamp = await this.stamp(this.prisma, scope, branchId);
+    this.open(stamp);
+    return reviewStateKey(reviewToken(stamp), stamp.recordUpdatedAt);
+  }
+
+  /**
+   * The review of a branch. A read: it writes nothing but the pruning of answers that no longer apply.
+   * With `ifState` (the `state` of the review the caller holds): `{ current: true }` when nothing it was
+   * computed from moved, without reading a document.
+   */
+  async changes(scope: TenantScope, branchId: string): Promise<BranchReview>;
+  async changes(scope: TenantScope, branchId: string, ifState: string | undefined): Promise<BranchReview | { current: true; state: string }>;
+  async changes(scope: TenantScope, branchId: string, ifState?: string): Promise<BranchReview | { current: true; state: string }> {
+    assertScope(scope);
+    if (ifState !== undefined && (await this.reviewState(scope, branchId)) === ifState) return { current: true, state: ifState };
     const state = await this.readState(scope, branchId);
+    const brought = this.upToDate(state) ? null : this.bringMainIn(state, draftAnswers(state.stamp.mergeDraft));
+    const kept = brought ? Object.fromEntries(brought.merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }])) : {};
+    const stored = await this.keepDraft(scope, state.stamp, kept);
+    // The key of what was read. When the pruning above wrote, or another write landed meanwhile, the next ask
+    // with this key computes once more: never the other way round, a newer key over an older review.
+    const at = stored.kept ? stored.recordUpdatedAt : state.stamp.recordUpdatedAt;
+    return this.reviewOf(scope, state, brought, at);
+  }
+
+  /** The review of a state already read and, when the branch is behind main, already merged with its answers. */
+  private async reviewOf(
+    scope: TenantScope,
+    state: ReviewState,
+    brought: ReturnType<SiteBranchMergeService['bringMainIn']> | null,
+    recordUpdatedAt: Date,
+  ): Promise<BranchReview> {
     const { stamp } = state;
-    const upToDate = this.upToDate(state);
-    const answers = draftAnswers(stamp.mergeDraft);
-    let conflicts: ShownConflict[] = [];
-    let settled: BranchReview['settled'] = [];
-    let problems: BranchReview['problems'] = [];
-    let kept: Record<string, { fingerprint: string; pick: MergeSide }> = {};
-    if (upToDate) {
-      problems = mergedDocumentProblems(state.branch, state.main, toProjectSnapshot);
-    } else {
-      const brought = this.bringMainIn(state, answers);
-      conflicts = brought.merge.conflicts.map(shown);
-      settled = brought.merge.settled.map(({ conflict, pick }) => ({ id: conflict.id, pick, conflict: shown(conflict) }));
-      kept = Object.fromEntries(brought.merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
-      problems = brought.problems;
-    }
-    await this.keepDraft(scope, stamp, kept);
-    const branchChanges = diffDocuments(state.base, state.branch);
+    const upToDate = brought === null;
+    const token = reviewToken(stamp);
     return {
-      branch: await this.branches.getBranch(scope, stamp.mainId, branchId),
-      token: reviewToken(stamp),
+      branch: await this.branches.getBranch(scope, stamp.mainId, stamp.branchId),
+      token,
       upToDate,
-      branchChanges,
+      branchChanges: diffDocuments(state.base, state.branch),
       unchanged: changesNothing(state.base, state.branch),
       mainChanges: upToDate ? null : diffDocuments(state.base, state.main),
-      conflicts,
-      settled,
-      problems,
+      conflicts: brought ? brought.merge.conflicts.map(shown) : [],
+      settled: brought ? brought.merge.settled.map(({ conflict, pick }) => ({ id: conflict.id, pick, conflict: shown(conflict) })) : [],
+      problems: brought ? brought.problems : mergedDocumentProblems(state.branch, state.main, toProjectSnapshot),
       review: reviewDocuments(state.base, state.branch),
       versions: { main: stamp.mainVersion, branch: stamp.branchVersion },
+      state: reviewStateKey(token, recordUpdatedAt),
     };
   }
 
@@ -429,7 +466,8 @@ export class SiteBranchMergeService {
    * Store conflict answers without bringing main in (slice S5): the review saves each answer as it is given, so a
    * reload, another tab or the next day finds it (section 6, "Resume"). Only answers that settle a conflict of the
    * state the token names are kept; the branch's content is not touched, and nothing is applied until Update.
-   * Answers the review afresh; 409 `branch_review_stale` when the state moved (the review reloads).
+   * Answers the review afresh, from the merge this call ran with the stored answers (it used to compute the
+   * whole review a second time); 409 `branch_review_stale` when the state moved (the review reloads).
    */
   async answer(scope: TenantScope, branchId: string, input: { token: string; resolutions: MergeAnswers }): Promise<BranchReview> {
     assertScope(scope);
@@ -438,14 +476,15 @@ export class SiteBranchMergeService {
     for (let attempt = 1; ; attempt++) {
       const state = await this.readState(scope, branchId);
       if (reviewToken(state.stamp) !== input.token) throw new BranchReviewStaleError();
-      if (this.upToDate(state)) break;
-      const { merge } = this.bringMainIn(state, { ...draftAnswers(state.stamp.mergeDraft), ...input.resolutions });
-      const kept = Object.fromEntries(merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
+      if (this.upToDate(state)) return this.reviewOf(scope, state, null, state.stamp.recordUpdatedAt);
+      const brought = this.bringMainIn(state, { ...draftAnswers(state.stamp.mergeDraft), ...input.resolutions });
+      const kept = Object.fromEntries(brought.merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
       // Under the locks, and only when the state is still the one read: an answer is never stored against a newer one.
-      if (await this.keepDraft(scope, state.stamp, kept, true)) break;
+      const stored = await this.keepDraft(scope, state.stamp, kept, true);
+      // What is stored now is exactly the answers that merge settled, so its result is the review of the stored state.
+      if (stored.kept) return this.reviewOf(scope, state, brought, stored.recordUpdatedAt);
       if (attempt >= ANSWER_ATTEMPTS) throw new BranchReviewStaleError();
     }
-    return this.changes(scope, branchId);
   }
 
   /**
@@ -479,7 +518,7 @@ export class SiteBranchMergeService {
     const kept = Object.fromEntries(merge.settled.map(({ conflict, pick }) => [conflict.id, { fingerprint: conflict.fingerprint, pick }]));
     // Stored before anything else is tried: a request refused below, or one whose write finds the state moved,
     // keeps the answers that applied, so the person never gives them twice.
-    const answersKept = await this.keepDraft(scope, stamp, kept, true);
+    const answersKept = (await this.keepDraft(scope, stamp, kept, true)).kept;
     if (merge.conflicts.length > 0) throw new BranchConflictsError(merge.conflicts.map(shown), reviewToken(stamp), answersKept);
     if (problems.length > 0) throw new BranchMergeInvalidError(problems, answersKept);
 

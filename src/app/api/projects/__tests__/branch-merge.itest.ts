@@ -20,7 +20,7 @@ import { getPrismaClient } from '@/server/db';
 import type { TenantScope } from '@/server/sites';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
 import { getSiteBranchRepository } from '@/server/sites/branches/repository';
-import { SiteBranchMergeService } from '@/server/sites/branches/merge';
+import { getSiteBranchMergeService, SiteBranchMergeService } from '@/server/sites/branches/merge';
 import { getSiteRepository } from '@/server/sites/repository';
 import { subscribeSite } from '@/server/sites/liveBus';
 import { POST as createPOST } from '../[projectId]/branches/route';
@@ -845,6 +845,62 @@ describe('the review (S5): the change list and answers saved as given', () => {
     expect((await update(branchId, { token: seen.token })).status).toBe(200);
     expect(await textOf(branchId, 'home')).toBe('Branch home');
     expect(await textOf(branchId, 'about')).toBe('Branch about');
+  });
+
+  it('a page that holds the review is told "current" without a new computation, and gets the review again whenever anything it shows moved', async () => {
+    const branchId = await createBranch(us, 'Watching');
+    await edit(us, branchId, { home: 'Branch home', about: 'Branch about' });
+    await edit(us, us.mainId, { home: 'Main home', about: 'Main about' });
+    const ask = async (state: string) =>
+      (await changesGET(request('GET', `/api/projects/${branchId}/branch/changes?ifState=${encodeURIComponent(state)}`), ctx(branchId))).json();
+    /** Asks with the key held: the new review when something moved, which is then the one held. */
+    let held = await review(branchId);
+    expect(held.state).toMatch(/^[\w-]{32}$/);
+    const moved = async (what: string) => {
+      const next = await ask(held.state);
+      expect(next.current, what).toBeUndefined();
+      expect(next.state, what).not.toBe(held.state);
+      held = next;
+      // And the review that came back is itself current.
+      expect(await ask(held.state), what).toEqual({ current: true, state: held.state });
+    };
+
+    // Nothing moved: no review, and the documents are not read (the merge service's read is not called).
+    const service = getSiteBranchMergeService();
+    const readState = vi.spyOn(service as unknown as { readState: () => Promise<unknown> }, 'readState');
+    expect(await ask(held.state)).toEqual({ current: true, state: held.state });
+    expect(readState).not.toHaveBeenCalled();
+    readState.mockRestore();
+    // A key that is none (an older page, a made-up one) gets the review.
+    expect((await ask('nonsense')).token).toBe(held.token);
+
+    // An answer stored from another tab: same token, another review.
+    const [first] = held.conflicts;
+    const answered = await (await answers(branchId, { token: held.token, resolutions: { [first.id]: { fingerprint: first.fingerprint, pick: 'branch' } } })).json();
+    await moved('an answer');
+    // The answer's own reply is the review of what is stored now: it carries the current key and the same content.
+    expect(answered.state).toBe(held.state);
+    expect(answered.settled).toEqual(held.settled);
+    expect(answered.conflicts).toEqual(held.conflicts);
+    expect(answered.review).toEqual(held.review);
+
+    expect((await approve(branchId, { token: held.token })).status).toBe(200);
+    await moved('an approval');
+    expect(held.branch.approved).toBe(true);
+    expect((await sendBack(branchId, { token: held.token, note: 'Footer again' })).status).toBe(200);
+    await moved('a send back');
+    expect(held.branch.reviewNote).toBe('Footer again');
+    await edit(us, branchId, { home: 'Branch home 2', about: 'Branch about' });
+    await moved('a save of the branch');
+    await edit(us, us.mainId, { home: 'Main home 2', about: 'Main about' });
+    await moved('a save of main');
+    await prisma.site.update({ where: { id: us.mainId }, data: { name: 'Bakery & Cafe' } });
+    await moved('a rename of main');
+
+    // A closed branch says so to the regular look too, as the review does.
+    await getSiteBranchRepository().discardBranch(us.scope, us.mainId, branchId, { kind: 'user', id: 'u' });
+    const closed = await changesGET(request('GET', `/api/projects/${branchId}/branch/changes?ifState=${held.state}`), ctx(branchId));
+    expect(closed.status).toBe(410);
   });
 
   it('two answers stored at once both land: a draft changed by the other is no stale review', async () => {

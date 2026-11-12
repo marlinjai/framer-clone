@@ -87,6 +87,8 @@ export interface BranchReviewJson {
   /** The change list: what the branch changes, per page and element (S5). Absent from an older server. */
   review?: DocumentReview;
   versions?: { main: number; branch: number };
+  /** A key over everything the review was computed from; `changesIfMoved` asks with it. Absent from an older server. */
+  state?: string;
 }
 
 /** A branch's public preview link as the editor shows it (PreviewLinkSummary in src/server/sites/branches/previewLinks.ts). */
@@ -107,6 +109,12 @@ export const branchClient = {
     call<{ branch: BranchSummaryJson; discarded: boolean }>('DELETE', `${site(mainId)}/branches/${encodeURIComponent(branchId)}`),
   get: (mainId: string, branchId: string) => call<{ branch: BranchSummaryJson }>('GET', `${site(mainId)}/branches/${encodeURIComponent(branchId)}`),
   changes: (branchId: string) => call<BranchReviewJson>('GET', `${site(branchId)}/branch/changes`),
+  /**
+   * The review again, unless nothing it was computed from moved since the one that carried `state`: then
+   * `{ current: true }`, which the server answers without computing anything. For the page's regular look.
+   */
+  changesIfMoved: (branchId: string, state: string) =>
+    call<BranchReviewJson | { current: true; state: string }>('GET', `${site(branchId)}/branch/changes?ifState=${encodeURIComponent(state)}`),
   update: (branchId: string, token: string) =>
     call<{ updated: boolean; branch: BranchSummaryJson; token: string }>('POST', `${site(branchId)}/branch/update`, { token }),
   answers: (branchId: string, token: string, resolutions: Record<string, { fingerprint: string; pick: MergeSideJson }>) =>

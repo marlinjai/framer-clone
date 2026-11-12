@@ -46,7 +46,7 @@ interface Handler<T> {
   body?: z.ZodType<T>;
   /** The body carries conflict answers (update, answers): the large limit. Every other body gets the small one. */
   answers?: true;
-  run: (input: { scope: TenantScope; branchId: string; actor: BranchActor; body: T }) => Promise<unknown>;
+  run: (input: { scope: TenantScope; branchId: string; actor: BranchActor; body: T; query: URLSearchParams }) => Promise<unknown>;
 }
 
 export function reviewRoute<T>(handler: Handler<T>) {
@@ -61,7 +61,9 @@ export function reviewRoute<T>(handler: Handler<T>) {
     }
     const { projectId } = await params;
     try {
-      const outcome = await handler.run({ scope: guarded.scope, branchId: projectId, actor: { kind: 'user', id: guarded.userId }, body });
+      const outcome = await handler.run({
+        scope: guarded.scope, branchId: projectId, actor: { kind: 'user', id: guarded.userId }, body, query: new URL(req.url).searchParams,
+      });
       return Response.json(outcome, { headers: NO_STORE });
     } catch (err) {
       if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
