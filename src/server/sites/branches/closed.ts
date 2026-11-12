@@ -18,10 +18,10 @@ export async function closedBranchError(
 ): Promise<BranchClosedError | null> {
   const record = await client.siteBranch.findFirst({
     where: { id: siteId, workspaceId, branchSiteId: null },
-    select: { status: true, siteId: true },
+    select: { status: true, siteId: true, undoneIntoBranchId: true },
   });
   if (!record) return null;
   // A record whose content row went some other way still reads as open: its content is gone, so it is reported
   // as discarded.
-  return new BranchClosedError(record.status === 'merged' ? 'merged' : 'discarded', record.siteId);
+  return new BranchClosedError(record.status === 'merged' ? 'merged' : 'discarded', record.siteId, record.status === 'merged' ? record.undoneIntoBranchId : null);
 }

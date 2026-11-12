@@ -106,6 +106,12 @@ export const branchClient = {
     call<{ branch: BranchSummaryJson }>('POST', `${site(branchId)}/branch/send-back`, { token, note }),
   merge: (branchId: string, token: string) =>
     call<{ merged: boolean; branch: BranchSummaryJson; mainVersion: number }>('POST', `${site(branchId)}/branch/merge`, { token }),
+  /** Undo the site's latest merge: `branch` is the new open branch that holds the merged work. */
+  undoMerge: (mainId: string, branchId: string) =>
+    call<{ undone: boolean; branch: BranchSummaryJson; merged: BranchSummaryJson; mainVersion: number }>(
+      'POST',
+      `${site(mainId)}/branches/${encodeURIComponent(branchId)}/undo-merge`,
+    ),
 };
 
 /** How much a branch changes, in one line: "2 pages, 14 elements changed". */

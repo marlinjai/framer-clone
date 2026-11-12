@@ -415,7 +415,9 @@ the others) are in the tool list and callable only for a key of a company in the
 ships the work-on-a-branch skill; it checks the tool list first and works on the site directly while the tools are absent.
 
 Migration `20261111000000_site_branches` is additive (one nullable column on `sites`, one table, constraints every
-existing row satisfies) and needs no reversing. **Before rolling the code back past it with open branches**, merge or
+existing row satisfies) and needs no reversing. Migration `20261112000000_site_branch_merge_undo` (slice S7) adds four nullable columns to `site_branches` and needs
+no reversing either; older code ignores them.
+**Before rolling the code back past the first of the two with open branches**, merge or
 discard them: older code does not know the column and lists each open branch as one more draft site in its company's
 dashboard. It cannot publish one or give it a domain (a `CHECK` constraint and a trigger refuse that whatever code
 runs), so visitors are never affected; the extra entries go away when the code is rolled forward again.

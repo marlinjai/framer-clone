@@ -37,7 +37,10 @@ function summary(over: Partial<BranchSummaryJson> = {}): BranchSummaryJson {
   return {
     branchId: BRANCH, mainSiteId: MAIN, name: 'Spring sale', status: 'open', createdByKind: 'user', createdBy: 'u', createdAt: '2026-11-11T09:00:00.000Z',
     updatedAt: '2026-11-11T09:00:00.000Z', version: 3, baseVersion: 7, mainMoved: false, readyBy: null, readyAt: null, reviewNote: null, approved: false,
-    mergedAt: null, discardedAt: null, ...over,
+    mergedAt: null, discardedAt: null,
+    undoUntil: null,
+    undoneIntoBranchId: null,
+    undoneAt: null, ...over,
   };
 }
 const NONE = { site: [], settings: [], pages: { added: [], removed: [], changed: [] }, components: { added: [], removed: [], changed: [] }, nodes: { added: 0, removed: 0, changed: 0 }, pageOrder: false };

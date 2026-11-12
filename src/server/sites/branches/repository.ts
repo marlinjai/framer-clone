@@ -69,6 +69,11 @@ export interface BranchSummary {
   approved: boolean;
   mergedAt: Date | null;
   discardedAt: Date | null;
+  /** A merged branch: until when its merge can be undone (S7); null when it cannot (any more), or was undone. */
+  undoUntil: Date | null;
+  /** A merged branch whose merge was undone: the branch that took the merged work back, and when. */
+  undoneIntoBranchId: string | null;
+  undoneAt: Date | null;
 }
 
 /** A site's branches for its switcher: the open ones, then the most recent closed ones. */
@@ -90,7 +95,7 @@ const CLOSED_LISTED = 20;
 /** Copying a site at the 10 MB limit, page by page, fits in this. */
 const BRANCH_WRITE_TRANSACTION = { maxWait: 5_000, timeout: 30_000 } as const;
 
-const RECORD_SELECT = {
+export const RECORD_SELECT = {
   id: true,
   siteId: true,
   name: true,
@@ -106,16 +111,19 @@ const RECORD_SELECT = {
   approvedBranchVersion: true,
   mergedAt: true,
   discardedAt: true,
+  mainBeforeExpiresAt: true,
+  undoneIntoBranchId: true,
+  undoneAt: true,
   branchSite: { select: { version: true } },
 } as const;
 
-type RecordRow = Prisma.SiteBranchGetPayload<{ select: typeof RECORD_SELECT }>;
+export type RecordRow = Prisma.SiteBranchGetPayload<{ select: typeof RECORD_SELECT }>;
 
 /**
  * `renamed`: main's name is no longer the fork point's. A rename moves no version, yet the branch is behind
  * main then, as the review and the merge count it (src/server/sites/branches/merge.ts, decision 37).
  */
-function summaryOf(row: RecordRow, mainVersion: number, renamed = false): BranchSummary {
+export function summaryOf(row: RecordRow, mainVersion: number, renamed = false): BranchSummary {
   const open = row.status === 'open' || row.status === 'ready';
   const version = open ? (row.branchSite?.version ?? null) : null;
   return {
@@ -136,6 +144,13 @@ function summaryOf(row: RecordRow, mainVersion: number, renamed = false): Branch
     approved: version !== null && row.approvedBranchVersion === version,
     mergedAt: row.mergedAt,
     discardedAt: row.discardedAt,
+    // The kept copy is selected by its expiry alone: it is set and cleared together with the document.
+    undoUntil:
+      row.status === 'merged' && !row.undoneIntoBranchId && row.mainBeforeExpiresAt && row.mainBeforeExpiresAt.getTime() > Date.now()
+        ? row.mainBeforeExpiresAt
+        : null,
+    undoneIntoBranchId: row.status === 'merged' ? row.undoneIntoBranchId : null,
+    undoneAt: row.status === 'merged' ? row.undoneAt : null,
   };
 }
 
@@ -349,6 +364,12 @@ export class SiteBranchRepository {
   async listBranches(scope: TenantScope, mainSiteId: string): Promise<BranchList> {
     assertScope(scope);
     const main = await this.loadMain(this.prisma, scope, mainSiteId);
+    // The copy of the site kept for "Undo this merge" goes once its 30 days are over (S7): removed here, the
+    // next time anyone looks at the site's branches, so no timer has to find it.
+    await this.prisma.siteBranch.updateMany({
+      where: { siteId: main.id, workspaceId: scope.workspaceId, mainBeforeExpiresAt: { lt: new Date() } },
+      data: { mainBeforeDocument: Prisma.DbNull, mainBeforeExpiresAt: null, mainBeforeEnded: 'expired' },
+    });
     const [open, closed, renamed] = await Promise.all([
       this.prisma.siteBranch.findMany({
         where: { siteId: main.id, workspaceId: scope.workspaceId, status: { in: ['open', 'ready'] } },
@@ -493,7 +514,7 @@ export class SiteBranchRepository {
         select: RECORD_SELECT,
       });
       if (!record) throw new BranchNotFoundError(branchId);
-      if (record.status === 'merged') throw new BranchClosedError('merged', main.id);
+      if (record.status === 'merged') throw new BranchClosedError('merged', main.id, record.undoneIntoBranchId);
       if (record.status === 'discarded') return { branch: summaryOf(record, main.version), discarded: false };
       const row = await this.closeRecord(tx, branchId, {
         status: 'discarded',
@@ -560,7 +581,8 @@ export class SiteBranchRepository {
       select: RECORD_SELECT,
     });
     if (!record) throw new BranchNotFoundError(branchId);
-    if (record.status === 'merged' || record.status === 'discarded') throw new BranchClosedError(record.status, main.id);
+    if (record.status === 'merged') throw new BranchClosedError('merged', main.id, record.undoneIntoBranchId);
+    if (record.status === 'discarded') throw new BranchClosedError('discarded', main.id);
     if (record.branchSite === null) throw new BranchClosedError('discarded', main.id);
     return { main, record };
   }

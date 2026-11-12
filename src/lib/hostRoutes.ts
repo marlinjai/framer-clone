@@ -97,6 +97,7 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/projects/[projectId]', why: 'authoring' },
   { route: '/api/projects/[projectId]/branches', why: 'site branches: list and create (authoring)' },
   { route: '/api/projects/[projectId]/branches/[branchId]', why: 'site branches: read, rename, ready, discard (authoring)' },
+  { route: '/api/projects/[projectId]/branches/[branchId]/undo-merge', why: 'site branches: undo the site\'s latest merge, the merged work into a new branch (authoring)' },
   { route: '/api/projects/[projectId]/branch/changes', why: 'site branches: the review of a branch (authoring)' },
   { route: '/api/projects/[projectId]/branch/update', why: 'site branches: bring main into a branch (authoring)' },
   { route: '/api/projects/[projectId]/branch/answers', why: 'site branches: store conflict answers without bringing main in (authoring)' },

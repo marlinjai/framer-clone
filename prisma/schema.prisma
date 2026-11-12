@@ -393,6 +393,15 @@ model SiteBranch {
   // Main as it was just before this branch's merge, for "Undo this merge" (S7): only the site's latest merge keeps one.
   mainBeforeDocument  Json?     @map("main_before_document")
   mainBeforeExpiresAt DateTime? @map("main_before_expires_at")
+  // Why that copy went without an undo: `expired`, `replaced` (a later merge) or `erased` (an erase of personal
+  // data left a match in it and removed it). Null while the copy is kept, and on records that never had one.
+  mainBeforeEnded     String?   @map("main_before_ended")
+
+  // Set when this branch's merge was undone (S7): the new open branch that took the merged work, who, and when.
+  // No foreign key: the new branch has its own life (merged again, discarded), and this stays as what happened.
+  undoneIntoBranchId String?   @map("undone_into_branch_id")
+  undoneBy           String?   @map("undone_by")
+  undoneAt           DateTime? @map("undone_at")
 
   // Who made it: a signed-in person (`user`) or an MCP key (`key`), as site_operation_audits records actors.
   createdByKind String   @map("created_by_kind")

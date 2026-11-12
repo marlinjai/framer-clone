@@ -18,7 +18,7 @@ import ProjectModel, { type ProjectSnapshotOut } from '@/models/ProjectModel';
 import type { MergeDocument } from '@/lib/siteMerge';
 import { documentBodies, treesOf, walkNodes } from '@/lib/siteMerge/references';
 import { persistedToProjectSnapshot, projectToPersisted, type PersistedSite } from '../snapshot';
-import { BranchMergeInvalidError } from '../errors';
+import { BranchMergeInvalidError, MergeUndoUnavailableError } from '../errors';
 
 /** A `sites` row with its pages, as the review reads main and the branch. */
 export interface SiteDocumentRow {
@@ -116,15 +116,18 @@ function idsOf(doc: Pick<MergeDocument, 'pages' | 'components'>): Set<string> {
 
 /**
  * A site's stored working copy as the merge reads it, through the editor model. `side` names it in the refusal
- * when the model's copy lost something the stored one holds.
+ * when the model's copy lost something the stored one holds; `base` (a fork point, only compared) is not checked,
+ * `kept` (the copy an undo writes back over main) is refused as an undo that is not available.
  */
-export function reviewDocument(row: SiteDocumentRow, side: 'main' | 'branch' | 'base'): MergeDocument {
+export function reviewDocument(row: SiteDocumentRow, side: 'main' | 'branch' | 'base' | 'kept'): MergeDocument {
   const doc = asDocument(throughModel(row));
   if (side === 'base') return doc;
   const kept = idsOf(doc);
   const lost = [...idsOf({ pages: row.pages as MergeDocument['pages'], components: row.components as MergeDocument['components'] })].filter(
     (id) => !kept.has(id),
   );
+  // The copy kept for "Undo this merge" is written over main whole: a part the editor drops on load would be lost.
+  if (lost.length > 0 && side === 'kept') throw new MergeUndoUnavailableError('unreadable');
   if (lost.length > 0) {
     throw new BranchMergeInvalidError([
       {

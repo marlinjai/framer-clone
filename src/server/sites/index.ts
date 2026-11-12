@@ -41,6 +41,7 @@ export {
   BranchNotFoundError,
   BranchClosedError,
   BranchCannotPublishError,
+  MergeUndoUnavailableError,
   SiteIsBranchError,
   BranchLimitError,
   BranchNameTakenError,
