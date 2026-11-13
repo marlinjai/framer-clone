@@ -181,11 +181,25 @@ describe('which layer a point hits', () => {
     expect(pick([text, orb], 0.6, 0)).toBe('orb');
   });
 
-  it('two layers at one depth: the later in the stored order wins', () => {
+  it('two layers at one depth: the one the scene draws last wins, which is the later object, whatever the stored order', () => {
+    // Without targeted effects every render order is 0 and equal depths draw by object id (creation order).
     const a = plane(layer('a', 'text'), 4, 1);
     const b = plane(layer('b', 'text'), 4, 1);
     expect(pick([a, b], 0, 0)).toBe('b');
-    expect(pick([b, a], 0, 0)).toBe('a');
+    // Reordered while retained: the objects are the same, so b is still drawn last, and still picked.
+    expect(pick([b, a], 0, 0)).toBe('b');
+  });
+
+  it('two layers at one depth in a scene with targeted effects: the render order the scene gave them decides (stored order, by rankRoots)', () => {
+    const a = plane(layer('a', 'text'), 4, 1);
+    const b = plane(layer('b', 'text'), 4, 1);
+    const rank = (entry: Entry, order: number) => entry.root.traverse((o) => void (o.renderOrder = order));
+    rank(a, 1);
+    rank(b, 0);
+    expect(pick([a, b], 0, 0)).toBe('a');
+    rank(a, 0);
+    rank(b, 1);
+    expect(pick([a, b], 0, 0)).toBe('b');
   });
 
   it('a layer behind a nearer one whose content the point misses is still picked', () => {

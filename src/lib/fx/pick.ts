@@ -30,9 +30,11 @@
  * over time) while its outline uses the largest radius. `SceneProbe` has no `invalidate`: nothing
  * here asks for a frame, the outline is HTML and moves on its own animation-frame loop.
  *
- * Which layer wins: the nearest to the camera along the ray (the scene draws see-through layers
- * back to front by depth, so a text at z 0 is over a shape at z -2.5 whatever their stored
- * order), the later one in the stored order on a tie.
+ * Which layer wins: the one the scene draws last at that point: by render order, then the nearest
+ * to the camera along the ray (the scene draws see-through layers back to front by depth, so a text
+ * at z 0 is over a shape at z -2.5 whatever their stored order), then the later object (the scene
+ * draws equal depths by object id, which a scene with targeted effects overrides through the render
+ * order it gives its layers).
  */
 
 import { Raycaster, Vector2, Vector3, type Camera, type Mesh, type Object3D, type PerspectiveCamera } from "three";
@@ -429,17 +431,23 @@ export function createPicker(probe: SceneProbe): FxPicker {
       probe.camera.updateMatrixWorld();
       at.set(ndcX, ndcY);
       raycaster.setFromCamera(at, probe.camera);
-      let best: { id: string; distance: number; index: number } | null = null;
-      probe.layers().forEach(({ layer, root }, index) => {
+      // What the scene draws LAST at this point is the one a click means. It draws see-through objects by render
+      // order, then back to front by depth, then by object id (creation order); a scene with targeted effects ranks
+      // its content layers by depth then stored order in `renderOrder` (see effects/ScopedGroup rankRoots), one
+      // without leaves it at 0, so there equal-depth layers draw by object id whatever order they are stored in.
+      // The pick follows the same three keys, so it never chooses a layer that is drawn underneath another.
+      type Candidate = { id: string; distance: number; order: number; objectId: number };
+      let best: Candidate | null = null;
+      probe.layers().forEach(({ layer, root }) => {
         const region = bounded(layer, root);
         if (!region) return;
         root.updateWorldMatrix(true, true);
         const hit = raycaster.intersectObject(root, true).find((h) => h.uv);
         if (!hit?.uv || !region.contains(hit.uv.x, hit.uv.y)) return;
-        // Nearest along the ray; the later layer when two sit at the same depth.
-        if (!best || hit.distance < best.distance - 1e-6 || (Math.abs(hit.distance - best.distance) <= 1e-6 && index > best.index)) {
-          best = { id: layer.id, distance: hit.distance, index };
-        }
+        const next: Candidate = { id: layer.id, distance: hit.distance, order: hit.object.renderOrder, objectId: hit.object.id };
+        const drawnLater = (a: Candidate, b: Candidate) =>
+          a.order !== b.order ? a.order > b.order : Math.abs(a.distance - b.distance) > 1e-6 ? a.distance < b.distance : a.objectId > b.objectId;
+        if (!best || drawnLater(next, best)) best = next;
       });
       return (best as { id: string } | null)?.id ?? null;
     },

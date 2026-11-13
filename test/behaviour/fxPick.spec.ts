@@ -198,6 +198,45 @@ describe('a real ray against the real scene', () => {
     expect(kept.standard.every(Boolean)).toBe(false);
   }, 120_000);
 
+  it('overlapping text boxes at one depth, reordered while retained: the click picks the box that is drawn on top', async () => {
+    // Two text boxes with the same text, place and size, in two colours: whichever is drawn on top shows its colour.
+    const same = { text: 'MMMM', width: 0.6, size: 0.3, position: [0.5, 0.5] };
+    const red = () => layer('a', 'textBox', { ...same, color: '#ff0000' });
+    const blue = () => layer('b', 'textBox', { ...same, color: '#0000ff' });
+    const { page, picture } = await open(scene([layer('g', 'gradient'), red(), blue()]), true);
+    const onTop = (png: PNG) => {
+      let r = 0;
+      let b = 0;
+      let first: [number, number] | null = null;
+      for (let y = 0; y < png.height; y++) {
+        for (let x = 0; x < png.width; x++) {
+          const i = (y * png.width + x) * 4;
+          if (png.data[i] > 200 && png.data[i + 2] < 80) {
+            r++;
+            first ??= [x, y];
+          } else if (png.data[i + 2] > 200 && png.data[i] < 80) {
+            b++;
+            first ??= [x, y];
+          }
+        }
+      }
+      expect(Math.max(r, b)).toBeGreaterThan(200);
+      return { id: r > b ? 'a' : 'b', at: first!, png };
+    };
+    const ndcOf = (at: [number, number], png: PNG): [number, number] => [(at[0] / png.width) * 2 - 1, 1 - (at[1] / png.height) * 2];
+
+    // A, then B: B is created last and drawn on top, and it is the one picked.
+    const first = onTop(picture);
+    expect(first.id).toBe('b');
+    expect(await pickAt(page, ...ndcOf(first.at, picture))).toBe('b');
+
+    // The same two layers, retained, in the other stored order: whatever the scene draws on top now is what a click picks.
+    await page.evaluate(([config]) => (window as unknown as Win).__mount(config, true), [scene([layer('g', 'gradient'), blue(), red()])]);
+    const after = await settledCanvas(page, '#stage canvas');
+    const second = onTop(after);
+    expect(await pickAt(page, ...ndcOf(second.at, after))).toBe(second.id);
+  }, 120_000);
+
   it('picks nothing without the probe, as the published page runs', async () => {
     const { page } = await open(scene([layer('g', 'gradient'), box()]), false);
     expect(await pickAt(page, 0, 0)).toBeNull();

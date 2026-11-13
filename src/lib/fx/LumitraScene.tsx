@@ -39,7 +39,7 @@
 
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { EffectComposer } from "@react-three/postprocessing";
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Camera, Object3D } from "three";
 
 import { planPipeline } from "./pipeline";
@@ -113,10 +113,37 @@ const LAYOUT_SIZE = { offsetSize: true } as const;
 /** Why a scene stopped drawing, see `onFail`. */
 export type SceneFailure = "no-webgl" | "renderer-error" | "context-lost";
 
-/** Inside the Canvas: hands the probe to the host while the context lives, and takes it back when it goes. */
-function ProbeBridge({ onProbe, layers }: { onProbe: (probe: SceneProbe | null) => void; layers: () => { layer: Layer; root: Object3D }[] }) {
+/**
+ * Inside the Canvas: hands the probe to the host while the context lives, and takes it back when it goes.
+ *
+ * The probe's layers are the content layers as the Canvas last COMMITTED them, taken in a layout effect of
+ * this component (it lives in the Canvas tree, so it runs when the Canvas's own children commit). Not the
+ * render in progress: the Canvas renders its children only after it is configured, and a render React
+ * discards must not change what a click can hit while the old meshes are still the ones on screen.
+ */
+function ProbeBridge({
+  onProbe,
+  contentLayers,
+  roots,
+}: {
+  onProbe: (probe: SceneProbe | null) => void;
+  contentLayers: Layer[];
+  roots: { current: Map<string, Object3D> };
+}) {
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
+  const committed = useRef<Layer[]>([]);
+  useLayoutEffect(() => {
+    committed.current = contentLayers;
+  });
+  const layers = useCallback(
+    () =>
+      committed.current.flatMap((layer) => {
+        const root = roots.current.get(layer.id);
+        return root ? [{ layer, root }] : [];
+      }),
+    [roots],
+  );
   const latest = useRef({ onProbe, layers });
   latest.current = { onProbe, layers };
   useEffect(() => {
@@ -296,10 +323,6 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   const [scoped, setScoped] = useState(false);
   if (groups.length > 0 && !scoped) setScoped(true);
   const layerById = new Map(config.layers.map((l) => [l.id, l]));
-  // The drawn content layers, for the probe: paired with their groups when a click asks, not here,
-  // because the groups are set by their refs after this render.
-  const drawnContent = useRef<Layer[]>([]);
-  drawnContent.current = contentLayers;
   // A host that picks layers holds every content layer in its group from the start.
   const wrapped = scoped || onProbe !== undefined;
 
@@ -344,12 +367,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
                 has nothing left to report and is unmounted. */}
             {!perfLow && <FrameRateMonitor onDecline={() => setPerfLow(true)} />}
             {onFirstFrame && <FirstFrame onFirstFrame={onFirstFrame} />}
-            {onProbe && <ProbeBridge onProbe={onProbe} layers={() =>
-                  drawnContent.current.flatMap((layer) => {
-                    const root = roots.current.get(layer.id);
-                    return root ? [{ layer, root }] : [];
-                  })
-                } />}
+            {onProbe && <ProbeBridge onProbe={onProbe} contentLayers={contentLayers} roots={roots} />}
             <color attach="background" args={[config.background]} />
             {contentLayers.map((layer) =>
               !wrapped ? (
