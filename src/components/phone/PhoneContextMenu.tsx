@@ -32,7 +32,7 @@ import { ArrowUp, ClipboardCopy, ClipboardPaste, Copy, CornerDownRight, PencilLi
 import type { EditorUIType } from '@/stores/EditorUIStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import { duplicateLayer } from '@/lib/layers/layerActions';
-import { deleteSelection } from '@/lib/canvas/deleteSelection';
+import { deleteSelection, routeFxLayerShortcut } from '@/lib/canvas/deleteSelection';
 import { haptic, resetSelectionTick, selectionTick } from '@/lib/haptics';
 import { cn } from '@/lib/utils';
 import { placeMenuAtPoint } from '@/lib/quickbar/placement';
@@ -203,7 +203,8 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
         beginInlineTextEdit(editorUI, component);
         return;
       case 'duplicate':
-        duplicateLayer(page, editorUI, history);
+        // A picked layer of an FX scene is copied instead of the box.
+        if (!routeFxLayerShortcut('duplicate', editorUI)) duplicateLayer(page, editorUI, history);
         return;
       case 'copyStyle':
         editorUI.setCopiedStyle(copyStyle(component, breakpointId));
@@ -212,7 +213,8 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
         if (editorUI.copiedStyle) pasteStyle(component, breakpointId, editorUI.copiedStyle, history);
         return;
       case 'delete':
-        deleteSelection(page, editorUI, history);
+        // A picked layer of an FX scene is deleted instead of the box.
+        if (!routeFxLayerShortcut('delete', editorUI)) deleteSelection(page, editorUI, history);
         return;
     }
   };

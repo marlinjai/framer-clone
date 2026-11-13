@@ -213,4 +213,19 @@ describe('tree navigation', () => {
     });
     expect(screen.getByTestId('quick-toolbar').getAttribute('data-shown')).toBe('false');
   });
+
+  it('Delete and Duplicate with a layer of an FX scene picked act on the layer, never on the box', () => {
+    const { editorUI, page, mobile } = setup();
+    const fx = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    act(() => editorUI.pickFxLayer(fx, { kind: 'layer', layerId: 'bloom' }, mobile.breakpointId));
+    renderBar();
+    const layers = () => ((fx.props as Record<string, unknown>).fx as { scene: { layers: { id: string; name: string }[] } }).scene.layers;
+    fireEvent.click(within(screen.getByTestId('quick-toolbar')).getByRole('button', { name: 'Duplicate' }));
+    expect(layers().filter((l) => l.name.startsWith('Bloom'))).toHaveLength(2);
+    expect(page.findComponent(fx.id)).toBeDefined();
+    const picked = editorUI.fxLayerPick as { layerId: string };
+    fireEvent.click(within(screen.getByTestId('quick-toolbar')).getByRole('button', { name: 'Delete' }));
+    expect(page.findComponent(fx.id)).toBeDefined();
+    expect(layers().some((l) => l.id === picked.layerId)).toBe(false);
+  });
 });

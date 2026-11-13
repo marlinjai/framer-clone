@@ -56,4 +56,28 @@ describe('the right panel with an FX scene box', () => {
     expect(screen.getByLabelText('Scene background')).toBeTruthy();
     expect(screen.queryAllByText(/^size$/i)).toHaveLength(0);
   });
+
+  it('hides the state switch while a layer is picked and brings it back with the pick cleared', () => {
+    render(<RightSidebar />);
+    expect(screen.getByRole('radio', { name: /^Hover$/ })).toBeTruthy();
+    act(() => store.editorUI.pickFxLayer(box, { kind: 'layer', layerId: 'bloom' }));
+    expect(screen.queryByRole('radio', { name: /^Hover$/ })).toBeNull();
+    act(() => store.editorUI.clearFxLayerPick());
+    expect(screen.getByRole('radio', { name: /^Hover$/ })).toBeTruthy();
+  });
+
+  it('does the same in the phone sheet', () => {
+    render(<RightSidebar variant="sheet" />);
+    act(() => store.editorUI.pickFxLayer(box, { kind: 'layer', layerId: 'bloom' }));
+    expect(screen.getByRole('group', { name: 'Settings of Bloom' })).toBeTruthy();
+    expect(screen.queryAllByText(/^size$/i)).toHaveLength(0);
+  });
+
+  it('picking a layer while the box is in the Hover state returns to Normal, so the layer is editable', () => {
+    render(<RightSidebar />);
+    act(() => store.editorUI.setActiveRule('hover'));
+    act(() => store.editorUI.pickFxLayer(box, { kind: 'layer', layerId: 'bloom' }));
+    expect(store.editorUI.activeRule).toBeNull();
+    expect(screen.getByRole('group', { name: 'Settings of Bloom' })).toBeTruthy();
+  });
 });

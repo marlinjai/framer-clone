@@ -433,6 +433,11 @@ const EditorUIStore = types.model('EditorUI', {
     const frame = self.selectedViewportNode?.breakpointId;
     if (!primary || primary.id !== box.id || self.selectedComponents.length !== 1 || (breakpointId && frame !== breakpointId)) this.selectComponent(box, breakpointId ?? frame);
     self.fxLayerRenaming = undefined;
+    // A scene's layers are properties of the box, never per state: the panel edits them in Normal.
+    if (self.activeRule) {
+      self.activeRule = null;
+      self.previewRule = null;
+    }
     self.selectedFxLayer = pick.kind === 'layer' ? { componentId: box.id, kind: 'layer', layerId: pick.layerId } : { componentId: box.id, kind: 'background' };
   },
 

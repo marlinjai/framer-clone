@@ -78,7 +78,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
   // A layer (or the Background row) of an FX scene is picked in the Layers panel: the panel shows that
   // layer alone. The box's own sections (Size, Styles, ...) come back when the pick is cleared.
   const fxPick = editorUI.fxLayerPick;
-  const fxLayerOnly = !!fxPick && !!target && fxPick.componentId === target.id && !editsDefinition;
+  const fxLayerOnly = !!fxPick && !!target && fxPick.componentId === target.id;
 
   return (
     <div className={isSheet ? 'bg-background flex flex-col h-full w-full' : `
@@ -97,9 +97,9 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
         // (PropertyRow's minmax(0,1fr) track), sections own their 12px inset.
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="min-w-0">
-            {editsDefinition ? null : fxLayerOnly && target ? (
+            {fxLayerOnly && target ? (
               <FxSceneSection component={target} breakpointId={breakpointId} />
-            ) : target ? (
+            ) : editsDefinition ? null : target ? (
               <>
                 {openDefinition && <InputsSection definition={openDefinition} />}
                 {repeatable && target && <RepeatSection definition={repeatable} node={target} />}

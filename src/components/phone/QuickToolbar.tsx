@@ -50,7 +50,7 @@ import { useKeyboardInset } from '@/components/ui/bottom-sheet';
 import { styleSource, breakpointLabel } from '@/components/sidebars/right/breakpointSource';
 import { FONT_LIBRARY, findLibraryFamily, fontFaceCss, fontStack, parseFontFamilyList } from '@/lib/fonts/registry';
 import { canDeleteLayer, duplicateLayer } from '@/lib/layers/layerActions';
-import { deleteSelection } from '@/lib/canvas/deleteSelection';
+import { deleteSelection, routeFxLayerShortcut } from '@/lib/canvas/deleteSelection';
 import { haptic } from '@/lib/haptics';
 import { cn } from '@/lib/utils';
 import {
@@ -477,10 +477,10 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
           )}
           {canDeleteLayer(component) && (
             <>
-              <QBtn label="Duplicate" onClick={() => duplicateLayer(page, editorUI, history)}>
+              <QBtn label="Duplicate" onClick={() => { if (!routeFxLayerShortcut('duplicate', editorUI)) duplicateLayer(page, editorUI, history); }}>
                 <Copy size={16} />
               </QBtn>
-              <QBtn label="Delete" className="text-red-600 dark:text-red-400" onClick={() => deleteSelection(page, editorUI, history)}>
+              <QBtn label="Delete" className="text-red-600 dark:text-red-400" onClick={() => { if (!routeFxLayerShortcut('delete', editorUI)) deleteSelection(page, editorUI, history); }}>
                 <Trash2 size={16} />
               </QBtn>
             </>

@@ -79,18 +79,35 @@ describe('the editor\'s keys with a layer of an FX scene picked', () => {
     expect(ui().currentPage!.findComponent(box.id)).toBeDefined();
   });
 
-  it('Backspace does the same, and a held key (repeats) never removes the box', () => {
-    for (let i = 0; i < 12; i++) key({ key: 'Backspace', repeat: i > 0 });
+  it('Backspace does the same, and a held key (repeats) walks down the layers and stops at Background without ever removing the box', () => {
+    const start = layers().length;
+    key({ key: 'Backspace' });
+    expect(layers()).toHaveLength(start - 1);
+    expect(layers().some((l) => l.id === 'bloom')).toBe(false);
+    for (let i = 1; i < 12; i++) key({ key: 'Backspace', repeat: true });
     expect(ui().currentPage!.findComponent(box.id)).toBeDefined();
+    expect(layers().length).toBeLessThan(start - 1);
+    expect(ui().fxLayerPick).toMatchObject({ kind: 'background' });
   });
 
-  it('Cmd+D copies the layer and the copy is picked; the box is not duplicated', () => {
-    const boxes = () => ui().currentPage!.appComponentTree!.children.filter((c: ComponentInstance) => c.type === 'div').length;
-    const before = boxes();
+  it('Cmd+D copies the layer and the copy is picked; the box is not duplicated (with no pick it is: the control case)', () => {
+    const scenes = () => {
+      let count = 0;
+      const walk = (n: ComponentInstance) => {
+        if ((n.props as Record<string, unknown>)['data-fx'] === 'scene') count += 1;
+        (n.children as ComponentInstance[]).forEach(walk);
+      };
+      walk(ui().currentPage!.appComponentTree as ComponentInstance);
+      return count;
+    };
+    expect(scenes()).toBe(1);
     key({ key: 'd', metaKey: true });
     expect(layers().filter((l) => l.name.startsWith('Bloom'))).toHaveLength(2);
-    expect(boxes()).toBe(before);
+    expect(scenes()).toBe(1);
     expect(ui().fxLayerPick).toMatchObject({ kind: 'layer' });
+    act(() => ui().clearFxLayerPick());
+    key({ key: 'd', metaKey: true });
+    expect(scenes()).toBe(2);
   });
 
   it('Escape returns to the box; the next Escape is the editor\'s own', () => {
