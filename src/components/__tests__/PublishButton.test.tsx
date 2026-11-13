@@ -258,6 +258,28 @@ describe('PublishButton legal check', () => {
     warn.mockRestore();
   });
 
+  it('warns about FX scene text under its own heading, not as a component that will not show', async () => {
+    const { fxFromPreset, addFxLayer } = await import('@/lib/fxScene/edit');
+    const made = fxFromPreset('gold-noise-gradient');
+    if (!made.ok) throw new Error(made.message);
+    const withText = addFxLayer(made.stored, 'text');
+    if (!withText.ok) throw new Error(withText.message);
+    const project = (currentStore.editorUI.currentProject as ReturnType<typeof makeProject>);
+    const page = project.pagesArray[0];
+    const stored = getSnapshot(page.appComponentTree) as Record<string, unknown>;
+    page.setAppComponentTree({
+      ...stored,
+      children: [{ id: 'fxbox', type: 'div', componentType: 'host', props: { 'data-fx': 'scene', fx: withText.stored }, children: [] }],
+    } as never);
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: /publish/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    const notice = screen.getByRole('dialog', { name: 'Some FX scene text will not show' });
+    expect(notice.textContent).not.toContain('Some components will not show');
+    expect(screen.getByTestId('publish-fx-text-issues').textContent).toMatch(/text drawn inside the scene/);
+    expect(screen.getByRole('button', { name: `Open ${page.metadata.title}` })).toBeTruthy();
+  });
+
   it('publishes straight away for a site without business data', () => {
     fetchMock.mockResolvedValue(ok);
     render(<PublishButton />);

@@ -45,6 +45,12 @@ describe('the FX text publish warning', () => {
     expect(fxTextWarning(own({}, { children: { source: 'x' } }))).toBeNull();
     expect(countFxBoxesWithoutHtmlText(own({ children: '  ' }))).toBe(1);
   });
+  it('does not warn for a text layer that is hidden (it draws nothing)', () => {
+    const hidden = (lockupScene as { scene: { layers: { type: string; visible: boolean }[] } });
+    const copy = JSON.parse(JSON.stringify(hidden));
+    for (const l of copy.scene.layers) if (l.type === 'text') l.visible = false;
+    expect(fxTextWarning(box(copy.scene ? { ...(lockupScene as object), scene: copy.scene } : lockupScene, []))).toBeNull();
+  });
   it('treats blank text as no text', () => {
     expect(countFxBoxesWithoutHtmlText(box(lockupScene, [text('   ')]))).toBe(1);
   });
@@ -62,7 +68,9 @@ describe('the FX text publish warning', () => {
   });
   it('reaches the publish check as an issue on its page', () => {
     const check = checkBeforePublish(EMPTY_BUSINESS, [page([box(lockupScene, [])])], { definitions: {}, refused: [] });
-    expect(check.components.some((c) => c.pageId === 'home' && /FX scene/.test(c.message))).toBe(true);
+    expect(check.fxText?.some((c) => c.pageId === 'home' && /FX scene/.test(c.message))).toBe(true);
+    // its own list: it is not a component that will not show
+    expect(check.components).toEqual([]);
     expect(hasPublishIssues(check)).toBe(true);
     const ok = checkBeforePublish(EMPTY_BUSINESS, [page([box(lockupScene, [text('Hi')])])], { definitions: {}, refused: [] });
     expect(hasPublishIssues(ok)).toBe(false);

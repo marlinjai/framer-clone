@@ -804,6 +804,32 @@ describe('setting groups, the text lines and the pointer', () => {
     expect(document.activeElement).toBe(document.body);
   });
 
+  it('Enter does not leave a focused resize handle or another control, but does from an FX row of the Layers panel', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const lockup = add(box, 'text');
+    const headline = within(settings(lockup.name)).getByLabelText('Headline') as HTMLInputElement;
+    const handle = document.createElement('div');
+    handle.setAttribute('role', 'separator');
+    handle.tabIndex = 0;
+    document.body.appendChild(handle);
+    handle.focus();
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    handle.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(handle);
+    const row = document.createElement('div');
+    row.setAttribute('data-fx-layer-row', 'x');
+    const rowButton = document.createElement('button');
+    row.appendChild(rowButton);
+    document.body.appendChild(row);
+    rowButton.focus();
+    rowButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(headline);
+    handle.remove();
+    row.remove();
+  });
+
   it('a text box has its text first, as a multi-line field', () => {
     const { box } = setup();
     render(<FxSceneSection component={box} />);
@@ -835,6 +861,39 @@ describe('setting groups, the text lines and the pointer', () => {
   });
 });
 
+describe('the Pointer group tells the truth about a layer without pointer settings', () => {
+  it('shows the noise field of the god rays preset as following the pointer, and changing the axes alone keeps that follow', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    back();
+    choose('Replace with a preset', 'godrays-hero');
+    pick('Noise Field');
+    const group = within(settings('Noise Field')).getByRole('group', { name: 'Pointer group' });
+    expect((within(group).getByLabelText('Track mouse, as a number') as HTMLInputElement).value).toBe('1');
+    expect((within(group).getByLabelText('Spring, as a number') as HTMLInputElement).value).toBe('0.04');
+    expect(within(group).getByText(/follows the pointer in its own plain way/)).toBeTruthy();
+    const noise = layersOf(box).find((l) => l.name === 'Noise Field')!;
+    expect(noise.interactivity).toBeUndefined();
+    choose('Axes', 'x');
+    expect(layerOf(box, noise.id).interactivity).toEqual({ trackMouse: 1, momentum: 0, spring: 0.04, axes: 'x' });
+    fireEvent.click(screen.getByRole('button', { name: 'Reset pointer settings' }));
+    expect(layerOf(box, noise.id).interactivity).toBeUndefined();
+  });
+
+  it('a shape stands still, says so, and raising Track mouse alone makes it move (it has a spring)', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const shape = add(box, 'shape');
+    const group = within(settings(shape.name)).getByRole('group', { name: 'Pointer group' });
+    expect((within(group).getByLabelText('Track mouse, as a number') as HTMLInputElement).value).toBe('0');
+    expect(within(group).getByText(/stands still until you raise Track mouse/)).toBeTruthy();
+    const typed = within(group).getByLabelText('Track mouse, as a number');
+    fireEvent.change(typed, { target: { value: '1' } });
+    fireEvent.blur(typed);
+    expect(layerOf(box, shape.id).interactivity).toEqual({ trackMouse: 1, momentum: 0.85, spring: 0.05, axes: 'both' });
+  });
+});
+
 describe('changing a layer\'s kind asks first', () => {
   it('a kind chosen is not stored until it is confirmed; keeping the kind drops it; one undo brings the old settings back', () => {
     const { box, history } = setup();
@@ -861,6 +920,23 @@ describe('changing a layer\'s kind asks first', () => {
     choose('Kind', 'shape');
     fireEvent.click(screen.getByRole('button', { name: /^Keep / }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Kind')));
+  });
+
+  it('the confirmation is announced, and Escape keeps the current kind', () => {
+    const { box, history } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    choose('Kind', 'shape');
+    const group = screen.getByRole('group', { name: 'Confirm the change of kind' });
+    expect(within(group).getByRole('status').textContent).toMatch(/Change Noise Field to .*Its settings will be replaced.*Escape/);
+    fireEvent.keyDown(group, { key: 'Escape' });
+    expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
+    expect(layersOf(box)[1].type).toBe('noiseFill');
+    expect(history.canUndo).toBe(false);
+    // Escape from the Kind field itself, too
+    choose('Kind', 'shape');
+    fireEvent.keyDown(screen.getByLabelText('Kind'), { key: 'Escape' });
+    expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
   });
 
   it('picking another layer drops a kind that was waiting', () => {

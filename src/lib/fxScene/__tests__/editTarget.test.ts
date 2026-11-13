@@ -16,6 +16,7 @@ import {
   stepFxLayer,
   type FxEdit,
 } from '../edit';
+import { pointerBaseOf } from '@/lib/fx/format';
 import { parseFxProp } from '../fxScene';
 
 type L = { id: string; type: string; name: string; target?: string; params: Record<string, unknown>; interactivity?: Record<string, unknown> };
@@ -224,12 +225,30 @@ describe('setFxLayerInteractivity', () => {
     const next = ok(setFxLayerInteractivity(s.stored, s.noise, { trackMouse: 5, momentum: -2, spring: 0.5, axes: 'x' }));
     expect(layers(next.stored).find((l) => l.id === s.noise)!.interactivity).toEqual({ trackMouse: 1, momentum: 0, spring: 0.5, axes: 'x' });
   });
-  it('starts from the engine default (still) and keeps what is not changed', () => {
+  it('a first edit starts from what the layer does without settings, so one change moves one thing', () => {
     const s = scoped();
-    const first = ok(setFxLayerInteractivity(ok(setFxLayerInteractivity(s.stored, s.noise, null)).stored, s.noise, { spring: 0.4 }));
-    expect(layers(first.stored).find((l) => l.id === s.noise)!.interactivity).toEqual({ trackMouse: 0, momentum: 0, spring: 0.4, axes: 'both' });
-    const second = ok(setFxLayerInteractivity(first.stored, s.noise, { trackMouse: 0.2 }));
-    expect(layers(second.stored).find((l) => l.id === s.noise)!.interactivity).toEqual({ trackMouse: 0.2, momentum: 0, spring: 0.4, axes: 'both' });
+    const bare = ok(setFxLayerInteractivity(s.stored, s.noise, null)).stored;
+    // the noise field follows the pointer in its own plain way: changing only the axes keeps that follow
+    const axes = ok(setFxLayerInteractivity(bare, s.noise, { axes: 'x' }));
+    expect(layers(axes.stored).find((l) => l.id === s.noise)!.interactivity).toEqual({ trackMouse: 1, momentum: 0, spring: 0.04, axes: 'x' });
+    // a shape stands still, but with a spring, so raising Track mouse alone makes it move
+    const withShape = ok(addFxLayer(s.stored, 'shape'));
+    const raised = ok(setFxLayerInteractivity(withShape.stored, withShape.layerId!, { trackMouse: 1 }));
+    expect(layers(raised.stored).find((l) => l.id === withShape.layerId)!.interactivity).toEqual({ trackMouse: 1, momentum: 0.85, spring: 0.05, axes: 'both' });
+    // and what is not changed is kept on later edits
+    const again = ok(setFxLayerInteractivity(raised.stored, withShape.layerId!, { momentum: 0.2 }));
+    expect(layers(again.stored).find((l) => l.id === withShape.layerId)!.interactivity).toEqual({ trackMouse: 1, momentum: 0.2, spring: 0.05, axes: 'both' });
+  });
+  it('the bases are exactly what the engine does without settings, per kind', () => {
+    expect(pointerBaseOf('noiseFill')).toEqual({ trackMouse: 1, momentum: 0, spring: 0.04, axes: 'both' });
+    for (const kind of ['shape', 'image', 'gradient']) expect(pointerBaseOf(kind)).toMatchObject({ trackMouse: 0, spring: 0.05 });
+  });
+  it('an explicit undefined in a patch leaves the value alone instead of erasing it', () => {
+    const s = scoped();
+    const before = layers(s.stored).find((l) => l.id === s.noise)!.interactivity;
+    const next = ok(setFxLayerInteractivity(s.stored, s.noise, { trackMouse: undefined, spring: 0.3 }));
+    expect(layers(next.stored).find((l) => l.id === s.noise)!.interactivity).toEqual({ ...before, spring: 0.3 });
+    expect(next.notes).toEqual([]);
   });
   it('null removes them; refuses a layer that ignores the pointer, NaN and a bad axis', () => {
     const s = scoped();
