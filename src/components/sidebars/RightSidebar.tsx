@@ -75,6 +75,11 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
     ? definitionOnCanvas
     : undefined;
 
+  // A layer (or the Background row) of an FX scene is picked in the Layers panel: the panel shows that
+  // layer alone. The box's own sections (Size, Styles, ...) come back when the pick is cleared.
+  const fxPick = editorUI.fxLayerPick;
+  const fxLayerOnly = !!fxPick && !!target && fxPick.componentId === target.id && !editsDefinition;
+
   return (
     <div className={isSheet ? 'bg-background flex flex-col h-full w-full' : `
       bg-background border-l border-border flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
@@ -84,7 +89,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
       <RightSidebarHeader variant={variant} />
 
       {/* Under the name and outside the scroll: it says what every row below edits. */}
-      {!isCollapsed && <StateSwitch variant={variant} />}
+      {!isCollapsed && !fxLayerOnly && <StateSwitch variant={variant} />}
 
       {/* Content - only show when not collapsed */}
       {!isCollapsed && (
@@ -92,7 +97,9 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
         // (PropertyRow's minmax(0,1fr) track), sections own their 12px inset.
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="min-w-0">
-            {editsDefinition ? null : target ? (
+            {editsDefinition ? null : fxLayerOnly && target ? (
+              <FxSceneSection component={target} breakpointId={breakpointId} />
+            ) : target ? (
               <>
                 {openDefinition && <InputsSection definition={openDefinition} />}
                 {repeatable && target && <RepeatSection definition={repeatable} node={target} />}
