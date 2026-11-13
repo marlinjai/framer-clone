@@ -475,12 +475,12 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
               {WIDTH_LABEL[widthMode]}
             </QBtn>
           )}
-          {canDeleteLayer(component) && (
+          {canDeleteLayer(component) && editorUI.fxLayerPick?.kind !== 'background' && (
             <>
-              <QBtn label="Duplicate" onClick={() => { if (!routeFxLayerShortcut('duplicate', editorUI)) duplicateLayer(page, editorUI, history); }}>
+              <QBtn label="Duplicate" onClick={() => { if (!routeFxLayerShortcut('duplicate', editorUI, { swallowStale: false })) duplicateLayer(page, editorUI, history); }}>
                 <Copy size={16} />
               </QBtn>
-              <QBtn label="Delete" className="text-red-600 dark:text-red-400" onClick={() => { if (!routeFxLayerShortcut('delete', editorUI)) deleteSelection(page, editorUI, history); }}>
+              <QBtn label="Delete" className="text-red-600 dark:text-red-400" onClick={() => { if (!routeFxLayerShortcut('delete', editorUI, { swallowStale: false })) deleteSelection(page, editorUI, history); }}>
                 <Trash2 size={16} />
               </QBtn>
             </>

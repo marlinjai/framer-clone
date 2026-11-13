@@ -256,6 +256,16 @@ describe('the keys act on the picked layer, never on the box', () => {
     expect(press('delete')).toBe(false);
   });
 
+  it('a button (the phone toolbar) is not swallowed by a stale pick: it shows the box, so the tap is the box\'s', () => {
+    const added = addFxLayer(stored(), 'shape');
+    if (!added.ok || !added.layerId) throw new Error('not added');
+    box.setProps({ [FX_PROP]: added.stored });
+    pickLayer(added.layerId);
+    undo();
+    expect(routeFxLayerShortcut('delete', ui(), { swallowStale: false })).toBe(false);
+    expect(ui().selectedFxLayer).toBeUndefined();
+  });
+
   it('Cmd+D copies the layer, picks the copy and leaves the box alone', () => {
     pickLayer('bloom');
     expect(press('duplicate')).toBe(true);

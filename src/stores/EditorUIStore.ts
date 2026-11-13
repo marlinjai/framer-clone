@@ -437,6 +437,7 @@ const EditorUIStore = types.model('EditorUI', {
     if (self.activeRule) {
       self.activeRule = null;
       self.previewRule = null;
+      self.ruleRefusal = null;
     }
     self.selectedFxLayer = pick.kind === 'layer' ? { componentId: box.id, kind: 'layer', layerId: pick.layerId } : { componentId: box.id, kind: 'background' };
   },

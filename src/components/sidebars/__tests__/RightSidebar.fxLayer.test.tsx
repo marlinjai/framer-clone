@@ -78,6 +78,7 @@ describe('the right panel with an FX scene box', () => {
     act(() => store.editorUI.setActiveRule('hover'));
     act(() => store.editorUI.pickFxLayer(box, { kind: 'layer', layerId: 'bloom' }));
     expect(store.editorUI.activeRule).toBeNull();
+    expect(store.editorUI.previewRule).toBeNull();
     expect(screen.getByRole('group', { name: 'Settings of Bloom' })).toBeTruthy();
   });
 });

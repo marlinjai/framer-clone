@@ -204,7 +204,7 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
         return;
       case 'duplicate':
         // A picked layer of an FX scene is copied instead of the box.
-        if (!routeFxLayerShortcut('duplicate', editorUI)) duplicateLayer(page, editorUI, history);
+        if (!routeFxLayerShortcut('duplicate', editorUI, { swallowStale: false })) duplicateLayer(page, editorUI, history);
         return;
       case 'copyStyle':
         editorUI.setCopiedStyle(copyStyle(component, breakpointId));
@@ -214,7 +214,7 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
         return;
       case 'delete':
         // A picked layer of an FX scene is deleted instead of the box.
-        if (!routeFxLayerShortcut('delete', editorUI)) deleteSelection(page, editorUI, history);
+        if (!routeFxLayerShortcut('delete', editorUI, { swallowStale: false })) deleteSelection(page, editorUI, history);
         return;
     }
   };

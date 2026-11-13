@@ -50,10 +50,12 @@ export function deleteSelection(
  * place within the layer's group) and F2 (rename). The Background pseudo-row cannot be
  * deleted, copied or moved, and its keys do nothing rather than fall through to the box.
  *
+ * `swallowStale: false` is for buttons (the phone toolbar and menu): see below.
+ *
  * Returns true when the key belongs to the picked layer (the caller then does nothing
  * else with it), false when no layer is picked and the key keeps its usual meaning.
  */
-export function routeFxLayerShortcut(action: KeyBindingActionId, editorUI: EditorUIType): boolean {
+export function routeFxLayerShortcut(action: KeyBindingActionId, editorUI: EditorUIType, options: { swallowStale?: boolean } = {}): boolean {
   const pick = editorUI.fxLayerPick;
   const box = editorUI.selectedComponent;
   if (!pick || !box) {
@@ -61,7 +63,9 @@ export function routeFxLayerShortcut(action: KeyBindingActionId, editorUI: Edito
     // it, so it is swallowed once and the pick is dropped. It never falls through to the box.
     if (editorUI.selectedFxLayer && box && editorUI.selectedFxLayer.componentId === box.id) {
       editorUI.clearFxLayerPick();
-      return true;
+      // A key is swallowed once (it may be a repeat or a double press meant for the layer). A button on
+      // screen shows the box's own state (the layer is no longer picked), so its tap is the box's.
+      return options.swallowStale !== false;
     }
     return false;
   }
