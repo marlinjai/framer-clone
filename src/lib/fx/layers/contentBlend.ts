@@ -64,8 +64,9 @@ export function premultiplyUniformOf(material: Material): PremultiplyUniform | u
 /**
  * Gives a MeshBasicMaterial (the text lockup and the text box, whose shader is three.js's own) the same
  * `uPremultiply` uniform the shader layers have, so multiply premultiplies it the same way: the basic shader's
-XX
- * Call it once, before the material is first drawn (its ref callback).
+ * premultiply step is swapped for the uniform's, after the colour space conversion like in the other layers.
+ * The swap drops three.js's own premultiply step, which only matters if `premultipliedAlpha` is ever set on such
+ * a material (nothing sets it today). Call it once, before the material is first drawn (its ref callback).
  */
 export function withPremultiplyUniform(material: MeshBasicMaterial): void {
   if (material.userData.uPremultiply) return;
