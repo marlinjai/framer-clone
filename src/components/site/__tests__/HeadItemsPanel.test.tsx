@@ -244,6 +244,37 @@ describe('backtrack and revise', () => {
     expect((write.mock.calls[0] as unknown as [unknown[]])[0]).toEqual([{ kind: 'meta', name: 'rating', content: 'general' }]);
   });
 
+  it('does not restore a hidden language after the relation was changed and put back, and lets a non-text language be switched', () => {
+    const write = vi.fn(() => ({ ok: true as const, dropped: 0 }));
+    const { unmount } = render(<HeadItemsEditor items={[{ kind: 'link', rel: 'me', href: 'https://example.com/', hreflang: 'de' }]} cap={20} write={write} home="site" />);
+    let row = within(screen.getByTestId('head-row'));
+    fireEvent.change(row.getByLabelText('Relation'), { target: { value: 'alternate' } });
+    fireEvent.change(row.getByLabelText('Relation'), { target: { value: 'me' } });
+    fireEvent.change(row.getByLabelText('Address'), { target: { value: 'https://example.com/x' } });
+    fireEvent.blur(row.getByLabelText('Address'));
+    expect((write.mock.calls[0] as unknown as [unknown[]])[0]).toEqual([{ kind: 'link', rel: 'me', href: 'https://example.com/x' }]);
+    unmount();
+    write.mockClear();
+    // A stored language that is not text is shown empty: choosing a feed type replaces it.
+    render(<HeadItemsEditor items={[{ kind: 'link', rel: 'alternate', href: '/en', hreflang: 5 }]} cap={20} write={write} home="site" />);
+    row = within(screen.getByTestId('head-row'));
+    fireEvent.change(row.getByLabelText('Or feed type'), { target: { value: 'application/rss+xml' } });
+    fireEvent.blur(row.getByLabelText('Or feed type'));
+    expect((write.mock.calls[0] as unknown as [unknown[]])[0]).toEqual([{ kind: 'link', rel: 'alternate', href: '/en', type: 'application/rss+xml' }]);
+  });
+
+  it('refuses every item of a split JSON-LD paste that the first item\'s kept keys would make unreadable', () => {
+    const a = { '@context': 'https://schema.org', '@type': 'Organization', name: 'A' };
+    const b = { '@context': 'https://schema.org', '@type': 'Organization', name: 'B' };
+    const write = vi.fn(() => ({ ok: true as const, dropped: 0 }));
+    render(<HeadItemsEditor items={[{ kind: 'jsonld', data: a, note: 'older write' }]} cap={20} write={write} home="site" />);
+    const row = within(screen.getByTestId('head-row'));
+    fireEvent.change(row.getByLabelText('JSON-LD'), { target: { value: JSON.stringify([a, b]) } });
+    fireEvent.blur(row.getByLabelText('JSON-LD'));
+    expect(write).not.toHaveBeenCalled();
+    expect(row.getByTestId('head-message').textContent).toContain('"note"');
+  });
+
   it('each add, edit and delete is one undo step, for the site and for a page', () => {
     site();
     fireEvent.change(newForm().getByLabelText('Name'), { target: { value: 'author' } });

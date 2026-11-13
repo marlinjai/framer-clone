@@ -58,9 +58,11 @@ interface Draft {
   json: string;
   /** The kind was changed in the form: the stored item is replaced by a new one of that kind, so it carries nothing over. */
   kindEdited: boolean;
+  /** The relation was changed in the form: the language and type the stored link kept while it was hidden are let go. */
+  relEdited: boolean;
 }
 
-const BLANK: Draft = { kind: 'meta', name: '', property: '', content: '', rel: 'alternate', href: '', hreflang: '', type: '', title: '', json: '', kindEdited: false };
+const BLANK: Draft = { kind: 'meta', name: '', property: '', content: '', rel: 'alternate', href: '', hreflang: '', type: '', title: '', json: '', kindEdited: false, relEdited: false };
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
@@ -81,6 +83,7 @@ function draftOf(stored: StoredHeadItem | null): Draft {
     title: text(stored.title),
     json: data && typeof data === 'object' ? JSON.stringify(data, null, 2) : '',
     kindEdited: false,
+    relEdited: false,
   };
 }
 
@@ -107,12 +110,15 @@ function carriedFrom(base: StoredHeadItem | null, d: Draft, stored: StoredHeadIt
     if (value === undefined || key in out) {
       // A modeled field that was not text and is still empty in the form: the user did not touch it.
       if (modeled?.has(key) && key in out && typeof value !== 'string' && out[key] === '') out[key] = value;
+      // The form shows a relation that was not text as alternate; an edit of another field leaves it as it was.
+      if (key === 'rel' && typeof value !== 'string' && !d.relEdited) out[key] = value;
       continue;
     }
     if (!modeled?.has(key)) out[key] = value;
-    // Only while the fields are hidden (the relation is not alternate) and the relation is the stored one.
-    else if ((key === 'hreflang' || key === 'type') && d.rel !== 'alternate' && d.rel === base.rel) out[key] = value;
-    else if (typeof value !== 'string') out[key] = value;
+    // A link's language and type: only while they are hidden (the relation is not alternate) and nobody changed the relation.
+    else if (key === 'hreflang' || key === 'type') {
+      if (d.rel !== 'alternate' && d.rel === base.rel && !d.relEdited) out[key] = value;
+    } else if (typeof value !== 'string') out[key] = value;
   }
   return out;
 }
@@ -127,8 +133,11 @@ function candidateOf(d: Draft, base: StoredHeadItem | null): Candidate {
     // that splits into several items gives them to the first only.
     const extras = base && base.kind === 'jsonld' && !d.kindEdited ? Object.fromEntries(Object.entries(base).filter(([k]) => k !== 'kind' && k !== 'data')) : {};
     const items = read.items.map((data, index) => ({ ...(index === 0 ? extras : {}), kind: 'jsonld', data }));
-    const refused = items.length === 1 ? parseHeadItem(items[0]) : null;
-    return refused && !refused.ok ? { ok: false, message: refused.refusal.message } : { ok: true, items };
+    for (const item of items) {
+      const parsed = parseHeadItem(item);
+      if (!parsed.ok) return { ok: false, message: parsed.refusal.message };
+    }
+    return { ok: true, items };
   }
   const shown: StoredHeadItem =
     d.kind === 'meta'
@@ -252,7 +261,7 @@ function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommi
         <>
           <div className="flex flex-col gap-1">
             <label htmlFor={id('rel')} className={fieldLabel}>Relation</label>
-            <select id={id('rel')} className={inputBase} value={draft.rel} onChange={(e) => set({ rel: e.target.value, hreflang: '', type: '' })}>
+            <select id={id('rel')} className={inputBase} value={draft.rel} onChange={(e) => set({ rel: e.target.value, hreflang: '', type: '', relEdited: true })}>
               {LINK_RELS.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
