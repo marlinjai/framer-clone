@@ -248,8 +248,8 @@ describe('effects that apply to one layer', () => {
   }, 120_000);
 
   it('a no-op effect on a layer with a screen or multiply blend leaves the picture as it was', async () => {
-    // The text lockup ignores its stored blend, so every row here draws it normally, the multiply row
-    // included. Multiply itself is covered by the noise field below and by the colour test after it.
+    // The text lockup applies its stored blend like the other layers (rows for it are in the describe of
+    // every content layer below); here the scoped and the unscoped pictures must agree for each blend.
     for (const blend of ['screen', 'multiply', 'add']) {
       const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 't' });
       const plain = (await draw(scene([gradient(), text({ blend })]))).picture;
@@ -458,26 +458,30 @@ describe('effects that apply to one layer', () => {
     }, 240_000);
   });
 
-  describe('scoped text with a stored blend (the text lockup ignores it)', () => {
+  describe('scoped text with a stored blend: the scoped picture is the unscoped one', () => {
     const scopedText = (blend: string) => scene([gradient(), text({ blend }), layer('vg', 'vignette', { darkness: 0 }, { target: 't' })]);
+    const unscopedText = (blend: string) => scene([gradient(), text({ blend })]);
 
-    it('a frame drawn long after the edit draws the text normally, deterministically (fails on main every time)', async () => {
-      const plain = (await draw(scene([gradient(), text()]))).picture;
-      for (const blend of ['add', 'screen']) {
+    it('a frame drawn long after the edit equals the unscoped text with the same blend, deterministically', async () => {
+      const normal = (await draw(unscopedText('normal'))).picture;
+      for (const blend of ['add', 'screen', 'multiply']) {
+        const unscoped = (await draw(unscopedText(blend))).picture;
+        expect.soft(difference(unscoped, normal).differing, `${blend} differs from normal`).toBeGreaterThan(50);
         const edits = await session(scopedText(blend));
-        expect.soft(difference(await edits.reflow(), plain).share, `${blend} after a reflow`).toBeLessThan(0.002);
+        expect.soft(difference(await edits.reflow(), unscoped).share, `${blend} after a reflow`).toBeLessThan(0.002);
       }
-    }, 240_000);
+    }, 300_000);
 
-    it('a blend changed in a mounted scene never changes the picture of the text, in the frame of the edit or after it', async () => {
-      const plain = (await draw(scene([gradient(), text()]))).picture;
+    it('a blend changed in a mounted scene shows in the frame of the edit and after it, scoped like unscoped', async () => {
+      const fresh: Record<string, PNG> = {};
+      for (const blend of ['normal', 'add', 'screen', 'multiply']) fresh[blend] = (await draw(unscopedText(blend))).picture;
       const edits = await session(scopedText('normal'));
-      for (const blend of ['add', 'screen', 'normal', 'overlay']) {
+      for (const blend of ['add', 'screen', 'normal', 'multiply', 'normal']) {
         // The frame the edit itself produces is the one a visitor with reduced motion keeps.
-        expect.soft(difference(await edits.show(scopedText(blend)), plain).share, `${blend}, the edit's own frame`).toBeLessThan(0.002);
-        expect.soft(difference(await edits.reflow(), plain).share, `${blend}, after a reflow`).toBeLessThan(0.002);
+        expect.soft(difference(await edits.show(scopedText(blend)), fresh[blend]).share, `${blend}, the edit's own frame`).toBeLessThan(0.002);
+        expect.soft(difference(await edits.reflow(), fresh[blend]).share, `${blend}, after a reflow`).toBeLessThan(0.002);
       }
-    }, 240_000);
+    }, 300_000);
   });
 
   it('adds and removes an effect that applies to one layer in a mounted scene (on, off, on)', async () => {
@@ -519,30 +523,30 @@ describe('effects that apply to one layer', () => {
     };
     const only = (type: string, blend: string): Raw => withBackground([layer('l', type, visible[type] ?? {}, { blend })]);
     /** The pixels a layer changes over the plain background, and the mean of the three channels there. */
-    const box = (a: PNG, b: PNG) => {
-      let x0 = WIDTH, y0 = HEIGHT, x1 = 0, y1 = 0;
+    const box = (a: PNG, b: PNG): Array<[number, number]> => {
+      const mask: Array<[number, number]> = [];
       for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
         const [r1, g1, b1] = px(a, x, y);
         const [r2, g2, b2] = px(b, x, y);
-        if (Math.max(Math.abs(r1 - r2), Math.abs(g1 - g2), Math.abs(b1 - b2)) > 6) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+        if (Math.max(Math.abs(r1 - r2), Math.abs(g1 - g2), Math.abs(b1 - b2)) > CHANNEL_TOLERANCE) mask.push([x, y]);
       }
-      return { x0, y0, x1, y1 };
+      return mask;
     };
-    const mean = (png: PNG, area: { x0: number; y0: number; x1: number; y1: number }): number => {
-      let sum = 0, count = 0;
-      for (let y = area.y0; y <= area.y1; y++) for (let x = area.x0; x <= area.x1; x++) {
+    /** The mean of the three channels over the pixels the layer changed (a mask, not its box, whose corners are background). */
+    const mean = (png: PNG, mask: Array<[number, number]>): number => {
+      let sum = 0;
+      for (const [x, y] of mask) {
         const [r, g, b] = px(png, x, y);
         sum += r + g + b;
-        count += 3;
       }
-      return sum / Math.max(1, count);
+      return sum / Math.max(1, mask.length * 3);
     };
 
     it.each(['text', 'textBox'])('a %s layer is lighter with add and screen, and darker with multiply, than with a normal blend', async (type) => {
       const normal = (await draw(only(type, 'normal'))).picture;
       const plain = (await draw(withBackground([]))).picture;
       const area = box(normal, plain);
-      expect(area.x1, 'the layer is on the picture').toBeGreaterThan(area.x0);
+      expect(area.length, 'the layer is on the picture').toBeGreaterThan(200);
       const base = mean(normal, area);
       for (const blend of ['add', 'screen']) {
         const picture = (await draw(only(type, blend))).picture;

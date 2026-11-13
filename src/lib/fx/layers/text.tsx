@@ -135,10 +135,7 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   // Spec section 8: Safari caps WebGL contexts; never leak textures.
   useEffect(() => () => tex.dispose(), [tex]);
 
-  // The material takes its blend when it is created (the ref callback below) and again when it changes.
-  useEffect(() => {
-    if (matRef.current) applyContentBlend(matRef.current, layer.blend);
-  }, [layer.blend]);
+  // The material takes its blend in its ref callback below, which React calls again on every render.
 
   const pointer = useWindowPointer();
   const startedAt = useRef<number | null>(null);

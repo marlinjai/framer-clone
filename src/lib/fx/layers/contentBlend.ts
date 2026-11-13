@@ -73,6 +73,10 @@ export function withPremultiplyUniform(material: MeshBasicMaterial): void {
   material.userData.uPremultiply = uniform;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uPremultiply = uniform;
+    if (!shader.fragmentShader.includes("#include <premultiplied_alpha_fragment>")) {
+      // A three.js that renamed the step would leave multiply drawing plain colour (brighter than it should): say so.
+      console.error("[lumitra-fx] the basic material shader has no premultiplied_alpha_fragment step; multiply text will not be premultiplied.");
+    }
     shader.fragmentShader =
       "uniform float uPremultiply;\n" +
       shader.fragmentShader.replace(

@@ -19,6 +19,7 @@ import {
   ZeroFactor,
   type Material,
   MeshBasicMaterial,
+  ShaderLib,
 } from 'three';
 
 import { applyContentBlend, isMultiplyBlend, premultiplyUniformOf, withPremultiplyUniform } from '../layers/contentBlend';
@@ -214,7 +215,8 @@ describe('the text layers (basic materials) take their blend like the shader lay
     const m = new MeshBasicMaterial({ transparent: true });
     withPremultiplyUniform(m);
     withPremultiplyUniform(m); // once
-    const shader = { uniforms: {} as Record<string, unknown>, fragmentShader: 'void main() {\n#include <colorspace_fragment>\n#include <premultiplied_alpha_fragment>\n}' };
+    // three.js's own basic fragment shader (before its includes are resolved), so a renamed step fails here.
+    const shader = { uniforms: {} as Record<string, unknown>, fragmentShader: ShaderLib.basic.fragmentShader };
     (m.onBeforeCompile as unknown as (s: typeof shader) => void)(shader);
     expect(shader.uniforms.uPremultiply).toBe(premultiplyUniformOf(m));
     expect(shader.fragmentShader).toContain('uniform float uPremultiply;');
@@ -236,7 +238,7 @@ describe('a content layer cannot forget its blend', () => {
   });
 
   it.each(files)('%s applies the blend and supports multiply', (file) => {
-    const source = fs.readFileSync(path.join(dir, file), 'utf8');
+    const source = fs.readFileSync(path.join(dir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     expect(source, 'applies the blend').toMatch(/applyContentBlend\(/);
     const shaderLayer = /uniform float uPremultiply;/.test(source);
     const basicLayer = /withPremultiplyUniform\(/.test(source);
