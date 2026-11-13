@@ -23,7 +23,7 @@
 import { EffectComposer } from "@react-three/postprocessing";
 import { useFrame, useThree } from "@react-three/fiber";
 import { EffectComposer as ComposerImpl, RenderPass } from "postprocessing";
-import { Fragment, useEffect, useMemo, useRef, type MutableRefObject, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, type MutableRefObject, type ReactNode } from "react";
 import {
   Mesh,
   NoBlending,
@@ -138,6 +138,40 @@ export function resultOf(composer: ComposerImpl): Texture {
   return (swaps % 2 === 1 ? composer.outputBuffer : composer.inputBuffer).texture;
 }
 
+/**
+ * A ref callback for a library `<EffectComposer>` that frees the composer when it is
+ * replaced or gone (the library never does, and a composer holds two frame buffers).
+ *
+ * The callback is stable, so it runs only when the composer changes or goes away. In
+ * development React StrictMode runs the library's layout effects twice on mount, which
+ * clears the ref and sets it again for the SAME composer; freeing it at once would strip
+ * its passes while it is still drawing. So a freeing is deferred one microtask and skipped
+ * when the composer is back. (`dispose` also frees the geometry every pass shares; three.js
+ * uploads it again on the next draw.)
+ */
+export function useHeldComposer(onChange?: (composer: ComposerImpl | null) => void): (composer: ComposerImpl | null) => void {
+  const held = useRef<ComposerImpl | null>(null);
+  return useCallback(
+    (composer) => {
+      onChange?.(composer);
+      if (composer === null) {
+        const gone = held.current;
+        held.current = null;
+        if (gone) {
+          queueMicrotask(() => {
+            if (held.current !== gone) gone.dispose();
+          });
+        }
+        return;
+      }
+      const previous = held.current;
+      held.current = composer;
+      if (previous && previous !== composer) previous.dispose();
+    },
+    [onChange],
+  );
+}
+
 interface ScopedGroupProps {
   group: PipelineGroup;
   /** The wrapper object of every drawn content layer, by layer id (filled by LumitraScene). */
@@ -151,9 +185,11 @@ interface ScopedGroupProps {
 export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupProps) {
   const { gl, camera } = useThree();
   const composerRef = useRef<ComposerImpl | null>(null);
-  // The library resets the ref it is given to null when it unmounts, before an effect
-  // cleanup here could read it, so the composer is remembered separately to be freed.
-  const ownedComposer = useRef<ComposerImpl | null>(null);
+  const holdComposer = useHeldComposer(
+    useCallback((composer: ComposerImpl | null) => {
+      composerRef.current = composer;
+    }, []),
+  );
   const failed = useRef(false);
   const quadRef = useRef<Mesh>(null);
   const drawingSize = useMemo(() => new Vector2(), []);
@@ -176,15 +212,6 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
     material.needsUpdate = true;
   }, [material, group.target.blend]);
   useEffect(() => () => material.dispose(), [material]);
-  // The library never disposes its composer: free the buffers when the group goes.
-  useEffect(
-    () => () => {
-      ownedComposer.current?.dispose();
-      ownedComposer.current = null;
-    },
-    [],
-  );
-
   const channel = group.channel;
   const targetId = group.target.id;
   const chain = group.effects;
@@ -255,10 +282,7 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
   return (
     <>
       <EffectComposer
-        ref={(composer: ComposerImpl | null) => {
-          composerRef.current = composer;
-          if (composer) ownedComposer.current = composer;
-        }}
+        ref={holdComposer}
         enabled={false} depthBuffer={false} multisampling={0}>
         {chain.map((layer) => (
           <Fragment key={layer.id}>{renderLayer(layer.id)}</Fragment>

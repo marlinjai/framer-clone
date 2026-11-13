@@ -1,5 +1,5 @@
 // The page script of fxScoped.spec.ts: mounts a stored scene with the engine from source.
-import { createElement } from 'react';
+import { StrictMode, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LumitraScene } from '@/lib/fx';
 import { parseFxScene } from '@/lib/fx/format';
@@ -11,7 +11,9 @@ const show = (stored: unknown): string[] => {
   const read = parseFxScene(stored);
   if (!read.ok) throw new Error(read.message);
   root ??= createRoot(document.getElementById('stage')!);
-  root.render(createElement(LumitraScene, { config: read.scene }));
+  const scene = createElement(LumitraScene, { config: read.scene });
+  // The development build with StrictMode, as `next dev` runs pages: effects run twice on mount.
+  root.render((window as unknown as { __strict?: boolean }).__strict ? createElement(StrictMode, null, scene) : scene);
   return read.notes;
 };
 
