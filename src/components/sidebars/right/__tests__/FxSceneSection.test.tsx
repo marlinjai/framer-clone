@@ -870,7 +870,7 @@ describe('Applies to: effects that change one layer only', () => {
     // and what god rays read excludes a layer that has effects of its own
     const gradient = layersOf(box)[0];
     choose('Applies to', gradient.id);
-    const rays = add(box, 'godRays');
+    add(box, 'godRays');
     expect(screen.queryByLabelText('Applies to')).toBeNull();
     const options = Array.from((screen.getByLabelText('Reads from') as HTMLSelectElement).options).map((o) => o.textContent);
     expect(options).not.toContain('Gradient');
