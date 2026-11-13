@@ -35,6 +35,7 @@ interface NoiseValues {
 
 interface NoiseUniforms {
   [key: string]: THREE.IUniform<unknown>;
+  uPremultiply: THREE.IUniform<number>;
   uTime: THREE.IUniform<number>;
   uMouse: THREE.IUniform<THREE.Vector2>;
   uScale: THREE.IUniform<number>;
@@ -51,6 +52,7 @@ const NOISE_VERT = /* glsl */ `
 `;
 
 const NOISE_FRAG = /* glsl */ `
+  uniform float uPremultiply;
   uniform float uTime;
   uniform vec2 uMouse;
   uniform float uScale;
@@ -103,6 +105,10 @@ const NOISE_FRAG = /* glsl */ `
     // to the screen converted nothing. Into the composer's buffer this is the
     // identity, so a scene with a post pass is drawn exactly as before.
     #include <colorspace_fragment>
+    // Multiply blends premultiplied colour (see contentBlend): uPremultiply is 1 for it, 0 otherwise.
+    gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
+    // Only multiply reads the alpha as a factor (one minus it); a value above 1 (the noise reaches 1.1) must not go negative there.
+    gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
   }
 `;
 
@@ -147,6 +153,7 @@ function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
   // strict react-hooks/immutability rule happy.
   const initialUniforms = useMemo<NoiseUniforms>(
     () => ({
+      uPremultiply: { value: 0 },
       uTime: { value: 0 },
       uMouse: { value: new THREE.Vector2(0, 0) },
       uScale: { value: v.scale },

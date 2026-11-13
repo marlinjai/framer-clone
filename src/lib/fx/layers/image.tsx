@@ -45,6 +45,7 @@ interface ImageValues {
 
 interface ImageUniforms {
   [key: string]: THREE.IUniform<unknown>;
+  uPremultiply: THREE.IUniform<number>;
   uMap: THREE.IUniform<THREE.Texture | null>;
   uOpacity: THREE.IUniform<number>;
   uDisplace: THREE.IUniform<number>;
@@ -65,6 +66,7 @@ const IMAGE_VERT = /* glsl */ `
 `;
 
 const IMAGE_FRAG = /* glsl */ `
+  uniform float uPremultiply;
   precision highp float;
   uniform sampler2D uMap;
   uniform float uOpacity;
@@ -132,6 +134,10 @@ const IMAGE_FRAG = /* glsl */ `
     // to the screen converted nothing. Into the composer's buffer this is the
     // identity, so a scene with a post pass is drawn exactly as before.
     #include <colorspace_fragment>
+    // Multiply blends premultiplied colour (see contentBlend): uPremultiply is 1 for it, 0 otherwise.
+    gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
+    // Only multiply reads the alpha as a factor (one minus it); a value above 1 (the noise reaches 1.1) must not go negative there.
+    gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
   }
 `;
 
@@ -239,6 +245,7 @@ function ImageLayerComponent({ layer, values, ctx }: LayerComponentProps) {
 
   const initialUniforms = useMemo<ImageUniforms>(
     () => ({
+      uPremultiply: { value: 0 },
       uMap: { value: null },
       uOpacity: { value: v.opacity },
       uDisplace: { value: v.displace },

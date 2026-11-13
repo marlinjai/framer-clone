@@ -1,8 +1,8 @@
 {
   "comparedWith": {
     "file": "docs/primitives-score/latest.json",
-    "generatedAt": "2026-11-13T07:52:31.759Z",
-    "included": 1845
+    "generatedAt": "2026-11-13T10:15:49.900Z",
+    "included": 1878
   },
   "framerPlugin": {
     "name": "framer-plugin",
@@ -10,15 +10,15 @@
     "typingsSha256": "38e57e89ce85f08f6624a203c31a9bde87d6449c8a94a269aa5bf22b0d11839e"
   },
   "totals": {
-    "rows": 1845,
+    "rows": 1878,
     "framer": {
       "native": 40,
       "partial": 509,
       "code-only": 1091,
-      "unknown": 205
+      "unknown": 238
     },
     "framerTyped": 549,
-    "ourRenderer": 1796,
+    "ourRenderer": 1829,
     "ourPanel": 1244,
     "documentedNotMeasured": 83
   },
@@ -280,19 +280,19 @@
     },
     {
       "kind": "page-item",
-      "label": "Page-level items: a site theme",
-      "total": 9,
+      "label": "Page-level items: a site theme and head items",
+      "total": 42,
       "framer": {
         "native": 2,
         "partial": 1,
         "code-only": 0,
-        "unknown": 6
+        "unknown": 39
       },
       "framerTyped": 3,
-      "ourRenderer": 9,
+      "ourRenderer": 42,
       "ourPanel": 9,
       "framerTypedOursFails": 0,
-      "oursPassesFramerUntyped": 6,
+      "oursPassesFramerUntyped": 39,
       "framerTypedPanelFails": 0
     },
     {
@@ -16657,6 +16657,402 @@
       "reason": "no node kind, trait or enumeration in framer-plugin 3.10.3 expresses it; MathML only as raw HTML in a code component or custom code",
       "symbols": [
         "FramerPluginAPI.setCustomCode"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:jsonld",
+      "kind": "page-item",
+      "id": "head:jsonld",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:link:alternate",
+      "kind": "page-item",
+      "id": "head:link:alternate",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:link:author",
+      "kind": "page-item",
+      "id": "head:link:author",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:link:help",
+      "kind": "page-item",
+      "id": "head:link:help",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:link:license",
+      "kind": "page-item",
+      "id": "head:link:license",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:link:me",
+      "kind": "page-item",
+      "id": "head:link:me",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:link:privacy-policy",
+      "kind": "page-item",
+      "id": "head:link:privacy-policy",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:link:terms-of-service",
+      "kind": "page-item",
+      "id": "head:link:terms-of-service",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:ahrefs-site-verification",
+      "kind": "page-item",
+      "id": "head:meta:ahrefs-site-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:apple-mobile-web-app-title",
+      "kind": "page-item",
+      "id": "head:meta:apple-mobile-web-app-title",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:application-name",
+      "kind": "page-item",
+      "id": "head:meta:application-name",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:author",
+      "kind": "page-item",
+      "id": "head:meta:author",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:baidu-site-verification",
+      "kind": "page-item",
+      "id": "head:meta:baidu-site-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:facebook-domain-verification",
+      "kind": "page-item",
+      "id": "head:meta:facebook-domain-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:format-detection",
+      "kind": "page-item",
+      "id": "head:meta:format-detection",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:geo.placename",
+      "kind": "page-item",
+      "id": "head:meta:geo.placename",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:geo.position",
+      "kind": "page-item",
+      "id": "head:meta:geo.position",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:geo.region",
+      "kind": "page-item",
+      "id": "head:meta:geo.region",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:google-site-verification",
+      "kind": "page-item",
+      "id": "head:meta:google-site-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:msvalidate.01",
+      "kind": "page-item",
+      "id": "head:meta:msvalidate.01",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:p:domain_verify",
+      "kind": "page-item",
+      "id": "head:meta:p:domain_verify",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:rating",
+      "kind": "page-item",
+      "id": "head:meta:rating",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:twitter:creator",
+      "kind": "page-item",
+      "id": "head:meta:twitter:creator",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:twitter:site",
+      "kind": "page-item",
+      "id": "head:meta:twitter:site",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:meta:yandex-verification",
+      "kind": "page-item",
+      "id": "head:meta:yandex-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:property:article:*",
+      "kind": "page-item",
+      "id": "head:property:article:*",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:property:book:*",
+      "kind": "page-item",
+      "id": "head:property:book:*",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:property:fb:app_id",
+      "kind": "page-item",
+      "id": "head:property:fb:app_id",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:property:og:audio",
+      "kind": "page-item",
+      "id": "head:property:og:audio",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:property:og:locale:alternate",
+      "kind": "page-item",
+      "id": "head:property:og:locale:alternate",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:property:og:video",
+      "kind": "page-item",
+      "id": "head:property:og:video",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:property:product:*",
+      "kind": "page-item",
+      "id": "head:property:product:*",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": false
+    },
+    {
+      "key": "page-item:head:property:profile:*",
+      "kind": "page-item",
+      "id": "head:property:profile:*",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
       "ourPanel": false

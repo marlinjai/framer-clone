@@ -56,8 +56,9 @@ const QUAD_VERT = /* glsl */ `
 // uMode: 0 = the blend state weights by alpha (normal, add), 1 = screen and
 // overlay, whose blend state ignores alpha: a pixel with no alpha at all adds
 // nothing (an effect such as grain writes light into transparent pixels, which
-// must not show), 2 = multiply: a pixel with no alpha leaves the picture as it is.
-// Every other pixel is drawn as the layer itself would be.
+// must not show), 2 = multiply, whose blend state wants premultiplied colour: the
+// colour is multiplied by its alpha after the conversion, as the layer's shader does
+// for it. Every other pixel is drawn as the layer itself would be.
 const QUAD_FRAG = /* glsl */ `
   precision highp float;
   uniform sampler2D uMap;
@@ -65,13 +66,16 @@ const QUAD_FRAG = /* glsl */ `
   varying vec2 vUv;
   void main() {
     vec4 c = texture2D(uMap, vUv);
-    float seen = step(0.002, c.a);
-    if (uMode > 1.5) c.rgb = mix(vec3(1.0), c.rgb, seen);
-    else if (uMode > 0.5) c.rgb *= seen;
+    if (uMode > 0.5 && uMode < 1.5) c.rgb *= step(0.002, c.a);
     gl_FragColor = c;
     // Same as the content layers: converts to the output colour space when
     // drawn to the screen, the identity when drawn into the main composer.
     #include <colorspace_fragment>
+    if (uMode > 1.5) {
+      // The layer's own multiply line, from the group's plain colour (alpha can be above 1 in a half-float buffer).
+      gl_FragColor.rgb *= clamp(gl_FragColor.a, 0.0, 1.0);
+      gl_FragColor.a = clamp(gl_FragColor.a, 0.0, 1.0);
+    }
   }
 `;
 
@@ -242,11 +246,15 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
     const first = meshesOf(root)[0];
     // The quad draws with the blend its layer draws with, read before it is switched off below.
     if (first) material.uniforms.uMode.value = copyBlendState(materialsOf(first)[0], material);
-    const saved: Array<[Material, Blending]> = [];
+    // The group's buffer holds plain colour and alpha whatever the blend: a multiply layer's shader
+    // premultiplies only for its own blend, the quad does it when it composites.
+    const saved: Array<[Material, Blending, number | null]> = [];
     for (const mesh of meshesOf(root)) {
       for (const m of materialsOf(mesh)) {
-        saved.push([m, m.blending]);
+        const premultiply = (m as ShaderMaterial).uniforms?.uPremultiply;
+        saved.push([m, m.blending, premultiply ? (premultiply.value as number) : null]);
         m.blending = NoBlending;
+        if (premultiply) premultiply.value = 0;
       }
     }
     const mask = camera.layers.mask;
@@ -266,7 +274,10 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
       gl.autoClear = autoClear;
       camera.layers.mask = mask;
       gl.setRenderTarget(null);
-      for (const [m, blending] of saved) m.blending = blending;
+      for (const [m, blending, premultiply] of saved) {
+        m.blending = blending;
+        if (premultiply !== null) (m as ShaderMaterial).uniforms.uPremultiply.value = premultiply;
+      }
     }
     material.uniforms.uMap.value = resultOf(composer);
     quad.visible = true;

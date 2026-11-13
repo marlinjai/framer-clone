@@ -181,7 +181,7 @@ jobs:
         run: pnpm test:render-gate
 
   # The runtime on a real production build, through the real published route on a real
-  # Postgres, in real Chromium and WebKit. A job of its own for the same reason as the
+  # Postgres, in real Chromium, Firefox and WebKit. A job of its own for the same reason as the
   # render gate. It is the only place a page that hangs a tab can show.
   behaviour:
     name: behaviour
@@ -210,7 +210,7 @@ jobs:
       # slowest 924 s. 20 minutes passes a slow mirror and ends a hung one.
       - name: Install browsers
         timeout-minutes: 20
-        run: pnpm exec playwright install --with-deps chromium webkit
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
 
       - name: Behaviour proofs
         run: pnpm test:behaviour
