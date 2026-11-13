@@ -3,11 +3,11 @@
 // target layer's own material has, copied in the frame that draws the quad. Regression for the
 // race of the single demand frame under reduced motion: the quad's blend used to be set from the
 // layer's stored `blend` in a passive effect, after that frame, and a text layer (which draws
-// normally whatever `blend` says) was then composited with `add` or `screen` about one run in five
-// on a software renderer, glyph interiors saturated.
+// normally whatever `blend` says) was then composited with `add` or `screen` in 9 and 10 of 20 runs
+// on a software renderer (Linux, one container), glyph interiors saturated.
 
 import { describe, expect, it } from 'vitest';
-import { AdditiveBlending, CustomBlending, MeshBasicMaterial, MultiplyBlending, NormalBlending, ShaderMaterial } from 'three';
+import { AdditiveBlending, CustomBlending, MeshBasicMaterial, MultiplyBlending, NoBlending, NormalBlending, ShaderMaterial } from 'three';
 
 import { COMPOSITE_MODE, copyBlendState } from '../effects/compositeBlend';
 import { applyContentBlend } from '../layers/contentBlend';
@@ -24,7 +24,7 @@ describe('the composite quad blend', () => {
     ['overlay', COMPOSITE_MODE.ignoresAlpha],
     ['multiply', COMPOSITE_MODE.multiply],
   ])('draws a layer that applies %s with exactly that blend state', (blend, mode) => {
-    const layer = new ShaderMaterial();
+    const layer = new ShaderMaterial({ transparent: true }); // every content layer's material is transparent
     applyContentBlend(layer, blend);
     const to = quad();
     expect(copyBlendState(layer, to)).toBe(mode);
@@ -34,7 +34,7 @@ describe('the composite quad blend', () => {
   it('keeps the blend state exact for every kind of blending the layers use', () => {
     const kinds = [NormalBlending, AdditiveBlending, MultiplyBlending, CustomBlending];
     for (const blending of kinds) {
-      const layer = new ShaderMaterial();
+      const layer = new ShaderMaterial({ transparent: true }); // every content layer's material is transparent
       layer.blending = blending;
       const to = quad();
       copyBlendState(layer, to);
@@ -51,8 +51,26 @@ describe('the composite quad blend', () => {
     expect(to.blending).toBe(NormalBlending);
   });
 
+  it('draws a layer that is not transparent without blending, and copies the premultiplied flag and the blend constants', () => {
+    const opaque = new MeshBasicMaterial({ transparent: false });
+    opaque.blending = AdditiveBlending; // three draws a non-transparent material without blending, whatever this says
+    const to = quad();
+    to.blending = AdditiveBlending;
+    expect(copyBlendState(opaque, to)).toBe(COMPOSITE_MODE.alpha);
+    expect(to.blending).toBe(NoBlending);
+
+    const layer = new ShaderMaterial({ transparent: true });
+    layer.premultipliedAlpha = true;
+    layer.blendAlpha = 0.5;
+    layer.blendColor.set('#336699');
+    copyBlendState(layer, to);
+    expect(to.premultipliedAlpha).toBe(true);
+    expect(to.blendAlpha).toBe(0.5);
+    expect(to.blendColor.getHex()).toBe(layer.blendColor.getHex());
+  });
+
   it('follows the layer when its blend changes between two frames', () => {
-    const layer = new ShaderMaterial();
+    const layer = new ShaderMaterial({ transparent: true }); // every content layer's material is transparent
     const to = quad();
     applyContentBlend(layer, 'add');
     copyBlendState(layer, to);

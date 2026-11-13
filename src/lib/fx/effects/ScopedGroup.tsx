@@ -200,14 +200,7 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
       }),
     [],
   );
-  // A change of the target's blend reaches its material in that layer's own effect, after this
-  // render. A scene drawn on demand (reduced motion) can draw the commit's frame before that effect
-  // has run, so ask for another from an effect: it is drawn after the batch of this commit's effects.
-  // (The scene's own RedrawOnChange does the same for every edit; this one keeps the group correct on its own.)
-  const invalidate = useThree((state) => state.invalidate);
-  useEffect(() => {
-    invalidate();
-  }, [invalidate, group.target.blend]);
+  // The frame that shows a changed blend is asked for by the scene's RedrawOnChange (every edit is a config change).
   useEffect(() => () => material.dispose(), [material]);
   const channel = group.channel;
   const targetId = group.target.id;

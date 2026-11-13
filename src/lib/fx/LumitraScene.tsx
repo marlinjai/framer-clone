@@ -263,16 +263,6 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   // each time the step down drops the last targeted effect.
   const [scoped, setScoped] = useState(false);
   if (groups.length > 0 && !scoped) setScoped(true);
-  useEffect(() => {
-    if (groups.length > 0) return;
-    // No group left: nothing keeps ranks or channels, put the objects back where they started.
-    for (const root of roots.current.values()) {
-      setChannel(root, 0);
-      root.traverse((o) => {
-        o.renderOrder = 0;
-      });
-    }
-  }, [groups.length]);
   const layerById = new Map(config.layers.map((l) => [l.id, l]));
 
   const dprClamp = perfLow ? ([1, 1] as [number, number]) : config.dpr;
@@ -346,6 +336,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
                 ))}
               </EffectComposer>
             )}
+            <ResetWhenUngrouped grouped={groups.length > 0} roots={roots} />
             <RedrawOnChange token={config} />
           </Canvas>
         </WebGLErrorBoundary>
@@ -356,6 +347,24 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
       )}
     </div>
   );
+}
+
+/**
+ * When the last group goes, nothing keeps the channels and render orders the groups gave the
+ * content layers: put the objects back where they started. It lives inside the Canvas so it
+ * runs in the same commit as the group's unmount, in the same batch as RedrawOnChange.
+ */
+function ResetWhenUngrouped({ grouped, roots }: { grouped: boolean; roots: { current: Map<string, Object3D> } }) {
+  useEffect(() => {
+    if (grouped) return;
+    for (const root of roots.current.values()) {
+      setChannel(root, 0);
+      root.traverse((o) => {
+        o.renderOrder = 0;
+      });
+    }
+  }, [grouped, roots]);
+  return null;
 }
 
 /**

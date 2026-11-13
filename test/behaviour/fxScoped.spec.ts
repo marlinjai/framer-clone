@@ -97,7 +97,7 @@ const COUNT_FRAME_REQUESTS = (): void => {
 async function session(
   first: Raw,
   options: { dev?: boolean } = {},
-): Promise<{ show: (next: Raw) => Promise<PNG>; live: () => Promise<{ textures: number; framebuffers: number }>; frames: () => Promise<number>; idle: (ms: number) => Promise<number> }> {
+): Promise<{ show: (next: Raw) => Promise<PNG>; live: () => Promise<{ textures: number; framebuffers: number }>; frames: () => Promise<number>; idle: (ms: number) => Promise<number>; reflow: () => Promise<PNG> }> {
   const context = await browser.newContext(ORACLE_CONTEXT);
   contexts.push(context);
   const page = await context.newPage();
@@ -117,6 +117,14 @@ async function session(
     },
     live: () => page.evaluate(() => (window as unknown as { __gl: { textures: number; framebuffers: number } }).__gl),
     frames: () => page.evaluate(() => (window as unknown as { __raf: number }).__raf),
+    /** Makes the scene's box another size and back: the canvas asks for a frame of its own accord, long after the edit. */
+    reflow: async () => {
+      await page.evaluate(() => ((document.getElementById('stage') as HTMLElement).style.width = '700px'));
+      await page.waitForTimeout(400);
+      await page.evaluate((width) => ((document.getElementById('stage') as HTMLElement).style.width = `${width}px`), WIDTH);
+      await page.waitForTimeout(400);
+      return settledCanvas(page, '#stage canvas');
+    },
     /** The frames requested while nothing happens for `ms` milliseconds. */
     idle: async (ms) => {
       const before = await page.evaluate(() => (window as unknown as { __raf: number }).__raf);
@@ -237,6 +245,9 @@ describe('effects that apply to one layer', () => {
   }, 120_000);
 
   it('a no-op effect on a layer with a screen or multiply blend leaves the picture as it was', async () => {
+    // The text lockup ignores its stored blend, so every row here draws it normally. The multiply row
+    // proves nothing about multiply: three.js 0.184 refuses MultiplyBlending without premultipliedAlpha
+    // and draws with the previous blend function (a known defect of the engine, tracked in ROADMAP.md).
     for (const blend of ['screen', 'multiply', 'add']) {
       const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 't' });
       const plain = (await draw(scene([gradient(), text({ blend })]))).picture;
@@ -257,8 +268,9 @@ describe('effects that apply to one layer', () => {
       const plain = (await draw(scene([gradient(), noise(blend)]))).picture;
       const scoped = (await draw(scene([gradient(), noise(blend), noop]))).picture;
       expect(difference(scoped, plain).share, blend).toBeLessThan(0.002);
-      // Positive controls where the layer is visible under that blend (a noise field multiplied over
-      // the gradient is not): the blend changes the picture, and a real effect changes it further.
+      // Multiply is inert for every content layer in three.js 0.184 (it refuses MultiplyBlending without
+      // premultipliedAlpha and keeps the previous blend function), so the picture equals a normal blend
+      // and there is nothing to control; the equality above holds trivially for that row. Tracked in ROADMAP.md.
       if (blend === 'multiply') continue;
       const normal = (await draw(scene([gradient(), noise('normal')]))).picture;
       expect(difference(plain, normal).differing, `${blend} differs from normal`).toBeGreaterThan(1000);
@@ -321,14 +333,19 @@ describe('effects that apply to one layer', () => {
       expect(difference(await edits.show(withImage), fresh.withImage).differing).toBe(0);
     }, 240_000);
 
-    it('in development under StrictMode (effects mounted, unmounted and mounted again): same pictures, nothing left behind, no frame loop', async () => {
-      const low = scene([gradient(), noise(0.1)]);
-      const high = scene([gradient(), noise(0.9)]);
+    it('in development under StrictMode (effects mounted, unmounted and mounted again): same pictures with an effect on one layer, nothing left behind, no frame loop', async () => {
+      const targeted = (intensity: number) => scene([gradient(), noise(intensity), layer('px', 'pixelate', { granularity: 24 }, { target: 'n' })]);
+      const [low, high] = [targeted(0.1), targeted(0.9)];
       const fresh = { low: (await draw(low)).picture, high: (await draw(high)).picture };
+      expect(difference(fresh.low, fresh.high).differing).toBeGreaterThan(1000);
       const edits = await session(low, { dev: true });
+      const first = await edits.live();
       for (const [name, next] of [['high', high], ['low', low], ['high', high], ['low', low]] as const) {
         expect(difference(await edits.show(next), fresh[name]).differing, name).toBe(0);
       }
+      const after = await edits.live();
+      expect(after.textures).toBeLessThanOrEqual(first.textures);
+      expect(after.framebuffers).toBeLessThanOrEqual(first.framebuffers);
       expect(await edits.idle(800), 'frames requested while nothing changes').toBe(0);
     }, 240_000);
 
@@ -346,6 +363,38 @@ describe('effects that apply to one layer', () => {
       expect(await edits.idle(800), 'idle after the same scene again').toBe(0);
     }, 240_000);
   });
+
+  describe('scoped text with a stored blend (the text lockup ignores it)', () => {
+    const scopedText = (blend: string) => scene([gradient(), text({ blend }), layer('vg', 'vignette', { darkness: 0 }, { target: 't' })]);
+
+    it('a frame drawn long after the edit draws the text normally, deterministically (fails on main every time)', async () => {
+      const plain = (await draw(scene([gradient(), text()]))).picture;
+      for (const blend of ['add', 'screen']) {
+        const edits = await session(scopedText(blend));
+        expect(difference(await edits.reflow(), plain).share, `${blend} after a reflow`).toBeLessThan(0.002);
+      }
+    }, 240_000);
+
+    it('a blend changed in a mounted scene never changes the picture of the text', async () => {
+      const plain = (await draw(scene([gradient(), text()]))).picture;
+      const edits = await session(scopedText('normal'));
+      for (const blend of ['add', 'screen', 'normal', 'overlay']) {
+        await edits.show(scopedText(blend));
+        expect(difference(await edits.reflow(), plain).share, blend).toBeLessThan(0.002);
+      }
+    }, 240_000);
+  });
+
+  it('adds and removes an effect that applies to one layer in a mounted scene (on, off, on)', async () => {
+    const without = scene([gradient(), layer('n', 'noiseFill', { intensity: 0.9 }, { blend: 'add' })]);
+    const withEffect = scene([...(without.layers as Raw[]), pixelate('n', 24)]);
+    const fresh = { without: (await draw(without)).picture, withEffect: (await draw(withEffect)).picture };
+    expect(difference(fresh.without, fresh.withEffect).differing).toBeGreaterThan(1000);
+    const edits = await session(without);
+    for (const [name, next] of [['withEffect', withEffect], ['without', without], ['withEffect', withEffect], ['without', without]] as const) {
+      expect(difference(await edits.show(next), fresh[name]).differing, name).toBe(0);
+    }
+  }, 240_000);
 
   it('on a phone the step down leaves out a heavy effect of a group, and the layer is drawn plainly', async () => {
     const bloom = layer('bl', 'bloom', { intensity: 2.5, threshold: 0.1, radius: 0.9 }, { target: 't' });
