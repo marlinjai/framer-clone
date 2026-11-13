@@ -6,6 +6,8 @@
 // work out what the GPU would do with it, so they fail on the old mapping.
 
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   AdditiveBlending,
   CustomBlending,
@@ -143,5 +145,22 @@ describe('the blend actually set follows the mode, in any order', () => {
     } finally {
       console.error = original;
     }
+  });
+});
+
+describe('every layer that applies a blend draws multiply from premultiplied colour', () => {
+  // Their shaders are strings inside React components, so the guard reads the sources: a layer that loses the
+  // uniform or the premultiply line would multiply plain colour and brighten what it does not cover.
+  const dir = path.resolve(__dirname, '../layers');
+  it.each(['noiseFill', 'gradient', 'shape', 'image'])('%s', (name) => {
+    const source = fs.readFileSync(path.join(dir, `${name}.tsx`), 'utf8');
+    expect(source, 'declares the uniform').toMatch(/uniform float uPremultiply;/);
+    expect(source, 'starts it at 0').toMatch(/uPremultiply: \{ value: 0 \}/);
+    const colourSpace = source.indexOf('#include <colorspace_fragment>');
+    const premultiply = source.indexOf('gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);');
+    const clampAlpha = source.indexOf('gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);');
+    expect(colourSpace, 'converts to the output colour space').toBeGreaterThan(-1);
+    expect(premultiply, 'premultiplies after the conversion, as the quad does').toBeGreaterThan(colourSpace);
+    expect(clampAlpha, 'clamps the alpha factor for multiply only, after the premultiply').toBeGreaterThan(premultiply);
   });
 });

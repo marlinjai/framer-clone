@@ -283,8 +283,20 @@ describe('effects that apply to one layer', () => {
     const withBackground = (layers: Raw[]): Raw => ({ ...scene(layers), background });
     const middle = (png: PNG) => px(png, WIDTH / 2, HEIGHT / 2);
 
-    it('a layer of a known colour over a known background gives the product, per channel, without a console error', async () => {
-      const result = await draw(withBackground([flat('#80c0ff')]));
+    const solidImage = (): string => {
+      const png = new PngWriter({ width: 64, height: 64 });
+      for (let i = 0; i < png.data.length; i += 4) png.data.set([0x80, 0xc0, 0xff, 255], i);
+      return `data:image/png;base64,${PngWriter.sync.write(png).toString('base64')}`;
+    };
+    const flatShape = (colour: string): Raw => layer('f', 'shape', { colorA: colour, colorB: colour, colorC: colour, colorD: colour, opacity: 1 }, { blend: 'multiply' });
+    const flatImage = (): Raw => layer('f', 'image', { src: solidImage(), opacity: 1, fit: 'cover' }, { blend: 'multiply' });
+
+    it.each([
+      ['gradient', () => flat('#80c0ff')],
+      ['shape', () => flatShape('#80c0ff')],
+      ['image', flatImage],
+    ] as const)('a %s layer of a known colour over a known background gives the product, per channel, without a console error', async (_name, make) => {
+      const result = await draw(withBackground([make()]));
       const [r, g, b] = middle(result.picture);
       // 0xff * 0x80 / 255, 0x80 * 0xc0 / 255, 0x40 * 0xff / 255 (the framebuffer holds encoded colour, so the product is of encoded values)
       expect.soft(Math.abs(r - 128), `red ${r}`).toBeLessThanOrEqual(3);
@@ -302,6 +314,7 @@ describe('effects that apply to one layer', () => {
       // Black at half alpha: destination x (1 - 0.5 + 0.5 x 0) = half the background.
       expect.soft(Math.abs(half[0] - bg[0] / 2), `red ${half[0]} of ${bg[0]}`).toBeLessThanOrEqual(3);
       expect.soft(Math.abs(half[1] - bg[1] / 2), `green ${half[1]} of ${bg[1]}`).toBeLessThanOrEqual(3);
+      expect.soft(Math.abs(half[2] - bg[2] / 2), `blue ${half[2]} of ${bg[2]}`).toBeLessThanOrEqual(3);
     }, 120_000);
 
     it('a scoped no-op effect on a multiply layer leaves the same product, and a real one changes it', async () => {
@@ -323,6 +336,31 @@ describe('effects that apply to one layer', () => {
         if (opacity === 0.5) expect.soft(difference(unscoped, plain).differing, 'half drawn differs from fully drawn').toBeGreaterThan(1000);
       }
     }, 180_000);
+
+    it('a noise field at full intensity (its alpha reaches 1.1): scoped and unscoped give the same picture', async () => {
+      const noise = layer('n', 'noiseFill', { intensity: 1 }, { blend: 'multiply' });
+      const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 'n' });
+      const unscoped = (await draw(withBackground([noise]))).picture;
+      const scoped = (await draw(withBackground([noise, noop]))).picture;
+      expect(difference(scoped, unscoped).share).toBeLessThan(0.002);
+      expect(difference(unscoped, (await draw(withBackground([]))).picture).differing, 'the noise multiplies something').toBeGreaterThan(1000);
+    }, 180_000);
+
+    it('a blend changed in a mounted scene, multiply to normal and back, with and without an effect on the layer', async () => {
+      const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 'f' });
+      const cases: Array<[string, Raw, Raw]> = [
+        ['unscoped', withBackground([flat('#80c0ff')]), withBackground([flat('#80c0ff', 1, { blend: 'normal' })])],
+        ['scoped', withBackground([flat('#80c0ff'), noop]), withBackground([flat('#80c0ff', 1, { blend: 'normal' }), noop])],
+      ];
+      for (const [name, multiply, normal] of cases) {
+        const fresh = { multiply: (await draw(multiply)).picture, normal: (await draw(normal)).picture };
+        expect(difference(fresh.multiply, fresh.normal).differing, `${name}: the two differ`).toBeGreaterThan(1000);
+        const edits = await session(multiply);
+        for (const [step, next] of [['normal', normal], ['multiply', multiply], ['normal', normal], ['multiply', multiply]] as const) {
+          expect(difference(await edits.show(next), fresh[step]).differing, `${name}: ${step}`).toBe(0);
+        }
+      }
+    }, 300_000);
   });
 
   it('a blend changed in a mounted scene drawn on demand (reduced motion) reaches the picture', async () => {

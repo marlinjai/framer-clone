@@ -109,6 +109,8 @@ const GRADIENT_FRAG = /* glsl */ `
     #include <colorspace_fragment>
     // Multiply blends premultiplied colour (see contentBlend): uPremultiply is 1 for it, 0 otherwise.
     gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
+    // Only multiply reads the alpha as a factor (one minus it); a value above 1 (the noise reaches 1.1) must not go negative there.
+    gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
   }
 `;
 

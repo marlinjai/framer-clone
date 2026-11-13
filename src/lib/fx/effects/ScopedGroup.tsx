@@ -71,7 +71,11 @@ const QUAD_FRAG = /* glsl */ `
     // Same as the content layers: converts to the output colour space when
     // drawn to the screen, the identity when drawn into the main composer.
     #include <colorspace_fragment>
-    if (uMode > 1.5) gl_FragColor.rgb *= gl_FragColor.a;
+    if (uMode > 1.5) {
+      // The layer's own multiply line, from the group's plain colour (alpha can be above 1 in a half-float buffer).
+      gl_FragColor.rgb *= clamp(gl_FragColor.a, 0.0, 1.0);
+      gl_FragColor.a = clamp(gl_FragColor.a, 0.0, 1.0);
+    }
   }
 `;
 
