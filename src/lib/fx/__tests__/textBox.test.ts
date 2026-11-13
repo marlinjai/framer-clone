@@ -230,6 +230,13 @@ describe('wrapText', () => {
     expect(wrapText('a\r\nb', 100, measure)).toEqual(['a', 'b']);
   });
 
+  it('never splits an emoji when it cuts a long word', () => {
+    const out = wrapText('😀😀😀😀😀😀', 45, measure);
+    expect(out.length).toBeGreaterThan(1);
+    expect(out.join('')).toBe('😀😀😀😀😀😀');
+    for (const l of out) expect(Array.from(l).every((c) => c === '😀')).toBe(true);
+  });
+
   it('cuts a word wider than the whole line, so nothing leaves the box', () => {
     expect(wrapText('abcdefghij', 40, measure)).toEqual(['abcd', 'efgh', 'ij']);
     expect(wrapText('x abcdefghij', 40, measure)).toEqual(['x', 'abcd', 'efgh', 'ij']);

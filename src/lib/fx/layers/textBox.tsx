@@ -47,11 +47,10 @@ interface TextBoxValues {
   parallax: number;
 }
 
-/** The texture is this wide in pixels at most; a larger font than `MAX_FONT_PX` shrinks the texture, not the text. */
+/** The text rectangle is this wide in pixels at most; a larger font than `MAX_FONT_PX` shrinks the texture, not the text. */
 const TEXTURE_WIDTH = 2048;
 const MAX_FONT_PX = 512;
 const MAX_TEXTURE_HEIGHT = 4096;
-const MIN_TEXTURE_WIDTH = 64;
 
 /** Where each of the nine anchors sits on the text's own rectangle: x from the left, y from the top, each 0 to 1. */
 export function anchorFractions(anchor: string): [number, number] {
@@ -77,7 +76,8 @@ export function wrapText(text: string, maxWidth: number, measure: Measure): stri
       continue;
     }
     let line = "";
-    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+    // Words break at spaces and tabs only (a non-breaking space stays inside its word).
+    for (const word of paragraph.split(/[ \t]+/).filter(Boolean)) {
       const candidate = line ? `${line} ${word}` : word;
       if (measure(candidate) <= maxWidth) {
         line = candidate;
@@ -85,15 +85,15 @@ export function wrapText(text: string, maxWidth: number, measure: Measure): stri
       }
       if (line) lines.push(line);
       line = "";
-      // A word wider than a line is cut into pieces that fit.
-      let rest = word;
-      while (rest && measure(rest) > maxWidth) {
+      // A word wider than a line is cut into pieces that fit, by whole characters (never inside a surrogate pair).
+      let rest = Array.from(word);
+      while (rest.length > 0 && measure(rest.join("")) > maxWidth) {
         let cut = 1;
-        while (cut < rest.length && measure(rest.slice(0, cut + 1)) <= maxWidth) cut++;
-        lines.push(rest.slice(0, cut));
+        while (cut < rest.length && measure(rest.slice(0, cut + 1).join("")) <= maxWidth) cut++;
+        lines.push(rest.slice(0, cut).join(""));
         rest = rest.slice(cut);
       }
-      line = rest;
+      line = rest.join("");
     }
     lines.push(line);
   }
@@ -108,6 +108,8 @@ export interface TextBoxLayout {
   canvasHeight: number;
   /** Padding around the text rectangle, so strokes and slanted glyph edges are not cut. */
   pad: number;
+  /** Width of the text rectangle in pixels: the canvas without its padding. It stands for the box's whole width. */
+  textWidth: number;
   fontPx: number;
   lines: string[];
 }
@@ -166,74 +168,100 @@ function spacedLine(
 }
 
 /**
- * Lay the text out and draw it. Returns the canvas and its layout. The canvas is
- * never zero-sized, and never larger than the texture limits, whatever the text.
+ * Lay the text out and draw it. Returns the canvas and its layout.
+ *
+ * The text rectangle (the canvas without its padding) stands for exactly the box's width, so the
+ * glyphs are `size` of the scene's height whatever the padding, stroke or letter spacing is. How many
+ * pixels that is may be lowered, never the world size: a font above `MAX_FONT_PX`, or text that would
+ * need a canvas taller than `MAX_TEXTURE_HEIGHT`, is drawn with fewer pixels per world unit (a softer
+ * texture) instead of being cut or drawn too big. The canvas is never zero-sized.
  */
 export function drawTextBox(spec: TextBoxSpec): { canvas: HTMLCanvasElement; layout: TextBoxLayout } {
   const boxWidth = Math.max(1e-6, spec.width * spec.viewportWidth);
-  // World height of one line of text (before the line spacing), and how many pixels that is.
   const unitsPerFont = spec.size * spec.viewportHeight;
-  let canvasWidth = TEXTURE_WIDTH;
-  let fontPx = (unitsPerFont * canvasWidth) / boxWidth;
-  if (fontPx > MAX_FONT_PX) {
-    canvasWidth = Math.max(MIN_TEXTURE_WIDTH, Math.round((TEXTURE_WIDTH * MAX_FONT_PX) / fontPx));
-    fontPx = (unitsPerFont * canvasWidth) / boxWidth;
-  }
-  fontPx = Math.max(1, fontPx);
-
-  const spacing = spec.letterSpacing * fontPx;
-  const strokePx = spec.strokeWidth * fontPx;
-  const pad = Math.ceil(fontPx * 0.25 + strokePx + Math.abs(spacing));
-  const textWidth = Math.max(1, canvasWidth - 2 * pad);
-
   const canvas = document.createElement("canvas");
-  canvas.width = canvasWidth;
+  canvas.width = 4;
   canvas.height = 4;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("2d canvas context unavailable");
 
-  ctx.font = fontOf(spec, fontPx);
-  const measure: Measure = (t) => spacedLine(ctx, t, 0, 0, spacing, "measure");
-  let lines = wrapText(spec.text, textWidth, measure);
-  const lineHeightPx = fontPx * spec.lineHeight;
-  const maxLines = Math.max(1, Math.floor((MAX_TEXTURE_HEIGHT - 2 * pad) / lineHeightPx));
-  if (lines.length > maxLines) lines = lines.slice(0, maxLines);
+  /** Everything that depends on the pixel width of the text rectangle. */
+  const layoutAt = (textWidth: number) => {
+    const fontPx = Math.max(1, (unitsPerFont * textWidth) / boxWidth);
+    const spacing = spec.letterSpacing * fontPx;
+    const strokePx = spec.strokeWidth * fontPx;
+    const pad = Math.ceil(fontPx * 0.25 + strokePx + Math.abs(spacing));
+    ctx.font = fontOf(spec, fontPx);
+    const measure: Measure = (t) => spacedLine(ctx, t, 0, 0, spacing, "measure");
+    const lines = wrapText(spec.text, textWidth, measure);
+    const lineHeightPx = fontPx * spec.lineHeight;
+    return { textWidth, fontPx, spacing, strokePx, pad, lines, lineHeightPx, height: Math.max(4, Math.ceil(lines.length * lineHeightPx + 2 * pad)) };
+  };
 
-  const canvasHeight = Math.max(4, Math.ceil(lines.length * lineHeightPx + 2 * pad));
-  // Resizing a canvas resets its state, so the font is set again after it.
+  let textWidth = TEXTURE_WIDTH;
+  let laid = layoutAt(textWidth);
+  if (laid.fontPx > MAX_FONT_PX) {
+    textWidth = Math.max(8, Math.round((TEXTURE_WIDTH * MAX_FONT_PX) / laid.fontPx));
+    laid = layoutAt(textWidth);
+  }
+  // Too tall for a texture: fewer pixels per world unit, the text itself unchanged (it wraps the same way).
+  for (let attempt = 0; attempt < 12 && laid.height > MAX_TEXTURE_HEIGHT && textWidth > 8; attempt++) {
+    textWidth = Math.max(8, Math.floor(textWidth * (MAX_TEXTURE_HEIGHT / laid.height) * 0.95));
+    laid = layoutAt(textWidth);
+  }
+  // Only a text that cannot fit at any size is cut, at the last line that does.
+  const maxLines = Math.max(1, Math.floor((MAX_TEXTURE_HEIGHT - 2 * laid.pad) / laid.lineHeightPx));
+  const lines = laid.lines.slice(0, maxLines);
+
+  const canvasWidth = textWidth + 2 * laid.pad;
+  const canvasHeight = Math.max(4, Math.min(MAX_TEXTURE_HEIGHT, Math.ceil(lines.length * laid.lineHeightPx + 2 * laid.pad)));
+  // Resizing a canvas resets its state, so everything is set again after it.
+  canvas.width = canvasWidth;
   canvas.height = canvasHeight;
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-  ctx.font = fontOf(spec, fontPx);
+  ctx.font = fontOf(spec, laid.fontPx);
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
   ctx.lineJoin = "round";
   ctx.miterLimit = 2;
-  ctx.lineWidth = strokePx * 2;
+  ctx.lineWidth = laid.strokePx * 2;
   ctx.fillStyle = spec.color;
   ctx.strokeStyle = spec.strokeColor;
 
+  const place = (line: string, i: number) => {
+    const width = spacedLine(ctx, line, 0, 0, laid.spacing, "measure");
+    const x = spec.align === "left" ? laid.pad : spec.align === "right" ? canvasWidth - laid.pad - width : laid.pad + (textWidth - width) / 2;
+    return { x, y: laid.pad + laid.lineHeightPx * (i + 0.5) };
+  };
+  // Every outline goes under every fill, so a tight line height never paints one line's outline over the last one's letters.
+  if (laid.strokePx > 0) {
+    lines.forEach((line, i) => {
+      if (line === "") return;
+      const { x, y } = place(line, i);
+      spacedLine(ctx, line, x, y, laid.spacing, "stroke");
+    });
+  }
   lines.forEach((line, i) => {
     if (line === "") return;
-    const y = pad + lineHeightPx * (i + 0.5);
-    const width = spacedLine(ctx, line, 0, 0, spacing, "measure");
-    const x = spec.align === "left" ? pad : spec.align === "right" ? canvasWidth - pad - width : pad + (textWidth - width) / 2;
-    // The outline goes under the fill, so it reads as an outside stroke.
-    if (strokePx > 0) spacedLine(ctx, line, x, y, spacing, "stroke");
-    spacedLine(ctx, line, x, y, spacing, "fill");
+    const { x, y } = place(line, i);
+    spacedLine(ctx, line, x, y, laid.spacing, "fill");
   });
 
-  return { canvas, layout: { canvasWidth, canvasHeight, pad, fontPx, lines } };
+  return { canvas, layout: { canvasWidth, canvasHeight, pad: laid.pad, textWidth, fontPx: laid.fontPx, lines } };
 }
 
-/** The mesh's offset from the anchor point, in world units, so the anchor of the text rectangle sits on the anchor point. */
+/**
+ * The mesh's offset from the anchor point, in world units, so the anchor of the text rectangle (the
+ * canvas without its padding) sits on the anchor point.
+ */
 export function anchorOffset(
   anchor: string,
   plane: { width: number; height: number },
   layout: Pick<TextBoxLayout, "canvasWidth" | "canvasHeight" | "pad">,
 ): [number, number] {
   const [fx, fy] = anchorFractions(anchor);
-  const contentW = (plane.width * (layout.canvasWidth - 2 * layout.pad)) / layout.canvasWidth;
-  const contentH = (plane.height * (layout.canvasHeight - 2 * layout.pad)) / layout.canvasHeight;
+  const contentW = (plane.width * Math.max(1, layout.canvasWidth - 2 * layout.pad)) / layout.canvasWidth;
+  const contentH = (plane.height * Math.max(1, layout.canvasHeight - 2 * layout.pad)) / layout.canvasHeight;
   return [(0.5 - fx) * contentW, (fy - 0.5) * contentH];
 }
 
@@ -246,6 +274,7 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
 
   const meshRef = useRef<THREE.Mesh | null>(null);
   const driftRef = useRef<THREE.Group | null>(null);
+  const pullRef = useRef({ x: 0, y: 0 });
   const matRef = useRef<THREE.MeshBasicMaterial | null>(null);
 
   const built = useMemo(() => {
@@ -270,7 +299,8 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     tex.minFilter = THREE.LinearFilter;
     tex.magFilter = THREE.LinearFilter;
     tex.anisotropy = 4;
-    const planeWidth = v.width * vw * (layout.canvasWidth / (layout.canvasWidth - 2 * layout.pad));
+    // The text rectangle is the box's width; the padding hangs outside it.
+    const planeWidth = v.width * vw * (layout.canvasWidth / layout.textWidth);
     // Pixels are square: the plane keeps the canvas's proportions.
     const planeHeight = (planeWidth * layout.canvasHeight) / layout.canvasWidth;
     return { tex, layout, planeWidth, planeHeight };
@@ -311,16 +341,25 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     if (drift) {
       const s = ctx.reduce ? 1 : THREE.MathUtils.lerp(1.05, 1.0, e);
       drift.scale.set(s, s, 1);
-      const tx = ctx.reduce ? 0 : pointer.x * v.parallax;
-      const ty = ctx.reduce ? 0 : pointer.y * v.parallax * 0.62;
-      drift.position.x += (tx - drift.position.x) * 0.05;
-      drift.position.y += (ty - drift.position.y) * 0.05;
+      // The pointer's pull eases in; the box's own position is always where the settings put it.
+      const pull = pullRef.current;
+      if (ctx.reduce) {
+        // Reduced motion (also when it is switched on while the page is open) holds the final state at once.
+        pull.x = 0;
+        pull.y = 0;
+      } else {
+        pull.x += (pointer.x * v.parallax - pull.x) * 0.05;
+        pull.y += (pointer.y * v.parallax * 0.62 - pull.y) * 0.05;
+      }
+      drift.position.set(baseX + pull.x, baseY + pull.y, 0);
     }
   });
 
+  // The drift group (position by the pointer, scale) is outside the rotated one, so the pointer moves
+  // the text on the screen whatever the rotation is, and the scale settles about the anchor point.
   return (
-    <group position={[baseX, baseY, 0]} rotation={[0, 0, THREE.MathUtils.degToRad(v.rotation)]}>
-      <group ref={driftRef}>
+    <group ref={driftRef}>
+      <group rotation={[0, 0, THREE.MathUtils.degToRad(v.rotation)]}>
         <mesh
           position={[offset[0], offset[1], 0]}
           ref={(m) => {

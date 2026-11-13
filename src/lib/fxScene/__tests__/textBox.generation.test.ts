@@ -39,7 +39,9 @@ describe('a stored scene with a text box, through the generator\'s reader', () =
     const layer = read.fx.scene.layers.find((l) => l.id === added.layerId)!;
     expect(layer.type).toBe('textBox');
     expect(layer.params.text.value).toBe('Hello\nthere');
-    expect(JSON.stringify(serializeScene(read.fx.scene))).toBe(JSON.stringify(serializeScene((parseFxProp(set.stored) as { ok: true; fx: { scene: never } }).fx.scene)));
+    const direct = parseFxProp(set.stored);
+    if (!direct.ok) throw new Error(direct.message);
+    expect(JSON.stringify(serializeScene(read.fx.scene))).toBe(JSON.stringify(serializeScene(direct.fx.scene)));
   });
 
   it('a value out of range is moved into it with a note, as for every other layer', () => {
