@@ -37,10 +37,10 @@
  * the probe passed (e.g. the GPU process crashes mid-session).
  */
 
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { EffectComposer } from "@react-three/postprocessing";
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Object3D } from "three";
+import type { Camera, Object3D } from "three";
 
 import { planPipeline } from "./pipeline";
 import { MAIN_PRIORITY, MainRender, ScopedGroup, setChannel, useHeldComposer } from "./effects/ScopedGroup";
@@ -86,6 +86,27 @@ interface LumitraSceneProps {
    * a canvas sized from it is drawn too large or too small inside the same transform.
    */
   layoutSize?: boolean;
+  /**
+   * The editor only: receives the probe once the context exists (and `null` when it goes). Passed
+   * from the first render and never changed, because it holds every content layer in an identity
+   * group (the one a scene with targeted effects has anyway), and switching that on later would
+   * mount every layer again. The published page never passes it, so its scene graph is unchanged.
+   */
+  onProbe?: (probe: SceneProbe | null) => void;
+}
+
+/**
+ * What the editor's canvas needs to pick a layer (see ./pick, which holds all of the logic): the
+ * camera and canvas of the live context, and the content layers that are drawn now with the
+ * group each one is held in, back to front. Handed over by `onProbe`, and only when asked for.
+ */
+export interface SceneProbe {
+  camera: Camera;
+  canvas: HTMLCanvasElement;
+  /** The drawn content layers in stored order (back to front), each with its identity group. */
+  layers: () => { layer: Layer; root: Object3D }[];
+  /** Draw a frame now (a scene held still under reduced motion draws only on a change). */
+  invalidate: () => void;
 }
 
 /** The canvas measured by its layout size, see `layoutSize`. */
@@ -93,6 +114,20 @@ const LAYOUT_SIZE = { offsetSize: true } as const;
 
 /** Why a scene stopped drawing, see `onFail`. */
 export type SceneFailure = "no-webgl" | "renderer-error" | "context-lost";
+
+/** Inside the Canvas: hands the probe to the host while the context lives, and takes it back when it goes. */
+function ProbeBridge({ onProbe, layers }: { onProbe: (probe: SceneProbe | null) => void; layers: () => { layer: Layer; root: Object3D }[] }) {
+  const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
+  const invalidate = useThree((s) => s.invalidate);
+  const latest = useRef({ onProbe, layers });
+  latest.current = { onProbe, layers };
+  useEffect(() => {
+    latest.current.onProbe({ camera, canvas: gl.domElement, layers: () => latest.current.layers(), invalidate: () => invalidate() });
+    return () => latest.current.onProbe(null);
+  }, [camera, gl, invalidate]);
+  return null;
+}
 
 /** Inside the Canvas: reports once that a frame has been drawn. */
 function FirstFrame({ onFirstFrame }: { onFirstFrame: () => void }) {
@@ -182,7 +217,7 @@ class WebGLErrorBoundary extends Component<
   }
 }
 
-export function LumitraScene({ config, className, fallback, onFirstFrame, onFail, layoutSize = false }: LumitraSceneProps) {
+export function LumitraScene({ config, className, fallback, onFirstFrame, onFail, layoutSize = false, onProbe }: LumitraSceneProps) {
   const [objects, setObjects] = useState<Record<string, Object3D>>({});
   const reduce = useMemo(() => readPrefersReducedMotion(), []);
 
@@ -274,6 +309,12 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
     }
   }, [groups.length]);
   const layerById = new Map(config.layers.map((l) => [l.id, l]));
+  // The drawn content layers, for the probe: paired with their groups when a click asks, not here,
+  // because the groups are set by their refs after this render.
+  const drawnContent = useRef<Layer[]>([]);
+  drawnContent.current = contentLayers;
+  // A host that picks layers holds every content layer in its group from the start.
+  const wrapped = scoped || onProbe !== undefined;
 
   const dprClamp = perfLow ? ([1, 1] as [number, number]) : config.dpr;
 
@@ -316,9 +357,15 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
                 has nothing left to report and is unmounted. */}
             {!perfLow && <FrameRateMonitor onDecline={() => setPerfLow(true)} />}
             {onFirstFrame && <FirstFrame onFirstFrame={onFirstFrame} />}
+            {onProbe && <ProbeBridge onProbe={onProbe} layers={() =>
+                  drawnContent.current.flatMap((layer) => {
+                    const root = roots.current.get(layer.id);
+                    return root ? [{ layer, root }] : [];
+                  })
+                } />}
             <color attach="background" args={[config.background]} />
             {contentLayers.map((layer) =>
-              !scoped ? (
+              !wrapped ? (
                 <LayerHost key={layer.id} layer={layer} ctx={ctx} />
               ) : (
                 <ScopedRoot key={layer.id} layer={layer} ctx={ctx} roots={roots} channel={channelOf.get(layer.id)} />

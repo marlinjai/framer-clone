@@ -21,6 +21,10 @@
 //    the layout so the zoom does not scale it twice, and every change of the scene
 //    updates the same context. What it is doing is reported to the store, for the
 //    FX section of the panel. Under reduced motion the engine holds one still frame.
+//    On the canvas the layer also takes clicks that pick one layer of the scene, outlines the
+//    picked one and drags a picked text box (./useCanvasPick, ./FxPickOutline). That code is the
+//    editor-only `@/lib/fx/pick`, which this file loads by an import of its own, only here: the
+//    published island never reaches it.
 //  - Preview (`FxPreviewLayer`): the published island's own steps, from the shared
 //    src/lib/fxScene/start.ts: reduced motion, the WebGL probe, the start
 //    (`settled`, `visible`, `immediate`), then the engine. Only inside a preview
@@ -32,7 +36,7 @@
 // What the layer is doing is written on the layer as `data-fc-fx-state`, with the
 // published page's own state names (src/lib/fxScene/marker.ts).
 
-import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { FX_LAYER_STYLE, holdFxBox } from '@/lib/fxScene/box';
@@ -41,6 +45,13 @@ import { parseFxProp } from '@/lib/fxScene/fxScene';
 import { FX_LAYER_ATTR, FX_STATE_ATTR, type FxState } from '@/lib/fxScene/marker';
 import { FX_REDUCED_MOTION_QUERY, FX_WARNING, fxStartDecision, whenStarted, type FxStartSettings } from '@/lib/fxScene/start';
 import { editorSiteImageUrl } from '@/lib/site/siteImages';
+import { FxPickOutline } from './FxPickOutline';
+import { useCanvasPick, type CanvasPickTools } from './useCanvasPick';
+
+/** What the live scene hands out for picking (a type: the editor-only pick entry is loaded by a dynamic import below). */
+const loadPick = () => import('@/lib/fx/pick');
+type PickModule = Awaited<ReturnType<typeof loadPick>>;
+type SceneProbe = Parameters<PickModule['createPicker']>[0];
 
 /** A preview frame's one-context claim. Without it (any other use of the headless renderer) no scene is drawn. */
 export const FxPreviewContext = React.createContext<FxClaim | null>(null);
@@ -92,11 +103,16 @@ interface DrawnLayerProps {
   /** The box's own inline position, when it has one: the layer leaves it alone. */
   ownPosition: unknown;
   onStatus?: (status: LayerStatus) => void;
+  /** The canvas's: what picking a layer needs from the live scene. Fixed for the life of the layer. */
+  onProbe?: (probe: SceneProbe | null) => void;
+  /** The scene layer's element, for a caller that works on it (the canvas's picking). */
+  elementRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 /** The layer itself, and the engine in it while `draws`. */
-function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId, ownPosition, onStatus }: DrawnLayerProps) {
-  const layerRef = useRef<HTMLDivElement>(null);
+function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId, ownPosition, onStatus, onProbe, elementRef }: DrawnLayerProps) {
+  const ownRef = useRef<HTMLDivElement>(null);
+  const layerRef = elementRef ?? ownRef;
   const [status, setStatus] = useState<LayerStatus>({ state: idle });
   const handle = useRef<{ update: (stored: unknown) => void; teardown: () => void } | null>(null);
   const latest = useRef({ stored, projectId, onStatus, ownPosition });
@@ -155,6 +171,7 @@ function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId,
           if (stopped) return;
           handle.current = renderFxScene(layer, latest.current.stored, {
             layoutSize,
+            onProbe,
             resolveImage: (src) => {
               const id = latest.current.projectId;
               return id ? editorSiteImageUrl(id, src) : null;
@@ -210,23 +227,53 @@ export interface FxLayerProps {
 export const FxCanvasLayer = observer(function FxCanvasLayer({ stored, ownPosition }: FxLayerProps) {
   const { editorUI } = useStore();
   const draws = useFxClaim(editorUI.fxLiveClaim, true);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const [probe, setProbe] = useState<SceneProbe | null>(null);
+  const [pick, setPick] = useState<PickModule | null>(null);
+  // The editor-only pick code, by an import of its own: a chunk that does not arrive costs the
+  // picking and nothing else (the scene itself is the engine's import, in DrawnLayer).
+  useEffect(() => {
+    if (!draws) return;
+    let stopped = false;
+    loadPick()
+      .then((module) => {
+        if (!stopped) setPick(module);
+      })
+      .catch((error: unknown) => console.warn(FX_WARNING, 'Picking a layer on the canvas is not available.', error));
+    return () => {
+      stopped = true;
+    };
+  }, [draws]);
+  // Only while the scene really draws: a refused scene or a lost context leaves nothing to pick.
+  const live = draws && editorUI.fxLiveStatus.state === 'live';
+  const picker = useMemo(() => (live && probe && pick ? pick.createPicker(probe) : null), [live, probe, pick]);
+  const tools = useMemo<CanvasPickTools | null>(
+    () => (picker && pick ? { picker, pointerToNdc: pick.pointerToNdc, positionAfterDrag: pick.positionAfterDrag } : null),
+    [picker, pick],
+  );
+  useCanvasPick({ editorUI, layerRef, tools });
   return (
-    <DrawnLayer
-      stored={stored}
-      draws={draws}
-      idle="calm"
-      layoutSize
-      projectId={editorUI.currentProject?.id}
-      ownPosition={ownPosition}
-      onStatus={
-        draws
-          ? (status) =>
-              editorUI.reportFxLive(
-                status.state === 'live' ? { state: 'live' } : status.state === 'off' ? { state: 'off', reason: status.reason ?? 'renderer-error' } : { state: 'loading' },
-              )
-          : undefined
-      }
-    />
+    <>
+      <DrawnLayer
+        stored={stored}
+        draws={draws}
+        idle="calm"
+        layoutSize
+        projectId={editorUI.currentProject?.id}
+        ownPosition={ownPosition}
+        elementRef={layerRef}
+        onProbe={setProbe}
+        onStatus={
+          draws
+            ? (status) =>
+                editorUI.reportFxLive(
+                  status.state === 'live' ? { state: 'live' } : status.state === 'off' ? { state: 'off', reason: status.reason ?? 'renderer-error' } : { state: 'loading' },
+                )
+            : undefined
+        }
+      />
+      {picker && <FxPickOutline editorUI={editorUI} layerRef={layerRef} boundsOf={picker.boundsOf} />}
+    </>
   );
 });
 

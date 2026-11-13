@@ -24,7 +24,7 @@
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-import { LumitraScene, type SceneFailure } from '@/lib/fx';
+import { LumitraScene, type SceneFailure, type SceneProbe } from '@/lib/fx';
 import type { SceneConfig } from '@/lib/fx/format';
 import { FX_FADE_MS, FX_LAYER_STYLE, holdFxBox } from './box';
 import { parseFxProp } from './fxScene';
@@ -54,6 +54,11 @@ export interface RenderFxOptions {
    * where the rectangle is the scaled size and the canvas would be drawn too large.
    */
   layoutSize?: boolean;
+  /**
+   * The editor's canvas only: receives what picking a layer needs while the context lives
+   * (`null` when it goes). Fixed for the life of the root: it changes how the scene is held.
+   */
+  onProbe?: (probe: SceneProbe | null) => void;
 }
 
 export interface FxSceneHandle {
@@ -91,7 +96,7 @@ function loseContexts(layer: HTMLElement): void {
 }
 
 /** Draw `stored` into `layer`, which the caller owns and has placed. */
-export function renderFxScene(layer: HTMLElement, stored: unknown, { onLive, onOff, resolveImage, layoutSize }: RenderFxOptions): FxSceneHandle {
+export function renderFxScene(layer: HTMLElement, stored: unknown, { onLive, onOff, resolveImage, layoutSize, onProbe }: RenderFxOptions): FxSceneHandle {
   let root: Root | null = null;
   let done = false;
   // One per root: a scene that failed is not drawn again by a later update of the same root.
@@ -124,6 +129,7 @@ export function renderFxScene(layer: HTMLElement, stored: unknown, { onLive, onO
       createElement(LumitraScene, {
         config: withResolvedImages(parsed.fx.scene, resolveImage),
         layoutSize,
+        onProbe,
         // Asked for until it came: an update that arrives before the first frame must not lose it.
         ...(firstFrame
           ? {}
