@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-13
 title: "FX scene layers in the Layers panel: each layer of a scene is a row on the left, its settings alone on the right"
 summary: "Marlin compared Unicorn Studio's effects editor with Lumitra Sites on 2026-11-12: in Unicorn every effect and text layer is a row in the left layer list and the right panel adapts to the one picked; in Sites the scene's layers are a list buried inside the FX section of the properties panel. This plan makes each layer of an FX scene a derived row under its box in the Layers panel (select, hide, rename, delete, duplicate, reorder by keys and menu), keeps which layer is picked in the editor store, and shows only that layer's settings on the right, grouped, with the text lockup's three lines first. No change to the stored format (fx version 1) and nothing a published page or the gold preset draws, so the FX owner's pixel comparison with lumitra.co is untouched. Three slices; the first is about 2 to 3 agent days. Three product questions for Marlin: free text layers instead of the three-line lockup, effects nested under one layer, and picking layers on the canvas."
@@ -181,29 +181,80 @@ events, so it ships separately from the keyboard and menu paths.
 |---|---|---|---|
 | L1 `fx-layer-rows` | Derived Scene rows (front at top, Effects sub-group, Background pseudo-row), `selectedFxLayer` in the store with its fallbacks, the panel showing only the picked layer (existing generated controls, ungrouped), the scene-level FX section and summary, row actions by button, menu and keys (hide, rename, delete, duplicate, move), the shortcut routing, `moveFxLayerTo` and `duplicateFxLayer`. FxSceneSection's 38 tests move with the code; the score rows in `test/score/fx.panel.jsdom.score.tsx` are updated so the floor holds. | Unit: layerOps helpers (move within group, never across; duplicate id; limit). Store: pick, follow `setFxLayerType`, fallback after undo of add, preset, import, adoption, node and page change. Panel: picked layer only, notes cleared on undo. Layers panel: rows per breakpoint, no drop target, unreadable scene shows none. Shortcuts: Delete with a layer picked removes the layer and not the box (and undo restores both), Cmd+D, Escape. Four paths per the stateful-flow standard: forward, backtrack (rename then undo), resume (reload keeps the scene, picks nothing), re-entry (delete the picked layer, pick again). Hide and show: stored, published, one undo step; hiding god rays' source marks the god rays row off. Keyboard: Alt+Up and Alt+Down within a group and refused at its edge, F2 rename, Enter and Space pick, `aria-current` on the picked row, the live region announces a move and a refusal. Rows repeat in every breakpoint and the highlight follows the selected frame. Collaboration: an adopted snapshot keeps or drops the pick; with unsaved work and a layer picked, the "site changed" dialog, then "Load the newer version", leaves a valid pick or the box. Browser proof locally with dev-browser on the automation profile: pick each row of the hub hero scene, edit the headline, hide god rays, move bloom, undo all. | 2 to 3 |
 | L2 `fx-layer-panel-polish` | Setting groups (optional `group` on schema settings, presentation only), the Text group first with larger fields and focus on Enter, the Pointer group, kind change behind a confirmation, drag reorder within a group (Marlin verifies by hand), colour or thumbnail hint per row. | Schema groups do not change serialized output (golden test on every preset, including gold-noise-gradient). The same golden test covers the generator's schema documents (`fxGenerationDocs` in `src/lib/fxScene/generation.ts`) and the score's panel probe (`test/score/fx.panel.jsdom.score.tsx`): unchanged, or changed on purpose and said so in the pull request. `validateGeneration` unchanged; pixel oracle unchanged. `setFxLayerInteractivity` goes through `parseFx` like every other edit; tests prove its values are held by the flash safety clamps in `src/lib/fx/format.ts` at the top of every range, and that reduced motion with calm `frame` still draws one still frame with pointer settings on (the FX owner's F8 comparison is taken at that frame). | 2 to 3 |
-| L3 (only if Marlin says yes, see below) | Free text layers. | Oracle, format, generator, agent | 4 to 6 |
+| L3 `fx-text-box` | A new layer kind `textBox` (design below). Engine and schema only; its controls come from the generated panel. | Oracle and gold preset unchanged; the reader clamps every new setting; generator documents and `validateGeneration` know the kind; a scene with a text box round-trips; reduced motion draws one still frame. | 1.5 to 2 |
+| L4 `fx-scoped-effects` | Effects nested under one content layer (design below): engine first, then the rows and the "Applies to" control in the panel phase. | A scene without `target` draws pixel-identical (oracle, still frame); a target that is hidden, deleted or not content; the performance step down; limits. | 2 to 3 |
+| L5 `fx-canvas-pick` | Picking a layer on the live canvas, its outline, and dragging a text box (design below). | Pick on hit, miss falls through to the box, Live off means no pick, undo of a drag, one WebGL context. | 1.5 to 2 |
+## Decided by Marlin (2026-11-13)
 
-## For Marlin to decide
+Marlin approved this plan and the first slice L1 on 2026-11-13 (relayed by the coordinator, pane w2:p11). He also
+decided all three open questions the other way from this plan's recommendation: **free-positioned text, effects nested
+under individual layers, and picking layers on the canvas are in**, built in the same overnight run after L1, with a
+design review and a code review per slice and model tiers routed by complexity. The direction is his; the production
+gates stay: no deploy, no publish, no production write, no spending, no external message without his yes.
 
-1. **Text in a scene: keep the three-line lockup, or add free text layers?** Today scene text is one lockup of three
-   lines with seven fonts, drawn as pixels; Unicorn's text box has position, alignment, line height, letter spacing,
-   stroke and any font. Free text layers are engine work (a new layer kind, with the generator, the agent operation
-   and the reader taught about it), about 4 to 6 agent days. Recommendation: **keep the lockup for now** (L1 and L2
-   make its three lines prominent and editable), because real headlines belong in the box's HTML, which is what search
-   engines and screen readers read, and the lockup exists for the bright glow that god rays read. Add free text layers
-   only if you want decorative text effects as a product feature. Any change here is told to the FX owner first,
-   because the hub hero's pixel comparison with lumitra.co depends on the stored format and the gold preset.
-2. **Effects scoped to one layer** (Unicorn's "Mini Blur" nested under its text). The engine applies every effect to
-   the whole scene; only god rays read one layer. Scoping effects is a renderer change (render a layer to its own
-   target, then compose). Recommendation: **not now**; L1 shows the honest flat model, with "reads Lockup" on god rays.
-3. **Picking layers on the canvas** (click the glow to pick god rays). Needs hit testing inside the one live WebGL
-   context and only works while Live is on in one breakpoint. Recommendation: **not now**; the Layers panel is the way
-   in, and a picked layer can get an outline on the canvas later.
+### L3: free-positioned text (`textBox`)
+
+- A **new** layer kind `textBox` next to the existing `text` lockup, which is unchanged (the hub hero and the gold
+  preset keep drawing exactly what they draw). Format version stays 1: a new kind is additive.
+- Settings: `text` (string, up to `FX_LIMITS.text`, line breaks allowed), `font` (the existing `FONT_OPTIONS`),
+  `weight`, `size`, `lineHeight`, `letterSpacing`, `align` (left, centre, right), `color`, `strokeColor`,
+  `strokeWidth`, `position` (two numbers, the anchor point in the box, 0 to 1 each), `anchor` (nine points), `width`
+  (share of the box, text wraps inside), `rotation`, `opacity`, plus `reveal` and `parallax` as the lockup has them.
+- Drawn into a canvas texture like the lockup; it can be a god rays source like any content layer.
+- It is pixels, like the lockup: the panel's Text group says the box's HTML is what search engines and screen readers
+  read. The generator may use it only for decorative text, never for the page's real headline (its schema document
+  says so).
+- Conditions from the FX owner (2026-11-13), part of the slice: it is the 16th built-in kind, so `builtins.ts`, the
+  generator's schema documents, `validateGeneration`, the FX plan's "Safety" section (says 15) and
+  `test/score/data/fx-scenes.json` are updated together. Its strings fall under the `FX_LIMITS.text` clamp and are
+  plain text drawn to a canvas texture, never HTML. Fonts stay the lockup's fixed system stacks (`FONT_STACKS` in
+  `layers/text.tsx`); site fonts are not offered, because a canvas only draws a font the page has already loaded and the
+  published page would show a fallback the editor does not. A publish check warns when a scene has text layers and the
+  box has no HTML text children (scene text is gone without WebGL and under reduced motion with calm `background`).
+
+### L4: effects nested under one layer
+
+- An optional field `target` on a post layer: the id of a content layer. Absent means the whole scene, exactly as
+  today. Format version stays 1; the reader keeps `target` only when it names a content layer of the scene and drops
+  it otherwise with a note (as it does for god rays' source).
+- Renderer: content layers with targeted effects are drawn to their own render target, run through their own effect
+  chain in stored order, and composited back in their place; untargeted effects then run on the whole scene as today.
+  A scene with no `target` takes the existing path unchanged, so the pixel oracle and the still frame cannot move.
+- At most 4 targeted layers per scene (each costs a render target); the performance step down drops targeted chains
+  of heavy effects first. A hidden target leaves its effects out, like a hidden god rays source.
+- Layers panel: a targeted effect is a row nested under its layer (as in Unicorn); untargeted ones stay in Effects.
+  The panel gains "Applies to" (whole scene or a content layer) through a new `setFxLayerTarget` in `edit.ts`.
+  Moving a nested effect keeps it among its siblings.
+- Conditions from the FX owner (2026-11-13), part of the slice: every edit that changes ids keeps `target` right
+  (`removeFxLayer` of the targeted layer, `setFxLayerType` which gives a new id, `importFxScene`, `applyFxPreset`),
+  as `sourceLayerId` is handled. The reader refuses a target that names a post layer or the effect itself, not only a
+  dangling one. The cap on targeted groups is a new entry in `FX_LIMITS`, and their render targets are sized through
+  `textureSize.ts` and the pixel ratio range (phones are the limit). Because `pipeline.ts` is on every scene's path,
+  the still frame comparison runs for all four presets and the score scenes before and after, not only the gold
+  preset. When the `pipeline.ts` change merges, the FX owner is told so it can rerun the lumitra.co proof rehearsal
+  (`test/fx-proof`) on main.
+
+### L5: picking on the canvas
+
+- Only while Live is on, in its one breakpoint. A click on the box with the FX box or one of its layers selected
+  asks the live scene which content layer is under the pointer (a raycast against the objects layers already
+  register); a hit picks that layer, a miss leaves the box selected, a click on an HTML child selects that child as
+  today. Effects are picked from the panel or by their nested row.
+- The picked content layer gets an outline on the canvas (an HTML overlay sized from the layer's projected bounds,
+  not a second WebGL context).
+- A picked text box can be dragged on the canvas; the drag writes `position` through `setFxParam` as one undo step.
+- With Live off nothing changes: the canvas shows the box and its children.
+- Conditions from the FX owner (2026-11-13), part of the slice: the pick API is exported from an editor-only entry,
+  never reaching the published island's bundle (`fx.spec.ts` measures it). `noiseFill` and `gradient` fill the whole
+  frame, so only bounded layers (text, text box, image, shape) are pickable, else the click falls to the box. An HTML
+  child of the box lying over a layer wins the click (the children are in front of the scene). Pointer coordinates
+  map through the layout size, not the measured rectangle (the canvas is scaled by a CSS transform); tested at 60
+  percent zoom. Picking exists only in the frame that holds the live context.
 
 ## Decided here, say so if you disagree
 
-- Rows are derived from the stored scene, not new site nodes: no format change, no migration, the agent operation
-  `setFxScene` stays sufficient (per-layer agent operations are not needed for this).
+- Rows are derived from the stored scene, not new site nodes: no migration; the only format additions are the
+  additive `textBox` kind and the optional `target` (L3, L4), and the agent operation `setFxScene` stays sufficient.
 - Front at the top; post effects in their own sub-group; no move across groups.
 - The picked layer is session state in `EditorUIStore`, keyed by node id and layer id.
 - With a layer picked, Delete, Cmd+D and Escape act on the layer.
@@ -213,9 +264,33 @@ events, so it ships separately from the keyboard and menu paths.
 
 ## Ownership and gates
 
-- Planning and build owner: fx-layer-editor (Herdr pane w5:pR), in its own worktree. The FX owner lumitra-fx-build-2
-  (w5:pE) keeps F7 (the production proof) and F8 (the lumitra.co hero and its pixel comparison) and has confirmed it
-  holds no code branch on the files this plan touches.
-- Kept stable for the FX owner: the stored format (`fx` version 1, `SCENE_SCHEMA_VERSION` 1) and what the preset
-  `gold-noise-gradient` draws.
-- Nothing here deploys, publishes or writes to production. Implementation starts only after Marlin decides this plan.
+- Orchestrator and reviewer: fx-layer-editor (Herdr pane w5:pR). The FX owner lumitra-fx-build-2 (w5:pE) keeps F7
+  (the production proof) and F8 (the lumitra.co hero and its pixel comparison) and was told about the `textBox` kind
+  and the `target` field before they are built.
+- Kept stable for the FX owner: `fx` version 1, `SCENE_SCHEMA_VERSION` 1, every existing layer kind's settings and
+  defaults, and what `gold-noise-gradient` draws. The F4 pixel oracle must stay green in every slice.
+- Nothing here deploys, publishes or writes to production.
+- Rollback: an editor or published image from before L3 and L4 drops `textBox` layers and treats a targeted effect
+  as scene-wide, and its editor strips `target` on the next edit of such a scene (the writer stores only what it
+  knows). After a rollback, one edit changes such scenes for good. A rollback past these slices is therefore checked
+  for scenes that use them first.
+
+### Worker map for the overnight run (2026-11-13, deadline 10:01 CET)
+
+One owner per file at any time; each worker works in its own git worktree off `origin/main`. Builders run on the
+`complex` routing tier (Sonnet); each slice's design note and its diff are reviewed by a fresh agent on the
+`planning` tier (Opus) given only the diff and the repo's instructions, and every finding is fixed before the pull
+request opens. Pull requests land through land-pr on green checks.
+
+| Phase | Worker | Slice | Owns (files) | Starts |
+|---|---|---|---|---|
+| A | fx-l1-rows | L1 | `LayersPanel.tsx` and its tests, new `src/lib/layers/fxRows.ts`, `layerIcon.ts`, `EditorUIStore.ts`, `FxSceneSection.tsx` and its tests, `keyBindings.ts`, `deleteSelection.ts`, the editor key handler, `src/lib/fx/layerOps.ts`, `src/lib/fxScene/edit.ts`, `test/score/fx.panel.jsdom.score.tsx`, the FX plan's "The editor" sentence | now |
+| A | fx-l3-textbox | L3 | new `src/lib/fx/layers/textBox.tsx`, `src/lib/fx/schemas.ts` (the new kind only), `builtins.ts`, `src/lib/fxScene/generation.ts`, the generator's schema documents | now |
+| A | fx-l4-engine | L4 engine | `src/lib/fx/types.ts`, `format.ts`, `serialize.ts`, `pipeline.ts`, `LumitraScene.tsx`, `src/lib/fx/effects/` | now, design note reviewed before code |
+| B | fx-l2-panel | L2 plus the L4 panel part | `FxSceneSection.tsx`, `LayersPanel.tsx`, `fxRows.ts`, `edit.ts`, `schemas.ts` (groups) | when L1, L3 and L4 engine have merged |
+| C | fx-l5-pick | L5 | `src/components/fx/FxLayer.tsx`, `src/lib/fxScene/mount.tsx`, a new canvas overlay, the pick API in `LumitraScene.tsx` | when L4 engine and L1 have merged |
+
+Checkpoints (CET): 01:30 phase A running; 02:30 L4 design note reviewed; about 04:30 L1 and L3 open and reviewed;
+about 06:00 L4 engine open; phase B and C start as their inputs merge; 09:00 local browser proof on the automation
+profile (dev-browser) of every landed slice on the hub hero scene; 09:30 report to the coordinator with what landed,
+what is open and why.
