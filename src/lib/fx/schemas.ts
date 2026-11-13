@@ -134,6 +134,59 @@ export const gradientSchema: LayerSchemaDefinition = {
   defaultParams: GRADIENT_DEFAULT_PARAMS,
 };
 
+// --- layers/textBox.tsx
+
+/** The nine points of a text box that `position` places: row (top, middle, bottom) then column (left, centre, right). */
+export const TEXT_BOX_ANCHORS = [
+  "top left",
+  "top center",
+  "top right",
+  "middle left",
+  "center",
+  "middle right",
+  "bottom left",
+  "bottom center",
+  "bottom right",
+];
+
+/** The weights a text box may draw in. */
+export const TEXT_BOX_WEIGHTS = ["300", "400", "500", "600", "700", "800"];
+
+/** How the lines of a text box sit inside its width. */
+export const TEXT_BOX_ALIGNS = ["left", "center", "right"];
+
+const TEXT_BOX_DEFAULT_PARAMS: ParamsSchema = {
+  text: { type: "string", value: "Text", label: "text" },
+  font: { type: "select", value: "Helvetica Neue", options: FONT_OPTIONS, label: "font" },
+  weight: { type: "select", value: "500", options: TEXT_BOX_WEIGHTS, label: "weight" },
+  // Share of the scene's height one line of text is tall.
+  size: { type: "number", value: 0.08, min: 0.01, max: 0.5, step: 0.005, label: "size" },
+  lineHeight: { type: "number", value: 1.2, min: 0.8, max: 2.5, step: 0.05, label: "line height" },
+  letterSpacing: { type: "number", value: 0, min: -0.1, max: 0.5, step: 0.005, label: "letter spacing" },
+  align: { type: "select", value: "center", options: TEXT_BOX_ALIGNS, label: "align" },
+  color: { type: "color", value: "#dfe6ff" },
+  strokeColor: { type: "color", value: "#000000", label: "stroke color" },
+  // Share of the line's height; 0 draws no outline.
+  strokeWidth: { type: "number", value: 0, min: 0, max: 0.2, step: 0.005, label: "stroke width" },
+  // The anchor point in the scene: [0, 0] is its top left, [1, 1] its bottom right.
+  position: { type: "vec2", value: [0.5, 0.5], min: [0, 0], max: [1, 1], step: 0.005 },
+  anchor: { type: "select", value: "center", options: TEXT_BOX_ANCHORS, label: "anchor" },
+  // Share of the scene's width the text wraps inside.
+  width: { type: "number", value: 0.6, min: 0.05, max: 1, step: 0.01 },
+  // Degrees, turning the box about its anchor point.
+  rotation: { type: "number", value: 0, min: -180, max: 180, step: 1 },
+  opacity: { type: "number", value: 1, min: 0, max: 1, step: 0.01 },
+  reveal: { type: "number", value: 1, min: 0, max: 5, step: 0.1 },
+  parallax: { type: "number", value: 0, min: 0, max: 0.6, step: 0.01 },
+};
+
+export const textBoxSchema: LayerSchemaDefinition = {
+  type: "textBox",
+  kind: "content",
+  label: "Text Box",
+  defaultParams: TEXT_BOX_DEFAULT_PARAMS,
+};
+
 // --- effects/godRays.tsx
 
 const GOD_RAYS_DEFAULT_PARAMS: ParamsSchema = {
@@ -313,6 +366,7 @@ export const LAYER_SCHEMAS: readonly LayerSchemaDefinition[] = [
   imageSchema,
   shapeSchema,
   gradientSchema,
+  textBoxSchema,
   godRaysSchema,
   bloomSchema,
   bokehSchema,

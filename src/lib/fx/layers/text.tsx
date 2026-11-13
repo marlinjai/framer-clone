@@ -53,7 +53,8 @@ const FONT_STACKS: Record<string, string> = {
   "Courier New": '"Courier New", monospace',
 };
 
-function fontStack(name: string): string {
+/** The CSS stack of a font name; the text box layer draws with the same fixed stacks. */
+export function fontStack(name: string): string {
   return FONT_STACKS[name] ?? `"${name}", sans-serif`;
 }
 
