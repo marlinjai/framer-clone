@@ -122,7 +122,8 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
   const livePick = editorUI.fxLayerPick;
   const pickKey = livePick ? (livePick.kind === 'layer' ? `layer:${livePick.layerId}` : 'background') : '';
   const openedOn = React.useRef<string | null>(null);
-  React.useEffect(() => {
+  // Before paint: the menu must not be seen (or touched) for a frame with the box's own items.
+  React.useLayoutEffect(() => {
     if (!open) {
       openedOn.current = null;
       return;
@@ -189,7 +190,9 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
     return () => window.removeEventListener('keydown', onKey, true);
   }, [open, close]);
 
-  if (!open || !component || !page || !point) return null;
+  // The pick changed under the open menu: nothing is drawn or run from it (the effect above closes it).
+  const pickChanged = openedOn.current !== null && openedOn.current !== pickKey;
+  if (!open || !component || !page || !point || pickChanged) return null;
 
   const history = getHistoryStore();
   // Paste style writes Normal, so a state does not offer it.
@@ -202,6 +205,7 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
 
   const run = (item: ContextMenuItem) => {
     close();
+    if (openedOn.current !== null && openedOn.current !== pickKey) return;
     switch (item) {
       case 'selectParent': {
         const parent = parentOf(component, page);

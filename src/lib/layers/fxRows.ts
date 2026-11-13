@@ -165,7 +165,9 @@ export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType,
     // editor's notice shows a refusal wherever the person is.
     // Only where it displaces nothing: another notice may carry a button (Load the newer version, Undo, Show first values).
     const shown = editorUI.editorNotice;
-    if (!shown || shown.kind === 'refused') editorUI.setEditorNotice({ kind: 'refused', message: edit.message });
+    // Notices with an action: Load the newer version, Open the page, Undo the delete, Show first values.
+    const holdsAction = !!shown && (shown.kind === 'changedElsewhere' || shown.kind === 'previewState' || shown.kind === 'pageDeleted' || !!shown.preview || (shown.kind === 'newPage' && !!shown.pageId));
+    if (!holdsAction) editorUI.setEditorNotice({ kind: 'refused', message: edit.message });
     return { ok: false, message: edit.message };
   }
 

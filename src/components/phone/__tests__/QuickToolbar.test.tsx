@@ -232,4 +232,16 @@ describe('tree navigation', () => {
     expect(page.findComponent(fx.id)).toBeDefined();
     expect(layers().some((l) => l.id === picked.layerId)).toBe(false);
   });
+
+  it('an open parents list is closed when a layer of an FX scene is picked', () => {
+    const { editorUI, page, mobile } = setup();
+    const fx = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    editorUI.selectComponent(fx, mobile.breakpointId);
+    renderBar();
+    fireEvent.click(screen.getByTestId('quick-breadcrumb'));
+    expect(screen.queryAllByRole('menuitem').length).toBeGreaterThan(0);
+    act(() => editorUI.pickFxLayer(fx, { kind: 'layer', layerId: 'bloom' }, mobile.breakpointId));
+    expect(screen.queryByTestId('quick-breadcrumb')).toBeNull();
+    expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+  });
 });

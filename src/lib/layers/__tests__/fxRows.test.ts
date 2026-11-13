@@ -387,6 +387,24 @@ describe('the refusal notice', () => {
   });
 });
 
+describe('the refusal notice and the scene it was said about', () => {
+  it('a refusal and its banner are gone once the stored scene changes any other way (an undo, a panel edit, another writer)', () => {
+    runFxLayerAction(box, ui(), 'bloom', { type: 'move', delta: -1 });
+    expect(ui().editorNotice?.kind).toBe('refused');
+    const other = toggleFxLayer(stored(), 'grain');
+    if (!other.ok) throw new Error(other.message);
+    box.setProps({ [FX_PROP]: other.stored });
+    expect(ui().editorNotice).toBeUndefined();
+    expect(ui().fxLayerNotice).toBeUndefined();
+  });
+
+  it('a refusal is shown over a notice without a button, and never over one that has a button', () => {
+    ui().setEditorNotice({ kind: 'missingPage', message: 'That page is gone.' });
+    runFxLayerAction(box, ui(), 'nope', { type: 'delete' });
+    expect(ui().editorNotice?.kind).toBe('refused');
+  });
+});
+
 describe('the four paths', () => {
   it('forward: pick, hide, move, rename, each one undo step, the pick staying valid throughout', () => {
     pickLayer('bloom');

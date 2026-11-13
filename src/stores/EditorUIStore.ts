@@ -965,6 +965,25 @@ const EditorUIStore = types.model('EditorUI', {
   // outcome rather than each way there covers the ways nobody listed. Another frame
   // of the same node keeps the state.
   afterCreate() {
+    // A refusal of a layer action is about the scene it was said about: once the stored scene is another
+    // one (an undo, an edit in the panel, another writer), the message and its banner are gone.
+    addDisposer(
+      self,
+      reaction(
+        () => {
+          const notice = self.fxLayerNotice;
+          if (!notice?.problem) return false;
+          const box = self.currentPage?.findComponent(notice.componentId);
+          return JSON.stringify((box?.props as Record<string, unknown> | undefined)?.fx ?? null) !== notice.about;
+        },
+        (stale) => {
+          if (!stale) return;
+          const notice = self.fxLayerNotice;
+          if (self.editorNotice?.kind === 'refused' && self.editorNotice.message === notice?.text) self.setEditorNotice(undefined);
+          self.setFxLayerNotice(undefined);
+        },
+      ),
+    );
     // A preview names states of one page: another page, or another project, starts from
     // first values, however the editor got there.
     addDisposer(

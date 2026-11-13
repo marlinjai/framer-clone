@@ -286,6 +286,9 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
 
   // A new selection closes any open popover.
   React.useEffect(() => setPanel(null), [component?.id]);
+  // So does a change of what is picked inside an FX scene box: the parents list belongs to the box.
+  const pickedKey = editorUI.fxLayerPick ? (editorUI.fxLayerPick.kind === 'layer' ? editorUI.fxLayerPick.layerId : 'background') : '';
+  React.useEffect(() => setPanel(null), [pickedKey]);
 
   // The spacing handles keep out from under the toolbar (SpacingHandlesLayer
   // treats its rect as an obstacle), so they re-measure whenever it moves,
