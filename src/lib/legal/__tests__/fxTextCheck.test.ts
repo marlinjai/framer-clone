@@ -32,6 +32,19 @@ describe('the FX text publish warning', () => {
     expect(fxTextWarning(box(lockupScene, [{ id: 'h', type: 'h1', props: {}, bindings: { children: { source: 'x' } } }]))).toBeNull();
     expect(fxTextWarning(box(lockupScene, [{ id: 'n', type: 'p', props: { children: 7 } }]))).toBeNull();
   });
+  it('counts text held in the box\'s own props.children, bound or numeric', () => {
+    const own = (props: Record<string, unknown>, bindings?: unknown) => ({
+      id: 'b',
+      type: 'div',
+      props: { 'data-fx': 'scene', fx: lockupScene, ...props },
+      ...(bindings ? { bindings } : {}),
+      children: [],
+    });
+    expect(fxTextWarning(own({ children: 'Hello' }))).toBeNull();
+    expect(fxTextWarning(own({ children: 7 }))).toBeNull();
+    expect(fxTextWarning(own({}, { children: { source: 'x' } }))).toBeNull();
+    expect(countFxBoxesWithoutHtmlText(own({ children: '  ' }))).toBe(1);
+  });
   it('treats blank text as no text', () => {
     expect(countFxBoxesWithoutHtmlText(box(lockupScene, [text('   ')]))).toBe(1);
   });

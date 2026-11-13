@@ -21,15 +21,21 @@ interface TreeNode {
 /** Layer kinds that draw text into the scene as pixels. */
 const TEXT_KINDS = new Set(['text', 'textBox']);
 
+function nodeHoldsText(node: TreeNode): boolean {
+  const text = node.props?.children;
+  if (typeof text === 'string' && text.trim() !== '') return true;
+  return typeof text === 'number' || Boolean(node.bindings?.children);
+}
+
 function holdsHtmlText(box: TreeNode): boolean {
+  // The box's own `props.children` counts too, by the same rules as its descendants.
+  if (nodeHoldsText(box)) return true;
   const stack: TreeNode[] = [...(box.children ?? [])];
   let seen = 0;
   while (stack.length > 0 && seen < 20000) {
     const node = stack.pop()!;
     seen++;
-    const text = node.props?.children;
-    if (typeof text === 'string' && text.trim() !== '') return true;
-    if (typeof text === 'number' || node.bindings?.children) return true;
+    if (nodeHoldsText(node)) return true;
     if (Array.isArray(node.children)) stack.push(...node.children);
   }
   return false;
