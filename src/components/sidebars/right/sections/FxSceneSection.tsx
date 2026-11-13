@@ -537,8 +537,16 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     }
   };
 
+  // A refusal from a row, a menu or a key (the Layers panel's live region may be out of sight): shown here too.
+  const rowNotice = editorUI.fxLayerNotice;
+  const rowProblem = rowNotice && rowNotice.problem && rowNotice.componentId === component.id && rowNotice.about === sceneKey ? rowNotice.text : '';
   const messages = (
     <>
+      {rowProblem && rowProblem !== problem ? (
+        <p role="alert" className={ERROR}>
+          {rowProblem}
+        </p>
+      ) : null}
       {notes.length > 0 ? (
         <div role="status" className="flex min-w-0 flex-col gap-1 rounded-[6px] border border-border px-2 py-1.5">
           <span className={FIELD_LABEL}>Adjusted while saving</span>

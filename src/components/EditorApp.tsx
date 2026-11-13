@@ -230,13 +230,13 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         // A dialog, menu or gesture that handled Escape itself has the last
         // word; so does an active resize (its own Escape restores the size).
         if (e.defaultPrevented || ui.isResizing) return;
-        // A picked layer of an FX scene: Escape is back to the box.
-        if (routeFxLayerShortcut('clearSelection', ui)) return;
         // With focus outside every frame, Escape ends Interact.
         if (ui.interactOn) {
           ui.setSelectedTool(EditorTool.SELECT);
           return;
         }
+        // A picked layer of an FX scene: Escape is back to the box.
+        if (routeFxLayerShortcut('clearSelection', ui)) return;
         // In a definition, Escape first lets go of what was picked, as everywhere,
         // and then leaves. Opening one selects its root, which counts as nothing
         // picked, so Escape straight after entering goes back out.

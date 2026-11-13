@@ -216,16 +216,43 @@ describe('the keys act on the picked layer, never on the box', () => {
     expect(press('delete')).toBe(true);
     expect(page.findComponent(box.id)).toBeDefined();
     expect(names()).not.toContain('Bloom');
-    expect(ui().fxLayerPick).toBeUndefined();
+    // The pick moves to the neighbour in the group (toward the front first).
+    expect(ui().fxLayerPick).toMatchObject({ kind: 'layer', layerId: 'vignette' });
     expect(ui().selectedComponent?.id).toBe(box.id);
     undo();
     expect(JSON.stringify(stored())).toBe(before);
     expect(getHistoryStore()!.canUndo).toBe(false);
   });
 
-  it('after the layer is gone the next Delete (no pick left) is the box\'s again: it is never silently skipped', () => {
+  it('a held or repeated Delete walks down the layers and then lands on Background: it never removes the box', () => {
     pickLayer('bloom');
-    press('delete');
+    for (let i = 0; i < 12; i++) expect(press('delete')).toBe(true);
+    expect(page.findComponent(box.id)).toBeDefined();
+    expect(ui().fxLayerPick).toMatchObject({ kind: 'background' });
+  });
+
+  it('a layer button\'s Delete of the picked layer leaves the next Delete on a layer, not on the box', () => {
+    pickLayer('grain');
+    runFxLayerAction(box, ui(), 'grain', { type: 'delete' });
+    expect(ui().fxLayerPick).toMatchObject({ kind: 'layer', layerId: 'vignette' });
+    expect(press('delete')).toBe(true);
+    expect(page.findComponent(box.id)).toBeDefined();
+  });
+
+  it('a pick that went stale (an undo, another writer\'s save) swallows the next Delete once instead of deleting the box', () => {
+    const added = addFxLayer(stored(), 'shape');
+    if (!added.ok || !added.layerId) throw new Error('not added');
+    box.setProps({ [FX_PROP]: added.stored });
+    pickLayer(added.layerId);
+    undo();
+    expect(ui().fxLayerPick).toBeUndefined();
+    expect(press('delete')).toBe(true);
+    expect(page.findComponent(box.id)).toBeDefined();
+    expect(ui().selectedFxLayer).toBeUndefined();
+    // A redo does not bring the old pick back.
+    getHistoryStore()!.redo();
+    expect(ui().fxLayerPick).toBeUndefined();
+    // Now nothing is picked: the key is the editor's again.
     expect(press('delete')).toBe(false);
   });
 
@@ -365,7 +392,6 @@ describe('the four paths', () => {
     pickLayer('bloom');
     routeFxLayerShortcut('delete', ui());
     undo();
-    expect(ui().fxLayerPick).toBeUndefined();
     pickLayer('bloom');
     expect(ui().fxLayerPick).toMatchObject({ layerId: 'bloom' });
   });

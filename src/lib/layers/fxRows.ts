@@ -105,18 +105,18 @@ export interface FxActionResult {
 
 const storedOf = (box: ComponentInstance) => (box.props as Record<string, unknown>)[FX_PROP];
 
-/** The layer names of one group in stored order, for "Bloom moved behind God Rays". */
-function groupNames(box: ComponentInstance, layerId: string): string[] {
+/** The layers of one group in stored order (back to front), for "Bloom moved behind God Rays" and for the neighbour a delete picks. */
+function groupOf(box: ComponentInstance, layerId: string): { id: string; name: string }[] {
   const read = parseFxProp(storedOf(box));
   if (!read.ok) return [];
   const kind = fxLayerKind(read.fx.scene.layers.find((l) => l.id === layerId)?.type ?? '');
-  return read.fx.scene.layers.filter((l) => fxLayerKind(l.type) === kind).map((l) => l.name);
+  return read.fx.scene.layers.filter((l) => fxLayerKind(l.type) === kind).map((l) => ({ id: l.id, name: l.name }));
 }
 
 /**
  * Do one action on one layer of a box: through the one edit module, as one undo step, and
  * say what happened (or why not) in the editor's layer notice, which the Layers panel reads
- * out. Keeps the picked layer right: a removed layer drops the pick (back to the box), a copy
+ * out. Keeps the picked layer right: a removed layer moves the pick to a neighbour (or Background), a copy
  * becomes the pick. Used by the row buttons, the row menu and the keys.
  */
 export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType, layerId: string, action: FxLayerAction): FxActionResult {
@@ -124,7 +124,7 @@ export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType,
   const read = parseFxProp(before);
   const layer = read.ok ? read.fx.scene.layers.find((l) => l.id === layerId) : undefined;
   const name = layer?.name ?? 'The layer';
-  const order = action.type === 'move' ? groupNames(box, layerId) : [];
+  const order = action.type === 'move' || action.type === 'delete' ? groupOf(box, layerId) : [];
 
   let edit: FxEdit & { layerId?: string };
   switch (action.type) {
@@ -132,7 +132,7 @@ export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType,
       edit = toggleFxLayer(before, layerId);
       break;
     case 'rename':
-      edit = renameFxLayer(before, layerId, action.name.trim().length > 0 ? action.name : name);
+      edit = renameFxLayer(before, layerId, action.name.trim().length > 0 ? action.name.trim() : name);
       break;
     case 'delete':
       edit = removeFxLayer(before, layerId);
@@ -167,9 +167,9 @@ export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType,
       text = `${name} copied.`;
       break;
     case 'move': {
-      const at = order.indexOf(name);
+      const at = order.findIndex((l) => l.id === layerId);
       const passed = order[at + action.delta];
-      text = passed ? `${name} moved ${action.delta > 0 ? 'in front of' : 'behind'} ${passed}.` : `${name} moved.`;
+      text = passed ? `${name} moved ${action.delta > 0 ? 'in front of' : 'behind'} ${passed.name}.` : `${name} moved.`;
       break;
     }
   }
@@ -177,7 +177,15 @@ export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType,
   editorUI.setFxLayerNotice({ componentId: box.id, about: JSON.stringify(edit.stored), text, problem: false });
 
   const pick = editorUI.selectedFxLayer;
-  if (action.type === 'delete' && pick && pick.kind === 'layer' && pick.componentId === box.id && pick.layerId === layerId) editorUI.clearFxLayerPick();
+  if (action.type === 'delete' && pick && pick.kind === 'layer' && pick.componentId === box.id && pick.layerId === layerId) {
+    // The pick moves to the next layer in the same group (toward the front, else toward the back), or to the
+    // Background row when the group is empty. It is never left on the box: a second Delete or a held key
+    // would otherwise remove the box itself.
+    const at = order.findIndex((l) => l.id === layerId);
+    const next = order[at + 1] ?? order[at - 1];
+    if (next) editorUI.pickFxLayer(box, { kind: 'layer', layerId: next.id });
+    else editorUI.pickFxLayer(box, { kind: 'background' });
+  }
   if (action.type === 'duplicate' && edit.layerId) editorUI.pickFxLayer(box, { kind: 'layer', layerId: edit.layerId });
   if (action.type === 'rename') editorUI.endFxLayerRename();
   return { ok: true, message: text };

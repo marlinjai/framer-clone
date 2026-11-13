@@ -699,10 +699,12 @@ describe('the four paths of editing a scene', () => {
     act(() => {
       runFxLayerAction(box, store.editorUI, 'bloom', { type: 'delete' });
     });
-    // The pick fell back to the box: the panel shows the box view without the layer.
-    expect(store.editorUI.fxLayerPick).toBeUndefined();
-    expect(listedNames()).not.toContain('Bloom');
+    // The pick moved to the next layer of its group: the panel shows that one, not the removed layer.
+    expect(store.editorUI.fxLayerPick).toMatchObject({ kind: 'layer', layerId: 'vignette' });
     expect(screen.queryByRole('group', { name: 'Settings of Bloom' })).toBeNull();
+    expect(settings('Vignette')).toBeTruthy();
+    back();
+    expect(listedNames()).not.toContain('Bloom');
 
     undo();
     expect(JSON.stringify(layersOf(box))).toBe(before);

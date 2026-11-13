@@ -110,7 +110,8 @@ export function moveLayerTo(layers: Layer[], id: string, toIndex: number): MoveR
   });
   const members = slots.map((i) => layers[i]);
   const from = members.findIndex((l) => l.id === id);
-  if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= members.length) {
+  if (!Number.isInteger(toIndex)) return { ok: false, reason: `${layer.name} cannot be moved to that place.` };
+  if (toIndex < 0 || toIndex >= members.length) {
     const edge = toIndex < 0 ? "back" : "front";
     return { ok: false, reason: `${layer.name} is already at the ${edge} of its group.` };
   }

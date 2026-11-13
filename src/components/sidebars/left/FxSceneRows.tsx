@@ -281,7 +281,9 @@ const Notice = observer(({ box, breakpointId }: { box: ComponentInstance; breakp
   const notice = editorUI.fxLayerNotice;
   const frame = editorUI.selectedViewportNode?.breakpointId;
   // Every breakpoint lists the same rows: one live region reads the message out, not one per frame.
-  if (frame && breakpointId && frame !== breakpointId) return null;
+  // With no frame selected, only the first breakpoint's list carries it.
+  const first = editorUI.currentPage?.sortedViewportNodes[0]?.breakpointId;
+  if (breakpointId && (frame ? frame !== breakpointId : first !== breakpointId)) return null;
   const current = JSON.stringify((box.props as Record<string, unknown>)[FX_PROP] ?? null);
   const said = notice && notice.componentId === box.id && notice.about === current ? notice : null;
   return (

@@ -56,7 +56,15 @@ export function deleteSelection(
 export function routeFxLayerShortcut(action: KeyBindingActionId, editorUI: EditorUIType): boolean {
   const pick = editorUI.fxLayerPick;
   const box = editorUI.selectedComponent;
-  if (!pick || !box) return false;
+  if (!pick || !box) {
+    // A layer WAS picked and has since gone (an undo, another writer's save): the key was meant for
+    // it, so it is swallowed once and the pick is dropped. It never falls through to the box.
+    if (editorUI.selectedFxLayer && box && editorUI.selectedFxLayer.componentId === box.id) {
+      editorUI.clearFxLayerPick();
+      return true;
+    }
+    return false;
+  }
   switch (action) {
     case 'clearSelection':
       editorUI.clearFxLayerPick();

@@ -462,6 +462,15 @@ describe('the rows of an FX scene box', () => {
     expect(store.editorUI.selectedViewportNode?.breakpointId).toBe(frames[1]);
   });
 
+  it('picking a row in another breakpoint moves Live drawing there, as picking the box does', () => {
+    const frames = page.sortedViewportNodes.map((v) => v.breakpointId!);
+    store.editorUI.startFxLive(box.id, frames[0]);
+    render(<LayersPanel />);
+    act(() => store.editorUI.setCollapsedLayerIds(new Set()));
+    fireEvent.click(nameButton('Bloom', frames[1]));
+    expect(store.editorUI.fxLive).toEqual({ componentId: box.id, frameId: frames[1] });
+  });
+
   it('is not part of the node tree: no row is a drag source or a drop target the resolver can find', () => {
     render(<LayersPanel />);
     for (const row of rowsIn()) {
@@ -491,6 +500,9 @@ describe('the rows of an FX scene box', () => {
     // Shift click picks that layer alone too.
     fireEvent.click(nameButton('Grain'), { shiftKey: true });
     expect(store.editorUI.fxLayerPick).toMatchObject({ layerId: 'grain' });
+    expect(store.editorUI.selectedComponentList).toHaveLength(1);
+    fireEvent.click(nameButton('Vignette'), { metaKey: true });
+    expect(store.editorUI.fxLayerPick).toMatchObject({ layerId: 'vignette' });
     expect(store.editorUI.selectedComponentList).toHaveLength(1);
   });
 
