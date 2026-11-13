@@ -242,6 +242,16 @@ describe('wrapText', () => {
     expect(wrapText('x abcdefghij', 40, measure)).toEqual(['x', 'abcd', 'efgh', 'ij']);
   });
 
+  it('adds no blank line when the last piece of a cut word is a single character wider than the line', () => {
+    expect(wrapText('AB\nCD', 5, measure)).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('keeps a joined emoji and an accented letter whole when it cuts a word', () => {
+    const family = '👨‍👩‍👧';
+    expect(wrapText(`${family}${family}`, 1, () => 10).every((l) => l === family)).toBe(true);
+    expect(wrapText('e\u0301e\u0301', 1, () => 10)).toEqual(['e\u0301', 'e\u0301']);
+  });
+
   it('gives nothing for an empty or blank text', () => {
     expect(wrapText('', 100, measure)).toEqual([]);
     expect(wrapText('  \n \n', 100, measure)).toEqual([]);

@@ -59,6 +59,13 @@ export function anchorFractions(anchor: string): [number, number] {
   return [(index % 3) / 2, Math.floor(index / 3) / 2];
 }
 
+/** The visible characters of a text: whole grapheme clusters where the engine can tell them, else code points. */
+export function graphemes(text: string): string[] {
+  const Segmenter = (Intl as { Segmenter?: new (l?: string, o?: { granularity: "grapheme" }) => { segment(t: string): Iterable<{ segment: string }> } }).Segmenter;
+  if (!Segmenter) return Array.from(text);
+  return Array.from(new Segmenter(undefined, { granularity: "grapheme" }).segment(text), (part) => part.segment);
+}
+
 /** What a measuring function answers: the drawn width of a piece of text in pixels. */
 export type Measure = (text: string) => number;
 
@@ -86,7 +93,7 @@ export function wrapText(text: string, maxWidth: number, measure: Measure): stri
       if (line) lines.push(line);
       line = "";
       // A word wider than a line is cut into pieces that fit, by whole characters (never inside a surrogate pair).
-      let rest = Array.from(word);
+      let rest = graphemes(word);
       while (rest.length > 0 && measure(rest.join("")) > maxWidth) {
         let cut = 1;
         while (cut < rest.length && measure(rest.slice(0, cut + 1).join("")) <= maxWidth) cut++;
@@ -95,7 +102,8 @@ export function wrapText(text: string, maxWidth: number, measure: Measure): stri
       }
       line = rest.join("");
     }
-    lines.push(line);
+    // A paragraph that ended on a cut piece has no line left over (a blank paragraph was handled above).
+    if (line !== "") lines.push(line);
   }
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines;
@@ -358,7 +366,8 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   // The drift group (position by the pointer, scale) is outside the rotated one, so the pointer moves
   // the text on the screen whatever the rotation is, and the scale settles about the anchor point.
   return (
-    <group ref={driftRef}>
+    // `position` is a real prop too, so a changed position draws a new frame even where frames are drawn only on a change (reduced motion).
+    <group ref={driftRef} position={[baseX, baseY, 0]}>
       <group rotation={[0, 0, THREE.MathUtils.degToRad(v.rotation)]}>
         <mesh
           position={[offset[0], offset[1], 0]}
