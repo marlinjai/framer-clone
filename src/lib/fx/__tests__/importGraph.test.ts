@@ -120,6 +120,7 @@ describe('the render-free entry (format.ts)', () => {
       'registry.ts',
       'schemas.ts',
       'serialize.ts',
+      'targets.ts',
       'types.ts',
     ]);
   });

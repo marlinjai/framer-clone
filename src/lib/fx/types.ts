@@ -71,6 +71,12 @@ export interface Layer<P extends ParamsSchema = ParamsSchema> {
   params: P;
   animate?: Record<string, AnimateSpec>;
   interactivity?: InteractivitySpec;
+  /**
+   * Post layers only: the id of the one content layer this effect applies to.
+   * Absent means the whole scene. The reader keeps it only when it names a
+   * content layer of the scene (see ./format `settleTargets`).
+   */
+  target?: string;
 }
 
 export interface SceneConfig {
