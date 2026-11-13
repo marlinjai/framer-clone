@@ -79,8 +79,8 @@ describe('page-level item rows, the generator column', () => {
 
     const rows = new Set(pageItemEntries().map((e) => rowKey(e.kind, e.id)));
     for (const name of Object.keys(out)) expect(rows.has(name), name).toBe(true);
-    // Every theme row has an answer, so none falls back to "not built yet".
-    for (const name of rows) expect(out[name], name).toBeDefined();
+    // Every theme row has an answer, so none falls back to "not built yet". The head rows are answered by head.score.ts.
+    for (const name of rows) if (!name.startsWith('page-item:head:')) expect(out[name], name).toBeDefined();
     writeOut('page-items-ai', { ai: out });
   });
 });
