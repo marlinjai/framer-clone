@@ -21,6 +21,7 @@ import type { ExpansionFailureKind } from '@/lib/components/expand';
 import { literalPageTree, type LiteralPageSource } from '@/lib/renderer/server/snapshotToComponentNode';
 import { LEGAL_KINDS, findLegalPage, type LegalKind, type LegalPageLike } from './legalPages';
 import { findPlaceholders } from './templates';
+import { fxTextWarning } from './fxTextCheck';
 import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { colorPartialProblem, findToken, referenceState, tokenUsage, type SiteTheme } from '@/lib/site/theme';
 
@@ -203,6 +204,12 @@ export function checkBeforePublish(
     for (const kind of kinds) {
       components.push({ pageId: page.id, title: page.metadata.title, message: FAILURE_COPY[kind] });
     }
+  }
+
+  // Scene text is pixels: a box that holds no HTML text shows none of it without WebGL (reuses the components list).
+  for (const page of pages) {
+    const message = fxTextWarning(trees.get(page.id)?.root);
+    if (message) components.push({ pageId: page.id, title: page.metadata.title, message });
   }
 
   const tokens: ComponentIssue[] = [];
