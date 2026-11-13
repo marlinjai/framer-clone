@@ -157,7 +157,7 @@ function newScratchCanvas(w: number, h: number): ScratchCanvas | null {
 /** The one scratch canvas, kept between reads: a text texture is rebuilt on every keystroke, and its size rarely changes. */
 let scratch: { w: number; h: number; context: ScratchContext } | null = null;
 
-/** Let go of the scratch canvas (its memory), for a caller that is done with picking. The next read makes a new one. */
+/** Let go of the scratch canvas (about 2 MB for a lockup), for a caller that is done with picking. The next read makes a new one. */
 export function releaseScratch(): void {
   scratch = null;
 }
@@ -236,15 +236,15 @@ function drawnLines(mesh: Mesh): UvRect[] | undefined {
           bands.push(open);
         }
       }
+      // Back to canvas pixels, by the copy's own scale (w / qw is not always 4).
+      const sx = w / qw;
+      const sy = h / qh;
       rects = bands.map((b) => {
-        // Back to canvas pixels, by the copy's own scale (w / qw is not always 4); a click between two letters, or just
-        // beside a line, still counts.
-        const sx = w / qw;
-        const sy = h / qh;
+        // A click between two letters, or just beside a line, still counts.
         const bx0 = b.x0 * sx;
-        const bx1 = Math.min(w, b.x1 * sx);
+        const bx1 = b.x1 * sx;
         const by0 = b.y0 * sy;
-        const by1 = Math.min(h, b.y1 * sy);
+        const by1 = b.y1 * sy;
         const pad = Math.max(4, Math.round((by1 - by0) * 0.15));
         const x0 = Math.max(0, bx0 - pad);
         const x1 = Math.min(w, bx1 + pad);

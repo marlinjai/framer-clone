@@ -19,6 +19,19 @@ import { parseFxProp } from '@/lib/fxScene/fxScene';
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
+// The real pick code, with a spy on the call that lets go of its scratch canvas.
+const { releaseScratch } = vi.hoisted(() => ({ releaseScratch: vi.fn() }));
+vi.mock('@/lib/fx/pick', async (original) => {
+  const real = await original<typeof import('@/lib/fx/pick')>();
+  return {
+    ...real,
+    releaseScratch: () => {
+      releaseScratch();
+      real.releaseScratch();
+    },
+  };
+});
+
 interface Drawn {
   layer: HTMLElement;
   options: { onLive: () => void; onOff: (reason: string) => void; onProbe?: (probe: unknown) => void };
@@ -559,6 +572,15 @@ describe('double-click, and the pointer held by every picking press', () => {
     expect(letGo).not.toHaveBeenCalled();
     await release(at.x + 300, at.y);
     expect(letGo).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('the scratch canvas of the text read-back', () => {
+  it('is let go when the canvas layer goes away (Live off, the editor closed), not held for the rest of the tab', async () => {
+    const view = await mountLive();
+    releaseScratch.mockClear();
+    view.unmount();
+    expect(releaseScratch).toHaveBeenCalledTimes(1);
   });
 });
 

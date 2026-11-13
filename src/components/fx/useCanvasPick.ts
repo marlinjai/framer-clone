@@ -202,7 +202,7 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
         }
         const rect = layer.getBoundingClientRect();
         const layout = { width: layer.offsetWidth, height: layer.offsetHeight };
-        if (!component || layout.width <= 0 || layout.height <= 0 || rect.width <= 0) {
+        if (layout.width <= 0 || layout.height <= 0 || rect.width <= 0) {
           finish(true, true);
           return;
         }

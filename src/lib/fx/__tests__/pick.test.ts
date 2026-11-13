@@ -50,11 +50,14 @@ class FakeScratch {
             let sum = 0;
             if (averaged) {
               for (let by = 0; by < fy; by++) for (let bx = 0; bx < fx; bx++) sum += alphaAt(x * fx + bx, y * fy + by);
-              data[(y * dw + x) * 4 + 3] = Math.round(sum / (fx * fy));
+              sum = Math.round(sum / (fx * fy));
             } else {
               for (const by of [1, 2]) for (const bx of [1, 2]) sum += alphaAt(x * fx + bx, y * fy + by);
-              data[(y * dw + x) * 4 + 3] = Math.round(sum / 4);
+              sum = Math.round(sum / 4);
             }
+            // Painted OVER what is already there, as a browser does (source-over): a canvas that is not cleared keeps old ink.
+            const below = data[(y * dw + x) * 4 + 3];
+            data[(y * dw + x) * 4 + 3] = Math.round(sum + below * (1 - sum / 255));
           }
         }
       },
@@ -415,6 +418,22 @@ describe('text is hit where it was drawn', () => {
     // A texture of another size: a new canvas.
     createPicker(probeOf([drawn(layer('c', 'text'), 5, 2.5, { w: 400, h: 200, rows: [[80, 120]], x0: 160, x1: 240 })])).pickAt(0, 0);
     expect(scratch.made).toEqual([[250, 125], [100, 50]]);
+  });
+
+  it('a second texture of the same size is read on a cleared canvas: the first one\'s ink does not hit or outline it', () => {
+    // A has a line high up, B has a line low down; both canvases are 1000 by 500, so they share the scratch canvas.
+    const a = drawn(layer('a', 'textBox', { text: 'A' }), 5, 2.5, { w: 1000, h: 500, rows: [[60, 110]], x0: 400, x1: 600 });
+    const b = drawn(layer('b', 'textBox', { text: 'B' }), 5, 2.5, { w: 1000, h: 500, rows: [[390, 440]], x0: 400, x1: 600 });
+    const worldPerPx = 5 / 1000;
+    const ndcY = (py: number) => ((250 - py) * worldPerPx) / worldHalfHeight(0);
+    // Read A first (it is picked), then B, as the editor does when the picked layer changes.
+    expect(createPicker(probeOf([a])).pickAt(0, ndcY(85))).toBe('a');
+    const picker = createPicker(probeOf([b]));
+    expect(picker.pickAt(0, ndcY(85))).toBeNull();
+    expect(picker.pickAt(0, ndcY(415))).toBe('b');
+    const rect = picker.boundsOf('b', 800, 500)!;
+    // B's outline is its own line (50 px of ink plus padding of 8 px), not a box reaching up to A's.
+    expect(rect.height).toBeLessThan(((50 + 2 * 8 + 4) * worldPerPx / (2 * worldHalfHeight(0))) * 500);
   });
 
   it('bands map back by the copy\'s own scale: on a canvas 1001 wide a copy pixel is 1001 / 251 pixels, not 4', () => {

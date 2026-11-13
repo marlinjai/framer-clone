@@ -235,13 +235,18 @@ export const FxCanvasLayer = observer(function FxCanvasLayer({ stored, ownPositi
   useEffect(() => {
     if (!draws) return;
     let stopped = false;
+    let loaded: PickModule | null = null;
     loadPick()
       .then((module) => {
+        loaded = module;
         if (!stopped) setPick(module);
       })
       .catch((error: unknown) => console.warn(FX_WARNING, 'Picking a layer on the canvas is not available.', error));
     return () => {
       stopped = true;
+      // Picking ends with this layer (Live off, another frame, the editor closed): the scratch canvas the text
+      // read-back keeps is not held for the rest of the tab. A later read makes a new one.
+      loaded?.releaseScratch();
     };
   }, [draws]);
   // Only while the scene really draws: a refused scene or a lost context leaves nothing to pick.
