@@ -294,3 +294,27 @@ Checkpoints (CET): 01:30 phase A running; 02:30 L4 design note reviewed; about 0
 about 06:00 L4 engine open; phase B and C start as their inputs merge; 09:00 local browser proof on the automation
 profile (dev-browser) of every landed slice on the hub hero scene; 09:30 report to the coordinator with what landed,
 what is open and why.
+
+## Build log
+
+### 2026-11-13, overnight run (orchestrator fx-layer-editor, pane w5:pR)
+
+- 01:05 CET: phase A started: fx-l1-rows (L1), fx-l3-textbox (L3), fx-l4-engine (L4 engine), builders on the
+  `complex` tier. From 01:13 Marlin asked for staggered, targeted local checks only (Mac load 27 to 84); broad suites
+  and the pixel oracle run in hosted continuous integration, and local runs wait for a 1-minute load under 24.
+- L1 adds three names to the `layerOps` re-export block of `src/lib/fx/format.ts` (`duplicateLayer`, `moveLayerTo`,
+  `placeInGroup`), the only hunk shared with L4, which edits other regions; whichever merges second rebases.
+- L3 `textBox`: PR #424. The 16th built-in kind; it reuses the lockup's fixed font stacks (`fontStack` exported from
+  `layers/text.tsx`, no pixel change). Two Opus review rounds fixed phone sizing, padding, line cuts, parallax under
+  rotation, grapheme splits and redraw under reduced motion. The FX plan's "Safety" section still says 15 kinds; it is
+  updated after L1 merges (L1 owns that file). Until L1's multi-line text field lands, editing a text box's text in the
+  panel flattens its line breaks.
+- L4 engine: design note v2 approved at 01:17 (`/tmp/fxlayers/l4-design.approved.md`), PR #425. One render channel
+  and composer per targeted layer, composited back in place; reader rules in `src/lib/fx/targets.ts`. Scenes without a
+  target: the four presets, v7 and demo-phase-2 drawn on main and on the branch differ in 0 pixels. The edit path
+  (`edit.ts`: removing, retyping or importing must keep `target` right, god rays never source a targeted layer, the new
+  `setFxLayerTarget`) is handed to phase B; until then only Import JSON can create a target.
+- Found on main by L4 (`/tmp/fxlayers/fx-l4-engine/diag.txt`): adding and removing an untargeted effect while a scene
+  is live leaks one texture and one framebuffer per cycle, because the main effect composer is never disposed. The
+  editor's live canvas grows a little with every such edit; published pages build their scene once. Fixed in its own
+  pull request after #425 merges (roadmap line), before phase C touches `LumitraScene.tsx`.
