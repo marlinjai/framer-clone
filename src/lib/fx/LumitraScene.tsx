@@ -144,8 +144,11 @@ function ProbeBridge({
       }),
     [roots],
   );
+  // What the effect below calls, kept current at commit too (a ref is not written during render).
   const latest = useRef({ onProbe, layers });
-  latest.current = { onProbe, layers };
+  useLayoutEffect(() => {
+    latest.current = { onProbe, layers };
+  });
   useEffect(() => {
     latest.current.onProbe({ camera, canvas: gl.domElement, layers: () => latest.current.layers() });
     return () => latest.current.onProbe(null);
