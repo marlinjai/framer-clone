@@ -77,8 +77,16 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   under 300ms, ease-out, nothing perpetual, off under prefers-reduced-motion. Plus an optional
   per-site Lenis (MIT) smooth-scroll toggle, off by default and off under reduced motion. Decided
   by Marlin on 2026-10-23; built 2026-10-24 (Effects section, canvas badge and Play, preview and
-  published runtime, Lenis switch in Site settings, sparing appear effects in the generator). See
-  [plan](docs/plans/2026-10-23-motion-effects.md). (2026-10-24)
+  published runtime, Lenis switch in Site settings, sparing appear effects in the generator).
+  Fixed 2026-11-13 (Marlin's report that the duration did not stick and the playback ignored the
+  new one; his screenshot shows Distance 48 and Duration 400, both at their ceilings): a number
+  typed above its limit stayed on screen while the clamped value was stored and played (reproduced
+  in the demo editor, shown 1000 against 400 played), and the fields now show what is stored. Also
+  found in a test: a draft typed without a blur was lost when the selection or frame changed; it is
+  now committed to the element and breakpoint it was typed on. Not reproduced: a direction change
+  that fails to stick (the select commits at once and stored, played and previewed correctly in the
+  demo editor), and no local database run of a real project save. See
+  [plan](docs/plans/2026-10-23-motion-effects.md). (2026-11-13)
 - [x] The editor on phones: below 768px wide (or a phone held sideways) the canvas fills the screen
   between a compact top bar and a bottom bar, Pages and Layers and the properties panel open as
   bottom sheets, every top-bar action stays reachable through a More menu, dialogs and the preview
