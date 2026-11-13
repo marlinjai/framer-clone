@@ -31,6 +31,7 @@ import {
   getLayerSchema,
   instantiateLayer,
   layerReadsPointer,
+  pointerBaseOf,
   moveLayerTo,
   placeInGroup,
   removeLayer,
@@ -391,12 +392,9 @@ export function setFxLayerTarget(current: unknown, layerId: string, targetId: st
   });
 }
 
-/** What a layer without pointer settings does: nothing (the engine's own default). */
-const NO_POINTER: InteractivitySpec = { trackMouse: 0, momentum: 0, spring: 0, axes: 'both' };
-
 /**
  * Change a layer's pointer settings (track mouse, momentum, spring, axes), or remove them with
- * `null`. Only for kinds that read them. The values go through the strict reader like every
+ * `null`. Only for kinds that read them; a layer without any starts from `pointerBaseOf`. The values go through the strict reader like every
  * other change, which holds each amount to 0..1; anything else (not a number, an unknown axis)
  * is refused here with a reason rather than left to be dropped.
  */
@@ -411,7 +409,10 @@ export function setFxLayerInteractivity(current: unknown, layerId: string, patch
       if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v))) return `The pointer setting "${key}" must be a number.`;
     }
     if (patch.axes !== undefined && patch.axes !== 'x' && patch.axes !== 'y' && patch.axes !== 'both') return 'The pointer axes can be x, y or both.';
-    const next: InteractivitySpec = { ...NO_POINTER, ...layer.interactivity, ...patch };
+    // An explicit undefined means "leave it", never "erase it" (the spread would store it as missing).
+    const given = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<InteractivitySpec>;
+    // A first edit starts from what the layer does without settings (see pointerBaseOf), so one change moves one thing.
+    const next: InteractivitySpec = { ...pointerBaseOf(layer.type), ...layer.interactivity, ...given };
     return withLayers(fx, fx.scene.layers.map((l) => (l === layer ? { ...l, interactivity: next } : l)));
   });
 }

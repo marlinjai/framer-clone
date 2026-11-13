@@ -101,6 +101,21 @@ function groupOf(layer: Layer): string | null {
  */
 const POINTER_KINDS: ReadonlySet<string> = new Set(["noiseFill", "shape", "image", "gradient"]);
 
+/**
+ * What a layer of this kind does with its pointer BEFORE it has pointer settings of its own, as
+ * the values a first edit starts from (so changing one value never silently changes the rest):
+ *  - the noise field follows the pointer in a plain way of its own when it has none (a 0.04
+ *    follow of the whole pointer, from the lumitra.co hero's first version): shown as track mouse 1,
+ *    momentum 0, spring 0.04;
+ *  - shape, image and gradient stand still: track mouse 0, but with the soft spring and momentum
+ *    the gold preset uses, so raising Track mouse alone makes the layer move (the engine's
+ *    smoothing is driven by the spring: a spring of 0 never moves).
+ */
+export function pointerBaseOf(type: string): { trackMouse: number; momentum: number; spring: number; axes: "x" | "y" | "both" } {
+  if (type === "noiseFill") return { trackMouse: 1, momentum: 0, spring: 0.04, axes: "both" };
+  return { trackMouse: 0, momentum: 0.85, spring: 0.05, axes: "both" };
+}
+
 /** Whether a layer of this kind reads its pointer settings, so the panel may offer them. */
 export function layerReadsPointer(type: string): boolean {
   return POINTER_KINDS.has(type);

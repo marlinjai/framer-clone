@@ -51,7 +51,7 @@ export function countFxBoxesWithoutHtmlText(root: unknown): number {
     seen++;
     if (isFxScene(node.props, node.type)) {
       const read = parseFxProp(node.props?.[FX_PROP]);
-      if (read.ok && read.fx.scene.layers.some((l) => TEXT_KINDS.has(l.type)) && !holdsHtmlText(node)) count++;
+      if (read.ok && read.fx.scene.layers.some((l) => l.visible && TEXT_KINDS.has(l.type)) && !holdsHtmlText(node)) count++;
     }
     if (Array.isArray(node.children)) stack.push(...node.children);
   }

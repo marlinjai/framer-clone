@@ -50,7 +50,7 @@ import {
   toggleFxLayer,
   type FxEdit,
 } from '@/lib/fxScene/edit';
-import { FX_LIMITS, FX_SOURCE_LAYER_PARAM, layerReadsPointer, listAddableTypes, settingGroupOf, type BlendMode, type FxCalm, type FxStart, type InteractivitySpec, type Layer, type ParamSchema } from '@/lib/fx/format';
+import { FX_LIMITS, FX_SOURCE_LAYER_PARAM, layerReadsPointer, listAddableTypes, pointerBaseOf, settingGroupOf, type BlendMode, type FxCalm, type FxStart, type InteractivitySpec, type Layer, type ParamSchema } from '@/lib/fx/format';
 import { editorSiteImageUrl, MAX_SITE_IMAGE_BYTES, formatBytes } from '@/lib/site/siteImages';
 import { uploadFailureMessage } from '@/components/site/SiteImageField';
 
@@ -367,8 +367,13 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     if (!hasTextFields) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.defaultPrevented) return;
+      // Only from nowhere in particular (the page body: the canvas, the panels' empty space) or from an FX row of the
+      // Layers panel: never from another control (a resize handle, a menu, a field), which keeps its own Enter.
       const el = e.target as HTMLElement | null;
-      if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || isActivatableControl(e.target))) return;
+      const fromRow = !!el?.closest?.('[data-fx-layer-row]');
+      const fromNowhere = !el || el === document.body || el === document.documentElement;
+      if (!fromRow && !fromNowhere) return;
+      if (el && !fromRow && (el.isContentEditable || isActivatableControl(e.target))) return;
       const field = document.querySelector<HTMLElement>('[data-fx-text-primary]');
       if (!field) return;
       e.preventDefault();
@@ -658,7 +663,8 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     }
     const loose = grouped.get(null) ?? [];
     const named = [...grouped.entries()].filter((entry): entry is [string, [string, ParamSchema][]] => entry[0] !== null);
-    const pointer: InteractivitySpec = selected.interactivity ?? { trackMouse: 0, momentum: 0, spring: 0, axes: 'both' };
+    // Without settings of its own a layer does what pointerBaseOf says: that is what is shown, and what a first edit starts from.
+    const pointer: InteractivitySpec = selected.interactivity ?? pointerBaseOf(selected.type);
     const setPointer = (patch: Partial<InteractivitySpec>) => apply(setFxLayerInteractivity(currentStored(), selected.id, patch));
     const kindName2 = pendingKind ? kindLabel(pendingKind) : '';
     return (
@@ -670,7 +676,15 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
           <PropertyRow label="Visible" hint="Hide or show this layer in the scene, on the published page too">
             <PropertySwitch checked={selected.visible} onCheckedChange={() => apply(toggleFxLayer(stored, selected.id))} />
           </PropertyRow>
-          <div ref={kindRef}>
+          <div
+            ref={kindRef}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && pendingKind) {
+                e.stopPropagation();
+                setPendingKind(null);
+              }
+            }}
+          >
             <PropertySelect
               label="Kind"
               value={pendingKind ?? selected.type}
@@ -679,7 +693,21 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
             />
           </div>
           {pendingKind ? (
-            <div role="group" aria-label="Confirm the change of kind" className="flex min-w-0 flex-col gap-1.5 rounded-[6px] border border-border px-2 py-1.5">
+            <div
+              role="group"
+              aria-label="Confirm the change of kind"
+              className="flex min-w-0 flex-col gap-1.5 rounded-[6px] border border-border px-2 py-1.5"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  setPendingKind(null);
+                  focusKind();
+                }
+              }}
+            >
+              <p role="status" className="sr-only">
+                Change {selected.name} to {kindName2}? Its settings will be replaced. Choose Change to {kindName2}, or Keep {kindLabel(selected.type)}, or press Escape to keep it.
+              </p>
               <p className={HINT}>
                 Change {selected.name} to {kindName2}? Its settings below are replaced by {kindName2}&apos;s own, and the layer gets a new identity (effects that apply to it follow it, or go if the new kind is an effect). Undo brings the old settings back.
               </p>
@@ -756,7 +784,14 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
                 ]}
                 onChange={(axes) => setPointer({ axes: axes as InteractivitySpec['axes'] })}
               />
-              <p className={HINT}>How much this layer follows the pointer. All at 0 is still. With reduced motion asked for, the scene stays one still frame whatever is set here.</p>
+              <p className={HINT}>
+                {selected.interactivity
+                  ? 'How much this layer follows the pointer. Track mouse at 0 is still.'
+                  : selected.type === 'noiseFill'
+                    ? 'This layer follows the pointer in its own plain way until you change a value here; the values shown are what it does now. Track mouse at 0 is still.'
+                    : 'This layer stands still until you raise Track mouse (the spring and momentum shown are what it will move with).'}{' '}
+                With reduced motion asked for, the scene stays one still frame whatever is set here.
+              </p>
               {selected.interactivity ? (
                 <button type="button" className={`${TEXT_BUTTON} self-start`} onClick={() => apply(setFxLayerInteractivity(currentStored(), selected.id, null))}>
                   Reset pointer settings

@@ -54,7 +54,7 @@ export {
   toggleLayer,
   withLayers,
 } from "./layerOps";
-export { layerReadsPointer, settingGroupOf } from "./layerOps";
+export { layerReadsPointer, pointerBaseOf, settingGroupOf } from "./layerOps";
 export { PRESETS, findPreset, type PresetMeta } from "./presets";
 export { SCENE_SCHEMA_VERSION } from "./types";
 export type {
