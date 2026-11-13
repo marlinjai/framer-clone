@@ -6,7 +6,9 @@
 import { describe, expect, it } from 'vitest';
 
 import '../builtins';
-import { duplicateLayer, instantiateLayer, moveLayerTo, placeInGroup } from '../layerOps';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { duplicateLayer, instantiateLayer, layerReadsPointer, moveLayerTo, placeInGroup } from '../layerOps';
 import { findPreset } from '../presets';
 import { getLayerSchema } from '../registry';
 import type { Layer } from '../types';
@@ -107,5 +109,38 @@ describe('duplicateLayer', () => {
     layers[0] = { ...layers[0], name: 'x'.repeat(80) };
     const copied = duplicateLayer(layers, layers[0].id, 16, 80);
     expect(copied.ok && copied.layers[1].name).toHaveLength(80);
+  });
+});
+
+
+describe('effects of one layer are a group of their own', () => {
+  it('moves a scoped effect only among the effects of its layer, and a scene effect only among scene effects', () => {
+    const out: Layer[] = [];
+    for (const type of ['gradient', 'shape', 'bloom', 'vignette', 'grain', 'pixelate']) out.push(instantiateLayer(type, out)!);
+    const [gradient, , bloom, vignette, grain, pixelate] = out;
+    // bloom and grain apply to the gradient; vignette and pixelate to the whole scene
+    out[2] = { ...bloom, target: gradient.id };
+    out[4] = { ...grain, target: gradient.id };
+    expect(placeInGroup(out, bloom.id)).toEqual({ index: 0, size: 2 });
+    expect(placeInGroup(out, vignette.id)).toEqual({ index: 0, size: 2 });
+    const moved = moveLayerTo(out, bloom.id, 1);
+    expect(moved.ok && ids(moved.layers)).toEqual([gradient.id, out[1].id, grain.id, vignette.id, bloom.id, pixelate.id]);
+    expect(moveLayerTo(out, bloom.id, 2).ok).toBe(false);
+    const wide = moveLayerTo(out, vignette.id, 1);
+    expect(wide.ok && ids(wide.layers)).toEqual([gradient.id, out[1].id, bloom.id, pixelate.id, grain.id, vignette.id]);
+  });
+});
+
+describe('which kinds read pointer settings', () => {
+  it('lists exactly the kinds whose component reads `layer.interactivity` (checked against the sources)', () => {
+    const dir = join(__dirname, '..', 'layers');
+    const reading = readdirSync(dir)
+      .filter((f) => f.endsWith('.tsx') && readFileSync(join(dir, f), 'utf8').includes('useInteractivitySpec(layer.interactivity)'))
+      .map((f) => f.replace('.tsx', ''))
+      .sort();
+    const known = ['noiseFill', 'shape', 'image', 'gradient', 'text', 'textBox'].filter((t) => layerReadsPointer(t)).sort();
+    expect(known).toEqual(reading);
+    expect(layerReadsPointer('bloom')).toBe(false);
+    expect(readdirSync(join(__dirname, '..', 'effects')).filter((f) => readFileSync(join(__dirname, '..', 'effects', f), 'utf8').includes('layer.interactivity'))).toEqual([]);
   });
 });
