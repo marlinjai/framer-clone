@@ -383,7 +383,7 @@ what is open and why.
   after relaying the last review. The race fix is #434 (fx-l4-engine): the composite quad copies the blend state of its
   layer's live material in the frame that draws it (`copyBlendState`), a `RedrawOnChange` canvas child asks for a frame
   after an in-place edit in a demand-mode scene, and `ResetWhenUngrouped` (inside the Canvas) puts ranks back when the
-  last group goes. Reviewed in four rounds (b0643847, bfda6581, 99746b70, d986ed9d, 972d4b40, each finding fixed, the
+  last group goes. Reviewed in five rounds (b0643847, bfda6581, 99746b70, d986ed9d, 972d4b40, each finding fixed, the
   last two only test files). The new tests fail on main on every run (the failure follows from main's code, no race
   involved); Linux software-GL, 20 interleaved runs of the text no-op test: main failed 8 of 20, the branch 0 of 20
   (0 of 20 is consistent with a true rate up to about 14 percent at 95 percent confidence). Merged as 74ebec20 after
@@ -396,7 +396,7 @@ what is open and why.
   uniform is set in the material's ref callback at creation). The FX owner rechecked main: 136 of 136.
 - Text layers never applied their stored blend (found by the FX owner during the #436 recheck; every stored text blend
   in presets, fixtures and score scenes is `normal`): own pull request #437 (fx-l4-engine), see ROADMAP.
-- L5 landed: #432 merged as 6aa80212. It took 16 independent review rounds across its heads. Two incidents worth
+- L5 landed: #432 merged as 6aa80212. It took 13 independent review rounds across its heads. Two incidents worth
   keeping: after a head was approved and the hold removed, land-pr's unattended fixer woke on a CodeRabbit comment that
   was still open and pushed 93c3904e (a cover image pickable on its plane unless the plane covers the frame; correct,
   but unreviewed at that moment); the hold was put back within minutes and the head was reviewed and proved again. From
