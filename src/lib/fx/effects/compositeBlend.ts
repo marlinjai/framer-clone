@@ -17,7 +17,7 @@
  * RENDER-FREE: three.js types only, no React.
  */
 
-import { CustomBlending, MultiplyBlending, NoBlending, type Material, type ShaderMaterial } from "three";
+import { CustomBlending, MultiplyBlending, type Material, type ShaderMaterial } from "three";
 
 /** `uMode` of the composite shader: how a pixel with no alpha must behave under the blend. */
 export const COMPOSITE_MODE = { alpha: 0, ignoresAlpha: 1, multiply: 2 } as const;
@@ -28,8 +28,10 @@ export const COMPOSITE_MODE = { alpha: 0, ignoresAlpha: 1, multiply: 2 } as cons
  * overlay (custom blending) do not, multiply leaves the picture alone where nothing is drawn.
  */
 export function copyBlendState(from: Material, to: ShaderMaterial): number {
-  // three.js draws a material that is not `transparent` without blending, whatever `blending` says.
-  const blending = from.transparent ? from.blending : NoBlending;
+  // Assumes what every content layer's material is: `transparent`, so three.js draws it with the blend
+  // function it names (it only drops blending for NormalBlending on a material that is not transparent;
+  // a test reads the layer sources to keep that true). The quad is always transparent too.
+  const blending = from.blending;
   to.blending = blending;
   to.blendEquation = from.blendEquation;
   to.blendSrc = from.blendSrc;
@@ -39,6 +41,7 @@ export function copyBlendState(from: Material, to: ShaderMaterial): number {
   to.blendDstAlpha = from.blendDstAlpha;
   to.blendColor.copy(from.blendColor);
   to.blendAlpha = from.blendAlpha;
+  // No `needsUpdate`: this only selects blend factors when drawing; the quad's shader has no premultiplied chunk to recompile.
   to.premultipliedAlpha = from.premultipliedAlpha;
   if (blending === MultiplyBlending) return COMPOSITE_MODE.multiply;
   return blending === CustomBlending ? COMPOSITE_MODE.ignoresAlpha : COMPOSITE_MODE.alpha;

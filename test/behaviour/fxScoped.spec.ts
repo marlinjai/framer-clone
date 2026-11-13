@@ -268,9 +268,9 @@ describe('effects that apply to one layer', () => {
       const plain = (await draw(scene([gradient(), noise(blend)]))).picture;
       const scoped = (await draw(scene([gradient(), noise(blend), noop]))).picture;
       expect(difference(scoped, plain).share, blend).toBeLessThan(0.002);
-      // Multiply is inert for every content layer in three.js 0.184 (it refuses MultiplyBlending without
-      // premultipliedAlpha and keeps the previous blend function), so the picture equals a normal blend
-      // and there is nothing to control; the equality above holds trivially for that row. Tracked in ROADMAP.md.
+      // Multiply is skipped from here on, not covered: three.js 0.184 refuses MultiplyBlending without
+      // premultipliedAlpha and draws with the previous blend function, so there is no multiply picture
+      // to control, and the equality above says little for that row. Tracked in ROADMAP.md.
       if (blend === 'multiply') continue;
       const normal = (await draw(scene([gradient(), noise('normal')]))).picture;
       expect(difference(plain, normal).differing, `${blend} differs from normal`).toBeGreaterThan(1000);
@@ -333,21 +333,26 @@ describe('effects that apply to one layer', () => {
       expect(difference(await edits.show(withImage), fresh.withImage).differing).toBe(0);
     }, 240_000);
 
-    it('in development under StrictMode (effects mounted, unmounted and mounted again): same pictures with an effect on one layer, nothing left behind, no frame loop', async () => {
-      const targeted = (intensity: number) => scene([gradient(), noise(intensity), layer('px', 'pixelate', { granularity: 24 }, { target: 'n' })]);
-      const [low, high] = [targeted(0.1), targeted(0.9)];
-      const fresh = { low: (await draw(low)).picture, high: (await draw(high)).picture };
-      expect(difference(fresh.low, fresh.high).differing).toBeGreaterThan(1000);
-      const edits = await session(low, { dev: true });
-      const first = await edits.live();
-      for (const [name, next] of [['high', high], ['low', low], ['high', high], ['low', low]] as const) {
+    it('in development under StrictMode (effects mounted, unmounted and mounted again): same pictures, a group that comes and goes leaves nothing behind, no frame loop', async () => {
+      const without = scene([gradient(), noise(0.9)]);
+      const withGroup = scene([gradient(), noise(0.9), layer('px', 'pixelate', { granularity: 24 }, { target: 'n' })]);
+      const fresh = { without: (await draw(without)).picture, withGroup: (await draw(withGroup)).picture };
+      expect(difference(fresh.without, fresh.withGroup).differing).toBeGreaterThan(1000);
+      // Reference: the same scenes in the production build, which mounts everything once.
+      const reference = await session(without);
+      await reference.show(withGroup);
+      await reference.show(without);
+      const settled = await reference.live();
+      const edits = await session(without, { dev: true });
+      for (const [name, next] of [['withGroup', withGroup], ['without', without], ['withGroup', withGroup], ['without', without], ['withGroup', withGroup], ['without', without]] as const) {
         expect(difference(await edits.show(next), fresh[name]).differing, name).toBe(0);
       }
+      // Every mount ran its effects twice here; what the double mount left would show against the production count.
       const after = await edits.live();
-      expect(after.textures).toBeLessThanOrEqual(first.textures);
-      expect(after.framebuffers).toBeLessThanOrEqual(first.framebuffers);
+      expect(after.textures, 'textures').toBeLessThanOrEqual(settled.textures);
+      expect(after.framebuffers, 'framebuffers').toBeLessThanOrEqual(settled.framebuffers);
       expect(await edits.idle(800), 'frames requested while nothing changes').toBe(0);
-    }, 240_000);
+    }, 300_000);
 
     it('asks for no frame when nothing changes, and for a few when the scene does', async () => {
       const edits = await session(scene([gradient(), noise(0.5)]));
@@ -371,16 +376,17 @@ describe('effects that apply to one layer', () => {
       const plain = (await draw(scene([gradient(), text()]))).picture;
       for (const blend of ['add', 'screen']) {
         const edits = await session(scopedText(blend));
-        expect(difference(await edits.reflow(), plain).share, `${blend} after a reflow`).toBeLessThan(0.002);
+        expect.soft(difference(await edits.reflow(), plain).share, `${blend} after a reflow`).toBeLessThan(0.002);
       }
     }, 240_000);
 
-    it('a blend changed in a mounted scene never changes the picture of the text', async () => {
+    it('a blend changed in a mounted scene never changes the picture of the text, in the frame of the edit or after it', async () => {
       const plain = (await draw(scene([gradient(), text()]))).picture;
       const edits = await session(scopedText('normal'));
       for (const blend of ['add', 'screen', 'normal', 'overlay']) {
-        await edits.show(scopedText(blend));
-        expect(difference(await edits.reflow(), plain).share, blend).toBeLessThan(0.002);
+        // The frame the edit itself produces is the one a visitor with reduced motion keeps.
+        expect.soft(difference(await edits.show(scopedText(blend)), plain).share, `${blend}, the edit's own frame`).toBeLessThan(0.002);
+        expect.soft(difference(await edits.reflow(), plain).share, `${blend}, after a reflow`).toBeLessThan(0.002);
       }
     }, 240_000);
   });
@@ -394,6 +400,18 @@ describe('effects that apply to one layer', () => {
     for (const [name, next] of [['withEffect', withEffect], ['without', without], ['withEffect', withEffect], ['without', without]] as const) {
       expect(difference(await edits.show(next), fresh[name]).differing, name).toBe(0);
     }
+  }, 240_000);
+
+  it('after the last targeted effect is removed, a layer added later is drawn in front as stored (the ranks the group gave are reset)', async () => {
+    const noise = layer('n', 'noiseFill', { intensity: 0.9 }, { blend: 'add' });
+    const grouped = scene([gradient(), noise, pixelate('n', 24)]);
+    const ungrouped = scene([gradient(), noise]);
+    const withText = scene([gradient(), noise, text()]);
+    const fresh = (await draw(withText)).picture;
+    const edits = await session(grouped); // the group ranks the layers: gradient 0, noise 1
+    await edits.show(ungrouped); // the last group is gone
+    // A new layer starts at render order 0: left-over ranks would draw the noise field over it.
+    expect(difference(await edits.show(withText), fresh).differing).toBe(0);
   }, 240_000);
 
   it('on a phone the step down leaves out a heavy effect of a group, and the layer is drawn plainly', async () => {

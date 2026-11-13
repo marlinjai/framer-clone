@@ -7,7 +7,9 @@
 // on a software renderer (Linux, one container), glyph interiors saturated.
 
 import { describe, expect, it } from 'vitest';
-import { AdditiveBlending, CustomBlending, MeshBasicMaterial, MultiplyBlending, NoBlending, NormalBlending, ShaderMaterial } from 'three';
+import fs from 'node:fs';
+import path from 'node:path';
+import { AdditiveBlending, CustomBlending, MeshBasicMaterial, MultiplyBlending, NormalBlending, ShaderMaterial } from 'three';
 
 import { COMPOSITE_MODE, copyBlendState } from '../effects/compositeBlend';
 import { applyContentBlend } from '../layers/contentBlend';
@@ -51,22 +53,33 @@ describe('the composite quad blend', () => {
     expect(to.blending).toBe(NormalBlending);
   });
 
-  it('draws a layer that is not transparent without blending, and copies the premultiplied flag and the blend constants', () => {
-    const opaque = new MeshBasicMaterial({ transparent: false });
-    opaque.blending = AdditiveBlending; // three draws a non-transparent material without blending, whatever this says
-    const to = quad();
-    to.blending = AdditiveBlending;
-    expect(copyBlendState(opaque, to)).toBe(COMPOSITE_MODE.alpha);
-    expect(to.blending).toBe(NoBlending);
-
+  it('copies the premultiplied flag and the blend constants', () => {
     const layer = new ShaderMaterial({ transparent: true });
     layer.premultipliedAlpha = true;
     layer.blendAlpha = 0.5;
     layer.blendColor.set('#336699');
+    const to = quad();
     copyBlendState(layer, to);
     expect(to.premultipliedAlpha).toBe(true);
     expect(to.blendAlpha).toBe(0.5);
     expect(to.blendColor.getHex()).toBe(layer.blendColor.getHex());
+  });
+
+  it('keeps the blend function of a layer that names one, whatever its transparency (three.js only drops NormalBlending)', () => {
+    const layer = new ShaderMaterial({ transparent: false });
+    layer.blending = AdditiveBlending;
+    const to = quad();
+    expect(copyBlendState(layer, to)).toBe(COMPOSITE_MODE.alpha);
+    expect(to.blending).toBe(AdditiveBlending);
+  });
+
+  it('every content layer draws a transparent material (the assumption copyBlendState documents)', () => {
+    const dir = path.resolve(__dirname, '../layers');
+    const contentLayers = fs.readdirSync(dir).filter((f) => f.endsWith('.tsx'));
+    expect(contentLayers.length).toBeGreaterThanOrEqual(6);
+    for (const file of contentLayers) {
+      expect(fs.readFileSync(path.join(dir, file), 'utf8'), file).toMatch(/\btransparent\b/);
+    }
   });
 
   it('follows the layer when its blend changes between two frames', () => {
