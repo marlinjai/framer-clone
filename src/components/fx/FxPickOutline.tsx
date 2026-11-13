@@ -4,8 +4,9 @@
 // The outline of the picked layer on the live canvas: an HTML overlay over the scene layer,
 // sized from the layer's projected bounds (the editor-only pick code in `@/lib/fx/pick`). It is
 // never a second WebGL context and never takes a pointer. It sits inside a clip of the scene
-// layer's own rectangle, so an outline that reaches past the box is cut there. It is drawn above the
-// scene layer and below the box's in-flow HTML (both sit at z-index -1, the outline after the scene). Its numbers are in the layer's layout pixels, inside the box, so the
+// layer's own rectangle, so an outline that reaches past the box is cut there. It is drawn above
+// the scene layer and below the box's in-flow HTML (both sit at z-index -1, the outline after
+// the scene). Its numbers are in the layer's layout pixels, inside the box, so the
 // editor's zoom (a CSS transform on the canvas) scales it with the scene.
 
 import React, { useEffect, useState } from 'react';

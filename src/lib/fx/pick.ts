@@ -118,6 +118,8 @@ export function containedImageRect(planeAspect: number, imageAspect: number): Uv
 
 /** An alpha above this is ink. */
 const INK_ALPHA = 16;
+/** The stride of the read-back, in pixels, along both axes. */
+const INK_STEP = 4;
 
 interface Readable {
   width: number;
@@ -144,13 +146,17 @@ function drawnLines(mesh: Mesh): UvRect[] | undefined {
     const context = image.getContext("2d");
     if (context) {
       const { width: w, height: h } = image;
-      const data = context.getImageData(0, 0, w, h).data;
       const bands: { y0: number; y1: number; x0: number; x1: number }[] = [];
       let open: { y0: number; y1: number; x0: number; x1: number } | null = null;
-      for (let y = 0; y < h; y++) {
+      // One read of the canvas (one trip for the pixels, not one per row), then one row in STEP and one pixel in STEP
+      // along it: a texture is rebuilt on every keystroke of its text and read when a frame next asks for the outline,
+      // and a 2048 by 1024 canvas is two million pixels. Line bands are tens of pixels tall and padded by at least 4,
+      // so a stride loses nothing.
+      const data = context.getImageData(0, 0, w, h).data;
+      for (let y = 0; y < h; y += INK_STEP) {
         let x0 = -1;
         let x1 = -1;
-        for (let x = 0; x < w; x++) {
+        for (let x = 0; x < w; x += INK_STEP) {
           if (data[(y * w + x) * 4 + 3] > INK_ALPHA) {
             if (x0 < 0) x0 = x;
             x1 = x;
@@ -160,12 +166,14 @@ function drawnLines(mesh: Mesh): UvRect[] | undefined {
           open = null;
           continue;
         }
+        const y1 = Math.min(h, y + INK_STEP);
+        const right = Math.min(w, x1 + INK_STEP);
         if (open) {
-          open.y1 = y + 1;
+          open.y1 = y1;
           open.x0 = Math.min(open.x0, x0);
-          open.x1 = Math.max(open.x1, x1 + 1);
+          open.x1 = Math.max(open.x1, right);
         } else {
-          open = { y0: y, y1: y + 1, x0, x1: x1 + 1 };
+          open = { y0: y, y1, x0, x1: right };
           bands.push(open);
         }
       }

@@ -569,17 +569,36 @@ describe('the four paths of picking', () => {
     await waitFor(() => expect(outlineLeft()).toBe(first));
   });
 
-  it('resume: a canvas mounted again (a reload has no pick) shows no outline until a layer is clicked', async () => {
+  it('resume in the session: a canvas mounted again shows the outline of the layer that is still picked', async () => {
     const view = await mountLive();
     await press(boxEl, CENTRE.x, CENTRE.y);
     await release(CENTRE.x, CENTRE.y);
     await waitFor(() => expect(document.querySelector('[data-fc-fx-outline-box]')).not.toBeNull());
     view.unmount();
-    act(() => store.editorUI.clearFxLayerPick());
+    await mountLive();
+    expect(store.editorUI.fxLayerPick).toEqual({ componentId: box.id, kind: 'layer', layerId: textBoxId });
+    await waitFor(() => expect(document.querySelector('[data-fc-fx-outline-box]')).not.toBeNull());
+  });
+
+  it('resume after a reload (a store with no pick): no outline until a layer is clicked, then it picks', async () => {
+    // A reload is a new root store holding the stored scene and nothing picked; the scene is the same.
+    const stored = (box.props as Record<string, unknown>)[FX_PROP];
+    store = createRootStore();
+    store.projectStore.createProject('Reloaded');
+    const project = store.projectStore.findProjectByTitle('Reloaded')!;
+    const page = project.findPageBySlug('')!;
+    store.editorUI.setCurrentProject(project);
+    store.editorUI.setCurrentPage(page);
+    getHistoryStore()!.setTargetStore(store.projectStore);
+    box = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    box.setProps({ [FX_PROP]: stored });
+    store.editorUI.selectComponent(box, page.sortedViewportNodes[0].breakpointId!);
+    store.editorUI.startFxLive(box.id, null);
+    expect(store.editorUI.fxLayerPick).toBeUndefined();
     await mountLive();
     expect(document.querySelector('[data-fc-fx-outline-box]')).toBeNull();
-    expect(store.editorUI.fxLayerPick).toBeUndefined();
     await press(boxEl, CENTRE.x, CENTRE.y);
+    expect(store.editorUI.fxLayerPick).toEqual({ componentId: box.id, kind: 'layer', layerId: textBoxId });
     await waitFor(() => expect(document.querySelector('[data-fc-fx-outline-box]')).not.toBeNull());
   });
 
@@ -605,5 +624,53 @@ describe('the four paths of picking', () => {
     act(() => store.editorUI.clearFxLayerPick());
     await press(boxEl, lockup.x, lockup.y);
     expect(store.editorUI.fxLayerPick).toEqual({ componentId: box.id, kind: 'layer', layerId: textId });
+  });
+});
+
+describe('a drag that ends early while the button is still down keeps the pointer held', () => {
+  const entries = () => getHistoryStore()!.history.length;
+  const ENDINGS: [string, () => Promise<void>][] = [
+    ['Escape', async () => void (await escape())],
+    ['the window losing focus', async () => void act(() => void window.dispatchEvent(new Event('blur')))],
+    ['another selection', async () => void act(() => store.editorUI.clearSelection())],
+    ['another gesture\'s batch', async () => void act(() => getHistoryStore()!.commitBatch())],
+  ];
+
+  it.each(ENDINGS)('%s: the pointer is let go at the real release, wherever it is, and the click after it is not the box parent\'s', async (_name, end) => {
+    await mountLive();
+    const hold = vi.fn();
+    const letGo = vi.fn();
+    (boxEl as unknown as { setPointerCapture: unknown }).setPointerCapture = hold;
+    (boxEl as unknown as { releasePointerCapture: unknown }).releasePointerCapture = letGo;
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    await end();
+    // The drag is over, the button is not: the box still holds the pointer.
+    await move(CENTRE.x + 90, CENTRE.y);
+    expect(letGo).not.toHaveBeenCalled();
+    // The release far outside the box; the pointer is the box's, so its click comes to the box and is swallowed.
+    await release(5, 5);
+    expect(letGo).toHaveBeenCalledWith(1);
+    const clicked = vi.fn();
+    document.addEventListener('click', clicked);
+    act(() => void boxEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+    document.removeEventListener('click', clicked);
+    expect(clicked).not.toHaveBeenCalled();
+    expect(getHistoryStore()!.batch).toBeUndefined();
+    expect(entries()).toBeLessThanOrEqual(1);
+  });
+
+  it('unmounting leaves no listener of the hook behind: the held pointer is let go once, and a later release does nothing', async () => {
+    const view = await mountLive();
+    const letGo = vi.fn();
+    (boxEl as unknown as { setPointerCapture: unknown }).setPointerCapture = vi.fn();
+    (boxEl as unknown as { releasePointerCapture: unknown }).releasePointerCapture = letGo;
+    const lockup = screenAt(0.5 + 0.5 * (2.6 / (frameWidth / 2)), 0.5);
+    await press(boxEl, lockup.x, lockup.y);
+    expect(letGo).not.toHaveBeenCalled();
+    view.unmount();
+    expect(letGo).toHaveBeenCalledTimes(1);
+    await release(lockup.x, lockup.y);
+    expect(letGo).toHaveBeenCalledTimes(1);
   });
 });

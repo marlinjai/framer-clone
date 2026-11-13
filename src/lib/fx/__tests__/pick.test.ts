@@ -258,10 +258,10 @@ describe('text is hit where it was drawn', () => {
 
   it('a readable canvas is read once per texture and version', () => {
     const entry = lockup();
-    const image = ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map!.image as { getContext: () => unknown };
+    const map = ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map as unknown as { image: { getContext: () => unknown }; version: number };
     let reads = 0;
-    const original = image.getContext;
-    image.getContext = () => {
+    const original = map.image.getContext;
+    map.image.getContext = () => {
       reads++;
       return original();
     };
@@ -269,6 +269,51 @@ describe('text is hit where it was drawn', () => {
     picker.pickAt(0, 0);
     picker.pickAt(0.01, 0);
     picker.boundsOf('t', 800, 500);
+    expect(reads).toBe(1);
+    // A redraw into the same canvas bumps the texture's version: it is read again, once.
+    map.version = 2;
+    picker.pickAt(0, 0);
+    picker.boundsOf('t', 800, 500);
+    expect(reads).toBe(2);
+  });
+
+  it('a text plane that covers the frame and has no readable canvas is no target (the fallback is checked for cover too)', () => {
+    // The largest lockup (9 by 5 at z 0 is more than the 7.5 by 4.7 the frame shows there) before its canvas exists.
+    expect(pick([plane(layer('t', 'text'), 9, 5)], 0, 0)).toBeNull();
+    expect(createPicker(probeOf([plane(layer('t', 'text'), 9, 5)])).boundsOf('t', 800, 500)).toBeNull();
+    // The same plane smaller than the frame is a target on the whole plane.
+    expect(pick([plane(layer('t', 'text'), 4, 1)], 0, 0)).toBe('t');
+  });
+
+  it('a canvas that cannot be read (its context throws) falls back to the plane, with the cover check', () => {
+    const throwing = (width: number, height: number) => {
+      const entry = plane(layer('t', 'text'), width, height);
+      const image = {
+        width: 100,
+        height: 50,
+        getContext: () => {
+          throw new Error('lost');
+        },
+      };
+      ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map = { image, version: 1 } as never;
+      return entry;
+    };
+    expect(pick([throwing(4, 1)], 0, 0)).toBe('t');
+    expect(pick([throwing(9, 5)], 0, 0)).toBeNull();
+  });
+
+  it('reads a canvas once and scans it on a stride, so a rebuilt texture is not a stall', () => {
+    const entry = lockup();
+    const map = ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map as unknown as { image: { getContext: () => { getImageData: (...a: number[]) => unknown } } };
+    let reads = 0;
+    const context = map.image.getContext();
+    map.image.getContext = () => ({
+      getImageData: (...args: number[]) => {
+        reads++;
+        return context.getImageData(...args);
+      },
+    });
+    createPicker(probeOf([entry])).pickAt(0, 0);
     expect(reads).toBe(1);
   });
 });

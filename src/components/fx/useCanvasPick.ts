@@ -77,7 +77,34 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
     // Consecutive presses that picked a layer, and when the last did: two of them are not a double-click on the box.
     let pickStreak = 0;
     let streakAt = -Infinity;
-    let drag: { stop: (revert: boolean) => void } | null = null;
+    let drag: { stop: (revert: boolean, stillDown: boolean) => void } | null = null;
+
+    // The pointer is held (captured by the box) from a picking press until its REAL release, so the release and the
+    // click after it land on the box, wherever the pointer ends up: a click on the box's parent would select it and
+    // drop the pick. A drag that ends early (Escape, blur, another selection) while the button is still down hands
+    // the hold over to this, and the effect's cleanup ends it.
+    let endHold: () => void = () => {};
+    const holdUntilRelease = (pointerId: number) => {
+      endHold();
+      const onEnd = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        // A cancelled pointer has no click after it.
+        if (ev.type === 'pointercancel') swallowNextClick = false;
+        endHold();
+      };
+      window.addEventListener('pointerup', onEnd, true);
+      window.addEventListener('pointercancel', onEnd, true);
+      endHold = () => {
+        window.removeEventListener('pointerup', onEnd, true);
+        window.removeEventListener('pointercancel', onEnd, true);
+        try {
+          box.releasePointerCapture(pointerId);
+        } catch {
+          // Already released: the pointer is gone.
+        }
+        endHold = () => {};
+      };
+    };
 
     const swallowClick = (e: Event) => {
       if (!swallowNextClick) return;
@@ -107,7 +134,8 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
       let ownBatch: unknown;
       let lastWritten = start;
       const userSelect = document.body.style.userSelect;
-      const finish = (revert: boolean) => {
+      // `stillDown`: the button is still held (Escape, blur, another selection): the pointer stays held until its release.
+      const finish = (revert: boolean, stillDown: boolean) => {
         window.removeEventListener('pointermove', move, true);
         window.removeEventListener('pointerup', up, true);
         window.removeEventListener('pointercancel', cancel, true);
@@ -117,10 +145,13 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
         drag = null;
         streakAt = performance.now();
         document.body.style.userSelect = userSelect;
-        try {
-          box.releasePointerCapture(pointerId);
-        } catch {
-          // Already released: the pointer is gone.
+        if (stillDown) holdUntilRelease(pointerId);
+        else {
+          try {
+            box.releasePointerCapture(pointerId);
+          } catch {
+            // Already released: the pointer is gone.
+          }
         }
         const history = getHistoryStore();
         const own = ownBatch;
@@ -137,7 +168,7 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
         // capture was lost): the drag ends here, with what it has done, and does not follow a hovering pointer.
         if (ev.buttons === 0) {
           swallowNextClick = false;
-          finish(false);
+          finish(false, false);
           return;
         }
         const dx = ev.clientX - origin.x;
@@ -147,7 +178,7 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
           const history = getHistoryStore();
           // Another gesture's batch is open: this drag would be folded into it, or undo it. Not started.
           if (!history || history.batch) {
-            finish(true);
+            finish(true, true);
             return;
           }
           history.startBatch('Move text');
@@ -158,18 +189,18 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
         // Another gesture opened or closed a batch meanwhile (the history keeps one): the drag's step is no longer
         // its own, so it ends and writes nothing more.
         if (started && getHistoryStore()?.batch !== ownBatch) {
-          finish(true);
+          finish(true, true);
           return;
         }
         // The box the drag began on, and still the selection: another selection (a shortcut, an agent, the Layers panel) ends it.
         if (editorUI.selectedComponent?.id !== component.id) {
-          finish(true);
+          finish(true, true);
           return;
         }
         const rect = layer.getBoundingClientRect();
         const layout = { width: layer.offsetWidth, height: layer.offsetHeight };
         if (!component || layout.width <= 0 || layout.height <= 0 || rect.width <= 0) {
-          finish(true);
+          finish(true, true);
           return;
         }
         const next = positionAfterDrag(start, { dx, dy }, rect.width / layout.width, layout);
@@ -180,28 +211,28 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
         const edit = setFxParam(current, layerId, 'position', next);
         if (!edit.ok) {
           editorUI.setFxLayerNotice({ componentId: component.id, about: JSON.stringify(current ?? null), text: edit.message, problem: true });
-          finish(true);
+          finish(true, true);
           return;
         }
         component.setProps({ [FX_PROP]: edit.stored });
       };
       const up = (ev: PointerEvent) => {
-        if (ev.pointerId === pointerId) finish(false);
+        if (ev.pointerId === pointerId) finish(false, false);
       };
       const cancel = (ev: PointerEvent) => {
         if (ev.pointerId !== pointerId) return;
         // A cancelled pointer has no click after it.
         swallowNextClick = false;
-        finish(true);
+        finish(true, false);
       };
       // The pointer capture went (another element took it, the pointer left the window): there will be no release.
       const lost = (ev: PointerEvent) => {
         if (ev.pointerId !== pointerId) return;
         swallowNextClick = false;
-        finish(false);
+        finish(false, false);
       };
       // The window lost focus mid-drag (a dialog, another app): nothing of the drag stays.
-      const blur = () => finish(true);
+      const blur = () => finish(true, true);
       const key = (ev: KeyboardEvent) => {
         const edit = ev.key === 'Delete' || ev.key === 'Backspace' || ((ev.metaKey || ev.ctrlKey) && ['d', 'z', 'y', 'x', 'v'].includes(ev.key.toLowerCase()));
         if (ev.key !== 'Escape' && !edit) return;
@@ -209,7 +240,7 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
         // of the layer or the history while the drag runs would be folded into its undo step, or undone by it.
         ev.stopPropagation();
         ev.preventDefault();
-        if (ev.key === 'Escape') finish(true);
+        if (ev.key === 'Escape') finish(true, true);
       };
       window.addEventListener('pointermove', move, true);
       window.addEventListener('pointerup', up, true);
@@ -228,6 +259,8 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
     const onPointerDown = (e: PointerEvent) => {
       // A new press ends the wait for the last one's click: it is not left to eat a later click.
       swallowNextClick = false;
+      // A new press ends the hold of the last one.
+      endHold();
       // A press that does not pick ends the run of picking presses (what a double-click is judged by).
       const streak = pickStreak;
       pickStreak = 0;
@@ -265,27 +298,13 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
         beginDrag(e, component, layerId, start);
         return;
       }
-      // Every picking press holds the pointer until its release, so the release (and its click) lands on the box
-      // wherever the pointer ends up, and never reaches an ancestor that would select over the pick.
-      const pointerId = e.pointerId;
+      // Every picking press holds the pointer until its release (see `holdUntilRelease`).
       try {
-        box.setPointerCapture(pointerId);
+        box.setPointerCapture(e.pointerId);
       } catch {
         // No capture: the release is handled where it lands.
       }
-      const release = (ev: PointerEvent) => {
-        if (ev.pointerId !== pointerId) return;
-        window.removeEventListener('pointerup', release, true);
-        window.removeEventListener('pointercancel', release, true);
-        if (ev.type === 'pointercancel') swallowNextClick = false;
-        try {
-          box.releasePointerCapture(pointerId);
-        } catch {
-          // Already released.
-        }
-      };
-      window.addEventListener('pointerup', release, true);
-      window.addEventListener('pointercancel', release, true);
+      holdUntilRelease(e.pointerId);
     };
 
     box.addEventListener('pointerdown', onPointerDown, true);
@@ -296,7 +315,9 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
       box.removeEventListener('click', swallowClick, true);
       box.removeEventListener('dblclick', swallowDoubleClick, true);
       // Going away mid-drag (Live off, the scene stopped, another box): the drag ends and leaves nothing.
-      (drag as { stop: (revert: boolean) => void } | null)?.stop(true);
+      (drag as { stop: (revert: boolean, stillDown: boolean) => void } | null)?.stop(true, false);
+      // A pending hold ends with the effect: no listener of this hook outlives it.
+      endHold();
     };
   }, [editorUI, layerRef, tools]);
 }

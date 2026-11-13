@@ -129,6 +129,45 @@ describe('a real ray against the real scene', () => {
     expect(await pickAt(page, 0.95, 0.9)).toBeNull();
   }, 120_000);
 
+  /** Every point of a grid (normalised device coordinates) at which a pick hits `id`. */
+  const hitsOf = (page: Awaited<ReturnType<typeof open>>['page'], id: string, x: [number, number], y: [number, number], step = 0.02) =>
+    page.evaluate(
+      ([x0, x1, y0, y1, st, wanted]) => {
+        const out: [number, number][] = [];
+        for (let px = x0 as number; px <= (x1 as number); px += st as number) {
+          for (let py = y0 as number; py <= (y1 as number); py += st as number) {
+            if ((window as unknown as Win).__pick(px, py) === wanted) out.push([px, py]);
+          }
+        }
+        return out;
+      },
+      [x[0], x[1], y[0], y[1], step, id] as const,
+    );
+
+  it('picks the text lockup on its ink and not on the transparent margin of its plane', async () => {
+    const { page } = await open(scene([layer('g', 'gradient'), layer('lk', 'text')]), true);
+    // Some point near the middle is on the headline.
+    const hits = await hitsOf(page, 'lk', [-0.5, 0.5], [-0.4, 0.4]);
+    expect(hits.length).toBeGreaterThan(5);
+    // The corners of the lockup's plane (5 by 2.5 world units, ndc about 0.67 by 0.54 at z 0) hold no ink.
+    expect(await pickAt(page, 0.62, 0.5)).toBeNull();
+    expect(await pickAt(page, -0.62, -0.5)).toBeNull();
+    expect(await pickAt(page, 0.62, -0.5)).toBeNull();
+  }, 120_000);
+
+  it('reads the texture the right way up: in a left-aligned box a long first line and a short second line are hit where they are', async () => {
+    const { page } = await open(scene([layer('g', 'gradient'), layer('tb', 'textBox', { text: 'MMMMMMMM\nMM', align: 'left', width: 0.6, size: 0.1 })]), true);
+    const hits = await hitsOf(page, 'tb', [-0.8, 0.8], [-0.5, 0.5]);
+    expect(hits.length).toBeGreaterThan(10);
+    const upper = hits.filter(([, y]) => y > 0);
+    const lower = hits.filter(([, y]) => y < 0);
+    expect(upper.length).toBeGreaterThan(0);
+    expect(lower.length).toBeGreaterThan(0);
+    const right = (points: [number, number][]) => Math.max(...points.map(([x]) => x));
+    // The first line (above) is the long one, the second (below) the short one: read upside down it would be the other way round.
+    expect(right(upper)).toBeGreaterThan(right(lower) + 0.15);
+  }, 120_000);
+
   it('picks nothing without the probe, as the published page runs', async () => {
     const { page } = await open(scene([layer('g', 'gradient'), box()]), false);
     expect(await pickAt(page, 0, 0)).toBeNull();
