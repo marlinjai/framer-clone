@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import '../builtins';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { SETTING_GROUPS } from '../schemas';
 import { duplicateLayer, instantiateLayer, layerReadsPointer, moveLayerTo, placeInGroup } from '../layerOps';
 import { findPreset } from '../presets';
 import { getLayerSchema } from '../registry';
@@ -142,5 +143,16 @@ describe('which kinds read pointer settings', () => {
     expect(known).toEqual(reading);
     expect(layerReadsPointer('bloom')).toBe(false);
     expect(readdirSync(join(__dirname, '..', 'effects')).filter((f) => readFileSync(join(__dirname, '..', 'effects', f), 'utf8').includes('layer.interactivity'))).toEqual([]);
+  });
+});
+
+describe('the setting groups of the panel', () => {
+  it('only name settings that exist, and never become part of a setting\'s schema', () => {
+    for (const [type, groups] of Object.entries(SETTING_GROUPS)) {
+      const schema = getLayerSchema(type);
+      expect(schema, type).toBeTruthy();
+      for (const key of Object.keys(groups)) expect(Object.keys(schema!.defaultParams), `${type}.${key}`).toContain(key);
+      for (const param of Object.values(schema!.defaultParams)) expect(Object.keys(param)).not.toContain('group');
+    }
   });
 });

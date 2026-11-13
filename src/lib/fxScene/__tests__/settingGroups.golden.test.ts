@@ -25,17 +25,10 @@ describe('setting groups change nothing that is stored or generated', () => {
     expect(fxGenerationDocs()).toBe(golden.docs);
   });
 
-  it('a group never reaches a serialized layer, and only names existing settings', async () => {
-    const { SETTING_GROUPS } = await import('@/lib/fx/schemas');
-    const { getLayerSchema } = await import('@/lib/fx/format');
-    for (const [type, groups] of Object.entries(SETTING_GROUPS)) {
-      const schema = getLayerSchema(type);
-      expect(schema, type).toBeTruthy();
-      for (const key of Object.keys(groups)) expect(Object.keys(schema!.defaultParams), `${type}.${key}`).toContain(key);
-      for (const key of Object.keys(schema!.defaultParams)) expect(JSON.stringify(schema!.defaultParams[key])).not.toMatch(/"group"/);
-    }
+  it('groups are looked up by kind and setting, and an unlisted setting has none', () => {
     expect(settingGroupOf('noiseFill', 'color')).toBeNull();
     expect(settingGroupOf('text', 'headlineText')).toBe('Text');
+    expect(settingGroupOf('textBox', 'text')).toBe('Text');
     expect(listAddableTypes().length).toBeGreaterThan(0);
   });
 });
