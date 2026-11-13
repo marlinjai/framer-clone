@@ -16,8 +16,10 @@ import {
   useInteractivity,
   useInteractivitySpec,
   useWindowPointer,
+  type InteractivityTarget,
 } from "../interactivity";
 import type {
+  InteractivitySpec,
   LayerComponentProps,
   LayerDefinition,
 } from "../types";
@@ -105,16 +107,33 @@ const NOISE_FRAG = /* glsl */ `
 `;
 
 /**
- * The plain follow a noise field has while it has no pointer settings: `mouse += (pointer - mouse) * 0.04`.
- * The engine's own pointer target is kept in step with it (same position, no velocity), so that the moment the
- * layer gets pointer settings (a first edit in the editor) the engine carries on from where the field already is
- * instead of from the rest position, which would be a visible jump.
+ * One frame of a noise field's pointer, in the order the component runs it (the component and its test both
+ * call this, so the order cannot drift apart from what is tested):
+ *  1. the engine's smoothing steps (`interactivity.step`);
+ *  2. with pointer settings, the engine's position is the field's (`uMouse`);
+ *  3. without them, the field follows the pointer plainly, `mouse += (pointer - mouse) * 0.04` (the first
+ *     version's feel, kept exactly), and the engine's target is kept at the same position with no velocity, so
+ *     that the moment the layer gets pointer settings (a first edit in the editor) the engine carries on from
+ *     where the field already is instead of from the rest position, which would be a visible jump. Under
+ *     reduced motion this branch does not run and the still frame is untouched.
  */
-export function followPointerPlainly(mouse: THREE.Vector2, pointer: Readonly<{ x: number; y: number }>, engine: { mouse: THREE.Vector2; velocity: THREE.Vector2 }): void {
-  mouse.x += (pointer.x - mouse.x) * 0.04;
-  mouse.y += (pointer.y - mouse.y) * 0.04;
-  engine.mouse.copy(mouse);
-  engine.velocity.set(0, 0);
+export function stepNoisePointer(
+  uMouse: THREE.Vector2,
+  hasSettings: boolean,
+  spec: InteractivitySpec,
+  reduce: boolean,
+  pointer: Readonly<{ x: number; y: number }>,
+  engine: InteractivityTarget,
+): void {
+  engine.step(spec, reduce);
+  if (hasSettings) {
+    uMouse.copy(engine.mouse);
+  } else if (!reduce) {
+    uMouse.x += (pointer.x - uMouse.x) * 0.04;
+    uMouse.y += (pointer.y - uMouse.y) * 0.04;
+    engine.mouse.copy(uMouse);
+    engine.velocity.set(0, 0);
+  }
 }
 
 function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
@@ -170,14 +189,7 @@ function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
     if (!m) return;
     const u = m.uniforms;
     u.uTime.value = ctx.reduce ? 2.0 : state.clock.elapsedTime * v.speed;
-    interactivity.step(spec, ctx.reduce);
-    // If the layer declares interactivity, the bus drives mouse; otherwise
-    // keep the legacy v7 lerp so the hero feels exactly the same.
-    if (layer.interactivity) {
-      (u.uMouse.value as THREE.Vector2).copy(interactivity.mouse);
-    } else if (!ctx.reduce) {
-      followPointerPlainly(u.uMouse.value as THREE.Vector2, pointer, interactivity);
-    }
+    stepNoisePointer(u.uMouse.value as THREE.Vector2, !!layer.interactivity, spec, ctx.reduce, pointer, interactivity);
   });
 
   return (

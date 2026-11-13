@@ -762,6 +762,7 @@ describe('setting groups, the text lines and the pointer', () => {
     const text = within(panel).getByRole('group', { name: 'Text group' });
     expect(within(text).getAllByRole('textbox').map((el) => (el as HTMLInputElement).value)).toEqual(['Introducing', 'Lumitra', 'we bring your project to life']);
     expect(within(text).getByText(/drawn as pixels/)).toBeTruthy();
+    expect(within(text).getByText(/With this layer picked, Enter jumps to its text field\./)).toBeTruthy();
     expect(within(within(panel).getByRole('group', { name: 'Layout group' })).getByLabelText('Width')).toBeTruthy();
   });
 

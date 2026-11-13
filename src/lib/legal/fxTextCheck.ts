@@ -9,6 +9,7 @@
 
 import { FX_PROP, isFxScene } from '@/lib/fxScene/marker';
 import { parseFxProp } from '@/lib/fxScene/fxScene';
+import { settingGroupOf } from '@/lib/fx/format';
 
 interface TreeNode {
   type?: unknown;
@@ -41,9 +42,11 @@ function holdsHtmlText(box: TreeNode): boolean {
   return false;
 }
 
-/** Whether a text layer has any text to draw: one of its text strings (`text`, `eyebrowText`, ...) is not blank. */
-function drawsText(layer: { params: Record<string, { type: string; value: unknown }> }): boolean {
-  return Object.entries(layer.params).some(([key, p]) => p.type === 'string' && /^(text|\w+Text)$/.test(key) && typeof p.value === 'string' && p.value.trim() !== '');
+/** Whether a text layer has any text to draw: one of the strings of its Text settings group is not blank. */
+function drawsText(layer: { type: string; params: Record<string, { type: string; value: unknown }> }): boolean {
+  return Object.entries(layer.params).some(
+    ([key, p]) => p.type === 'string' && settingGroupOf(layer.type, key) === 'Text' && typeof p.value === 'string' && p.value.trim() !== '',
+  );
 }
 
 /** How many FX scene boxes in the tree draw text layers while the box holds no HTML text. */

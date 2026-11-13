@@ -362,7 +362,8 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   useEffect(() => setPendingKind(null), [component.id, pickedLayerId]);
 
   // Enter with a text layer picked focuses its text field (it takes precedence over the editor's
-  // "enter component", which has no meaning on a scene layer). Not while typing, or on a button.
+  // "enter component", which has no meaning on a scene layer). Only from nowhere in particular or from the picked
+  // layer's own name button in the Layers panel (see below), never from another control.
   useEffect(() => {
     if (!hasTextFields) return;
     const onKey = (e: KeyboardEvent) => {
@@ -767,7 +768,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
               {entries.map(([key, schema]) => settingControl(selected, key, schema))}
               {group === 'Text' ? (
                 <p className={HINT}>
-                  This text is drawn as pixels inside the scene. The headline in the box&apos;s own HTML is what search engines and screen readers read, and what a visitor sees without WebGL or with reduced motion. Press Enter to edit it here.
+                  This text is drawn as pixels inside the scene. The headline in the box&apos;s own HTML is what search engines and screen readers read, and what a visitor sees without WebGL or with reduced motion. With this layer picked, Enter jumps to its text field.
                 </p>
               ) : null}
             </div>

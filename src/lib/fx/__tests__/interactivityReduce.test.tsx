@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { DEFAULT_INTERACTIVITY, useInteractivity, type InteractivityTarget } from '../interactivity';
-import { followPointerPlainly } from '../layers/noiseFill';
+import { stepNoisePointer } from '../layers/noiseFill';
 import { pointerBaseOf } from '../layerOps';
 import type { InteractivitySpec } from '../types';
 
@@ -94,32 +94,37 @@ describe('a noise field without pointer settings keeps the engine\'s pointer tar
   const zero: InteractivitySpec = DEFAULT_INTERACTIVITY;
   const pointer = { x: 0.8, y: -0.4 };
 
-  it('(c) the engine step that runs just before does not undo the copied position: two frames, settings added, one frame, no jump', () => {
+  it('(c) the component\'s own frame function: two frames, settings added, one frame, no jump (the engine step runs first and does not undo the copied position)', () => {
     const probe = mountTarget();
     const engine = probe.target();
     const uMouse = new THREE.Vector2(0, 0);
-    // what the component does every frame for a layer without settings: step with the default spec, then follow plainly
-    for (let frame = 0; frame < 120; frame += 1) {
-      engine.step(zero, false);
-      followPointerPlainly(uMouse, pointer, engine);
-    }
+    // every frame as the component runs it, for a layer without settings
+    for (let frame = 0; frame < 120; frame += 1) stepNoisePointer(uMouse, false, zero, false, pointer, engine);
     expect(uMouse.x).toBeGreaterThan(0.7);
-    // two more frames: the engine target sits where the field is (the step's easing toward 0 was overwritten)
+    // two more frames: the engine target sits where the field is
     for (let frame = 0; frame < 2; frame += 1) {
-      engine.step(zero, false);
-      followPointerPlainly(uMouse, pointer, engine);
+      stepNoisePointer(uMouse, false, zero, false, pointer, engine);
       expect(engine.mouse.x).toBeCloseTo(uMouse.x, 9);
       expect(engine.mouse.y).toBeCloseTo(uMouse.y, 9);
       expect(engine.velocity.length()).toBe(0);
     }
-    // settings added (the first edit): one engine frame carries on from where the field is
+    // settings added (the first edit): one frame carries on from where the field is, within one lerp step
     const before = uMouse.clone();
     act(() => {
       window.dispatchEvent(new PointerEvent('pointermove', { clientX: ((pointer.x + 1) / 2) * window.innerWidth, clientY: ((1 - pointer.y) / 2) * window.innerHeight }));
     });
-    engine.step(pointerBaseOf('noiseFill') as InteractivitySpec, false);
-    expect(Math.abs(engine.mouse.x - before.x)).toBeLessThan(0.05);
-    expect(Math.abs(engine.mouse.y - before.y)).toBeLessThan(0.05);
+    stepNoisePointer(uMouse, true, pointerBaseOf('noiseFill') as InteractivitySpec, false, pointer, engine);
+    expect(Math.abs(uMouse.x - before.x)).toBeLessThan(0.01);
+    expect(Math.abs(uMouse.y - before.y)).toBeLessThan(0.01);
+    probe.unmount();
+  });
+
+  it('under reduced motion a layer without settings leaves the field at rest, as before', () => {
+    const probe = mountTarget();
+    const uMouse = new THREE.Vector2(0, 0);
+    for (let frame = 0; frame < 30; frame += 1) stepNoisePointer(uMouse, false, zero, true, pointer, probe.target());
+    expect(uMouse.x).toBe(0);
+    expect(uMouse.y).toBe(0);
     probe.unmount();
   });
 
@@ -131,7 +136,7 @@ describe('a noise field without pointer settings keeps the engine\'s pointer tar
     act(() => {
       window.dispatchEvent(new PointerEvent('pointermove', { clientX: window.innerWidth, clientY: 0 }));
     });
-    for (let frame = 0; frame < 60; frame += 1) followPointerPlainly(uMouse, pointer, a.target());
+    for (let frame = 0; frame < 60; frame += 1) stepNoisePointer(uMouse, false, zero, false, pointer, a.target());
     expect(Math.abs(a.target().mouse.x)).toBeGreaterThan(0.5);
     expect(b.target().mouse.x).toBe(0);
     expect(b.target().mouse.y).toBe(0);
