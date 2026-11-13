@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
 import { useWindowPointer } from "../interactivity";
+import { applyContentBlend, withPremultiplyUniform } from "./contentBlend";
 import { textBoxSchema, TEXT_BOX_ANCHORS } from "../schemas";
 import type { LayerComponentProps, LayerDefinition } from "../types";
 import { fontStack } from "./text";
@@ -331,6 +332,11 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   // Free the texture when it is replaced or on unmount (Safari caps WebGL contexts).
   useEffect(() => () => built.tex.dispose(), [built.tex]);
 
+  // The material takes its blend when it is created (the ref callback below) and again when it changes.
+  useEffect(() => {
+    if (matRef.current) applyContentBlend(matRef.current, layer.blend);
+  }, [layer.blend]);
+
   const offset = anchorOffset(v.anchor, { width: built.planeWidth, height: built.planeHeight }, built.layout);
   const baseX = (v.position[0] - 0.5) * vw;
   const baseY = (0.5 - v.position[1]) * vh;
@@ -379,7 +385,13 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
         >
           <planeGeometry args={[built.planeWidth, built.planeHeight]} />
           <meshBasicMaterial
-            ref={matRef}
+            ref={(m) => {
+              matRef.current = m;
+              if (m) {
+                withPremultiplyUniform(m);
+                applyContentBlend(m, layer.blend);
+              }
+            }}
             map={built.tex}
             transparent
             opacity={ctx.reduce ? v.opacity : 0}

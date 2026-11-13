@@ -36,6 +36,7 @@ import {
   type Texture,
 } from "three";
 
+import { premultiplyUniformOf } from "../layers/contentBlend";
 import { copyBlendState } from "./compositeBlend";
 import type { PipelineGroup } from "../pipeline";
 import { textureSize } from "../textureSize";
@@ -251,7 +252,7 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
     const saved: Array<[Material, Blending, number | null]> = [];
     for (const mesh of meshesOf(root)) {
       for (const m of materialsOf(mesh)) {
-        const premultiply = (m as ShaderMaterial).uniforms?.uPremultiply;
+        const premultiply = premultiplyUniformOf(m);
         saved.push([m, m.blending, premultiply ? (premultiply.value as number) : null]);
         m.blending = NoBlending;
         if (premultiply) premultiply.value = 0;
@@ -276,7 +277,10 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
       gl.setRenderTarget(null);
       for (const [m, blending, premultiply] of saved) {
         m.blending = blending;
-        if (premultiply !== null) (m as ShaderMaterial).uniforms.uPremultiply.value = premultiply;
+        if (premultiply !== null) {
+          const uniform = premultiplyUniformOf(m);
+          if (uniform) uniform.value = premultiply;
+        }
       }
     }
     material.uniforms.uMap.value = resultOf(composer);

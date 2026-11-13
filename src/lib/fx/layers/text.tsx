@@ -23,6 +23,7 @@ import type {
   LayerDefinition,
 } from "../types";
 import { useWindowPointer } from "../interactivity";
+import { applyContentBlend, withPremultiplyUniform } from "./contentBlend";
 import { textSchema } from "../schemas";
 
 interface TextValues {
@@ -134,6 +135,11 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   // Spec section 8: Safari caps WebGL contexts; never leak textures.
   useEffect(() => () => tex.dispose(), [tex]);
 
+  // The material takes its blend when it is created (the ref callback below) and again when it changes.
+  useEffect(() => {
+    if (matRef.current) applyContentBlend(matRef.current, layer.blend);
+  }, [layer.blend]);
+
   const pointer = useWindowPointer();
   const startedAt = useRef<number | null>(null);
   useFrame((state) => {
@@ -162,7 +168,13 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     >
       <planeGeometry args={[v.width, v.height]} />
       <meshBasicMaterial
-        ref={matRef}
+        ref={(m) => {
+          matRef.current = m;
+          if (m) {
+            withPremultiplyUniform(m);
+            applyContentBlend(m, layer.blend);
+          }
+        }}
         map={tex}
         transparent
         opacity={0}

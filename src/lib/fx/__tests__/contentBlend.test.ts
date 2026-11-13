@@ -18,9 +18,10 @@ import {
   ShaderMaterial,
   ZeroFactor,
   type Material,
+  MeshBasicMaterial,
 } from 'three';
 
-import { applyContentBlend, isMultiplyBlend } from '../layers/contentBlend';
+import { applyContentBlend, isMultiplyBlend, premultiplyUniformOf, withPremultiplyUniform } from '../layers/contentBlend';
 import type { BlendMode } from '../types';
 
 /** A content layer's material: transparent, with the `uPremultiply` uniform every layer's shader has. */
@@ -184,5 +185,62 @@ describe('the composite quad of a scoped multiply layer', () => {
     const multiplyBranch = quad.slice(quad.indexOf('if (uMode > 1.5)'));
     expect(multiplyBranch).toContain('gl_FragColor.rgb *= clamp(');
     expect(quad.indexOf('clamp(gl_FragColor.a'), 'no clamp before the multiply branch').toBeGreaterThan(quad.indexOf('if (uMode > 1.5)'));
+  });
+});
+
+describe('the text layers (basic materials) take their blend like the shader layers', () => {
+  it('a basic material with the premultiply uniform multiplies like a shader layer, without an error', () => {
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const m = new MeshBasicMaterial({ transparent: true });
+      expect(premultiplyUniformOf(m), 'none before').toBeUndefined();
+      withPremultiplyUniform(m);
+      applyContentBlend(m, 'multiply');
+      expect(m.blending).toBe(CustomBlending);
+      expect(isMultiplyBlend(m)).toBe(true);
+      expect(premultiplyUniformOf(m)?.value).toBe(1);
+      applyContentBlend(m, 'add');
+      expect(m.blending).toBe(AdditiveBlending);
+      expect(premultiplyUniformOf(m)?.value).toBe(0);
+      expect(errors).toEqual([]);
+    } finally {
+      console.error = original;
+    }
+  });
+
+  it('swaps three.js premultiply step of the basic shader for the uniform, keeping the uniform shared with the material', () => {
+    const m = new MeshBasicMaterial({ transparent: true });
+    withPremultiplyUniform(m);
+    withPremultiplyUniform(m); // once
+    const shader = { uniforms: {} as Record<string, unknown>, fragmentShader: 'void main() {\n#include <colorspace_fragment>\n#include <premultiplied_alpha_fragment>\n}' };
+    (m.onBeforeCompile as unknown as (s: typeof shader) => void)(shader);
+    expect(shader.uniforms.uPremultiply).toBe(premultiplyUniformOf(m));
+    expect(shader.fragmentShader).toContain('uniform float uPremultiply;');
+    expect(shader.fragmentShader).not.toContain('#include <premultiplied_alpha_fragment>');
+    expect(shader.fragmentShader.indexOf('uPremultiply);')).toBeGreaterThan(shader.fragmentShader.indexOf('#include <colorspace_fragment>'));
+    expect(m.customProgramCacheKey()).toBe('fx-premultiply-uniform');
+  });
+});
+
+describe('a content layer cannot forget its blend', () => {
+  // Every file in layers/ is a content layer. The blend is applied from the material's ref callback, and
+  // multiply needs the premultiply uniform: declared in the shader (the shader layers) or given to the basic
+  // material (the text layers). A new layer that does neither draws its stored blend as normal, silently.
+  const dir = path.resolve(__dirname, '../layers');
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.tsx'));
+
+  it('finds the layers', () => {
+    expect(files.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it.each(files)('%s applies the blend and supports multiply', (file) => {
+    const source = fs.readFileSync(path.join(dir, file), 'utf8');
+    expect(source, 'applies the blend').toMatch(/applyContentBlend\(/);
+    const shaderLayer = /uniform float uPremultiply;/.test(source);
+    const basicLayer = /withPremultiplyUniform\(/.test(source);
+    expect(shaderLayer || basicLayer, 'the premultiply uniform').toBe(true);
+    expect(shaderLayer && basicLayer, 'one of the two').toBe(false);
   });
 });
