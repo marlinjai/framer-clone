@@ -252,12 +252,12 @@ describe('effects that apply to one layer', () => {
       const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 't' });
       const plain = (await draw(scene([gradient(), text({ blend })]))).picture;
       const scoped = (await draw(scene([gradient(), text({ blend }), noop]))).picture;
-      expect(difference(scoped, plain).share, blend).toBeLessThan(0.002);
+      expect.soft(difference(scoped, plain).share, blend).toBeLessThan(0.002);
       // Positive control: a real effect on the same layer does change the picture, inside its box only.
       const real = (await draw(scene([gradient(), text({ blend }), layer('px2', 'pixelate', { granularity: 24 }, { target: 't' })]))).picture;
       const box = await textBox(40);
-      expect(differing(real, plain, { ...box, inside: true }), `${blend} with a real effect`).toBeGreaterThan(50);
-      expect(differing(real, plain, box), `${blend} outside the box`).toBe(0);
+      expect.soft(differing(real, plain, { ...box, inside: true }), `${blend} with a real effect`).toBeGreaterThan(50);
+      expect.soft(differing(real, plain, box), `${blend} outside the box`).toBe(0);
     }
   }, 180_000);
 
@@ -267,15 +267,15 @@ describe('effects that apply to one layer', () => {
       const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 'n' });
       const plain = (await draw(scene([gradient(), noise(blend)]))).picture;
       const scoped = (await draw(scene([gradient(), noise(blend), noop]))).picture;
-      expect(difference(scoped, plain).share, blend).toBeLessThan(0.002);
+      expect.soft(difference(scoped, plain).share, blend).toBeLessThan(0.002);
       // Multiply is skipped from here on, not covered: three.js 0.184 refuses MultiplyBlending without
       // premultipliedAlpha and draws with the previous blend function, so there is no multiply picture
       // to control, and the equality above says little for that row. Tracked in ROADMAP.md.
       if (blend === 'multiply') continue;
       const normal = (await draw(scene([gradient(), noise('normal')]))).picture;
-      expect(difference(plain, normal).differing, `${blend} differs from normal`).toBeGreaterThan(1000);
+      expect.soft(difference(plain, normal).differing, `${blend} differs from normal`).toBeGreaterThan(1000);
       const real = (await draw(scene([gradient(), noise(blend), layer('px', 'pixelate', { granularity: 24 }, { target: 'n' })]))).picture;
-      expect(difference(real, plain).differing, `${blend} with a real effect`).toBeGreaterThan(100);
+      expect.soft(difference(real, plain).differing, `${blend} with a real effect`).toBeGreaterThan(100);
     }
   }, 240_000);
 

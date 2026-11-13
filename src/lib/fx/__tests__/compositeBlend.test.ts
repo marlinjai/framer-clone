@@ -78,7 +78,10 @@ describe('the composite quad blend', () => {
     const contentLayers = fs.readdirSync(dir).filter((f) => f.endsWith('.tsx'));
     expect(contentLayers.length).toBeGreaterThanOrEqual(6);
     for (const file of contentLayers) {
-      expect(fs.readFileSync(path.join(dir, file), 'utf8'), file).toMatch(/\btransparent\b/);
+      const source = fs.readFileSync(path.join(dir, file), 'utf8');
+      // The bare JSX prop (`transparent` on its own line); `transparent={false}` is refused.
+      expect(source, `${file}: bare transparent prop`).toMatch(/^\s*transparent\s*$/m);
+      expect(source, `${file}: transparent={false}`).not.toMatch(/transparent=\{\s*false\s*\}/);
     }
   });
 
