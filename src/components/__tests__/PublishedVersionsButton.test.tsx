@@ -142,6 +142,26 @@ describe('PublishedVersionsButton', () => {
     expect((within(question).getByRole('button', { name: 'Make live' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('says what is missing when the only warning is FX scene text, instead of showing nothing', async () => {
+    fetchMock.mockResolvedValueOnce(json(LIST));
+    fetchMock.mockResolvedValueOnce(json({
+      number: 1,
+      check: {
+        missingImpressum: false,
+        placeholders: [],
+        components: [],
+        tokens: [],
+        fxText: [{ pageId: 'home', title: 'Home', message: 'an FX scene has text drawn inside the scene but no text in its box' }],
+      },
+    }));
+    openDialog();
+
+    const question = await askForVersion(/Confirm version 1/);
+
+    await within(question).findByText(/Home: an FX scene has text drawn inside the scene/);
+    expect((within(question).getByRole('button', { name: 'Make live' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('a check that fails says so and does not block the way back', async () => {
     fetchMock.mockResolvedValueOnce(json(LIST));
     fetchMock.mockResolvedValueOnce(json({ error: { message: 'nope' } }, 500));
