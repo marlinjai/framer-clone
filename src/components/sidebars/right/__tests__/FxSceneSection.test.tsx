@@ -771,7 +771,7 @@ describe('setting groups, the text lines and the pointer', () => {
     const before = JSON.stringify(box.props);
     pick('Noise Field');
     const panel = settings('Noise Field');
-    expect(within(panel).queryByRole('group', { name: /^(Text|Type|Layout|Motion|Shape|Look) group$/ })).toBeNull();
+    expect(within(panel).queryByRole('group', { name: /^(Text|Type|Layout|Motion|Form|Look) group$/ })).toBeNull();
     expect(within(panel).getByLabelText('Scale')).toBeTruthy();
     expect(JSON.stringify(box.props)).toBe(before);
     expect(history.canUndo).toBe(false);
