@@ -55,6 +55,48 @@ afterEach(async () => {
   await Promise.all(contexts.splice(0).map((context) => context.close()));
 });
 
+/** Counts the WebGL textures and framebuffers alive on the page (created minus deleted). */
+const COUNT_GL_OBJECTS = (): void => {
+  const live = { textures: 0, framebuffers: 0 };
+  (window as unknown as { __gl: typeof live }).__gl = live;
+  for (const Context of [WebGL2RenderingContext, WebGLRenderingContext]) {
+    const proto = Context.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
+    for (const [kind, key] of [['textures', 'Texture'], ['framebuffers', 'Framebuffer']] as const) {
+      const create = proto[`create${key}`];
+      const remove = proto[`delete${key}`];
+      proto[`create${key}`] = function (this: unknown, ...args: unknown[]) {
+        live[kind] += 1;
+        return create.apply(this, args);
+      };
+      proto[`delete${key}`] = function (this: unknown, ...args: unknown[]) {
+        if (args[0]) live[kind] -= 1;
+        return remove.apply(this, args);
+      };
+    }
+  }
+};
+
+/** One mounted scene that is edited in place, like the editor does. */
+async function session(first: Raw): Promise<{ show: (next: Raw) => Promise<PNG>; live: () => Promise<{ textures: number; framebuffers: number }> }> {
+  const context = await browser.newContext(ORACLE_CONTEXT);
+  contexts.push(context);
+  const page = await context.newPage();
+  await page.addInitScript(STOP_THE_CLOCK);
+  await page.addInitScript(COUNT_GL_OBJECTS);
+  await serveStage(page, ORIGIN, { '/scoped.js': bundle });
+  await page.goto(`${ORIGIN}/`);
+  await page.evaluate((config) => (window as unknown as { __mount: (scene: unknown) => string[] }).__mount(config), first);
+  await settledCanvas(page, '#stage canvas');
+  return {
+    show: async (next) => {
+      await page.evaluate((config) => (window as unknown as { __update: (scene: unknown) => string[] }).__update(config), next);
+      await page.waitForTimeout(400);
+      return settledCanvas(page, '#stage canvas');
+    },
+    live: () => page.evaluate(() => (window as unknown as { __gl: { textures: number; framebuffers: number } }).__gl),
+  };
+}
+
 /** A scene as the real engine draws it, held still (reduced motion, stopped clock). `touch` is a phone: the step down starts on. */
 async function draw(raw: Raw, options: { touch?: boolean } = {}): Promise<{ picture: PNG; notes: string[] }> {
   const context = await browser.newContext({ ...ORACLE_CONTEXT, ...(options.touch ? { isMobile: true, hasTouch: true } : {}) });
@@ -124,7 +166,9 @@ describe('effects that apply to one layer', () => {
   it('works on a layer that is not the text (a gradient), and a different chain of two effects gives a different picture', async () => {
     const plain = (await draw(scene([gradient(), text()]))).picture;
     const scoped = (await draw(scene([gradient(), text(), pixelate('g')]))).picture;
+    const wholeScene = (await draw(scene([gradient(), text(), pixelate()]))).picture;
     expect(difference(scoped, plain).share).toBeGreaterThan(0.01);
+    expect(difference(scoped, wholeScene).differing).toBeGreaterThan(100); // not the whole-scene effect either
     // A convolution effect (bloom) is a pass of its own, which changes where the finished picture sits.
     const chain = (await draw(scene([gradient(), text(), pixelate('t'), layer('bl', 'bloom', { intensity: 2.5, threshold: 0.1, radius: 0.9 }, { target: 't' })]))).picture;
     const single = (await draw(scene([gradient(), text(), pixelate('t')]))).picture;
@@ -168,6 +212,11 @@ describe('effects that apply to one layer', () => {
       const plain = (await draw(scene([gradient(), text({ blend })]))).picture;
       const scoped = (await draw(scene([gradient(), text({ blend }), noop]))).picture;
       expect(difference(scoped, plain).share, blend).toBeLessThan(0.002);
+      // Positive control: a real effect on the same layer does change the picture, inside its box only.
+      const real = (await draw(scene([gradient(), text({ blend }), layer('px2', 'pixelate', { granularity: 24 }, { target: 't' })]))).picture;
+      const box = await textBox(40);
+      expect(differing(real, plain, { ...box, inside: true }), `${blend} with a real effect`).toBeGreaterThan(50);
+      expect(differing(real, plain, box), `${blend} outside the box`).toBe(0);
     }
   }, 180_000);
 
@@ -182,9 +231,35 @@ describe('effects that apply to one layer', () => {
     expect(difference(desktop, desktopPlain).differing).toBeGreaterThan(100);
   }, 180_000);
 
-  it('retargeting from one layer to the whole scene and back draws the same picture as drawing it fresh', async () => {
-    const first = (await draw(scene([gradient(), text(), pixelate('t')]))).picture;
-    const again = (await draw(scene([gradient(), text(), pixelate('t')]))).picture;
-    expect(difference(first, again).differing).toBe(0);
-  }, 120_000);
+  it('edits in a mounted scene give the same picture as a fresh draw: scope, whole scene, scope again, hide, show', async () => {
+    const scoped = scene([gradient(), text(), pixelate('t')]);
+    const whole = scene([gradient(), text(), pixelate()]);
+    const hidden = scene([gradient(), text({ visible: false }), pixelate('t')]);
+    const fresh = { scoped: (await draw(scoped)).picture, whole: (await draw(whole)).picture, hidden: (await draw(hidden)).picture };
+    expect(difference(fresh.scoped, fresh.whole).differing).toBeGreaterThan(100); // the three differ, so the checks below can fail
+    const edits = await session(scoped);
+    for (const [name, next] of [['whole', whole], ['scoped', scoped], ['hidden', hidden], ['scoped', scoped], ['whole', whole], ['scoped', scoped]] as const) {
+      expect(difference(await edits.show(next), fresh[name === 'whole' ? 'whole' : name === 'hidden' ? 'hidden' : 'scoped']).differing, name).toBe(0);
+    }
+  }, 240_000);
+
+  it('leaves no WebGL textures or framebuffers behind when a group comes and goes', async () => {
+    const withGroup = scene([gradient(), text(), pixelate('t')]);
+    // Without the effect no main composer is built either, so only the group's buffers are counted.
+    // Measured on origin/main and on this branch (test log /tmp/fxlayers/fx-l4-engine/diag.txt): a scene
+    // that adds and removes an UNTARGETED effect leaks one texture and one framebuffer per cycle, because
+    // @react-three/postprocessing never disposes its composer. That is older than this change and is
+    // listed separately; a group's own composer is freed (this test is flat).
+    const without = scene([gradient(), text()]);
+    const edits = await session(withGroup);
+    await edits.show(without);
+    const settled = await edits.live();
+    for (let i = 0; i < 6; i++) {
+      await edits.show(withGroup);
+      await edits.show(without);
+    }
+    const after = await edits.live();
+    expect(after.framebuffers).toBeLessThanOrEqual(settled.framebuffers);
+    expect(after.textures).toBeLessThanOrEqual(settled.textures + 2);
+  }, 240_000);
 });

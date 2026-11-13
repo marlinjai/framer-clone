@@ -256,6 +256,21 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   const roots = useRef(new Map<string, Object3D>());
   const channelOf = new Map(groups.map((g) => [g.target.id, g.channel]));
   const mainComposer = postReady && postLayers.length > 0;
+  // Once a scene has had a group its content layers stay in their wrappers for the life
+  // of the canvas: switching back would remount every layer (the text fade-in replays)
+  // each time the step down drops the last targeted effect.
+  const [scoped, setScoped] = useState(false);
+  if (groups.length > 0 && !scoped) setScoped(true);
+  useEffect(() => {
+    if (groups.length > 0) return;
+    // No group left: nothing keeps ranks or channels, put the objects back where they started.
+    for (const root of roots.current.values()) {
+      setChannel(root, 0);
+      root.traverse((o) => {
+        o.renderOrder = 0;
+      });
+    }
+  }, [groups.length]);
   const layerById = new Map(config.layers.map((l) => [l.id, l]));
 
   const dprClamp = perfLow ? ([1, 1] as [number, number]) : config.dpr;
@@ -301,7 +316,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
             {onFirstFrame && <FirstFrame onFirstFrame={onFirstFrame} />}
             <color attach="background" args={[config.background]} />
             {contentLayers.map((layer) =>
-              groups.length === 0 ? (
+              !scoped ? (
                 <LayerHost key={layer.id} layer={layer} ctx={ctx} />
               ) : (
                 <ScopedRoot key={layer.id} layer={layer} ctx={ctx} roots={roots} channel={channelOf.get(layer.id)} />

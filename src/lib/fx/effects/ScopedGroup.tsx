@@ -29,6 +29,7 @@ import {
   NoBlending,
   ShaderMaterial,
   Vector2,
+  Vector3,
   type Blending,
   type Material,
   type Object3D,
@@ -97,9 +98,12 @@ export function setChannel(root: Object3D, channel: number): void {
   root.traverse((o) => o.layers.set(channel));
 }
 
-/** The depth a content root sits at: its first mesh's z (layers sit at a fixed z). */
+const world = new Vector3();
+
+/** The depth a content root sits at: its first mesh's z in the scene (layers sit at a fixed z). */
 function depthOf(root: Object3D): number {
-  return meshesOf(root)[0]?.position.z ?? 0;
+  const mesh = meshesOf(root)[0];
+  return mesh ? mesh.getWorldPosition(world).z : 0;
 }
 
 /**
@@ -147,6 +151,10 @@ interface ScopedGroupProps {
 export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupProps) {
   const { gl, camera } = useThree();
   const composerRef = useRef<ComposerImpl | null>(null);
+  // The library resets the ref it is given to null when it unmounts, before an effect
+  // cleanup here could read it, so the composer is remembered separately to be freed.
+  const ownedComposer = useRef<ComposerImpl | null>(null);
+  const failed = useRef(false);
   const quadRef = useRef<Mesh>(null);
   const drawingSize = useMemo(() => new Vector2(), []);
   const material = useMemo(
@@ -171,8 +179,8 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
   // The library never disposes its composer: free the buffers when the group goes.
   useEffect(
     () => () => {
-      composerRef.current?.dispose();
-      composerRef.current = null;
+      ownedComposer.current?.dispose();
+      ownedComposer.current = null;
     },
     [],
   );
@@ -185,7 +193,7 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
     const composer = composerRef.current;
     const quad = quadRef.current;
     const root = roots.current.get(targetId);
-    if (!composer || !quad) return;
+    if (!composer || !quad || failed.current) return;
     if (!root) {
       quad.visible = false;
       return;
@@ -227,6 +235,13 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
     gl.autoClear = true;
     try {
       composer.render(delta);
+    } catch (error) {
+      // One layer's effects failing must not stop the picture: the layer is left out
+      // from now on, said once, and the main picture is still drawn after this callback.
+      failed.current = true;
+      quad.visible = false;
+      console.error(`[lumitra-fx] the effects of layer "${targetId}" could not be drawn and are left out:`, error);
+      return;
     } finally {
       gl.autoClear = autoClear;
       camera.layers.mask = mask;
@@ -239,7 +254,12 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
 
   return (
     <>
-      <EffectComposer ref={composerRef} enabled={false} depthBuffer={false} multisampling={0}>
+      <EffectComposer
+        ref={(composer: ComposerImpl | null) => {
+          composerRef.current = composer;
+          if (composer) ownedComposer.current = composer;
+        }}
+        enabled={false} depthBuffer={false} multisampling={0}>
         {chain.map((layer) => (
           <Fragment key={layer.id}>{renderLayer(layer.id)}</Fragment>
         ))}
