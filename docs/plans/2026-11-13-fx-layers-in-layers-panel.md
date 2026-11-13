@@ -318,3 +318,20 @@ what is open and why.
   is live leaks one texture and one framebuffer per cycle, because the main effect composer is never disposed. The
   editor's live canvas grows a little with every such edit; published pages build their scene once. Fixed in its own
   pull request after #425 merges (roadmap line), before phase C touches `LumitraScene.tsx`.
+- 01:58 CET: #424 (`textBox`) merged as 085b3ef9. 02:10: #425 (L4 engine) merged as b7dbb2a0; the FX owner was told.
+  Main's own runs on b7dbb2a0, 17ef1e41 and 4a02a33c were each cancelled by the next docs merge (verify, render-gate,
+  docker-build and roadmap-check passed on 4a02a33c before the cancel). The FX owner's browser recheck of b7dbb2a0
+  (`fx.spec.ts`, `fxOracle.spec.ts` with the lumitra.co proof rehearsals, `fxScoped.spec.ts`; production build,
+  Chromium and WebKit): 116 of 116 passed; gold preset, the other presets, `test/fx-oracle` and `test/fx-proof`
+  unchanged against the production commit b1e19a32.
+- From 02:12 every local browser run, broad suite, build or pixel comparison goes through one queue across the Mac
+  (`/tmp/heavy-run/heavy-run.sh`: one lock, waits for a 1-minute load under 24, never cancels another run), at
+  Marlin's request; agreed by the FX workers, sites-branching, receipts and the two Booking sessions.
+- L1: PR #426, held by the orchestrator from 01:47 until its review fixes were on the head (layer-only right panel,
+  mounted key test, phone menus never mixing layer and box actions, refusals shown on the phone, header with the
+  layer's name). Main merged into it so its checks ran on top of #424 and #425; the head 82becef8 is exactly the clean
+  merge of the reviewed 2b157369 with b7dbb2a0, and all five checks passed on it. Hold lifted, merged as 84bff0b3.
+- Composer leak: PR #429 by fx-l4-engine (also fixes the same flaw in #425's group cleanup under React strict mode);
+  leak counter flat over six cycles, four presets 0 differing pixels.
+- 02:40: phase B started (fx-l2-panel, pane w5:pX). Phase C (fx-l5-pick) starts when #429 has merged.
+- The FX plan's "Safety" section now counts 16 built-in kinds.
