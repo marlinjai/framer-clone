@@ -118,7 +118,8 @@ export function containedImageRect(planeAspect: number, imageAspect: number): Uv
 
 /**
  * An alpha above this is ink. Low on purpose: the canvas is read through a copy at a quarter of its size,
- * where a one pixel mark (a period, a hyphen) is averaged with its neighbours into a faint alpha.
+ * where a one pixel mark (a period, a hyphen) is averaged with its neighbours into a faint alpha (only
+ * when the copy is drawn smoothed at high quality: see `scratchContext`).
  */
 const INK_ALPHA = 4;
 /** The read-back copy is this many times smaller than the canvas along each axis. */
@@ -129,23 +130,56 @@ interface Drawable {
   height: number;
 }
 
-interface Scratch {
-  getContext: (kind: "2d") => {
-    drawImage: (image: never, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number) => void;
-    getImageData: (x: number, y: number, w: number, h: number) => { data: ArrayLike<number> };
-  } | null;
+interface ScratchContext {
+  imageSmoothingEnabled: boolean;
+  imageSmoothingQuality: "low" | "medium" | "high";
+  clearRect: (x: number, y: number, w: number, h: number) => void;
+  drawImage: (image: never, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number) => void;
+  getImageData: (x: number, y: number, w: number, h: number) => { data: ArrayLike<number> };
+}
+
+interface ScratchCanvas {
+  getContext: (kind: "2d", options?: { willReadFrequently?: boolean }) => ScratchContext | null;
 }
 
 /** A canvas to draw the copy on, or null where there is none (no OffscreenCanvas, no document). */
-function scratchCanvas(w: number, h: number): Scratch | null {
-  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h) as unknown as Scratch;
+function newScratchCanvas(w: number, h: number): ScratchCanvas | null {
+  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h) as unknown as ScratchCanvas;
   if (typeof document !== "undefined") {
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
-    return canvas as unknown as Scratch;
+    return canvas as unknown as ScratchCanvas;
   }
   return null;
+}
+
+/** The one scratch canvas, kept between reads: a text texture is rebuilt on every keystroke, and its size rarely changes. */
+let scratch: { w: number; h: number; context: ScratchContext } | null = null;
+
+/** Let go of the scratch canvas (its memory), for a caller that is done with picking. The next read makes a new one. */
+export function releaseScratch(): void {
+  scratch = null;
+}
+
+/**
+ * The scratch context for a copy of `w` by `h`, cleared and set to smooth at high quality, or null where there is
+ * none. Smoothing matters: the default (and "low") samples only the source pixels nearest each copy pixel, so a
+ * mark one pixel thick falls between samples at half its positions and vanishes; "medium" and "high" average
+ * over the whole block and keep it. (A browser that ignores the quality falls back, for a text with no other ink,
+ * to the text rectangle; see `linesRegion`.)
+ */
+function scratchContext(w: number, h: number): ScratchContext | null {
+  if (!scratch || scratch.w !== w || scratch.h !== h) {
+    const context = newScratchCanvas(w, h)?.getContext("2d", { willReadFrequently: true });
+    scratch = context ? { w, h, context } : null;
+  }
+  if (!scratch) return null;
+  const { context } = scratch;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.clearRect(0, 0, w, h);
+  return context;
 }
 
 const drawnCache = new WeakMap<object, { version: number; rects: UvRect[] | undefined }>();
@@ -156,9 +190,10 @@ const drawnCache = new WeakMap<object, { version: number; rects: UvRect[] | unde
  * empty list when it drew no ink at all. Cached per texture and version, because a text texture is rebuilt
  * (on every keystroke of its text), not edited.
  *
- * The canvas is drawn onto a scratch canvas a quarter of its size on each axis and that copy is read and
- * scanned whole: the browser does the downscale (the full canvas is never copied into script, 8 MB for a
- * 2048 by 1024 lockup), the scan is a sixteenth of the pixels, and the averaging keeps a thin mark visible.
+ * The canvas is drawn onto a scratch canvas a quarter of its size on each axis (smoothed at high quality, which
+ * averages each block, so a thin mark stays visible) and that copy is read and scanned whole: the browser does
+ * the downscale (the full canvas is never copied into script, 8 MB for a 2048 by 1024 lockup) and the scan is a
+ * sixteenth of the pixels.
  */
 function drawnLines(mesh: Mesh): UvRect[] | undefined {
   const map = (mesh.material as { map?: { image?: unknown; version?: number } }).map;
@@ -173,7 +208,7 @@ function drawnLines(mesh: Mesh): UvRect[] | undefined {
     const h = image.height;
     const qw = Math.max(1, Math.ceil(w / INK_SCALE));
     const qh = Math.max(1, Math.ceil(h / INK_SCALE));
-    const context = scratchCanvas(qw, qh)?.getContext("2d");
+    const context = scratchContext(qw, qh);
     if (context) {
       context.drawImage(image as never, 0, 0, w, h, 0, 0, qw, qh);
       const data = context.getImageData(0, 0, qw, qh).data;
@@ -202,11 +237,14 @@ function drawnLines(mesh: Mesh): UvRect[] | undefined {
         }
       }
       rects = bands.map((b) => {
-        // Back to canvas pixels; a click between two letters, or just beside a line, still counts.
-        const bx0 = b.x0 * INK_SCALE;
-        const bx1 = Math.min(w, b.x1 * INK_SCALE);
-        const by0 = b.y0 * INK_SCALE;
-        const by1 = Math.min(h, b.y1 * INK_SCALE);
+        // Back to canvas pixels, by the copy's own scale (w / qw is not always 4); a click between two letters, or just
+        // beside a line, still counts.
+        const sx = w / qw;
+        const sy = h / qh;
+        const bx0 = b.x0 * sx;
+        const bx1 = Math.min(w, b.x1 * sx);
+        const by0 = b.y0 * sy;
+        const by1 = Math.min(h, b.y1 * sy);
         const pad = Math.max(4, Math.round((by1 - by0) * 0.15));
         const x0 = Math.max(0, bx0 - pad);
         const x1 = Math.min(w, bx1 + pad);

@@ -168,6 +168,36 @@ describe('a real ray against the real scene', () => {
     expect(right(upper)).toBeGreaterThan(right(lower) + 0.15);
   }, 120_000);
 
+  it('the browser keeps a one pixel mark in the quarter-size copy at every offset when the copy is drawn at high quality (and loses some at the default)', async () => {
+    const { page } = await open(scene([layer('g', 'gradient'), box()]), false);
+    const kept = await page.evaluate(() => {
+      const survives = (quality: ImageSmoothingQuality | null, axis: 'row' | 'column', offset: number) => {
+        const source = new OffscreenCanvas(64, 32);
+        const sctx = source.getContext('2d')!;
+        sctx.fillStyle = 'white';
+        if (axis === 'row') sctx.fillRect(10, 8 + offset, 40, 1);
+        else sctx.fillRect(16 + offset, 4, 1, 20);
+        const copy = new OffscreenCanvas(16, 8);
+        const ctx = copy.getContext('2d', { willReadFrequently: true })!;
+        if (quality) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = quality;
+        }
+        ctx.drawImage(source, 0, 0, 64, 32, 0, 0, 16, 8);
+        const data = ctx.getImageData(0, 0, 16, 8).data;
+        let max = 0;
+        for (let i = 3; i < data.length; i += 4) max = Math.max(max, data[i]);
+        return max > 4;
+      };
+      const all = (quality: ImageSmoothingQuality | null) => [0, 1, 2, 3, 4, 5, 6, 7].map((o) => [survives(quality, 'row', o), survives(quality, 'column', o)]).flat();
+      return { high: all('high'), standard: all(null) };
+    });
+    // The code relies on this: every offset of a row and of a column survives at high quality.
+    expect(kept.high.every(Boolean)).toBe(true);
+    // Control: the default drops some, so the setting is what makes the difference.
+    expect(kept.standard.every(Boolean)).toBe(false);
+  }, 120_000);
+
   it('picks nothing without the probe, as the published page runs', async () => {
     const { page } = await open(scene([layer('g', 'gradient'), box()]), false);
     expect(await pickAt(page, 0, 0)).toBeNull();

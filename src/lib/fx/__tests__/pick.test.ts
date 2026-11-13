@@ -9,39 +9,52 @@
 import { Group, Mesh, MeshBasicMaterial, PerspectiveCamera, PlaneGeometry, ShaderMaterial, Vector2 } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { containedImageRect, createPicker, pointerToNdc, positionAfterDrag, type SceneProbe } from '../pick';
+import { containedImageRect, createPicker, pointerToNdc, positionAfterDrag, releaseScratch, type SceneProbe } from '../pick';
 import type { Layer } from '../types';
 
 
 /**
- * Stands in for OffscreenCanvas, the scratch canvas the read-back draws a copy of a text canvas on. `drawImage` averages the
- * source's alpha over each block of source pixels (what a browser's downscale does), `getImageData` hands out the copy
- * through a Proxy that counts every pixel read, and the log says what was made and read. A source is a plain
+ * Stands in for OffscreenCanvas, the scratch canvas the read-back draws a copy of a text canvas on. `drawImage` makes the
+ * copy the way a browser does: with `imageSmoothingQuality` "medium" or "high" it averages the source's alpha over each
+ * block of source pixels, otherwise (the default, and "low") it samples bilinearly, which at a quarter scale looks at the
+ * source pixels 4k+1 and 4k+2 only, so a one pixel mark at 4k or 4k+3 is lost (measured in Chromium). `getImageData` hands
+ * out the copy through a Proxy that counts every pixel read, and the log says what was made and read. A source is a plain
  * object `{ width, height, __ink }` (alpha per pixel as RGBA bytes), or `{ __throw: true }` for a canvas that cannot be read.
  */
 const scratch = { made: [] as [number, number][], drawn: 0, reads: 0, alphaReads: 0 };
 class FakeScratch {
+  private context?: ReturnType<FakeScratch['makeContext']>;
   constructor(
     readonly width: number,
     readonly height: number,
   ) {
     scratch.made.push([width, height]);
   }
-  getContext() {
+  private makeContext() {
     const { width: dw, height: dh } = this;
     const data = new Uint8ClampedArray(dw * dh * 4);
-    return {
+    const context = {
+      imageSmoothingEnabled: true,
+      imageSmoothingQuality: 'low' as 'low' | 'medium' | 'high',
+      clearRect: () => data.fill(0),
       drawImage: (src: { width: number; __ink?: Uint8ClampedArray; __throw?: boolean }, _sx: number, _sy: number, sw: number, sh: number) => {
         if (src.__throw) throw new Error('lost');
         scratch.drawn++;
         const ink = src.__ink!;
+        const alphaAt = (x: number, y: number) => ink[(y * sw + x) * 4 + 3] ?? 0;
         const fx = Math.ceil(sw / dw);
         const fy = Math.ceil(sh / dh);
+        const averaged = context.imageSmoothingEnabled && (context.imageSmoothingQuality === 'medium' || context.imageSmoothingQuality === 'high');
         for (let y = 0; y < dh; y++) {
           for (let x = 0; x < dw; x++) {
             let sum = 0;
-            for (let by = 0; by < fy; by++) for (let bx = 0; bx < fx; bx++) sum += ink[((y * fy + by) * sw + x * fx + bx) * 4 + 3] ?? 0;
-            data[(y * dw + x) * 4 + 3] = Math.round(sum / (fx * fy));
+            if (averaged) {
+              for (let by = 0; by < fy; by++) for (let bx = 0; bx < fx; bx++) sum += alphaAt(x * fx + bx, y * fy + by);
+              data[(y * dw + x) * 4 + 3] = Math.round(sum / (fx * fy));
+            } else {
+              for (const by of [1, 2]) for (const bx of [1, 2]) sum += alphaAt(x * fx + bx, y * fy + by);
+              data[(y * dw + x) * 4 + 3] = Math.round(sum / 4);
+            }
           }
         }
       },
@@ -57,6 +70,12 @@ class FakeScratch {
         };
       },
     };
+    return context;
+  }
+  getContext() {
+    // A canvas gives the same context every time it is asked.
+    this.context ??= this.makeContext();
+    return this.context;
   }
 }
 beforeEach(() => {
@@ -64,9 +83,13 @@ beforeEach(() => {
   scratch.drawn = 0;
   scratch.reads = 0;
   scratch.alphaReads = 0;
+  releaseScratch();
   vi.stubGlobal('OffscreenCanvas', FakeScratch);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  releaseScratch();
+  vi.unstubAllGlobals();
+});
 
 const ASPECT = 1.6;
 const camera = new PerspectiveCamera(50, ASPECT, 0.1, 100);
@@ -249,10 +272,11 @@ describe('a shape', () => {
 });
 
 /** A text layer's plane whose texture holds a canvas the lines were drawn on: ink rows at `rows`, from x0 to x1. */
-const drawn = (l: Layer, width: number, height: number, canvas: { w: number; h: number; rows: [number, number][]; x0: number; x1: number }, z = 0): Entry => {
+const drawn = (l: Layer, width: number, height: number, canvas: { w: number; h: number; rows: [number, number][]; x0: number; x1: number; rects?: [number, number, number, number][] }, z = 0): Entry => {
   const entry = plane(l, width, height, z);
   const data = new Uint8ClampedArray(canvas.w * canvas.h * 4);
   for (const [y0, y1] of canvas.rows) for (let y = y0; y < y1; y++) for (let x = canvas.x0; x < canvas.x1; x++) data[(y * canvas.w + x) * 4 + 3] = 255;
+  for (const [rx0, ry0, rx1, ry1] of canvas.rects ?? []) for (let y = ry0; y < ry1; y++) for (let x = rx0; x < rx1; x++) data[(y * canvas.w + x) * 4 + 3] = 255;
   const image = { width: canvas.w, height: canvas.h, __ink: data };
   const mesh = entry.root.children[0] as Mesh;
   (mesh.material as MeshBasicMaterial).map = { image, version: 1 } as never;
@@ -361,10 +385,45 @@ describe('text is hit where it was drawn', () => {
     expect(picker.pickAt(0, yAt(250))).toBeNull();
   });
 
-  it('a thin mark (a one pixel line of dots) survives the smaller copy and is a target', () => {
-    // A single row of ink 1 px tall and 40 px wide, as a hyphen at the smallest size.
-    const dash = drawn(layer('tb', 'textBox', { text: '--' }), 4, 1, { w: 1000, h: 500, rows: [[250, 251]], x0: 480, x1: 520 });
-    expect(pick([dash], 0, 0)).toBe('tb');
+  it('thin marks one pixel thick survive the smaller copy, at every offset of the four, because the copy is smoothed at high quality', () => {
+    // A line of text above, and under it marks one pixel thick: a row at 4k (252), a row at 4k+3 (303), and a column at 4k (800).
+    // The copy keeps all three only when it is averaged: sampled bilinearly it would look at pixels 4k+1 and 4k+2 alone.
+    const base = { w: 1000, h: 500, rows: [[100, 150]] as [number, number][], x0: 300, x1: 700 };
+    const worldPerPx = 5 / 1000;
+    const ndcX = (px: number) => ((px - 500) * worldPerPx) / (frameWidth0 / 2);
+    const ndcY = (py: number) => ((250 - py) * worldPerPx) / worldHalfHeight(0);
+    const marks = drawn(layer('tb', 'textBox', { text: 'A\n- -\n|' }), 5, 2.5, { ...base, rects: [[480, 252, 520, 253], [480, 303, 520, 304], [800, 320, 801, 420]] });
+    expect(pick([marks], ndcX(500), ndcY(252.5))).toBe('tb');
+    expect(pick([marks], ndcX(500), ndcY(303.5))).toBe('tb');
+    expect(pick([marks], ndcX(800.5), ndcY(370))).toBe('tb');
+    // And empty ground between them is still the box's.
+    expect(pick([marks], ndcX(900), ndcY(420))).toBeNull();
+  });
+
+  it('the one scratch canvas is kept across rebuilt textures of a size, and made again only when the size changes', () => {
+    const a = drawn(layer('a', 'text'), 5, 2.5, { w: 1000, h: 500, rows: [[200, 300]], x0: 400, x1: 600 });
+    const b = drawn(layer('b', 'text'), 5, 2.5, { w: 1000, h: 500, rows: [[100, 200]], x0: 400, x1: 600 }, -1);
+    const picker = createPicker(probeOf([a, b]));
+    picker.pickAt(0, 0);
+    expect(scratch.made).toEqual([[250, 125]]);
+    // Another texture of the same size, and a new version of the first: the same canvas, cleared and drawn again.
+    ((a.root.children[0] as Mesh).material as MeshBasicMaterial & { map: { version: number } }).map.version = 2;
+    picker.pickAt(0.01, 0);
+    picker.boundsOf('b', 800, 500);
+    expect(scratch.drawn).toBeGreaterThanOrEqual(3);
+    expect(scratch.made).toEqual([[250, 125]]);
+    // A texture of another size: a new canvas.
+    createPicker(probeOf([drawn(layer('c', 'text'), 5, 2.5, { w: 400, h: 200, rows: [[80, 120]], x0: 160, x1: 240 })])).pickAt(0, 0);
+    expect(scratch.made).toEqual([[250, 125], [100, 50]]);
+  });
+
+  it('bands map back by the copy\'s own scale: on a canvas 1001 wide a copy pixel is 1001 / 251 pixels, not 4', () => {
+    const odd = drawn(layer('t', 'text'), 5, 2.5, { w: 1001, h: 500, rows: [[200, 300]], x0: 800, x1: 900 });
+    const rect = createPicker(probeOf([odd])).boundsOf('t', 800, 500)!;
+    // The ink starts in copy column 200 (800 / 4); the padding of a 100 px line is 15 px.
+    const u0 = ((200 * 1001) / 251 - 15) / 1001;
+    const expectedLeft = ((((u0 - 0.5) * 5) / (frameWidth0 / 2)) + 1) * 400;
+    expect(Math.abs(rect.left - expectedLeft)).toBeLessThan(0.2);
   });
 
   it('text that left no ink at all (marks too thin to show) falls back to its rectangle, and a blank text is nothing to pick', () => {
