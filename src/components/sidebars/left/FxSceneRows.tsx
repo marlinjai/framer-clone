@@ -24,7 +24,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import { FX_PROP } from '@/lib/fxScene/marker';
 import { toggleFold } from '@/lib/layers/foldState';
 import { layerActionsWidth } from '@/lib/layers/sidebarWidth';
-import { fxEffectsGroupKey, fxSceneGroupKey, runFxLayerAction, type FxLayerRowModel, type FxRowsModel } from '@/lib/layers/fxRows';
+import { fxDropIndex, fxEffectsGroupKey, fxSceneGroupKey, runFxLayerAction, type FxLayerRowModel, type FxRowsModel } from '@/lib/layers/fxRows';
 import { FX_BACKGROUND_ICON, FX_EFFECTS_GROUP_ICON, FX_SCENE_GROUP_ICON, fxLayerIconOf } from '../layerIcon';
 import { ContextMenu, type MenuCloseReason, type MenuItem } from './ContextMenu';
 
@@ -74,8 +74,17 @@ const GroupRow = observer(
   ),
 );
 
-/** One layer of the scene. */
-const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed }: { box: ComponentInstance; row: FxLayerRowModel; depth: number; breakpointId?: string; dimmed?: boolean }) => {
+/**
+ * The row being dragged, shared by every row of every box (a drag is one gesture at a time). A row
+ * accepts a drop only from the same group of the same box: a layer never leaves its group by
+ * dragging, as it never does by the keys or the menu. These rows use the browser's own drag and
+ * drop (a layer is not a node, so the node tree's pointer drag never sees them).
+ */
+let dragging: { boxId: string; layerId: string; groupKey: string } | null = null;
+const DRAG_TYPE = 'application/x-fx-layer';
+
+/** One layer of the scene. `order` is the ids of its group as listed (front first), `groupKey` names the group. */
+const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, groupKey }: { box: ComponentInstance; row: FxLayerRowModel; depth: number; breakpointId?: string; dimmed?: boolean; order: readonly string[]; groupKey: string }) => {
   const { editorUI } = useStore();
   const pick = editorUI.fxLayerPick;
   // Highlighted in the frame whose box is selected, as node rows are.
@@ -97,6 +106,13 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed }: { box: C
     choose();
     editorUI.startFxLayerRename(box.id, row.layerId);
   };
+  // Drag to reorder inside the group: where the dragged row would land, shown as a line above or below this row.
+  const [dropPlace, setDropPlace] = useState<'above' | 'below' | null>(null);
+  const canDrop = () => !!dragging && dragging.boxId === box.id && dragging.groupKey === groupKey && dragging.layerId !== row.layerId;
+  const placeOf = (e: React.DragEvent): 'above' | 'below' => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return e.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
+  };
 
   const items: MenuItem[] = [
     { label: row.visible ? 'Hide in the scene' : 'Show in the scene', icon: row.visible ? <EyeOff size={14} /> : <Eye size={14} />, onClick: () => act({ type: 'toggle' }) },
@@ -113,7 +129,36 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed }: { box: C
         data-fx-layer-row={row.layerId}
         data-fx-layer-box={box.id}
         data-fx-layer-breakpoint={breakpointId}
-        className={`@container group relative flex ${ROW_HEIGHT} items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${picked ? 'bg-brand/10' : ''}`}
+        data-fx-layer-group={groupKey}
+        data-fx-drop={dropPlace ?? undefined}
+        draggable={!isRenaming}
+        onDragStart={(e) => {
+          dragging = { boxId: box.id, layerId: row.layerId, groupKey };
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData(DRAG_TYPE, row.layerId);
+        }}
+        onDragEnd={() => {
+          dragging = null;
+          setDropPlace(null);
+        }}
+        onDragOver={(e) => {
+          if (!canDrop()) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          setDropPlace(placeOf(e));
+        }}
+        onDragLeave={() => setDropPlace(null)}
+        onDrop={(e) => {
+          if (!canDrop() || !dragging) return;
+          e.preventDefault();
+          const place = placeOf(e);
+          const from = dragging.layerId;
+          dragging = null;
+          setDropPlace(null);
+          const toIndex = fxDropIndex(order, from, row.layerId, place);
+          if (toIndex !== null) runFxLayerAction(box, editorUI, from, { type: 'moveTo', toIndex, relativeTo: `${place === 'above' ? 'in front of' : 'behind'} ${row.name}` });
+        }}
+        className={`@container group relative flex ${ROW_HEIGHT} items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${picked ? 'bg-brand/10' : ''} ${dropPlace === 'above' ? 'shadow-[inset_0_2px_0_0_var(--brand,currentColor)]' : ''} ${dropPlace === 'below' ? 'shadow-[inset_0_-2px_0_0_var(--brand,currentColor)]' : ''}`}
         style={{ paddingLeft: `${6 + depth * 14}px`, ['--layer-actions-w' as string]: `${layerActionsWidth(3)}px` }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -125,6 +170,7 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed }: { box: C
           │
         </span>
         <Icon size={14} className={`flex-none ${picked ? 'text-brand' : 'text-muted-foreground'} ${dim ? 'opacity-50' : ''}`} />
+        {row.swatch ? <span data-fx-swatch={row.swatch} className={`inline-block h-2.5 w-2.5 flex-none rounded-[3px] border border-border ${dim ? 'opacity-50' : ''}`} style={{ background: row.swatch }} aria-hidden="true" /> : null}
 
         {isRenaming ? (
           <RenameField initial={row.name} onCommit={(name) => act({ type: 'rename', name })} onCancel={() => editorUI.endFxLayerRename()} />
@@ -302,6 +348,8 @@ export const FxSceneRows = observer(({ box, rows, depth, breakpointId, dimmed }:
   const sceneFolded = collapsed.has(sceneKey);
   const effectsFolded = collapsed.has(effectsKey);
   const inner = depth + 1;
+  const effectOrder = rows.effects.map((r) => r.layerId);
+  const contentOrder = rows.content.map((r) => r.layerId);
   const selectBox = () => editorUI.selectComponent(box, breakpointId);
   const boxPickedAlone = editorUI.isSelected(box.id) && !editorUI.fxLayerPick && (!breakpointId || editorUI.selectedViewportNode?.breakpointId === breakpointId);
 
@@ -322,11 +370,30 @@ export const FxSceneRows = observer(({ box, rows, depth, breakpointId, dimmed }:
           {rows.effects.length > 0 ? (
             <>
               <GroupRow icon={FX_EFFECTS_GROUP_ICON} label="Effects" depth={inner} folded={effectsFolded} onToggle={() => editorUI.setCollapsedLayerIds(toggleFold(collapsed, effectsKey))} onSelect={selectBox} />
-              {effectsFolded ? null : rows.effects.map((row) => <FxLayerRow key={row.layerId} box={box} row={row} depth={inner + 1} breakpointId={breakpointId} dimmed={dimmed} />)}
+              {effectsFolded
+                ? null
+                : rows.effects.map((row) => (
+                    <FxLayerRow key={row.layerId} box={box} row={row} depth={inner + 1} breakpointId={breakpointId} dimmed={dimmed} order={effectOrder} groupKey="effects" />
+                  ))}
             </>
           ) : null}
           {rows.content.map((row) => (
-            <FxLayerRow key={row.layerId} box={box} row={row} depth={inner} breakpointId={breakpointId} dimmed={dimmed} />
+            <React.Fragment key={row.layerId}>
+              <FxLayerRow box={box} row={row} depth={inner} breakpointId={breakpointId} dimmed={dimmed} order={contentOrder} groupKey="content" />
+              {/* Effects that apply to this layer only, nested under it (their own group: they move among themselves). */}
+              {row.nested?.map((effect) => (
+                <FxLayerRow
+                  key={effect.layerId}
+                  box={box}
+                  row={effect}
+                  depth={inner + 1}
+                  breakpointId={breakpointId}
+                  dimmed={dimmed}
+                  order={row.nested!.map((n) => n.layerId)}
+                  groupKey={`nested:${row.layerId}`}
+                />
+              ))}
+            </React.Fragment>
           ))}
           <FxBackgroundRow box={box} color={rows.background} depth={inner} breakpointId={breakpointId} dimmed={dimmed} />
         </>

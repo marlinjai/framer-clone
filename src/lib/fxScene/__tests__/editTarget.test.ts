@@ -19,9 +19,9 @@ import {
 import { parseFxProp } from '../fxScene';
 
 type L = { id: string; type: string; name: string; target?: string; params: Record<string, unknown>; interactivity?: Record<string, unknown> };
-const ok = (e: FxEdit): Extract<FxEdit, { ok: true }> => {
+const ok = <E extends FxEdit>(e: E): Extract<E, { ok: true }> => {
   if (!e.ok) throw new Error(`expected a change, got: ${e.message}`);
-  return e;
+  return e as Extract<E, { ok: true }>;
 };
 const refused = (e: FxEdit): string => {
   if (e.ok) throw new Error('expected a refusal');
