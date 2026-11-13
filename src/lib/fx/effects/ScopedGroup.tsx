@@ -53,9 +53,11 @@ const QUAD_VERT = /* glsl */ `
   }
 `;
 
-// uMode: 0 = alpha blending (the blend state weights by alpha), 1 = colour is
-// weighted by alpha here (add, screen, overlay: light written into transparent
-// pixels by an effect must not show), 2 = multiply (transparent leaves white).
+// uMode: 0 = the blend state weights by alpha (normal, add), 1 = screen and
+// overlay, whose blend state ignores alpha: a pixel with no alpha at all adds
+// nothing (an effect such as grain writes light into transparent pixels, which
+// must not show), 2 = multiply: a pixel with no alpha leaves the picture as it is.
+// Every other pixel is drawn as the layer itself would be.
 const QUAD_FRAG = /* glsl */ `
   precision highp float;
   uniform sampler2D uMap;
@@ -63,8 +65,9 @@ const QUAD_FRAG = /* glsl */ `
   varying vec2 vUv;
   void main() {
     vec4 c = texture2D(uMap, vUv);
-    if (uMode > 1.5) c.rgb = mix(vec3(1.0), c.rgb, c.a);
-    else if (uMode > 0.5) c.rgb *= c.a;
+    float seen = step(0.002, c.a);
+    if (uMode > 1.5) c.rgb = mix(vec3(1.0), c.rgb, seen);
+    else if (uMode > 0.5) c.rgb *= seen;
     gl_FragColor = c;
     // Same as the content layers: converts to the output colour space when
     // drawn to the screen, the identity when drawn into the main composer.
@@ -73,7 +76,7 @@ const QUAD_FRAG = /* glsl */ `
 `;
 
 function modeOf(blend: BlendMode): number {
-  if (blend === "normal") return 0;
+  if (blend === "normal" || blend === "add") return 0;
   return blend === "multiply" ? 2 : 1;
 }
 
