@@ -48,6 +48,7 @@ interface ShapeValues {
 
 interface ShapeUniforms {
   [key: string]: THREE.IUniform<unknown>;
+  uPremultiply: THREE.IUniform<number>;
   uShape: THREE.IUniform<number>;
   uPosition: THREE.IUniform<THREE.Vector2>;
   uSize: THREE.IUniform<number>;
@@ -73,6 +74,7 @@ const SHAPE_VERT = /* glsl */ `
 `;
 
 const SHAPE_FRAG = /* glsl */ `
+  uniform float uPremultiply;
   precision highp float;
   uniform int uShape;
   uniform vec2 uPosition;
@@ -161,6 +163,10 @@ const SHAPE_FRAG = /* glsl */ `
     // to the screen converted nothing. Into the composer's buffer this is the
     // identity, so a scene with a post pass is drawn exactly as before.
     #include <colorspace_fragment>
+    // Multiply blends premultiplied colour (see contentBlend): uPremultiply is 1 for it, 0 otherwise.
+    gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
+    // Only multiply reads the alpha as a factor (one minus it); a value above 1 (the noise reaches 1.1) must not go negative there.
+    gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
   }
 `;
 
@@ -172,6 +178,7 @@ function ShapeLayerComponent({ layer, values, ctx }: LayerComponentProps) {
 
   const initialUniforms = useMemo<ShapeUniforms>(
     () => ({
+      uPremultiply: { value: 0 },
       uShape: { value: SHAPE_INDEX[v.shape] ?? 0 },
       uPosition: { value: new THREE.Vector2(v.position[0], v.position[1]) },
       uSize: { value: v.size },
