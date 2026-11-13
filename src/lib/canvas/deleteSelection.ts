@@ -7,6 +7,8 @@
 import type { PageModelType } from '@/models/PageModel';
 import type { EditorUIType } from '@/stores/EditorUIStore';
 import type { HistoryStoreInstance } from '@/stores/HistoryStore';
+import type { KeyBindingActionId } from '@/lib/keyBindings';
+import { runFxLayerAction } from '@/lib/layers/fxRows';
 
 /**
  * Delete the selected components from the page. Returns how many were
@@ -39,4 +41,39 @@ export function deleteSelection(
   }
   editorUI.clearSelection();
   return removed;
+}
+
+/**
+ * With a layer of an FX scene box picked in the Layers panel (`EditorUIStore.fxLayerPick`),
+ * Delete, Cmd+D and Escape act on that LAYER, never on the box: Delete with the box selected
+ * removes the box, and a picked layer must not inherit that. Also Alt+Up / Alt+Down (one
+ * place within the layer's group) and F2 (rename). The Background pseudo-row cannot be
+ * deleted, copied or moved, and its keys do nothing rather than fall through to the box.
+ *
+ * Returns true when the key belongs to the picked layer (the caller then does nothing
+ * else with it), false when no layer is picked and the key keeps its usual meaning.
+ */
+export function routeFxLayerShortcut(action: KeyBindingActionId, editorUI: EditorUIType): boolean {
+  const pick = editorUI.fxLayerPick;
+  const box = editorUI.selectedComponent;
+  if (!pick || !box) return false;
+  switch (action) {
+    case 'clearSelection':
+      editorUI.clearFxLayerPick();
+      return true;
+    case 'delete':
+    case 'duplicate':
+    case 'fxLayerForward':
+    case 'fxLayerBackward':
+    case 'renameLayer': {
+      if (pick.kind !== 'layer') return true;
+      if (action === 'renameLayer') editorUI.startFxLayerRename(box.id, pick.layerId);
+      else if (action === 'delete') runFxLayerAction(box, editorUI, pick.layerId, { type: 'delete' });
+      else if (action === 'duplicate') runFxLayerAction(box, editorUI, pick.layerId, { type: 'duplicate' });
+      else runFxLayerAction(box, editorUI, pick.layerId, { type: 'move', delta: action === 'fxLayerForward' ? 1 : -1 });
+      return true;
+    }
+    default:
+      return false;
+  }
 }

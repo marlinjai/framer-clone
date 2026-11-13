@@ -31,7 +31,7 @@ import { resolveAction } from '@/lib/keyBindings';
 import { installSaveShortcut } from '@/lib/projects/saveShortcut';
 import { bindSpacePan, isActivatableControl } from '@/lib/canvas/spacePan';
 import { pageContentOf } from '@/lib/canvas/interactShim';
-import { deleteSelection } from '@/lib/canvas/deleteSelection';
+import { deleteSelection, routeFxLayerShortcut } from '@/lib/canvas/deleteSelection';
 import { duplicateLayer } from '@/lib/layers/layerActions';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
@@ -205,6 +205,8 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         const page = rootStore.editorUI.currentPage;
         if (!page || rootStore.editorUI.selectedComponentList.length === 0) return;
         e.preventDefault();
+        // A picked layer of an FX scene is deleted instead of the box.
+        if (routeFxLayerShortcut('delete', rootStore.editorUI)) return;
         // Every selected node, as one undo step.
         deleteSelection(page, rootStore.editorUI, getHistoryStore());
         return;
@@ -216,6 +218,8 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         if (rootStore.editorUI.selectedTool === EditorTool.GRAB) return;
         const page = rootStore.editorUI.currentPage;
         if (!page || rootStore.editorUI.selectedComponentList.length === 0) return;
+        // A picked layer of an FX scene is copied instead of the box.
+        if (routeFxLayerShortcut('duplicate', rootStore.editorUI)) return;
         // Every selected node, as one undo step; the copies become the selection.
         duplicateLayer(page, rootStore.editorUI, getHistoryStore());
         return;
@@ -226,6 +230,8 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         // A dialog, menu or gesture that handled Escape itself has the last
         // word; so does an active resize (its own Escape restores the size).
         if (e.defaultPrevented || ui.isResizing) return;
+        // A picked layer of an FX scene: Escape is back to the box.
+        if (routeFxLayerShortcut('clearSelection', ui)) return;
         // With focus outside every frame, Escape ends Interact.
         if (ui.interactOn) {
           ui.setSelectedTool(EditorTool.SELECT);
@@ -241,6 +247,13 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         }
         if (!ui.selectedComponent && !ui.selectedViewportNode && ui.selectedComponentList.length === 0) return;
         ui.clearSelection();
+        return;
+      }
+
+      if (match.action === 'fxLayerForward' || match.action === 'fxLayerBackward' || match.action === 'renameLayer') {
+        // Only with a layer of an FX scene picked; otherwise the key is not ours.
+        if (rootStore.editorUI.selectedTool === EditorTool.GRAB || e.defaultPrevented) return;
+        if (routeFxLayerShortcut(match.action, rootStore.editorUI)) e.preventDefault();
         return;
       }
 

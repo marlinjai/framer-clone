@@ -18,6 +18,7 @@ import { LivePlansStore } from '@/lib/live/plansStore';
 import { LivePresenceStore } from '@/lib/live/presenceStore';
 import { PageGenDraftStore } from '@/lib/ai/pageGen/draft';
 import { FxClaim } from '@/lib/fxScene/claim';
+import { FX_PROP, parseFxProp } from '@/lib/fxScene/fxScene';
 // Removed BreakpointModel - breakpoints are now viewport nodes
 
 // Available tools in our design editor (expanded from basic ToolStore)
@@ -110,6 +111,24 @@ export interface ComponentReturn {
 export interface FxLive {
   componentId: string;
   frameId: string | null;
+}
+
+/**
+ * The layer of an FX scene box picked in the Layers panel (`kind: 'layer'`), or the scene's
+ * Background pseudo-row (`kind: 'background'`, which has no layer id). Session state: not
+ * saved, not in the undo history. The box stays the primary selection; this only says what
+ * the properties panel shows and what Delete, Cmd+D and Escape act on. Keyed by node id and
+ * layer id, never by element, because one node is drawn in every breakpoint.
+ */
+export type FxLayerPick = { componentId: string; kind: 'layer'; layerId: string } | { componentId: string; kind: 'background' };
+
+/** What the last change to a scene's layers (from a row, a menu or a key) has to say, for the Layers panel's live region. */
+export interface FxLayerNotice {
+  componentId: string;
+  /** The stored scene the message was said about (JSON): after an undo or another change it is another scene and the message is gone. */
+  about: string;
+  text: string;
+  problem: boolean;
 }
 
 /**
@@ -236,6 +255,13 @@ const EditorUIStore = types.model('EditorUI', {
   fxLive: undefined as FxLive | undefined,
   // What that scene is doing, for the FX section of the panel.
   fxLiveStatus: { state: 'idle' } as FxLiveStatus,
+  // The layer (or the Background row) of an FX scene box picked in the Layers panel.
+  // Read through `fxLayerPick`, which drops a pick whose layer is gone.
+  selectedFxLayer: undefined as FxLayerPick | undefined,
+  // The layer row being renamed in place (F2, double-click, the row menu).
+  fxLayerRenaming: undefined as { componentId: string; layerId: string } | undefined,
+  // The message of the last layer change from a row or a key.
+  fxLayerNotice: undefined as FxLayerNotice | undefined,
   // Which rendered element draws it: one node can be drawn many times in one frame.
   fxLiveClaim: new FxClaim(),
   // Registered by Canvas while it is mounted.
@@ -397,6 +423,43 @@ const EditorUIStore = types.model('EditorUI', {
     self.fxLiveStatus = { state: 'idle' };
   },
 
+  /**
+   * Pick a layer row of an FX scene box. The box stays (or becomes) the primary selection, in
+   * the frame the row was picked in (which moves Live there, as picking the box does), and
+   * the pick is set after the selection, because every selection change drops a pick.
+   */
+  pickFxLayer(box: ComponentInstance, pick: { kind: 'layer'; layerId: string } | { kind: 'background' }, breakpointId?: string) {
+    const primary = self.selectedComponent;
+    const frame = self.selectedViewportNode?.breakpointId;
+    if (!primary || primary.id !== box.id || self.selectedComponents.length !== 1 || (breakpointId && frame !== breakpointId)) this.selectComponent(box, breakpointId ?? frame);
+    self.fxLayerRenaming = undefined;
+    self.selectedFxLayer = pick.kind === 'layer' ? { componentId: box.id, kind: 'layer', layerId: pick.layerId } : { componentId: box.id, kind: 'background' };
+  },
+
+  /** Back to the box: nothing of its scene picked. */
+  clearFxLayerPick() {
+    self.selectedFxLayer = undefined;
+    self.fxLayerRenaming = undefined;
+  },
+
+  /** `setFxLayerType` gives a layer a new id: the pick follows it. */
+  followFxLayer(componentId: string, layerId: string) {
+    const pick = self.selectedFxLayer;
+    if (pick && pick.kind === 'layer' && pick.componentId === componentId) self.selectedFxLayer = { componentId, kind: 'layer', layerId };
+  },
+
+  startFxLayerRename(componentId: string, layerId: string) {
+    self.fxLayerRenaming = { componentId, layerId };
+  },
+
+  endFxLayerRename() {
+    self.fxLayerRenaming = undefined;
+  },
+
+  setFxLayerNotice(notice: FxLayerNotice | undefined) {
+    self.fxLayerNotice = notice;
+  },
+
   /** The live layer says what it is doing (src/components/fx/FxLayer.tsx). */
   reportFxLive(status: FxLiveStatus) {
     if (self.fxLive) self.fxLiveStatus = status;
@@ -430,6 +493,9 @@ const EditorUIStore = types.model('EditorUI', {
       self.componentRequest = null;
       self.fxLive = undefined;
       self.fxLiveStatus = { state: 'idle' };
+      self.selectedFxLayer = undefined;
+      self.fxLayerRenaming = undefined;
+      self.fxLayerNotice = undefined;
     }
     self.currentProject = project;
   },
@@ -512,6 +578,9 @@ const EditorUIStore = types.model('EditorUI', {
     const target = component && selectionTarget(component);
     self.selectedComponent = target;
     self.selectedComponents.replace(target ? [target] : []);
+    // Selecting a node (the box again, or another) is back to the node: no layer of a scene is picked.
+    self.selectedFxLayer = undefined;
+    self.fxLayerRenaming = undefined;
     // The live FX scene follows its box to the frame it is picked in: one frame at a time.
     if (self.fxLive && target && self.fxLive.componentId === target.id && breakpointId && self.fxLive.frameId !== breakpointId) {
       self.fxLive = { componentId: target.id, frameId: breakpointId };
@@ -564,6 +633,8 @@ const EditorUIStore = types.model('EditorUI', {
     // Clear component selection when selecting a viewport
     self.selectedComponent = undefined;
     self.selectedComponents.clear();
+    self.selectedFxLayer = undefined;
+    self.fxLayerRenaming = undefined;
   },
 
   /**
@@ -585,6 +656,8 @@ const EditorUIStore = types.model('EditorUI', {
     const ordered = [primary, ...unique.filter(c => c !== primary)];
     self.selectedComponent = primary;
     self.selectedComponents.replace(ordered);
+    self.selectedFxLayer = undefined;
+    self.fxLayerRenaming = undefined;
     self.selectedViewportNode = !primary.isFloatingElement && breakpointId && self.currentPage
       ? self.currentPage.viewportNodes.find(v => v.breakpointId === breakpointId)
       : undefined;
@@ -623,6 +696,8 @@ const EditorUIStore = types.model('EditorUI', {
     self.selectedComponent = undefined;
     self.selectedComponents.clear();
     self.selectedViewportNode = undefined;
+    self.selectedFxLayer = undefined;
+    self.fxLayerRenaming = undefined;
   },
 
   // Space held: pan with the left button whatever the tool, as in Framer and
@@ -766,6 +841,23 @@ const EditorUIStore = types.model('EditorUI', {
   
   get hasComponentSelected(): boolean {
     return !!self.selectedComponent;
+  },
+
+  /**
+   * The picked layer of an FX scene box, or undefined: nothing picked, the box is no longer the
+   * primary selection, its scene cannot be read, or the layer is gone (an undo of its add, a
+   * preset, an import, another writer's snapshot). Every reader of the pick goes through this,
+   * so a pick that points at nothing falls back to the box. The Background pick has no layer
+   * id and holds while the box has a readable scene.
+   */
+  get fxLayerPick(): FxLayerPick | undefined {
+    const pick = self.selectedFxLayer;
+    const box = self.selectedComponent;
+    if (!pick || !box || box.id !== pick.componentId) return undefined;
+    const read = parseFxProp((box.props as Record<string, unknown>)[FX_PROP]);
+    if (!read.ok) return undefined;
+    if (pick.kind === 'background') return pick;
+    return read.fx.scene.layers.some(l => l.id === pick.layerId) ? pick : undefined;
   },
 
   /** Every selected component, the primary first. Never holds dead nodes. */

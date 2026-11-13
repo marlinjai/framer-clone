@@ -43,9 +43,12 @@ export { getLayerSchema, listLayerSchemas } from "./registry";
 export { deserializeScene, sceneToJSON, serializeScene, type SerializedScene } from "./serialize";
 export {
   appendLayer,
+  duplicateLayer,
   instantiateLayer,
   listAddableTypes,
   moveLayer,
+  moveLayerTo,
+  placeInGroup,
   removeLayer,
   toggleLayer,
   withLayers,
