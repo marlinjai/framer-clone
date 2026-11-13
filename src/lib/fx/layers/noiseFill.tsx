@@ -106,7 +106,7 @@ const NOISE_FRAG = /* glsl */ `
     // identity, so a scene with a post pass is drawn exactly as before.
     #include <colorspace_fragment>
     // Multiply blends premultiplied colour (see contentBlend): uPremultiply is 1 for it, 0 otherwise.
-    gl_FragColor.rgb *= mix(1.0, gl_FragColor.a, uPremultiply);
+    gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
   }
 `;
 

@@ -315,6 +315,13 @@ describe('effects that apply to one layer', () => {
       expect.soft(Math.abs(b - 64), `blue ${b}`).toBeLessThanOrEqual(3);
       const real = (await draw(withBackground([flat('#80c0ff'), layer('vg2', 'vignette', { darkness: 1, offset: 0 }, { target: 'f' })]))).picture;
       expect(difference(real, plain).differing, 'a real effect').toBeGreaterThan(1000);
+      // Where the layer is partly or not at all drawn the quad has to agree with the layer itself.
+      for (const opacity of [0.5, 0]) {
+        const unscoped = (await draw(withBackground([flat('#80c0ff', opacity)]))).picture;
+        const scopedToo = (await draw(withBackground([flat('#80c0ff', opacity), noop]))).picture;
+        expect.soft(difference(scopedToo, unscoped).share, `opacity ${opacity}`).toBeLessThan(0.002);
+        if (opacity === 0.5) expect.soft(difference(unscoped, plain).differing, 'half drawn differs from fully drawn').toBeGreaterThan(1000);
+      }
     }, 180_000);
   });
 

@@ -26,7 +26,7 @@ describe('the composite quad blend', () => {
     ['overlay', COMPOSITE_MODE.ignoresAlpha],
     ['multiply', COMPOSITE_MODE.multiply],
   ])('draws a layer that applies %s with exactly that blend state', (blend, mode) => {
-    const layer = new ShaderMaterial({ transparent: true }); // every content layer's material is transparent
+    const layer = new ShaderMaterial({ transparent: true, uniforms: { uPremultiply: { value: 0 } } }); // every content layer's material is transparent and has uPremultiply
     applyContentBlend(layer, blend);
     const to = quad();
     expect(copyBlendState(layer, to)).toBe(mode);
@@ -36,7 +36,7 @@ describe('the composite quad blend', () => {
   it('keeps the blend state exact for every kind of blending the layers use', () => {
     const kinds = [NormalBlending, AdditiveBlending, MultiplyBlending, CustomBlending];
     for (const blending of kinds) {
-      const layer = new ShaderMaterial({ transparent: true }); // every content layer's material is transparent
+      const layer = new ShaderMaterial({ transparent: true, uniforms: { uPremultiply: { value: 0 } } }); // every content layer's material is transparent and has uPremultiply
       layer.blending = blending;
       const to = quad();
       copyBlendState(layer, to);
@@ -106,7 +106,7 @@ describe('the composite quad blend', () => {
   });
 
   it('follows the layer when its blend changes between two frames', () => {
-    const layer = new ShaderMaterial({ transparent: true }); // every content layer's material is transparent
+    const layer = new ShaderMaterial({ transparent: true, uniforms: { uPremultiply: { value: 0 } } }); // every content layer's material is transparent and has uPremultiply
     const to = quad();
     applyContentBlend(layer, 'add');
     copyBlendState(layer, to);

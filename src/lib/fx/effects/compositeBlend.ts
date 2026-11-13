@@ -15,7 +15,9 @@
  * RENDER-FREE: three.js types only, no React.
  */
 
-import { CustomBlending, DstColorFactor, type Material, type ShaderMaterial } from "three";
+import { CustomBlending, type Material, type ShaderMaterial } from "three";
+
+import { isMultiplyBlend } from "../layers/contentBlend";
 
 /** `uMode` of the composite shader: how a pixel with no alpha must behave under the blend. */
 export const COMPOSITE_MODE = { alpha: 0, ignoresAlpha: 1, multiply: 2 } as const;
@@ -43,6 +45,5 @@ export function copyBlendState(from: Material, to: ShaderMaterial): number {
   // No `needsUpdate`: this only selects blend factors when drawing; the quad's shader has no premultiplied chunk to recompile.
   to.premultipliedAlpha = from.premultipliedAlpha;
   if (blending !== CustomBlending) return COMPOSITE_MODE.alpha;
-  // The layers' multiply is custom blending with the destination colour as the source factor.
-  return from.blendSrc === DstColorFactor ? COMPOSITE_MODE.multiply : COMPOSITE_MODE.ignoresAlpha;
+  return isMultiplyBlend(from) ? COMPOSITE_MODE.multiply : COMPOSITE_MODE.ignoresAlpha;
 }

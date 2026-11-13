@@ -18,7 +18,7 @@ import {
   type Material,
 } from 'three';
 
-import { applyContentBlend } from '../layers/contentBlend';
+import { applyContentBlend, isMultiplyBlend } from '../layers/contentBlend';
 import type { BlendMode } from '../types';
 
 /** A content layer's material: transparent, with the `uPremultiply` uniform every layer's shader has. */
@@ -61,6 +61,14 @@ describe('multiply', () => {
     expect(m.blendSrc).toBe(DstColorFactor);
     expect(m.blendDst).toBe(OneMinusSrcAlphaFactor);
     expect(m.uniforms.uPremultiply.value).toBe(1);
+  });
+
+  it('is told apart from screen and overlay (the quad of a scoped layer needs to know)', () => {
+    const m = layerMaterial();
+    for (const [mode, expected] of [['multiply', true], ['screen', false], ['overlay', false], ['add', false], ['normal', false]] as Array<[BlendMode, boolean]>) {
+      applyContentBlend(m, mode);
+      expect(isMultiplyBlend(m), mode).toBe(expected);
+    }
   });
 
   it('gives destination x source where the layer is fully drawn', () => {
@@ -119,9 +127,21 @@ describe('the blend actually set follows the mode, in any order', () => {
     expect(state(b)).toEqual(state(a));
   });
 
-  it('works on a material without the uniform (the text lockup never gets a blend, and nothing breaks)', () => {
-    const m = new ShaderMaterial({ transparent: true });
-    expect(() => applyContentBlend(m, 'multiply')).not.toThrow();
-    expect(m.blending).toBe(CustomBlending);
+  it('draws normally, and says so, on a material without the uniform (multiply would brighten the pixels the layer does not cover)', () => {
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const m = new ShaderMaterial({ transparent: true });
+      applyContentBlend(m, 'multiply');
+      expect(m.blending).toBe(NormalBlending);
+      expect(errors).toHaveLength(1);
+      // Other modes do not need the uniform.
+      applyContentBlend(m, 'add');
+      expect(m.blending).toBe(AdditiveBlending);
+      expect(errors).toHaveLength(1);
+    } finally {
+      console.error = original;
+    }
   });
 });
