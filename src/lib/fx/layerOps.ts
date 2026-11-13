@@ -80,6 +80,86 @@ export function moveLayer(layers: Layer[], id: string, delta: number): Layer[] {
   return next;
 }
 
+/** Which half of the scene a layer is in: content layers draw, post effects change what was drawn. `null` for an unregistered type. */
+function groupOf(layer: Layer): "content" | "post" | null {
+  return getLayerSchema(layer.type)?.kind ?? null;
+}
+
+export type MoveResult = { ok: true; layers: Layer[] } | { ok: false; reason: string };
+
+/**
+ * Move a layer to a place WITHIN ITS GROUP. `toIndex` counts inside the layer's own
+ * group (content layers among content layers, post effects among post effects), back
+ * to front, so `0` is the back of its group and `size - 1` the front.
+ *
+ * Content and post layers are never moved across: where a post effect sits among the
+ * content layers in the stored array changes nothing on screen (post effects run after
+ * all content, in their own order), so allowing it would only mislead. The slots of
+ * the other group stay exactly where they are in the array.
+ *
+ * Refused, with a reason a person can act on, when the layer is unknown, when `toIndex`
+ * is outside the group or is where the layer already is.
+ */
+export function moveLayerTo(layers: Layer[], id: string, toIndex: number): MoveResult {
+  const layer = layers.find((l) => l.id === id);
+  if (!layer) return { ok: false, reason: "That layer is no longer in the scene." };
+  const group = groupOf(layer);
+  const slots: number[] = [];
+  layers.forEach((l, i) => {
+    if (groupOf(l) === group) slots.push(i);
+  });
+  const members = slots.map((i) => layers[i]);
+  const from = members.findIndex((l) => l.id === id);
+  if (!Number.isInteger(toIndex)) return { ok: false, reason: `${layer.name} cannot be moved to that place.` };
+  if (toIndex < 0 || toIndex >= members.length) {
+    const edge = toIndex < 0 ? "back" : "front";
+    return { ok: false, reason: `${layer.name} is already at the ${edge} of its group.` };
+  }
+  if (toIndex === from) return { ok: false, reason: `${layer.name} is already there.` };
+  const [item] = members.splice(from, 1);
+  members.splice(toIndex, 0, item);
+  const next = layers.slice();
+  slots.forEach((slot, i) => {
+    next[slot] = members[i];
+  });
+  return { ok: true, layers: next };
+}
+
+/** The place of a layer inside its own group, back to front, with the size of the group. `null` when the layer is unknown. */
+export function placeInGroup(layers: Layer[], id: string): { index: number; size: number } | null {
+  const layer = layers.find((l) => l.id === id);
+  if (!layer) return null;
+  const group = groupOf(layer);
+  const members = layers.filter((l) => groupOf(l) === group);
+  return { index: members.findIndex((l) => l.id === id), size: members.length };
+}
+
+export type DuplicateResult = { ok: true; layers: Layer[]; layerId: string } | { ok: false; reason: string };
+
+/**
+ * Copy a layer: a new id, the name followed by " copy", every setting copied (never
+ * shared with the original), placed directly in front of it in the stored order, so
+ * in the same group. Refused when the scene already holds `max` layers.
+ */
+export function duplicateLayer(layers: Layer[], id: string, max: number, maxName = 80): DuplicateResult {
+  const index = layers.findIndex((l) => l.id === id);
+  if (index < 0) return { ok: false, reason: "That layer is no longer in the scene." };
+  if (layers.length >= max) return { ok: false, reason: `A scene can hold at most ${max} layers. Remove one first.` };
+  const source = layers[index];
+  const layerId = uniqueLayerId(layers, source.type);
+  const copy: Layer = {
+    ...source,
+    id: layerId,
+    name: `${source.name} copy`.slice(0, maxName),
+    params: cloneParams(source.params),
+    ...(source.interactivity ? { interactivity: { ...source.interactivity } } : {}),
+    ...(source.animate ? { animate: JSON.parse(JSON.stringify(source.animate)) } : {}),
+  };
+  const next = layers.slice();
+  next.splice(index + 1, 0, copy);
+  return { ok: true, layers: next, layerId };
+}
+
 export function removeLayer(layers: Layer[], id: string): Layer[] {
   return layers.filter((l) => l.id !== id);
 }

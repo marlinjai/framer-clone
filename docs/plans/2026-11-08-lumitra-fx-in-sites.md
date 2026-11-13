@@ -162,8 +162,9 @@ Following the map embed and the 3D primitive: an ordinary `div` with a marker at
 
 - **Insert palette:** an "FX scene" entry with the engine's presets as starting points, plus "Gold noise gradient" taken
   from `lumitra-web/src/scenes/hub-hero.json`.
-- **Properties panel, FX section:** a layer list (add, remove, reorder, show or hide; reusing the engine's `layerOps.ts`)
-  and, for the selected layer, controls generated from its `ParamSchema` (number with min, max and step; colour; select;
+- **Properties panel, FX section:** the scene's layers are rows under the box in the Layers panel (remove, duplicate, reorder, show or hide, rename; adding a layer stays in this section;
+  reusing the engine's `layerOps.ts`), planned in [FX scene layers in the Layers panel](2026-11-13-fx-layers-in-layers-panel.md),
+  which replaces the layer list that was first planned inside this section. The section shows, for the layer picked there, controls generated from its `ParamSchema` (number with min, max and step; colour; select;
   boolean; two-number vector). These map onto the panel's existing control kinds. The section also holds `start`, `calm`,
   and "Import scene JSON" / "Copy scene JSON", the same blob the leva Export writes, so a scene tuned on lumitra.co with
   `?tune=1` can be pasted in during the transition.

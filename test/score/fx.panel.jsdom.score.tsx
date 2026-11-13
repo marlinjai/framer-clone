@@ -89,7 +89,9 @@ async function panelCell(scene: ReturnType<typeof serializeScene>): Promise<Cell
 
   const missing: string[] = [];
   for (const layer of read.fx.scene.layers) {
-    const row = screen.getAllByRole('button').find((button) => button.hasAttribute('aria-pressed') && button.querySelector('span')?.textContent === layer.name);
+    const row = within(screen.getByRole('list', { name: 'Layers in this scene' }))
+      .getAllByRole('button')
+      .find((button) => button.querySelector('span')?.textContent === layer.name);
     if (!row) {
       missing.push(`${layer.name}: not in the layer list`);
       continue;
@@ -98,7 +100,8 @@ async function panelCell(scene: ReturnType<typeof serializeScene>): Promise<Cell
     const group = screen.queryByRole('group', { name: `Settings of ${layer.name}` });
     if (!group) missing.push(`${layer.name}: no settings shown`);
     else missing.push(...missingControls(layer, group));
-    fireEvent.click(row);
+    // Back to the box: the crumb above the picked layer.
+    fireEvent.click(screen.getByRole('button', { name: 'FX scene' }));
   }
   if (missing.length > 0) return fail(`no control for ${missing.join('; ')}`);
   const settings = read.fx.scene.layers.reduce((count, layer) => count + Object.keys(layer.params).length, 0);
@@ -122,7 +125,7 @@ describe('FX scene promises: the panel', () => {
     const layer = parseFxProp((box.props as Record<string, unknown>)[FX_PROP]);
     if (!layer.ok) throw new Error(layer.message);
     const bloom = layer.fx.scene.layers.find((l) => l.type === 'bloom')!;
-    fireEvent.click(screen.getAllByRole('button').find((button) => button.hasAttribute('aria-pressed') && button.querySelector('span')?.textContent === bloom.name)!);
+    fireEvent.click(within(screen.getByRole('list', { name: 'Layers in this scene' })).getAllByRole('button').find((button) => button.querySelector('span')?.textContent === bloom.name)!);
     const group = screen.getByRole('group', { name: `Settings of ${bloom.name}` });
     expect(missingControls(bloom, group)).toEqual([]);
     const invented: Layer = { ...bloom, params: { ...bloom.params, sparkle: { type: 'number', value: 1, min: 0, max: 2 } } };

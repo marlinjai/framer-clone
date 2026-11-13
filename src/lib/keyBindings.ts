@@ -9,7 +9,7 @@
 // Kept deliberately tiny. When the Settings page ships, swap `DEFAULT_BINDINGS`
 // for a MobX-observable map read from persisted user config.
 
-export type KeyBindingActionId = 'save' | 'delete' | 'duplicate' | 'undo' | 'redo' | 'clearSelection' | 'enterComponent' | 'createComponent' | 'selectTool' | 'grabTool';
+export type KeyBindingActionId = 'save' | 'delete' | 'duplicate' | 'undo' | 'redo' | 'clearSelection' | 'enterComponent' | 'createComponent' | 'selectTool' | 'grabTool' | 'fxLayerForward' | 'fxLayerBackward' | 'renameLayer';
 
 // Descriptor for a single key combo. Modifier keys are normalised across macOS
 // (Cmd) and other platforms (Ctrl) via `primary: true` — the matcher treats
@@ -92,6 +92,29 @@ export const DEFAULT_BINDINGS: KeyBindingDefinition[] = [
     bindings: [
       // Figma's and Framer's combination.
       { key: 'k', primary: true, alt: true },
+    ],
+  },
+  {
+    // With a layer of an FX scene picked in the Layers panel: one place toward the front or
+    // the back of its group. Nothing otherwise (src/lib/canvas/deleteSelection.ts).
+    action: 'fxLayerForward',
+    label: 'Bring the picked scene layer forward',
+    bindings: [
+      { key: 'ArrowUp', alt: true },
+    ],
+  },
+  {
+    action: 'fxLayerBackward',
+    label: 'Send the picked scene layer backward',
+    bindings: [
+      { key: 'ArrowDown', alt: true },
+    ],
+  },
+  {
+    action: 'renameLayer',
+    label: 'Rename the picked scene layer',
+    bindings: [
+      { key: 'F2' },
     ],
   },
   {

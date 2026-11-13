@@ -26,9 +26,12 @@ import {
   FX_START_MODES,
   PRESETS,
   appendLayer,
+  duplicateLayer,
   getLayerSchema,
   instantiateLayer,
   moveLayer,
+  moveLayerTo,
+  placeInGroup,
   removeLayer,
   sceneToJSON,
   toggleLayer,
@@ -163,6 +166,44 @@ export function removeFxLayer(current: unknown, layerId: string): FxEdit {
 /** Move a layer one place: `-1` toward the back (drawn earlier), `1` toward the front. At either end nothing changes. */
 export function moveFxLayer(current: unknown, layerId: string, delta: -1 | 1): FxEdit {
   return change(current, (fx) => (fx.scene.layers.some((l) => l.id === layerId) ? withLayers(fx, moveLayer(fx.scene.layers, layerId, delta)) : NO_LAYER));
+}
+
+/**
+ * Move a layer by `delta` places WITHIN ITS GROUP (`1` toward the front, `-1` toward the back),
+ * never across content and post: that would change nothing on screen. At the edge of the group
+ * the change is refused with a reason and nothing is stored (`moveFxLayer` keeps its quiet no-op).
+ */
+export function moveFxLayerTo(current: unknown, layerId: string, toIndex: number): FxEdit {
+  return change(current, (fx) => {
+    const moved = moveLayerTo(fx.scene.layers, layerId, toIndex);
+    return moved.ok ? withLayers(fx, moved.layers) : moved.reason;
+  });
+}
+
+/** `moveFxLayerTo` by a step: one place toward the front (`1`) or the back (`-1`) of the layer's group. */
+export function stepFxLayer(current: unknown, layerId: string, delta: -1 | 1): FxEdit {
+  const read = parseFxProp(current);
+  if (!read.ok) return read;
+  const place = placeInGroup(read.fx.scene.layers, layerId);
+  if (!place) return { ok: false, message: NO_LAYER };
+  const target = place.index + delta;
+  if (target < 0 || target >= place.size) {
+    const name = read.fx.scene.layers.find((l) => l.id === layerId)?.name ?? 'This layer';
+    return { ok: false, message: `${name} is already at the ${delta > 0 ? 'front' : 'back'} of its group.` };
+  }
+  return moveFxLayerTo(current, layerId, target);
+}
+
+/** Copy a layer with a new id, directly in front of the original. Refused past the scene's layer limit. Returns the copy's id. */
+export function duplicateFxLayer(current: unknown, layerId: string): FxEdit & { layerId?: string } {
+  let copyId: string | undefined;
+  const edit = change(current, (fx) => {
+    const copied = duplicateLayer(fx.scene.layers, layerId, FX_LIMITS.layers, FX_LIMITS.name);
+    if (!copied.ok) return copied.reason;
+    copyId = copied.layerId;
+    return withLayers(fx, copied.layers);
+  });
+  return edit.ok ? { ...edit, layerId: copyId } : edit;
 }
 
 /** Show or hide a layer. */

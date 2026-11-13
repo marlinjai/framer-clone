@@ -9,7 +9,9 @@
 //
 // Items per element (src/lib/quickbar/actions.ts contextMenuItemsFor): Select
 // parent, Select child (containers), Edit text (text), Duplicate, Copy style,
-// Paste style (once a style was copied), Delete. Picking one runs it and
+// Paste style (once a style was copied), Delete. With a layer of an FX scene
+// picked the menu is about that layer only (Duplicate layer, Delete layer);
+// with the scene Background picked Duplicate and Delete are left out. Picking one runs it and
 // closes the menu; a tap outside or Escape closes it. The menu is a second
 // way in: the quick toolbar stays.
 //
@@ -32,7 +34,8 @@ import { ArrowUp, ClipboardCopy, ClipboardPaste, Copy, CornerDownRight, PencilLi
 import type { EditorUIType } from '@/stores/EditorUIStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import { duplicateLayer } from '@/lib/layers/layerActions';
-import { deleteSelection } from '@/lib/canvas/deleteSelection';
+import { deleteSelection, routeFxLayerShortcut } from '@/lib/canvas/deleteSelection';
+import { fxPickLabel } from '@/lib/layers/fxRows';
 import { haptic, resetSelectionTick, selectionTick } from '@/lib/haptics';
 import { cn } from '@/lib/utils';
 import { placeMenuAtPoint } from '@/lib/quickbar/placement';
@@ -113,6 +116,22 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
 
   const close = React.useCallback(() => editorUI.closePhoneContextMenu(), [editorUI]);
 
+  // What the menu was opened on: the box itself or a picked layer of its FX scene. If the pick changes
+  // under an open menu (the layer vanished through an undo or another writer) the menu closes, so a finger
+  // sliding over "Delete layer" can never land on the box's own Delete.
+  const livePick = editorUI.fxLayerPick;
+  const pickKey = livePick ? (livePick.kind === 'layer' ? `layer:${livePick.layerId}` : 'background') : '';
+  const openedOn = React.useRef<string | null>(null);
+  // Before paint: the menu must not be seen (or touched) for a frame with the box's own items.
+  React.useLayoutEffect(() => {
+    if (!open) {
+      openedOn.current = null;
+      return;
+    }
+    if (openedOn.current === null) openedOn.current = pickKey;
+    else if (openedOn.current !== pickKey) close();
+  }, [open, pickKey, close]);
+
   // The element went away (undo, a collaborator): nothing to act on.
   React.useEffect(() => {
     if (point && (!component || !page)) close();
@@ -171,17 +190,22 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
     return () => window.removeEventListener('keydown', onKey, true);
   }, [open, close]);
 
-  if (!open || !component || !page || !point) return null;
+  // The pick changed under the open menu: nothing is drawn or run from it (the effect above closes it).
+  const pickChanged = openedOn.current !== null && openedOn.current !== pickKey;
+  if (!open || !component || !page || !point || pickChanged) return null;
 
   const history = getHistoryStore();
   // Paste style writes Normal, so a state does not offer it.
-  const items = contextMenuItemsFor(component, page, !editorUI.activeRule && !!editorUI.copiedStyle && Object.keys(editorUI.copiedStyle).length > 0);
+  const fxPick = editorUI.fxLayerPick && editorUI.fxLayerPick.componentId === component.id ? editorUI.fxLayerPick : undefined;
+  const fxLabel = fxPick ? fxPickLabel(component, fxPick) : null;
+  const items = contextMenuItemsFor(component, page, !editorUI.activeRule && !!editorUI.copiedStyle && Object.keys(editorUI.copiedStyle).length > 0, fxPick?.kind);
   const rect = screenRectFor(component, breakpointId);
   const w = typeof window !== 'undefined' ? window.innerWidth : 0;
   const h = typeof window !== 'undefined' ? window.innerHeight : 0;
 
   const run = (item: ContextMenuItem) => {
     close();
+    if (openedOn.current !== null && openedOn.current !== pickKey) return;
     switch (item) {
       case 'selectParent': {
         const parent = parentOf(component, page);
@@ -203,7 +227,8 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
         beginInlineTextEdit(editorUI, component);
         return;
       case 'duplicate':
-        duplicateLayer(page, editorUI, history);
+        // A picked layer of an FX scene is copied instead of the box.
+        if (!routeFxLayerShortcut('duplicate', editorUI, { swallowStale: false })) duplicateLayer(page, editorUI, history);
         return;
       case 'copyStyle':
         editorUI.setCopiedStyle(copyStyle(component, breakpointId));
@@ -212,7 +237,8 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
         if (editorUI.copiedStyle) pasteStyle(component, breakpointId, editorUI.copiedStyle, history);
         return;
       case 'delete':
-        deleteSelection(page, editorUI, history);
+        // A picked layer of an FX scene is deleted instead of the box.
+        if (!routeFxLayerShortcut('delete', editorUI, { swallowStale: false })) deleteSelection(page, editorUI, history);
         return;
     }
   };
@@ -248,13 +274,13 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
       <div
         ref={menuRef}
         role="menu"
-        aria-label={`Actions for ${component.displayName}`}
+        aria-label={`Actions for ${fxPick?.kind === 'layer' && fxLabel ? fxLabel.name : component.displayName}`}
         className="glass-surface float-enter absolute min-w-[200px] overflow-hidden rounded-xl py-1"
         data-shown={shown ? 'true' : 'false'}
         style={{ transform: shown ? 'scale(1)' : 'scale(0.96)', transformOrigin: 'top left' }}
       >
         <div className="truncate px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {component.displayName}
+          {fxPick?.kind === 'layer' && fxLabel ? fxLabel.name : component.displayName}
         </div>
         {items.map((item, i) => {
           const meta = ITEM_META[item];
@@ -272,7 +298,7 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
                   meta.destructive && 'text-red-600 dark:text-red-400',
                 )}
               >
-                <span className="flex-1">{meta.label}</span>
+                <span className="flex-1">{fxPick?.kind === 'layer' ? `${meta.label} layer` : meta.label}</span>
                 {meta.icon}
               </button>
             </React.Fragment>

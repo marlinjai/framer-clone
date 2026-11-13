@@ -16,19 +16,26 @@ import {
   AppWindow,
   AudioLines,
   Box,
+  Blend,
   Component,
   Database,
+  Image as ImageIcon,
   Info,
+  Layers,
   LayoutList,
   Minus,
   Monitor,
+  Palette,
   Repeat,
   Shapes,
   Sheet,
   Smartphone,
+  Sparkles,
   Tablet,
   Type,
   Video,
+  WandSparkles,
+  Waves,
 } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { COMPONENT_REGISTRY, FORM_COMPONENTS, type ComponentRegistryEntry, type DataComponentKind } from '@/lib/componentRegistry';
@@ -179,4 +186,28 @@ export function isPageBody(
 ): boolean {
   if (!component || inComponent || component.isViewportNode) return false;
   return !!page?.appComponentTree && page.appComponentTree.id === component.id;
+}
+
+/** The row of an FX scene's own group ("Scene"), under the box. */
+export const FX_SCENE_GROUP_ICON: LucideIcon = Sparkles;
+/** The sub-group of post effects ("Effects"). */
+export const FX_EFFECTS_GROUP_ICON: LucideIcon = WandSparkles;
+/** The pseudo-row for the scene's background colour. */
+export const FX_BACKGROUND_ICON: LucideIcon = Palette;
+
+/**
+ * The icon of one layer of an FX scene, by what the layer is: a kind icon for text, noise,
+ * gradient, picture and shape, one effect icon for every post effect. A layer kind
+ * this table does not know falls back to the layers icon, so a new kind needs no change here.
+ */
+export function fxLayerIconOf(type: string, kind: 'content' | 'post' | null): LucideIcon {
+  if (kind === 'post') return WandSparkles;
+  switch (type) {
+    case 'text': return Type;
+    case 'image': return ImageIcon;
+    case 'shape': return Shapes;
+    case 'noiseFill': return Waves;
+    case 'gradient': return Blend;
+    default: return Layers;
+  }
 }

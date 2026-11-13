@@ -1,12 +1,18 @@
 'use client';
 // src/components/sidebars/right/sections/FxSceneSection.tsx
 //
-// The properties panel's section for an FX scene box (src/lib/fxScene/fxScene.ts): the
-// preset, when the scene starts, what a visitor with reduced motion gets, the scene's
-// layers (add, remove, reorder, show or hide) and, for the layer picked in the list,
-// one control per setting. The controls are generated from the layer's own schema
-// (src/lib/fx/schemas.ts): a number with its range, a colour, a choice, a switch, text,
-// a pair of numbers. A new kind of layer or a new setting needs no change here.
+// The properties panel's section for an FX scene box (src/lib/fxScene/fxScene.ts). What it
+// shows depends on what is picked in the Layers panel (`EditorUIStore.fxLayerPick`):
+//   - nothing (the box): the scene-level settings (Live, preset, when the scene starts, what
+//     a visitor with reduced motion gets), a compact summary of the layers (each entry picks
+//     that layer; the rows themselves, with hide, rename, delete, duplicate and move, are in
+//     the Layers panel), adding a layer, and copying or importing the scene as JSON;
+//   - the Background row: the scene's background colour and the reduced motion choice;
+//   - a layer: that layer alone, behind a crumb back to the box: its name, whether it is
+//     shown, its kind and blend mode and one control per setting. The controls are
+//     generated from the layer's own schema (src/lib/fx/schemas.ts): a number with its
+//     range, a colour, a choice, a switch, text, a pair of numbers. A new kind of layer or
+//     a new setting needs no change here.
 //
 // Every change goes through src/lib/fxScene/edit.ts, which passes the scene through the
 // strict reader before it is stored, as one undo step. What the reader repaired is
@@ -17,7 +23,7 @@
 
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { ArrowDown, ArrowUp, Eye, EyeOff, Sparkles, Trash2 } from 'lucide-react';
+import { ChevronRight, Sparkles } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
@@ -31,8 +37,6 @@ import {
   fxPresetOptions,
   fxSceneJson,
   importFxScene,
-  moveFxLayer,
-  removeFxLayer,
   renameFxLayer,
   setFxBackground,
   setFxCalm,
@@ -43,7 +47,7 @@ import {
   toggleFxLayer,
   type FxEdit,
 } from '@/lib/fxScene/edit';
-import { FX_SOURCE_LAYER_PARAM, listAddableTypes, type BlendMode, type FxCalm, type FxStart, type Layer, type ParamSchema } from '@/lib/fx/format';
+import { FX_LIMITS, FX_SOURCE_LAYER_PARAM, listAddableTypes, type BlendMode, type FxCalm, type FxStart, type Layer, type ParamSchema } from '@/lib/fx/format';
 import { editorSiteImageUrl, MAX_SITE_IMAGE_BYTES, formatBytes } from '@/lib/site/siteImages';
 import { uploadFailureMessage } from '@/components/site/SiteImageField';
 
@@ -57,9 +61,6 @@ const ERROR = 'text-[11px] leading-snug text-destructive';
 const TEXT_BUTTON =
   'h-7 flex-none rounded-[6px] border border-border px-2.5 text-[11px] text-foreground transition-colors ' +
   'hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50';
-const ICON_BUTTON =
-  'flex h-6 w-6 flex-none items-center justify-center rounded-[5px] text-muted-foreground transition-colors ' +
-  'hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40';
 
 const START_OPTIONS: { value: FxStart; label: string }[] = [
   { value: 'settled', label: 'After the page has loaded' },
@@ -196,6 +197,43 @@ function TextSetting({ label, value, maxLength, onChange }: { label: string; val
   );
 }
 
+/**
+ * Text that keeps its line breaks: the `text` setting of a text box layer. Same draft handling as
+ * the single-line field (nothing stored while typing; one undo step on leaving the field or on
+ * Cmd+Enter / Ctrl+Enter, which does not insert a line break), but Enter is a line break here.
+ */
+export function MultilineTextSetting({ label, value, maxLength, onChange }: { label: string; value: string; maxLength?: number; onChange: (value: string) => void }) {
+  const id = useId();
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    if (draft !== value) onChange(draft);
+  };
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <label htmlFor={id} className={FIELD_LABEL}>
+        {label}
+      </label>
+      <textarea
+        id={id}
+        rows={4}
+        value={draft}
+        maxLength={maxLength}
+        spellCheck={false}
+        className="w-full resize-y rounded-[6px] border border-border bg-background p-2 text-[12px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            commit();
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 /** An image layer's picture: one the site stores, uploaded here. Never an address typed by hand. */
 function PictureSetting({ projectId, demo, value, onChange }: { projectId: string | undefined; demo: boolean; value: string; onChange: (value: string) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -294,7 +332,6 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   // The prop as it is NOW: an edit that completes later (a picture upload, a Studio conversion) is built from this,
   // never from the scene captured when it began, or it would overwrite what was changed in between.
   const currentStored = () => (component.props as Record<string, unknown>)[FX_PROP];
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   // What the last change left to say, kept with the scene it was said about: after an
   // undo, or a change made elsewhere, the scene is another one and the message is gone.
   const sceneKey = JSON.stringify(stored ?? null);
@@ -308,7 +345,6 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
 
   // Another box: nothing of the last one's messages or selection carries over.
   useEffect(() => {
-    setSelectedId(null);
     setSaid({ about: '', notes: [], problem: '' });
     setImporting(false);
     setImportText('');
@@ -334,7 +370,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
       placeholder="Choose a preset..."
       options={presets.map((p) => ({ value: p.id, label: p.label }))}
       onChange={(id) => {
-        if (id && apply(applyFxPreset(stored, id))) setSelectedId(null);
+        if (id && apply(applyFxPreset(stored, id))) editorUI.clearFxLayerPick();
       }}
     />
   );
@@ -358,7 +394,9 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
 
   const { fx } = read;
   const layers = fx.scene.layers;
-  const selected = layers.find((l) => l.id === selectedId) ?? null;
+  const pick = editorUI.fxLayerPick;
+  const picked = pick && pick.componentId === component.id ? pick : undefined;
+  const selected = picked && picked.kind === 'layer' ? (layers.find((l) => l.id === picked.layerId) ?? null) : null;
   const addable = listAddableTypes();
   const kindLabel = (type: string) => kindName(addable.find((t) => t.type === type)?.label ?? type);
   const layerName = (id: string) => layers.find((l) => l.id === id)?.name ?? id;
@@ -388,6 +426,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
           </PropertyRow>
         );
       case 'string':
+        if (layer.type === 'textBox' && key === 'text') return <MultilineTextSetting key={key} label={label} value={schema.value} maxLength={FX_LIMITS.text} onChange={set} />;
         if (layer.type === 'image' && key === 'src') return <PictureSetting key={key} projectId={projectId} demo={editorUI.isUnsavedDemo} value={schema.value} onChange={set} />;
         return <TextSetting key={key} label={label} value={schema.value} maxLength={200} onChange={set} />;
       case 'vec2':
@@ -494,9 +533,95 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     if (apply(importFxScene(currentStored(), scene))) {
       setImporting(false);
       setImportText('');
-      setSelectedId(null);
+      editorUI.clearFxLayerPick();
     }
   };
+
+  // A refusal from a row, a menu or a key (the Layers panel's live region may be out of sight): shown here too.
+  const rowNotice = editorUI.fxLayerNotice;
+  const rowProblem = rowNotice && rowNotice.problem && rowNotice.componentId === component.id && rowNotice.about === sceneKey ? rowNotice.text : '';
+  const messages = (
+    <>
+      {rowProblem && rowProblem !== problem ? (
+        <p role="alert" className={ERROR}>
+          {rowProblem}
+        </p>
+      ) : null}
+      {notes.length > 0 ? (
+        <div role="status" className="flex min-w-0 flex-col gap-1 rounded-[6px] border border-border px-2 py-1.5">
+          <span className={FIELD_LABEL}>Adjusted while saving</span>
+          {notes.map((note) => (
+            <p key={note} className={HINT}>
+              {note}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {problem ? (
+        <p role="alert" className={ERROR}>
+          {problem}
+        </p>
+      ) : null}
+    </>
+  );
+
+  /** The way back to the box, above whatever one part of the scene is shown. */
+  const crumb = (title: string, detail?: string) => (
+    <nav aria-label="Scene path" className="flex min-w-0 items-center gap-1 text-[12px]">
+      <button
+        type="button"
+        className="flex-none rounded-[4px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        onClick={() => editorUI.clearFxLayerPick()}
+      >
+        FX scene
+      </button>
+      <ChevronRight size={12} className="flex-none text-muted-foreground" aria-hidden="true" />
+      <span className="min-w-0 truncate font-medium text-foreground" aria-current="page">
+        {title}
+      </span>
+      {detail ? <span className="flex-none text-[10px] text-muted-foreground">{detail}</span> : null}
+    </nav>
+  );
+
+  if (picked?.kind === 'background') {
+    return (
+      <CollapsibleSection title="FX" icon={<Sparkles size={14} />} normalOnly>
+        {crumb('Background')}
+        <ColorInput label="Scene background" value={fx.scene.background} onChange={(value) => apply(setFxBackground(stored, value))} />
+        <p className={HINT}>The colour drawn behind every layer of the scene. The box&apos;s own background, set under Styles, is a different thing: it shows where the scene cannot be drawn.</p>
+        <PropertySelect label="With reduced motion" value={fx.calm} options={CALM_OPTIONS} onChange={(value) => apply(setFxCalm(stored, value as FxCalm))} />
+        <p className={HINT}>Some visitors ask their device for less motion. They get the box background, or one frame of the scene that does not move.</p>
+        {messages}
+      </CollapsibleSection>
+    );
+  }
+
+  if (selected) {
+    return (
+      <CollapsibleSection title="FX" icon={<Sparkles size={14} />} normalOnly>
+        {crumb(selected.name, kindLabel(selected.type))}
+        {messages}
+        <div className="flex min-w-0 flex-col gap-2.5" role="group" aria-label={`Settings of ${selected.name}`}>
+          <TextSetting label="Name" value={selected.name} maxLength={80} onChange={(name) => apply(renameFxLayer(stored, selected.id, name))} />
+          <PropertyRow label="Visible" hint="Hide or show this layer in the scene, on the published page too">
+            <PropertySwitch checked={selected.visible} onCheckedChange={() => apply(toggleFxLayer(stored, selected.id))} />
+          </PropertyRow>
+          <PropertySelect
+            label="Kind"
+            value={selected.type}
+            options={addable.map((t) => ({ value: t.type, label: kindName(t.label) }))}
+            onChange={(type) => {
+              const edit = setFxLayerType(stored, selected.id, type);
+              if (apply(edit) && edit.ok && edit.layerId) editorUI.followFxLayer(component.id, edit.layerId);
+            }}
+          />
+          <p className={HINT}>Another kind starts from that kind&apos;s own settings: the settings below are replaced.</p>
+          <PropertySelect label="Blend" value={selected.blend} options={BLEND_OPTIONS} onChange={(blend) => apply(setFxLayerBlend(stored, selected.id, blend as BlendMode))} />
+          {Object.entries(selected.params).map(([key, schema]) => settingControl(selected, key, schema))}
+        </div>
+      </CollapsibleSection>
+    );
+  }
 
   return (
     <CollapsibleSection title="FX" icon={<Sparkles size={14} />} normalOnly>
@@ -517,47 +642,33 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
       <PropertySelect label="Starts" value={fx.start} options={START_OPTIONS} onChange={(value) => apply(setFxStart(stored, value as FxStart))} />
       <PropertySelect label="With reduced motion" value={fx.calm} options={CALM_OPTIONS} onChange={(value) => apply(setFxCalm(stored, value as FxCalm))} />
       <p className={HINT}>Some visitors ask their device for less motion. They get the box background, or one frame of the scene that does not move.</p>
-      <ColorInput label="Scene background" value={fx.scene.background} onChange={(value) => apply(setFxBackground(stored, value))} />
 
       <div className="flex min-w-0 flex-col gap-1.5">
         <span className={FIELD_LABEL} id={`fx-layers-${component.id}`}>
-          Layers, back to front
+          Layers in this scene
         </span>
-        {layers.length === 0 ? <p className={HINT}>This scene has no layers, so it draws only its background. Add one below.</p> : null}
+        {layers.length === 0 ? (
+          <p className={HINT}>This scene has no layers, so it draws only its background. Add one below.</p>
+        ) : (
+          <p className={HINT}>Each layer is a row under this box in the Layers panel, front at the top: hide, rename, copy, move and delete them there. Pick one to change its settings.</p>
+        )}
         <ul aria-labelledby={`fx-layers-${component.id}`} className="flex min-w-0 flex-col gap-1">
-          {layers.map((layer, index) => (
-            <li key={layer.id} className={`flex min-w-0 items-center gap-1 rounded-[6px] border px-1.5 py-1 ${layer.id === selectedId ? 'border-brand bg-accent' : 'border-border'}`}>
+          {[...layers].reverse().map((layer) => (
+            <li key={layer.id}>
               <button
                 type="button"
-                aria-pressed={layer.id === selectedId}
-                className="min-w-0 flex-1 truncate rounded-[4px] px-1 text-left text-[12px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                onClick={() => setSelectedId(layer.id === selectedId ? null : layer.id)}
+                className="flex w-full min-w-0 items-baseline gap-1.5 rounded-[6px] border border-border px-2 py-1 text-left text-[12px] text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                onClick={() => editorUI.pickFxLayer(component, { kind: 'layer', layerId: layer.id })}
               >
-                <span className={layer.visible ? '' : 'opacity-50'}>{layer.name}</span>
-                <span className="ml-1.5 text-[10px] text-muted-foreground">{kindLabel(layer.type)}</span>
-              </button>
-              <button type="button" className={ICON_BUTTON} aria-label={`${layer.visible ? 'Hide' : 'Show'} ${layer.name}`} aria-pressed={!layer.visible} onClick={() => apply(toggleFxLayer(stored, layer.id))}>
-                {layer.visible ? <Eye size={13} /> : <EyeOff size={13} />}
-              </button>
-              <button type="button" className={ICON_BUTTON} aria-label={`Move ${layer.name} toward the back`} disabled={index === 0} onClick={() => apply(moveFxLayer(stored, layer.id, -1))}>
-                <ArrowUp size={13} />
-              </button>
-              <button type="button" className={ICON_BUTTON} aria-label={`Move ${layer.name} toward the front`} disabled={index === layers.length - 1} onClick={() => apply(moveFxLayer(stored, layer.id, 1))}>
-                <ArrowDown size={13} />
-              </button>
-              <button
-                type="button"
-                className={ICON_BUTTON}
-                aria-label={`Remove ${layer.name}`}
-                onClick={() => {
-                  if (apply(removeFxLayer(stored, layer.id)) && layer.id === selectedId) setSelectedId(null);
-                }}
-              >
-                <Trash2 size={13} />
+                <span className={`min-w-0 truncate ${layer.visible ? '' : 'opacity-50'}`}>{layer.name}</span>
+                <span className="flex-none text-[10px] text-muted-foreground">{layer.visible ? kindLabel(layer.type) : `${kindLabel(layer.type)}, hidden`}</span>
               </button>
             </li>
           ))}
         </ul>
+        <button type="button" className={`${TEXT_BUTTON} self-start`} onClick={() => editorUI.pickFxLayer(component, { kind: 'background' })}>
+          Background colour
+        </button>
       </div>
 
       <PropertySelect
@@ -568,45 +679,11 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
         onChange={(type) => {
           if (!type) return;
           const edit = addFxLayer(stored, type);
-          if (apply(edit) && edit.ok && edit.layerId) setSelectedId(edit.layerId);
+          if (apply(edit) && edit.ok && edit.layerId) editorUI.pickFxLayer(component, { kind: 'layer', layerId: edit.layerId });
         }}
       />
 
-      {notes.length > 0 ? (
-        <div role="status" className="flex min-w-0 flex-col gap-1 rounded-[6px] border border-border px-2 py-1.5">
-          <span className={FIELD_LABEL}>Adjusted while saving</span>
-          {notes.map((note) => (
-            <p key={note} className={HINT}>
-              {note}
-            </p>
-          ))}
-        </div>
-      ) : null}
-      {problem ? (
-        <p role="alert" className={ERROR}>
-          {problem}
-        </p>
-      ) : null}
-
-      {selected ? (
-        <div className="flex min-w-0 flex-col gap-2.5 border-t border-border pt-2.5" role="group" aria-label={`Settings of ${selected.name}`}>
-          <TextSetting label="Name" value={selected.name} maxLength={80} onChange={(name) => apply(renameFxLayer(stored, selected.id, name))} />
-          <PropertySelect
-            label="Kind"
-            value={selected.type}
-            options={addable.map((t) => ({ value: t.type, label: kindName(t.label) }))}
-            onChange={(type) => {
-              const edit = setFxLayerType(stored, selected.id, type);
-              if (apply(edit) && edit.ok && edit.layerId) setSelectedId(edit.layerId);
-            }}
-          />
-          <p className={HINT}>Another kind starts from that kind&apos;s own settings: the settings below are replaced.</p>
-          <PropertySelect label="Blend" value={selected.blend} options={BLEND_OPTIONS} onChange={(blend) => apply(setFxLayerBlend(stored, selected.id, blend as BlendMode))} />
-          {Object.entries(selected.params).map(([key, schema]) => settingControl(selected, key, schema))}
-        </div>
-      ) : layers.length > 0 ? (
-        <p className={HINT}>Pick a layer in the list to change its settings.</p>
-      ) : null}
+      {messages}
 
       <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border pt-2.5">
         <button type="button" className={TEXT_BUTTON} onClick={() => void copyJson()}>
