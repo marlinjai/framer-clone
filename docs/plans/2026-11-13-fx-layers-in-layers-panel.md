@@ -261,6 +261,13 @@ gates stay: no deploy, no publish, no production write, no spending, no external
 - Drag reorder ships in L2, after the keyboard and menu paths.
 - Tree keyboard navigation for the whole Layers panel is a separate roadmap item, not part of this plan.
 - Setting groups are presentation metadata in the schemas; they never reach the stored scene.
+- L5, text and text boxes are hit on their drawn lines, read back from the layer's own texture canvas (a quarter-size
+  copy scanned with high-quality smoothing, so a 1 px mark survives; text with no ink found falls back to its
+  rectangle, blank text is no target). The approved design put the line layout on the mesh instead; reading the canvas
+  is the exact source of what is drawn and needs no change to `textBox.tsx` or `text.tsx`, which L5 did not own.
+- L5, the scene probe has no `invalidate`: the pick outline is HTML on its own animation frame, so nothing asks the
+  scene for a frame. Picking maps the pointer for an unrotated, uniformly scaled box; a CSS rotation of the box itself
+  is not supported (stated in `src/lib/fx/pick.ts` and the pull request).
 
 ## Ownership and gates
 
@@ -335,3 +342,70 @@ what is open and why.
   leak counter flat over six cycles, four presets 0 differing pixels.
 - 02:40: phase B started (fx-l2-panel, pane w5:pX). Phase C (fx-l5-pick) starts when #429 has merged.
 - The FX plan's "Safety" section now counts 16 built-in kinds.
+- 04:18 CET: orchestration handed to fx-layer-orchestrator-2 (pane w5:pZ). Every release from here needed, at one
+  head: the targeted run with its exit line, browser proof with trusted mouse input (Playwright `page.mouse`, no
+  synthetic events), every hosted check green, and a fresh independent Opus review of exactly that head that approves.
+- L2 plus the L4 panel part: PR #431 (fx-l2-panel). Seven independent review rounds (acb439e2, 9b68fb1b, 15814d4a,
+  62a1f27f, 7c3f3285, e2c5a5f1, a938325e); every finding fixed, nits included. Notable fixes: a noise field without
+  pointer settings starts from values that reproduce its old plain 0.04 follow (track 1, momentum 1, spring 0.225,
+  side-by-side test against the old smoothing); Enter in the Layers panel only jumps to the text field from the picked
+  layer's own name or the page body; the FX text publish warning has its own list (`PublishCheck.fxText`) and heading,
+  is never a gate, skips hidden and blank layers, and is also listed when an older version is made live, where the
+  versions dialog now lists site colour and font problems too (it showed an empty list before).
+- `src/lib/fx/layers/noiseFill.tsx` was given to fx-l2-panel for one change (the engine's pointer position kept in
+  step with the old follow, so the first pointer edit does not jump), cleared by the FX owner with three conditions:
+  only in the branch that does not run under reduced motion, no layer reads another layer's pointer target, and the
+  per-frame engine step cannot overwrite the kept position (`stepNoisePointer`, called by the component and its test).
+- Hosted verify failed once on #431 at 7c3f3285: two assertions in `src/server/sites/__tests__/revision.test.ts`
+  compared the whole publish check and did not expect `fxText` (the builder's targeted set had not included
+  `src/server/sites`). Diagnosed from the log, not rerun; the consumer sweep found the versions dialog gap above.
+- 05:24 CET: #431 released at a938325e (review approve, 151 files and 2460 tests, 18 trusted-mouse screenshots, all
+  hosted checks green) and merged as 45bae572, whose tree equals the reviewed head apart from main's score documents.
+  Main's own run on 45bae572 passed every job (verify, behaviour, render-gate, docker-build, roadmap-check, score).
+  The FX owner was told and rechecked it: `fx.spec.ts`, `fxOracle.spec.ts` (the F4 pixel oracle and the lumitra.co
+  proof rehearsals) and `fxScoped.spec.ts` on a production build, Chromium and WebKit, 118 of 118 passed (05:27 to
+  05:38, `/tmp/fxrun/recheck-45bae572.log`); against b7dbb2a0 only `noiseFill.tsx` changed among the presets, layers,
+  `pipeline.ts`, the oracle and the proof tooling, so the gold preset and the pixel proof stay compatible with main.
+- L5: PR #432 (fx-l5-pick). Seven independent review rounds (c8293788, 64a250a2, 9aa90634, 9ab2e15f, 02f5fc32,
+  57bf8e76, 19fd2844); the builder proved each fix of the last three rounds with a deliberate negative control (the fix
+  removed, exactly its test fails, the source restored byte for byte). Approved at 19fd2844 with trusted-mouse proof at
+  that exact head (100 and 62 percent, including Escape mid-drag and a release outside the box).
+- Hosted behaviour failed on #432 at 19fd2844 (run 43367828680): only `fxScoped.spec.ts:221`, a no-op effect on a text
+  layer with the add blend, 1.41 percent of the frame against a limit of 0.2. Diagnosed, not rerun
+  (`/tmp/fxlayers/fx-l5-pick/ci/diagnosis-behaviour-43367828680.md`): it fails on main alone too, in a CI-like Linux
+  container with software rendering, with the same signature (the lockup's glyph interiors saturated). Failing runs
+  out of 20, three blends each: main 4, #432 alone 8, the merge 9. The trees ran one after the other, not interleaved,
+  so these rates do not show whether #432 shifts the race; they only show the failure exists without it. Suspected
+  cause: `ScopedGroup.tsx` applies the composite blend in a passive effect that races the one frame a reduced-motion
+  scene draws. Fixed on main in its own pull request by fx-l4-engine, with a regression that fails on main and the
+  0.2 percent limit unchanged; #432 held until then.
+- 08:18 CET: orchestration taken over by fx-layer-orchestrator-3 (pane w5:p0) from fx-layer-orchestrator-2, who retired
+  after relaying the last review. The race fix is #434 (fx-l4-engine): the composite quad copies the blend state of its
+  layer's live material in the frame that draws it (`copyBlendState`), a `RedrawOnChange` canvas child asks for a frame
+  after an in-place edit in a demand-mode scene, and `ResetWhenUngrouped` (inside the Canvas) puts ranks back when the
+  last group goes. Reviewed in four rounds (b0643847, bfda6581, 99746b70, d986ed9d, 972d4b40, each finding fixed, the
+  last two only test files). The new tests fail on main on every run (the failure follows from main's code, no race
+  involved); Linux software-GL, 20 interleaved runs of the text no-op test: main failed 8 of 20, the branch 0 of 20
+  (0 of 20 is consistent with a true rate up to about 14 percent at 95 percent confidence). Merged as 74ebec20 after
+  #435 put the multiply roadmap line on main. The FX owner rechecked main: 129 of 129.
+- Multiply: three.js 0.184 refuses `MultiplyBlending` on a material without `premultipliedAlpha`, so content layers
+  stored with `multiply` drew with the previous blend. #436 (fx-l4-engine, three review rounds) makes it custom blending
+  from premultiplied colour (`uPremultiply` in the four shader layers, 1 only for multiply; the composite quad through
+  the same mapping; alpha clamped for multiply only). Merged as ec45052e; Linux software-GL 10 of 10 runs of the multiply
+  rows passed (consistent with a true failure rate up to about 26 percent; what excludes a first-frame race is that the
+  uniform is set in the material's ref callback at creation). The FX owner rechecked main: 136 of 136.
+- Text layers never applied their stored blend (found by the FX owner during the #436 recheck; every stored text blend
+  in presets, fixtures and score scenes is `normal`): own pull request #437 (fx-l4-engine), see ROADMAP.
+- L5 landed: #432 merged as 6aa80212. It took 16 independent review rounds across its heads. Two incidents worth
+  keeping: after a head was approved and the hold removed, land-pr's unattended fixer woke on a CodeRabbit comment that
+  was still open and pushed 93c3904e (a cover image pickable on its plane unless the plane covers the frame; correct,
+  but unreviewed at that moment); the hold was put back within minutes and the head was reviewed and proved again. From
+  then on the pull request carried the `pinned` label, so no unattended fixer can touch it and the approval names one
+  full head. A second CodeRabbit review then found two valid points on the approved head: the probe's layer snapshot was
+  written during render (now published from a layout effect in the Canvas tree), and without targeted effects equal-depth
+  text boxes draw by object id while the picker preferred the later stored layer (the picker now picks what the scene
+  draws last: render order, nearest, newest object). The engine change CodeRabbit suggested (ranking roots in the
+  ungrouped path) was declined because it changes #434's semantics; it is a ROADMAP line (reordering retained layers
+  without targeted effects does not change what is drawn). The trusted-mouse proof script sits near dev-browser's 30
+  second cap at 62 percent (28 to 35 seconds under load); a timeout at the very end with every case printed was
+  diagnosed and the identical script rerun at low load. The FX owner rechecks main after each merge through the queue.
