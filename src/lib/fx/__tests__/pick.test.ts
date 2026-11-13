@@ -468,8 +468,12 @@ describe('a blob', () => {
 });
 
 describe('an image', () => {
-  it('under cover it fills the frame and is never picked', () => {
-    expect(pick([image('img', 0, 1.5, 0.3)], 0, 0)).toBeNull();
+  it('under cover it fills its plane: a small plane is hit anywhere on it', () => {
+    expect(pick([image('img', 0, 1.5, 0.3)], 0, 0)).toBe('img');
+  });
+
+  it('under cover a plane that covers the frame is never picked', () => {
+    expect(pick([image('img', 0, 1.5, 1)], 0, 0)).toBeNull();
   });
 
   it('under contain it is hit inside the fitted picture, not on the rest of its plane', () => {

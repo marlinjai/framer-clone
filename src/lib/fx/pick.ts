@@ -352,7 +352,10 @@ function regionOf(layer: Layer, root: Object3D, camera: Camera): Region | null {
     case "shape":
       return shapeRegion(layer, mesh);
     case "image": {
-      if (Number(uniform(mesh, "uFit") ?? (str(layer, "fit", "cover") === "contain" ? 1 : 0)) < 0.5) return null;
+      // Under cover the picture fills its whole plane; `bounded` drops it when that plane covers the frame.
+      if (Number(uniform(mesh, "uFit") ?? (str(layer, "fit", "cover") === "contain" ? 1 : 0)) < 0.5) {
+        return { mesh, rect: [0, 0, 1, 1], contains: () => true };
+      }
       const planeAspect = Number(uniform(mesh, "uPlaneAspect") ?? FALLBACK_PLANE_ASPECT);
       const imageAspect = Number(uniform(mesh, "uImageAspect") ?? planeAspect);
       const rect = containedImageRect(planeAspect, imageAspect);
