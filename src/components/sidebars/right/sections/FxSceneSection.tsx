@@ -27,7 +27,6 @@ import { ChevronRight, Sparkles } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
-import { isActivatableControl } from '@/lib/canvas/spacePan';
 import { CollapsibleSection, ColorInput, PropertyRow, PropertySelect, PropertySwitch, TextInput } from '../primitives';
 import { FIELD_LABEL } from '../primitives/field';
 import { FX_PROP } from '@/lib/fxScene/marker';
@@ -351,6 +350,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   // A kind chosen for the picked layer, waiting for the person to confirm that its settings are replaced.
   const [pendingKind, setPendingKind] = useState<string | null>(null);
   const kindRef = useRef<HTMLDivElement>(null);
+  const pointerRef = useRef<HTMLDivElement>(null);
   /** Back to the Kind field after the confirmation goes away, so a keyboard user is not dropped on the page. */
   const focusKind = () => requestAnimationFrame(() => kindRef.current?.querySelector('select')?.focus());
   const pickNow = editorUI.fxLayerPick;
@@ -376,7 +376,6 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
       const fromPickedName = !!row && row.getAttribute('data-fx-layer-row') === pickedLayerId && row.getAttribute('data-fx-layer-box') === component.id;
       const fromNowhere = !el || el === document.body || el === document.documentElement;
       if (!fromPickedName && !fromNowhere) return;
-      if (el && fromNowhere && (el.isContentEditable || isActivatableControl(e.target))) return;
       const field = document.querySelector<HTMLElement>('[data-fx-text-primary]');
       if (!field) return;
       e.preventDefault();
@@ -774,7 +773,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
             </div>
           ))}
           {layerReadsPointer(selected.type) ? (
-            <div role="group" aria-label="Pointer group" className="flex min-w-0 flex-col gap-2.5 border-t border-border pt-2.5">
+            <div ref={pointerRef} role="group" aria-label="Pointer group" className="flex min-w-0 flex-col gap-2.5 border-t border-border pt-2.5">
               <span className={FIELD_LABEL}>Pointer</span>
               <NumberSetting label="Track mouse" value={pointer.trackMouse} min={0} max={1} step={0.01} onChange={(trackMouse) => setPointer({ trackMouse })} />
               <NumberSetting label="Momentum" value={pointer.momentum} min={0} max={1} step={0.01} onChange={(momentum) => setPointer({ momentum })} />
@@ -798,7 +797,11 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
                 With reduced motion asked for, the scene stays one still frame whatever is set here.
               </p>
               {selected.interactivity ? (
-                <button type="button" className={`${TEXT_BUTTON} self-start`} onClick={() => apply(setFxLayerInteractivity(currentStored(), selected.id, null))}>
+                <button type="button" className={`${TEXT_BUTTON} self-start`} onClick={() => {
+                    apply(setFxLayerInteractivity(currentStored(), selected.id, null));
+                    // The button goes away with the settings: focus stays inside the group instead of falling to the page.
+                    requestAnimationFrame(() => pointerRef.current?.querySelector<HTMLElement>('input')?.focus());
+                  }}>
                   Reset pointer settings
                 </button>
               ) : null}

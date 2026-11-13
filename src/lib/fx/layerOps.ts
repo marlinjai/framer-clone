@@ -136,14 +136,15 @@ export function settingGroupOf(type: string, key: string): string | null {
 export type MoveResult = { ok: true; layers: Layer[] } | { ok: false; reason: string };
 
 /**
- * Move a layer to a place WITHIN ITS GROUP. `toIndex` counts inside the layer's own
- * group (content layers among content layers, post effects among post effects), back
- * to front, so `0` is the back of its group and `size - 1` the front.
+ * Move a layer to a place WITHIN ITS GROUP. `toIndex` counts inside the layer's own group, back
+ * to front, so `0` is the back of its group and `size - 1` the front. A group is: the content
+ * layers among themselves, the scene's effects among themselves, or the effects of one content
+ * layer among themselves (see `groupOf`).
  *
- * Content and post layers are never moved across: where a post effect sits among the
- * content layers in the stored array changes nothing on screen (post effects run after
- * all content, in their own order), so allowing it would only mislead. The slots of
- * the other group stay exactly where they are in the array.
+ * A layer is never moved across groups: where an effect sits among the content layers in
+ * the stored array changes nothing on screen (effects run after all content, in their own
+ * order), and an effect of one layer has no place among the scene's effects, so allowing it
+ * would only mislead. The slots of the other groups stay exactly where they are in the array.
  *
  * Refused, with a reason a person can act on, when the layer is unknown, when `toIndex`
  * is outside the group or is where the layer already is.

@@ -51,6 +51,23 @@ describe('the FX text publish warning', () => {
     for (const l of copy.scene.layers) if (l.type === 'text') l.visible = false;
     expect(fxTextWarning(box(copy.scene ? { ...(lockupScene as object), scene: copy.scene } : lockupScene, []))).toBeNull();
   });
+  it('does not warn for a text layer with nothing to draw (blank text), for either kind', () => {
+    const blank = (type: string, keys: string[]) => {
+      const added = addFxLayer(made.stored, type);
+      if (!added.ok) throw new Error('add');
+      const scene = JSON.parse(JSON.stringify(added.stored)) as { scene: { layers: { type: string; params: Record<string, unknown> }[] } };
+      const layer = scene.scene.layers.find((l) => l.type === type)!;
+      for (const k of keys) layer.params[k] = '   ';
+      return scene;
+    };
+    const textBox = blank('textBox', ['text']);
+    const lockup = blank('text', ['eyebrowText', 'headlineText', 'taglineText']);
+    expect(fxTextWarning(box(textBox, []))).toBeNull();
+    expect(fxTextWarning(box(lockup, []))).toBeNull();
+    // one line is enough to draw something
+    const one = blank('text', ['eyebrowText', 'taglineText']);
+    expect(fxTextWarning(box(one, []))).toMatch(/no text in its box/);
+  });
   it('treats blank text as no text', () => {
     expect(countFxBoxesWithoutHtmlText(box(lockupScene, [text('   ')]))).toBe(1);
   });

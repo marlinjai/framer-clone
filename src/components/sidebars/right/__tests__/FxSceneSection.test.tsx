@@ -887,7 +887,7 @@ describe('setting groups, the text lines and the pointer', () => {
 });
 
 describe('the Pointer group tells the truth about a layer without pointer settings', () => {
-  it('shows the noise field of the god rays preset as following the pointer, and changing the axes alone keeps that follow', () => {
+  it('shows the noise field of the god rays preset as following the pointer, and changing the axes alone keeps that follow', async () => {
     const { box } = setup();
     render(<FxSceneSection component={box} />);
     back();
@@ -903,6 +903,9 @@ describe('the Pointer group tells the truth about a layer without pointer settin
     expect(layerOf(box, noise.id).interactivity).toEqual({ trackMouse: 1, momentum: 1, spring: 0.225, axes: 'x' });
     fireEvent.click(screen.getByRole('button', { name: 'Reset pointer settings' }));
     expect(layerOf(box, noise.id).interactivity).toBeUndefined();
+    // the button went away with the settings: focus stays inside the Pointer group, not on the page
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Pointer group' }).contains(document.activeElement)).toBe(true));
+    expect(document.activeElement).not.toBe(document.body);
   });
 
   it('a shape stands still, says so, and raising Track mouse alone makes it move (it has a spring)', () => {

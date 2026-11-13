@@ -104,6 +104,19 @@ const NOISE_FRAG = /* glsl */ `
   }
 `;
 
+/**
+ * The plain follow a noise field has while it has no pointer settings: `mouse += (pointer - mouse) * 0.04`.
+ * The engine's own pointer target is kept in step with it (same position, no velocity), so that the moment the
+ * layer gets pointer settings (a first edit in the editor) the engine carries on from where the field already is
+ * instead of from the rest position, which would be a visible jump.
+ */
+export function followPointerPlainly(mouse: THREE.Vector2, pointer: Readonly<{ x: number; y: number }>, engine: { mouse: THREE.Vector2; velocity: THREE.Vector2 }): void {
+  mouse.x += (pointer.x - mouse.x) * 0.04;
+  mouse.y += (pointer.y - mouse.y) * 0.04;
+  engine.mouse.copy(mouse);
+  engine.velocity.set(0, 0);
+}
+
 function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
   const v = values as unknown as NoiseValues;
   const interactivity = useInteractivity();
@@ -163,9 +176,7 @@ function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
     if (layer.interactivity) {
       (u.uMouse.value as THREE.Vector2).copy(interactivity.mouse);
     } else if (!ctx.reduce) {
-      const mouse = u.uMouse.value as THREE.Vector2;
-      mouse.x += (pointer.x - mouse.x) * 0.04;
-      mouse.y += (pointer.y - mouse.y) * 0.04;
+      followPointerPlainly(u.uMouse.value as THREE.Vector2, pointer, interactivity);
     }
   });
 

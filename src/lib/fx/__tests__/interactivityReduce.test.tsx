@@ -4,7 +4,9 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
-import { useInteractivity, type InteractivityTarget } from '../interactivity';
+import * as THREE from 'three';
+import { DEFAULT_INTERACTIVITY, useInteractivity, type InteractivityTarget } from '../interactivity';
+import { followPointerPlainly } from '../layers/noiseFill';
 import { pointerBaseOf } from '../layerOps';
 import type { InteractivitySpec } from '../types';
 
@@ -84,5 +86,57 @@ describe('the noise field\'s pointer base reproduces its old plain follow', () =
     }
     expect(peak).toBeGreaterThan(1.1);
     probe.unmount();
+  });
+});
+
+
+describe('a noise field without pointer settings keeps the engine\'s pointer target in step', () => {
+  const zero: InteractivitySpec = DEFAULT_INTERACTIVITY;
+  const pointer = { x: 0.8, y: -0.4 };
+
+  it('(c) the engine step that runs just before does not undo the copied position: two frames, settings added, one frame, no jump', () => {
+    const probe = mountTarget();
+    const engine = probe.target();
+    const uMouse = new THREE.Vector2(0, 0);
+    // what the component does every frame for a layer without settings: step with the default spec, then follow plainly
+    for (let frame = 0; frame < 120; frame += 1) {
+      engine.step(zero, false);
+      followPointerPlainly(uMouse, pointer, engine);
+    }
+    expect(uMouse.x).toBeGreaterThan(0.7);
+    // two more frames: the engine target sits where the field is (the step's easing toward 0 was overwritten)
+    for (let frame = 0; frame < 2; frame += 1) {
+      engine.step(zero, false);
+      followPointerPlainly(uMouse, pointer, engine);
+      expect(engine.mouse.x).toBeCloseTo(uMouse.x, 9);
+      expect(engine.mouse.y).toBeCloseTo(uMouse.y, 9);
+      expect(engine.velocity.length()).toBe(0);
+    }
+    // settings added (the first edit): one engine frame carries on from where the field is
+    const before = uMouse.clone();
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: ((pointer.x + 1) / 2) * window.innerWidth, clientY: ((1 - pointer.y) / 2) * window.innerHeight }));
+    });
+    engine.step(pointerBaseOf('noiseFill') as InteractivitySpec, false);
+    expect(Math.abs(engine.mouse.x - before.x)).toBeLessThan(0.05);
+    expect(Math.abs(engine.mouse.y - before.y)).toBeLessThan(0.05);
+    probe.unmount();
+  });
+
+  it('(b) writing one layer\'s pointer target is not read by another layer of the same scene (one target per layer component)', () => {
+    const a = mountTarget();
+    const b = mountTarget();
+    expect(a.target()).not.toBe(b.target());
+    const uMouse = new THREE.Vector2(0, 0);
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: window.innerWidth, clientY: 0 }));
+    });
+    for (let frame = 0; frame < 60; frame += 1) followPointerPlainly(uMouse, pointer, a.target());
+    expect(Math.abs(a.target().mouse.x)).toBeGreaterThan(0.5);
+    expect(b.target().mouse.x).toBe(0);
+    expect(b.target().mouse.y).toBe(0);
+    expect(b.target().velocity.length()).toBe(0);
+    a.unmount();
+    b.unmount();
   });
 });

@@ -41,6 +41,11 @@ function holdsHtmlText(box: TreeNode): boolean {
   return false;
 }
 
+/** Whether a text layer has any text to draw: one of its text strings (`text`, `eyebrowText`, ...) is not blank. */
+function drawsText(layer: { params: Record<string, { type: string; value: unknown }> }): boolean {
+  return Object.entries(layer.params).some(([key, p]) => p.type === 'string' && /^(text|\w+Text)$/.test(key) && typeof p.value === 'string' && p.value.trim() !== '');
+}
+
 /** How many FX scene boxes in the tree draw text layers while the box holds no HTML text. */
 export function countFxBoxesWithoutHtmlText(root: unknown): number {
   let count = 0;
@@ -51,7 +56,7 @@ export function countFxBoxesWithoutHtmlText(root: unknown): number {
     seen++;
     if (isFxScene(node.props, node.type)) {
       const read = parseFxProp(node.props?.[FX_PROP]);
-      if (read.ok && read.fx.scene.layers.some((l) => l.visible && TEXT_KINDS.has(l.type)) && !holdsHtmlText(node)) count++;
+      if (read.ok && read.fx.scene.layers.some((l) => l.visible && TEXT_KINDS.has(l.type) && drawsText(l)) && !holdsHtmlText(node)) count++;
     }
     if (Array.isArray(node.children)) stack.push(...node.children);
   }
