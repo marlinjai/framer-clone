@@ -25,10 +25,11 @@ const text = (extra: Raw = {}) => layer('t', 'text', {}, extra);
 const pixelate = (target?: string, granularity = 32) => layer('px', 'pixelate', { granularity }, target ? { target } : {});
 
 let bundle: string;
+let devBundle: string;
 let browser: Browser;
 const contexts: BrowserContext[] = [];
 
-beforeAll(async () => {
+const bundleFor = async (mode: 'production' | 'development'): Promise<string> => {
   const entry = path.resolve('test/behaviour/fxScoped.entry.tsx');
   const result = await build({
     entryPoints: [entry],
@@ -38,12 +39,17 @@ beforeAll(async () => {
     platform: 'browser',
     target: 'es2022',
     jsx: 'automatic',
-    define: { 'process.env.NODE_ENV': '"production"' },
+    define: { 'process.env.NODE_ENV': `"${mode}"` },
     nodePaths: [path.resolve('node_modules')],
     alias: { '@': path.resolve('src') },
     logLevel: 'silent',
   });
-  bundle = result.outputFiles[0].text;
+  return result.outputFiles[0].text;
+};
+
+beforeAll(async () => {
+  bundle = await bundleFor('production');
+  devBundle = await bundleFor('development');
   browser = await chromium.launch();
 }, 120_000);
 
@@ -98,14 +104,15 @@ async function session(first: Raw): Promise<{ show: (next: Raw) => Promise<PNG>;
 }
 
 /** A scene as the real engine draws it, held still (reduced motion, stopped clock). `touch` is a phone: the step down starts on. */
-async function draw(raw: Raw, options: { touch?: boolean } = {}): Promise<{ picture: PNG; notes: string[] }> {
+async function draw(raw: Raw, options: { touch?: boolean; dev?: boolean } = {}): Promise<{ picture: PNG; notes: string[] }> {
   const context = await browser.newContext({ ...ORACLE_CONTEXT, ...(options.touch ? { isMobile: true, hasTouch: true } : {}) });
   contexts.push(context);
   const page: Page = await context.newPage();
   const problems: string[] = [];
   page.on('pageerror', (error) => problems.push(error.message));
   await page.addInitScript(STOP_THE_CLOCK);
-  await serveStage(page, ORIGIN, { '/scoped.js': bundle });
+  if (options.dev) await page.addInitScript(() => ((window as unknown as { __strict: boolean }).__strict = true));
+  await serveStage(page, ORIGIN, { '/scoped.js': options.dev ? devBundle : bundle });
   await page.goto(`${ORIGIN}/`);
   const notes = await page.evaluate((config) => (window as unknown as { __mount: (scene: unknown) => string[] }).__mount(config), raw);
   const picture = await settledCanvas(page, '#stage canvas');
@@ -241,6 +248,37 @@ describe('effects that apply to one layer', () => {
     for (const [name, next] of [['whole', whole], ['scoped', scoped], ['hidden', hidden], ['scoped', scoped], ['whole', whole], ['scoped', scoped]] as const) {
       expect(difference(await edits.show(next), fresh[name === 'whole' ? 'whole' : name === 'hidden' ? 'hidden' : 'scoped']).differing, name).toBe(0);
     }
+  }, 240_000);
+
+  it('in development (StrictMode runs effects twice) the picture is the same, with an effect on the whole scene and on one layer', async () => {
+    const plain = (await draw(scene([gradient(), text()]))).picture;
+    for (const [name, layers] of [
+      ['whole scene', [gradient(), text(), pixelate()]],
+      ['one layer', [gradient(), text(), pixelate('t')]],
+    ] as const) {
+      const production = (await draw(scene([...layers]))).picture;
+      const development = (await draw(scene([...layers]), { dev: true })).picture;
+      expect(difference(production, plain).differing, `${name} has an effect`).toBeGreaterThan(100);
+      expect(difference(development, production).differing, `${name} in development`).toBe(0);
+    }
+  }, 240_000);
+
+  it('leaves no WebGL textures or framebuffers behind when an effect on the whole scene comes and goes', async () => {
+    // The library builds the main composer and never frees it; the scene frees it itself. Measured on
+    // origin/main before the fix: one texture and one framebuffer more per cycle.
+    const plain = scene([gradient(), text()]);
+    const whole = scene([gradient(), text(), pixelate()]);
+    const edits = await session(plain);
+    await edits.show(whole);
+    await edits.show(plain);
+    const settled = await edits.live();
+    for (let i = 0; i < 6; i++) {
+      await edits.show(whole);
+      await edits.show(plain);
+    }
+    const after = await edits.live();
+    expect(after.framebuffers).toBeLessThanOrEqual(settled.framebuffers);
+    expect(after.textures).toBeLessThanOrEqual(settled.textures);
   }, 240_000);
 
   it('leaves no WebGL textures or framebuffers behind when a group comes and goes', async () => {

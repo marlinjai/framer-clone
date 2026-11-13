@@ -43,7 +43,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState, type Reac
 import type { Object3D } from "three";
 
 import { planPipeline } from "./pipeline";
-import { MAIN_PRIORITY, MainRender, ScopedGroup, setChannel } from "./effects/ScopedGroup";
+import { MAIN_PRIORITY, MainRender, ScopedGroup, setChannel, useHeldComposer } from "./effects/ScopedGroup";
 import { getLayerDefinition } from "./registry";
 import { FrameRateMonitor } from "./FrameRateMonitor";
 import type {
@@ -256,6 +256,8 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   const roots = useRef(new Map<string, Object3D>());
   const channelOf = new Map(groups.map((g) => [g.target.id, g.channel]));
   const mainComposer = postReady && postLayers.length > 0;
+  // The library builds the main composer and never frees it: free it when it is replaced or gone.
+  const holdComposer = useHeldComposer();
   // Once a scene has had a group its content layers stay in their wrappers for the life
   // of the canvas: switching back would remount every layer (the text fade-in replays)
   // each time the step down drops the last targeted effect.
@@ -338,7 +340,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
             ))}
             {groups.length > 0 && !mainComposer && <MainRender />}
             {mainComposer && (
-              <EffectComposer multisampling={0} renderPriority={groups.length > 0 ? MAIN_PRIORITY : undefined}>
+              <EffectComposer ref={holdComposer} multisampling={0} renderPriority={groups.length > 0 ? MAIN_PRIORITY : undefined}>
                 {postLayers.map((layer) => (
                   <LayerHost key={layer.id} layer={layer} ctx={ctx} />
                 ))}
