@@ -51,6 +51,7 @@ import { styleSource, breakpointLabel } from '@/components/sidebars/right/breakp
 import { FONT_LIBRARY, findLibraryFamily, fontFaceCss, fontStack, parseFontFamilyList } from '@/lib/fonts/registry';
 import { canDeleteLayer, duplicateLayer } from '@/lib/layers/layerActions';
 import { deleteSelection, routeFxLayerShortcut } from '@/lib/canvas/deleteSelection';
+import { fxPickLabel } from '@/lib/layers/fxRows';
 import { haptic } from '@/lib/haptics';
 import { cn } from '@/lib/utils';
 import {
@@ -401,6 +402,11 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
   };
   const toggle = (which: Exclude<Panel, null>) => setPanel((cur) => (cur === which ? null : which));
 
+  // A layer of an FX scene is picked: the bar is about that layer alone (Duplicate layer, Delete layer, More),
+  // never the box's own quick edits beside them.
+  const fxPick = editorUI.fxLayerPick && editorUI.fxLayerPick.componentId === component.id ? editorUI.fxLayerPick : undefined;
+  const fxLayer = fxPick?.kind === 'layer';
+  const fxName = fxPick ? fxPickLabel(component, fxPick)?.name : undefined;
   const widthMode = widthModeOf(ctx) ?? 'auto';
   const align = textAlignOf(ctx);
   const direction = layoutDirectionOf(ctx);
@@ -416,11 +422,13 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
         data-testid="quick-toolbar"
         data-shown="false"
         role="toolbar"
-        aria-label={`Quick edits for ${component.displayName}`}
+        aria-label={`Quick edits for ${fxLayer && fxName ? fxName : component.displayName}`}
         className="glass-surface float-enter fixed left-0 top-0 z-[95] flex max-w-[calc(100vw-16px)] flex-col gap-0.5 rounded-xl p-1"
         style={{ willChange: 'transform' }}
       >
         <div className="flex items-center gap-0.5 overflow-x-auto [scrollbar-width:none]">
+          {!fxLayer && (
+          <>
           <QBtn label="Select parent" disabled={!parent} onClick={() => parent && select(parent)}>
             <ArrowUp size={17} />
           </QBtn>
@@ -475,12 +483,14 @@ const QuickToolbar = observer(({ editorUI, hidden = false, onMore }: QuickToolba
               {WIDTH_LABEL[widthMode]}
             </QBtn>
           )}
-          {canDeleteLayer(component) && editorUI.fxLayerPick?.kind !== 'background' && (
+          </>
+          )}
+          {(fxLayer || canDeleteLayer(component)) && editorUI.fxLayerPick?.kind !== 'background' && (
             <>
-              <QBtn label="Duplicate" onClick={() => { if (!routeFxLayerShortcut('duplicate', editorUI, { swallowStale: false })) duplicateLayer(page, editorUI, history); }}>
+              <QBtn label={fxLayer ? 'Duplicate layer' : 'Duplicate'} onClick={() => { if (!routeFxLayerShortcut('duplicate', editorUI, { swallowStale: false })) duplicateLayer(page, editorUI, history); }}>
                 <Copy size={16} />
               </QBtn>
-              <QBtn label="Delete" className="text-red-600 dark:text-red-400" onClick={() => { if (!routeFxLayerShortcut('delete', editorUI, { swallowStale: false })) deleteSelection(page, editorUI, history); }}>
+              <QBtn label={fxLayer ? 'Delete layer' : 'Delete'} className="text-red-600 dark:text-red-400" onClick={() => { if (!routeFxLayerShortcut('delete', editorUI, { swallowStale: false })) deleteSelection(page, editorUI, history); }}>
                 <Trash2 size={16} />
               </QBtn>
             </>

@@ -87,7 +87,7 @@ export function derivedRowsOf(component: ComponentInstance): { provider: 'fx-sce
 
 /**
  * What a pick is called, for the properties panel's header and the phone menu: a layer's name and
- * kind ("Bloom", "Bloom"), or "Background". `null` when the pick does not match the box's scene.
+ * kind ("Bloom", "Bloom"), or "Background" (kind "Scene background"). `null` when the pick does not match the box's scene.
  */
 export function fxPickLabel(box: ComponentInstance, pick: { kind: 'layer'; layerId: string } | { kind: 'background' }): { name: string; kind: string; type: string | null } | null {
   if (pick.kind === 'background') return { name: 'Background', kind: 'Scene background', type: null };
@@ -163,11 +163,16 @@ export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType,
     editorUI.setFxLayerNotice({ componentId: box.id, about: JSON.stringify(before ?? null), text: edit.message, problem: true });
     // The Layers panel's own message may be out of sight (a folded box, a phone with its sheets closed): the
     // editor's notice shows a refusal wherever the person is.
-    editorUI.setEditorNotice({ kind: 'refused', message: edit.message });
+    // Only where it displaces nothing: another notice may carry a button (Load the newer version, Undo, Show first values).
+    const shown = editorUI.editorNotice;
+    if (!shown || shown.kind === 'refused') editorUI.setEditorNotice({ kind: 'refused', message: edit.message });
     return { ok: false, message: edit.message };
   }
 
   box.setProps({ [FX_PROP]: edit.stored });
+  // The refusal this layer's earlier try raised is out of date once a change is stored.
+  const lastRefusal = editorUI.fxLayerNotice;
+  if (lastRefusal?.problem && editorUI.editorNotice?.kind === 'refused' && editorUI.editorNotice.message === lastRefusal.text) editorUI.setEditorNotice(undefined);
 
   let text: string;
   switch (action.type) {

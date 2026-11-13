@@ -374,6 +374,19 @@ describe('the row actions', () => {
   });
 });
 
+describe('the refusal notice', () => {
+  it('does not displace a notice that carries a button, and clears once a change is stored', () => {
+    ui().setEditorNotice({ kind: 'changedElsewhere', message: 'The site changed elsewhere.' });
+    runFxLayerAction(box, ui(), 'nope', { type: 'delete' });
+    expect(ui().editorNotice?.kind).toBe('changedElsewhere');
+    ui().setEditorNotice(undefined);
+    runFxLayerAction(box, ui(), 'nope', { type: 'delete' });
+    expect(ui().editorNotice?.kind).toBe('refused');
+    runFxLayerAction(box, ui(), 'bloom', { type: 'toggle' });
+    expect(ui().editorNotice).toBeUndefined();
+  });
+});
+
 describe('the four paths', () => {
   it('forward: pick, hide, move, rename, each one undo step, the pick staying valid throughout', () => {
     pickLayer('bloom');

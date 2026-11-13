@@ -9,7 +9,9 @@
 //
 // Items per element (src/lib/quickbar/actions.ts contextMenuItemsFor): Select
 // parent, Select child (containers), Edit text (text), Duplicate, Copy style,
-// Paste style (once a style was copied), Delete. Picking one runs it and
+// Paste style (once a style was copied), Delete. With a layer of an FX scene
+// picked the menu is about that layer only (Duplicate layer, Delete layer);
+// with the scene Background picked Duplicate and Delete are left out. Picking one runs it and
 // closes the menu; a tap outside or Escape closes it. The menu is a second
 // way in: the quick toolbar stays.
 //
@@ -113,6 +115,21 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
   const open = !!point && !!component && !!page;
 
   const close = React.useCallback(() => editorUI.closePhoneContextMenu(), [editorUI]);
+
+  // What the menu was opened on: the box itself or a picked layer of its FX scene. If the pick changes
+  // under an open menu (the layer vanished through an undo or another writer) the menu closes, so a finger
+  // sliding over "Delete layer" can never land on the box's own Delete.
+  const livePick = editorUI.fxLayerPick;
+  const pickKey = livePick ? (livePick.kind === 'layer' ? `layer:${livePick.layerId}` : 'background') : '';
+  const openedOn = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!open) {
+      openedOn.current = null;
+      return;
+    }
+    if (openedOn.current === null) openedOn.current = pickKey;
+    else if (openedOn.current !== pickKey) close();
+  }, [open, pickKey, close]);
 
   // The element went away (undo, a collaborator): nothing to act on.
   React.useEffect(() => {

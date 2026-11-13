@@ -220,11 +220,15 @@ describe('tree navigation', () => {
     act(() => editorUI.pickFxLayer(fx, { kind: 'layer', layerId: 'bloom' }, mobile.breakpointId));
     renderBar();
     const layers = () => ((fx.props as Record<string, unknown>).fx as { scene: { layers: { id: string; name: string }[] } }).scene.layers;
-    fireEvent.click(within(screen.getByTestId('quick-toolbar')).getByRole('button', { name: 'Duplicate' }));
+    fireEvent.click(within(screen.getByTestId('quick-toolbar')).getByRole('button', { name: 'Duplicate layer' }));
     expect(layers().filter((l) => l.name.startsWith('Bloom'))).toHaveLength(2);
     expect(page.findComponent(fx.id)).toBeDefined();
     const picked = editorUI.fxLayerPick as { layerId: string };
-    fireEvent.click(within(screen.getByTestId('quick-toolbar')).getByRole('button', { name: 'Delete' }));
+    // The bar is about the layer alone: none of the box's own quick edits beside it.
+    expect(screen.queryByRole('button', { name: /Select parent/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Center in parent/ })).toBeNull();
+    expect(screen.getByRole('toolbar').getAttribute('aria-label')).toMatch(/^Quick edits for Bloom/);
+    fireEvent.click(within(screen.getByTestId('quick-toolbar')).getByRole('button', { name: 'Delete layer' }));
     expect(page.findComponent(fx.id)).toBeDefined();
     expect(layers().some((l) => l.id === picked.layerId)).toBe(false);
   });

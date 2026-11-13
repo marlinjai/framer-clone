@@ -175,4 +175,16 @@ describe('slide-to-select', () => {
     expect(item('duplicate')).toBeNull();
     expect(item('copyStyle')).not.toBeNull();
   });
+
+  it('closes when the picked layer goes away under it, so a sliding finger can never reach the box\'s own Delete', () => {
+    const { editorUI, page, mobile } = setup();
+    act(() => editorUI.closePhoneContextMenu());
+    const fx = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    act(() => editorUI.pickFxLayer(fx, { kind: 'layer', layerId: 'bloom' }, mobile.breakpointId));
+    act(() => editorUI.openPhoneContextMenu({ x: 100, y: 200 }));
+    expect(item('delete')).not.toBeNull();
+    act(() => fx.setProps({ fx: { ...(fx.props as Record<string, unknown>).fx as object, scene: { ...((fx.props as Record<string, unknown>).fx as { scene: { layers: { id: string }[] } }).scene, layers: [] } } }));
+    expect(editorUI.phoneContextMenu).toBeUndefined();
+    expect(page.findComponent(fx.id)).toBeDefined();
+  });
 });
