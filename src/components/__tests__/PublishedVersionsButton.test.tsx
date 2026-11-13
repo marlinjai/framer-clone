@@ -151,7 +151,7 @@ describe('PublishedVersionsButton', () => {
         placeholders: [],
         components: [],
         tokens: [],
-        fxText: [{ pageId: 'home', title: 'Home', message: 'an FX scene has text drawn inside the scene but no text in its box' }],
+        fxText: [{ pageId: 'home', title: 'Home', message: 'an FX scene has text drawn inside the scene but no text in its box.' }],
       },
     }));
     openDialog();
@@ -159,6 +159,25 @@ describe('PublishedVersionsButton', () => {
     const question = await askForVersion(/Confirm version 1/);
 
     await within(question).findByText(/Home: an FX scene has text drawn inside the scene/);
+    expect((within(question).getByRole('button', { name: 'Make live' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('says what is wrong when the only warning is a site colour or font that will not show, instead of showing nothing', async () => {
+    fetchMock.mockResolvedValueOnce(json(LIST));
+    fetchMock.mockResolvedValueOnce(json({
+      number: 1,
+      check: {
+        missingImpressum: false,
+        placeholders: [],
+        components: [],
+        tokens: [{ pageId: 'home', title: 'Home', message: 'a site colour or font it uses no longer exists, so it shows nothing' }],
+      },
+    }));
+    openDialog();
+
+    const question = await askForVersion(/Confirm version 1/);
+
+    await within(question).findByText('Home: a site colour or font it uses no longer exists, so it shows nothing.');
     expect((within(question).getByRole('button', { name: 'Make live' }) as HTMLButtonElement).disabled).toBe(false);
   });
 

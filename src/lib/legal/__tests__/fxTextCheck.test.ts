@@ -23,6 +23,7 @@ describe('the FX text publish warning', () => {
   it('warns when a scene has a text layer and the box has no HTML text', () => {
     expect(countFxBoxesWithoutHtmlText(box(lockupScene, []))).toBe(1);
     expect(fxTextWarning(box(lockupScene, []))).toMatch(/no text in its box/);
+    expect(fxTextWarning(box(lockupScene, []))).toMatch(/inside the box\.$/);
   });
   it('is quiet when the box holds HTML text, even nested', () => {
     expect(fxTextWarning(box(lockupScene, [text('Hello')]))).toBeNull();

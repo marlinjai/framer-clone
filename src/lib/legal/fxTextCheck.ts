@@ -70,5 +70,5 @@ export function countFxBoxesWithoutHtmlText(root: unknown): number {
 export function fxTextWarning(root: unknown): string | null {
   const n = countFxBoxesWithoutHtmlText(root);
   if (n === 0) return null;
-  return `${n === 1 ? 'an FX scene has' : `${n} FX scenes have`} text drawn inside the scene but no text in ${n === 1 ? 'its box' : 'their boxes'}, so a visitor without WebGL or with reduced motion, search engines and screen readers see no text there. Add the headline as ordinary text inside the box`;
+  return `${n === 1 ? 'an FX scene has' : `${n} FX scenes have`} text drawn inside the scene but no text in ${n === 1 ? 'its box' : 'their boxes'}, so a visitor without WebGL or with reduced motion, search engines and screen readers see no text there. Add the headline as ordinary text inside the box.`;
 }

@@ -394,7 +394,7 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
           <ul className="list-disc pl-4" data-testid="publish-fx-text-issues">
             {check.fxText!.map((issue) => (
               <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
-                {issue.title}: {issue.message}.
+                {issue.title}: {issue.message}
               </li>
             ))}
           </ul>

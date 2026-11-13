@@ -99,6 +99,11 @@ function ConfirmMakeLive({ confirm, online, onConfirm, onCancel }: {
               {issue.title}: {issue.message}
             </li>
           ))}
+          {check.tokens?.map((issue) => (
+            <li key={`token:${issue.pageId ?? issue.title}:${issue.message}`}>
+              {issue.title}: {issue.message}.
+            </li>
+          ))}
           {check.fxText?.map((issue) => (
             <li key={`fx:${issue.pageId ?? issue.title}:${issue.message}`}>
               {issue.title}: {issue.message}

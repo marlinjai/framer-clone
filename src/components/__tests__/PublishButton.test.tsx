@@ -277,6 +277,8 @@ describe('PublishButton legal check', () => {
     const notice = screen.getByRole('dialog', { name: 'Some FX scene text is missing for search engines and screen readers' });
     expect(notice.textContent).not.toContain('Some components will not show');
     expect(screen.getByTestId('publish-fx-text-issues').textContent).toMatch(/text drawn inside the scene/);
+    // one full stop at the end, the same sentence the versions dialog shows
+    expect(screen.getByTestId('publish-fx-text-issues').textContent).toMatch(/inside the box\.$/);
     expect(screen.getByRole('button', { name: `Open ${page.metadata.title}` })).toBeTruthy();
   });
 
