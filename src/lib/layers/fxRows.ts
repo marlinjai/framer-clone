@@ -85,6 +85,20 @@ export function derivedRowsOf(component: ComponentInstance): { provider: 'fx-sce
   return rows ? { provider: 'fx-scene', rows } : null;
 }
 
+/**
+ * What a pick is called, for the properties panel's header and the phone menu: a layer's name and
+ * kind ("Bloom", "Bloom"), or "Background". `null` when the pick does not match the box's scene.
+ */
+export function fxPickLabel(box: ComponentInstance, pick: { kind: 'layer'; layerId: string } | { kind: 'background' }): { name: string; kind: string; type: string | null } | null {
+  if (pick.kind === 'background') return { name: 'Background', kind: 'Scene background', type: null };
+  const read = parseFxProp((box.props as Record<string, unknown>)[FX_PROP]);
+  if (!read.ok) return null;
+  const layer = read.fx.scene.layers.find((l) => l.id === pick.layerId);
+  if (!layer) return null;
+  const label = listAddableTypes().find((t) => t.type === layer.type)?.label ?? layer.type;
+  return { name: layer.name, kind: capital(label), type: layer.type };
+}
+
 /** The fold-state key of the Scene group row of a box (kept like any other row's folded state). */
 export const fxSceneGroupKey = (boxId: string) => `${boxId}:fx-scene`;
 /** The fold-state key of its Effects sub-group. */
@@ -147,6 +161,9 @@ export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType,
 
   if (!edit.ok) {
     editorUI.setFxLayerNotice({ componentId: box.id, about: JSON.stringify(before ?? null), text: edit.message, problem: true });
+    // The Layers panel's own message may be out of sight (a folded box, a phone with its sheets closed): the
+    // editor's notice shows a refusal wherever the person is.
+    editorUI.setEditorNotice({ kind: 'refused', message: edit.message });
     return { ok: false, message: edit.message };
   }
 

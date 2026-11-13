@@ -81,4 +81,17 @@ describe('the right panel with an FX scene box', () => {
     expect(store.editorUI.previewRule).toBeNull();
     expect(screen.getByRole('group', { name: 'Settings of Bloom' })).toBeTruthy();
   });
+
+  it('the header names the picked layer and its kind, and the box again when the pick clears', () => {
+    const view = render(<RightSidebar />);
+    const header = () => view.container.querySelector<HTMLElement>('.sticky')!.textContent ?? '';
+    expect(header()).toContain('FX scene');
+    act(() => store.editorUI.pickFxLayer(box, { kind: 'layer', layerId: 'bloom' }));
+    expect(header()).toBe('BloomBloom');
+    act(() => store.editorUI.pickFxLayer(box, { kind: 'background' }));
+    expect(header()).toContain('Background');
+    act(() => store.editorUI.clearFxLayerPick());
+    expect(header()).toContain('FX scene');
+    expect(header()).not.toContain('Bloom');
+  });
 });

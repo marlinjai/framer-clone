@@ -354,6 +354,8 @@ describe('the row actions', () => {
     const gone = runFxLayerAction(box, ui(), 'nope', { type: 'delete' });
     expect(gone).toEqual({ ok: false, message: 'That layer is no longer in the scene.' });
     expect(ui().fxLayerNotice).toMatchObject({ problem: true });
+    // Shown where the person is, too (the Layers panel's own message may be out of sight).
+    expect(ui().editorNotice).toMatchObject({ kind: 'refused', message: 'That layer is no longer in the scene.' });
     while (layers().length < 16) runFxLayerAction(box, ui(), 'bloom', { type: 'duplicate' });
     getHistoryStore()!.clear();
     const full = runFxLayerAction(box, ui(), 'bloom', { type: 'duplicate' });

@@ -14,7 +14,9 @@ import { observer } from 'mobx-react-lite';
 import { Settings2, Square, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
-import { breakpointRefsOf, isPageBody, layerIconOf, viewportIconOf, type LayerIconBreakpoint } from '../layerIcon';
+import { FX_BACKGROUND_ICON, breakpointRefsOf, fxLayerIconOf, isPageBody, layerIconOf, viewportIconOf, type LayerIconBreakpoint } from '../layerIcon';
+import { fxLayerKind } from '@/lib/fxScene/edit';
+import { fxPickLabel } from '@/lib/layers/fxRows';
 
 /**
  * RightSidebarHeader
@@ -48,7 +50,12 @@ const RightSidebarHeader = observer(({ variant = 'docked' }: { variant?: 'docked
         breakpoints: breakpointRefsOf(page),
       }
     : undefined;
-  const TileIcon = pageBody
+  // A layer (or the Background row) of an FX scene is picked: the header names it, the crumb in the FX section leads back to the box.
+  const fxPick = editorUI.fxLayerPick;
+  const fxLabel = fxPick && target && fxPick.componentId === target.id ? fxPickLabel(target, fxPick) : null;
+  const TileIcon = fxLabel
+    ? (fxLabel.type ? fxLayerIconOf(fxLabel.type, fxLayerKind(fxLabel.type)) : FX_BACKGROUND_ICON)
+    : pageBody
     ? viewportIconOf(selectedViewportNode?.label)
     : target ? layerIconOf(target, at) : Square;
 
@@ -95,9 +102,14 @@ const RightSidebarHeader = observer(({ variant = 'docked' }: { variant?: 'docked
           className="text-foreground truncate"
           style={{ fontSize: '13px', fontWeight: 600 }}
         >
-          {title}
+          {fxLabel ? fxLabel.name : title}
         </span>
-        {breakpointName && (
+        {fxLabel && (
+          <span className="text-muted-foreground truncate flex-none" style={{ fontSize: '12px' }}>
+            {fxLabel.kind}
+          </span>
+        )}
+        {!fxLabel && breakpointName && (
           <span className="text-muted-foreground truncate flex-none" style={{ fontSize: '12px' }}>
             {breakpointName}
           </span>

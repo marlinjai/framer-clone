@@ -33,6 +33,7 @@ import type { EditorUIType } from '@/stores/EditorUIStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import { duplicateLayer } from '@/lib/layers/layerActions';
 import { deleteSelection, routeFxLayerShortcut } from '@/lib/canvas/deleteSelection';
+import { fxPickLabel } from '@/lib/layers/fxRows';
 import { haptic, resetSelectionTick, selectionTick } from '@/lib/haptics';
 import { cn } from '@/lib/utils';
 import { placeMenuAtPoint } from '@/lib/quickbar/placement';
@@ -175,7 +176,9 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
 
   const history = getHistoryStore();
   // Paste style writes Normal, so a state does not offer it.
-  const items = contextMenuItemsFor(component, page, !editorUI.activeRule && !!editorUI.copiedStyle && Object.keys(editorUI.copiedStyle).length > 0);
+  const fxPick = editorUI.fxLayerPick && editorUI.fxLayerPick.componentId === component.id ? editorUI.fxLayerPick : undefined;
+  const fxLabel = fxPick ? fxPickLabel(component, fxPick) : null;
+  const items = contextMenuItemsFor(component, page, !editorUI.activeRule && !!editorUI.copiedStyle && Object.keys(editorUI.copiedStyle).length > 0, fxPick?.kind);
   const rect = screenRectFor(component, breakpointId);
   const w = typeof window !== 'undefined' ? window.innerWidth : 0;
   const h = typeof window !== 'undefined' ? window.innerHeight : 0;
@@ -250,13 +253,13 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
       <div
         ref={menuRef}
         role="menu"
-        aria-label={`Actions for ${component.displayName}`}
+        aria-label={`Actions for ${fxPick?.kind === 'layer' && fxLabel ? fxLabel.name : component.displayName}`}
         className="glass-surface float-enter absolute min-w-[200px] overflow-hidden rounded-xl py-1"
         data-shown={shown ? 'true' : 'false'}
         style={{ transform: shown ? 'scale(1)' : 'scale(0.96)', transformOrigin: 'top left' }}
       >
         <div className="truncate px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {component.displayName}
+          {fxPick?.kind === 'layer' && fxLabel ? fxLabel.name : component.displayName}
         </div>
         {items.map((item, i) => {
           const meta = ITEM_META[item];
@@ -274,7 +277,7 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
                   meta.destructive && 'text-red-600 dark:text-red-400',
                 )}
               >
-                <span className="flex-1">{meta.label}</span>
+                <span className="flex-1">{fxPick?.kind === 'layer' ? `${meta.label} layer` : meta.label}</span>
                 {meta.icon}
               </button>
             </React.Fragment>

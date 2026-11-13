@@ -293,4 +293,17 @@ describe('the long-press menu items', () => {
     // The page root: no parent, cannot be duplicated or deleted.
     expect(contextMenuItemsFor(root, page, false)).toEqual(['selectChild', 'copyStyle']);
   });
+
+  it('with a layer of an FX scene picked the menu is about that layer only: no box items beside Duplicate and Delete', () => {
+    const { page, box } = setup();
+    expect(contextMenuItemsFor(box, page, true, 'layer')).toEqual(['duplicate', 'delete']);
+  });
+
+  it('with the scene Background picked Duplicate and Delete are absent and the rest is the box\'s', () => {
+    const { page, box } = setup();
+    const items = contextMenuItemsFor(box, page, true, 'background');
+    expect(items).not.toContain('duplicate');
+    expect(items).not.toContain('delete');
+    expect(items).toContain('copyStyle');
+  });
 });
