@@ -8,7 +8,8 @@ type Page = { __mount: (scene: unknown) => string[]; __update: (scene: unknown) 
 
 let root: ReturnType<typeof createRoot> | null = null;
 const show = (stored: unknown): string[] => {
-  const read = parseFxScene(stored);
+  // Test only: the harness has no site image store, so any address is accepted (the reader refuses every address otherwise).
+  const read = parseFxScene(stored, { isAllowedImageSrc: () => true });
   if (!read.ok) throw new Error(read.message);
   root ??= createRoot(document.getElementById('stage')!);
   const scene = createElement(LumitraScene, { config: read.scene });
