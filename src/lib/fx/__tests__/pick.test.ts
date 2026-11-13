@@ -192,6 +192,96 @@ describe('a shape', () => {
   });
 });
 
+/** A text layer's plane whose texture holds a canvas the lines were drawn on: ink rows at `rows`, from x0 to x1. */
+const drawn = (l: Layer, width: number, height: number, canvas: { w: number; h: number; rows: [number, number][]; x0: number; x1: number }, z = 0): Entry => {
+  const entry = plane(l, width, height, z);
+  const data = new Uint8ClampedArray(canvas.w * canvas.h * 4);
+  for (const [y0, y1] of canvas.rows) for (let y = y0; y < y1; y++) for (let x = canvas.x0; x < canvas.x1; x++) data[(y * canvas.w + x) * 4 + 3] = 255;
+  const image = { width: canvas.w, height: canvas.h, getContext: () => ({ getImageData: () => ({ data }) }) };
+  const mesh = entry.root.children[0] as Mesh;
+  (mesh.material as MeshBasicMaterial).map = { image, version: 1 } as never;
+  return entry;
+};
+
+describe('text is hit where it was drawn', () => {
+  // A 5 by 2.5 plane (the lockup's default) whose canvas is 1000 by 500 with one line of ink in the middle third, the middle fifth across.
+  const lockup = () => drawn(layer('t', 'text'), 5, 2.5, { w: 1000, h: 500, rows: [[200, 300]], x0: 400, x1: 600 });
+  const frameWidth0 = 2 * worldHalfHeight(0) * ASPECT;
+
+  it('the ink is hit, and the transparent margins of the plane are the box\'s', () => {
+    expect(pick([lockup()], 0, 0)).toBe('t');
+    // Well inside the plane (2 of 2.5 world across, ndc about 0.5) and far from the ink: a miss.
+    expect(pick([lockup()], (2 / frameWidth0) * 2, 0)).toBeNull();
+    expect(pick([lockup()], 0, 0.45)).toBeNull();
+  });
+
+  it('a click just beside a line, or between letters, still counts', () => {
+    // The ink is 1 world unit wide (200 of 1000 px over 5 units); a line is widened by 15 percent of its height (15 px, 0.075 units).
+    expect(pick([lockup()], ((0.5 + 0.05) / frameWidth0) * 2, 0)).toBe('t');
+    expect(pick([lockup()], ((0.5 + 0.2) / frameWidth0) * 2, 0)).toBeNull();
+  });
+
+  it('a plane that covers the whole frame (the largest lockup) is only hit on its ink', () => {
+    const big = drawn(layer('t', 'text'), 12, 6.5, { w: 1000, h: 500, rows: [[225, 275]], x0: 450, x1: 550 });
+    expect(pick([big], 0, 0)).toBe('t');
+    expect(pick([big], 0.8, 0.7)).toBeNull();
+    expect(pick([big], -0.8, -0.7)).toBeNull();
+  });
+
+  it('two lines are two targets: the gap between them is not', () => {
+    const two = drawn(layer('t', 'text'), 5, 2.5, { w: 1000, h: 500, rows: [[100, 150], [350, 400]], x0: 300, x1: 700 });
+    const worldPerPx = 2.5 / 500;
+    const yAt = (px: number) => ((250 - px) * worldPerPx) / worldHalfHeight(0);
+    expect(pick([two], 0, yAt(125))).toBe('t');
+    expect(pick([two], 0, yAt(375))).toBe('t');
+    expect(pick([two], 0, yAt(250))).toBeNull();
+  });
+
+  it('a text box is hit on its lines, not on its whole wrap width', () => {
+    const box = drawn(layer('box', 'textBox', { width: 0.6 }), frameWidth0 * 0.6 + 0.8, 1.4, { w: 1000, h: 400, rows: [[150, 250]], x0: 450, x1: 550 });
+    expect(pick([box], 0, 0)).toBe('box');
+    // Inside the box's width (0.6 of the frame) but nowhere near the short line it holds.
+    expect(pick([box], 0.4, 0)).toBeNull();
+  });
+
+  it('a canvas with no ink at all draws nothing to pick, and the outline has no bounds', () => {
+    const blank = drawn(layer('t', 'text'), 5, 2.5, { w: 100, h: 50, rows: [], x0: 0, x1: 0 });
+    expect(pick([blank], 0, 0)).toBeNull();
+    expect(createPicker(probeOf([blank])).boundsOf('t', 800, 500)).toBeNull();
+  });
+
+  it('the outline follows the ink, not the plane', () => {
+    const rect = createPicker(probeOf([lockup()])).boundsOf('t', 800, 500)!;
+    // 200 px of ink plus 15 px of padding on each side, of a canvas 1000 px wide that is 5 world units across.
+    expect(rect.width).toBeCloseTo(((5 * (200 + 30)) / 1000 / frameWidth0) * 800, 0);
+  });
+
+  it('a readable canvas is read once per texture and version', () => {
+    const entry = lockup();
+    const image = ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map!.image as { getContext: () => unknown };
+    let reads = 0;
+    const original = image.getContext;
+    image.getContext = () => {
+      reads++;
+      return original();
+    };
+    const picker = createPicker(probeOf([entry]));
+    picker.pickAt(0, 0);
+    picker.pickAt(0.01, 0);
+    picker.boundsOf('t', 800, 500);
+    expect(reads).toBe(1);
+  });
+});
+
+describe('a blob', () => {
+  it('is hit as the circle of its mean radius; its outline reaches the largest', () => {
+    const calm = createPicker(probeOf([shape('b', { shape: 2, size: 0.2, wobble: 0 })])).boundsOf('b', 800, 500)!;
+    const wobbly = createPicker(probeOf([shape('b', { shape: 2, size: 0.2, wobble: 0.5 })])).boundsOf('b', 800, 500)!;
+    expect(wobbly.width).toBeGreaterThan(calm.width * 1.3);
+    expect(pick([shape('b', { shape: 2, size: 0.2, wobble: 0.5 })], 0, 0)).toBe('b');
+  });
+});
+
 describe('an image', () => {
   it('under cover it fills the frame and is never picked', () => {
     expect(pick([image('img', 0, 1.5, 0.3)], 0, 0)).toBeNull();

@@ -10,14 +10,23 @@
  * mount chunk) never carries it. `src/lib/fx/__tests__/importGraph.test.ts` pins that.
  *
  * Which layers can be picked. Only layers with a bounded extent on the canvas:
- *  - `text`: its plane.
- *  - `textBox`: the text rectangle (the box's width by its lines), not the padded plane.
+ *  - `text` and `textBox`: the lines as drawn. The layer draws its text into a canvas texture, so
+ *    the drawn pixels are read back once per texture (rows with ink make a line, each line is its
+ *    ink's extent) and a click must land on a line (a little wider than its ink, so a click between
+ *    two letters still counts). Without a readable canvas (nothing drawn yet) the plane (`text`) or
+ *    the text rectangle (`textBox`) stands in.
  *  - `shape`: the extent of its shape (the quad it is drawn on is 26 by 16 and is no target),
  *    including the pointer's pull on it.
  *  - `image`: under `contain`, the fitted picture. `cover` fills the frame.
- * A shape or an image whose content covers the visible frame on both axes is unbounded and never
+ * A layer whose content covers the visible frame on both axes is unbounded and never
  * picked, as `noiseFill` and `gradient` (they fill the frame by nature) are never picked. A click
  * on any of these falls through to the box.
+ *
+ * Known limits, stated rather than hidden: the box is read as an unrotated, uniformly scaled
+ * rectangle (the editor's zoom is a CSS scale; a CSS rotation of the box itself would shift the
+ * mapping), and a blob is hit as the circle of its mean radius (its edge wobbles with noise
+ * over time) while its outline uses the largest radius. `SceneProbe` has no `invalidate`: nothing
+ * here asks for a frame, the outline is HTML and moves on its own animation-frame loop.
  *
  * Which layer wins: the nearest to the camera along the ray (the scene draws see-through layers
  * back to front by depth, so a text at z 0 is over a shape at z -2.5 whatever their stored
@@ -107,6 +116,87 @@ export function containedImageRect(planeAspect: number, imageAspect: number): Uv
   return [(1 - ratio) / 2, 0, (1 + ratio) / 2, 1];
 }
 
+/** An alpha above this is ink. */
+const INK_ALPHA = 16;
+
+interface Readable {
+  width: number;
+  height: number;
+  getContext: (kind: string) => { getImageData: (x: number, y: number, w: number, h: number) => { data: ArrayLike<number> } } | null;
+}
+
+const drawnCache = new WeakMap<object, { version: number; rects: UvRect[] | undefined }>();
+
+/**
+ * The lines a text layer drew, as rectangles in its plane's uv space, read from the canvas its texture
+ * holds: `undefined` when there is nothing to read (no canvas, no 2D context), an empty list when it
+ * drew no ink at all. Cached per texture and version, because a text texture is rebuilt, not edited.
+ */
+function drawnLines(mesh: Mesh): UvRect[] | undefined {
+  const map = (mesh.material as { map?: { image?: unknown; version?: number } }).map;
+  const image = map?.image as Readable | undefined;
+  if (!image || typeof image.getContext !== "function" || !(image.width > 0) || !(image.height > 0)) return undefined;
+  const version = map?.version ?? 0;
+  const cached = drawnCache.get(image);
+  if (cached && cached.version === version) return cached.rects;
+  let rects: UvRect[] | undefined;
+  try {
+    const context = image.getContext("2d");
+    if (context) {
+      const { width: w, height: h } = image;
+      const data = context.getImageData(0, 0, w, h).data;
+      const bands: { y0: number; y1: number; x0: number; x1: number }[] = [];
+      let open: { y0: number; y1: number; x0: number; x1: number } | null = null;
+      for (let y = 0; y < h; y++) {
+        let x0 = -1;
+        let x1 = -1;
+        for (let x = 0; x < w; x++) {
+          if (data[(y * w + x) * 4 + 3] > INK_ALPHA) {
+            if (x0 < 0) x0 = x;
+            x1 = x;
+          }
+        }
+        if (x0 < 0) {
+          open = null;
+          continue;
+        }
+        if (open) {
+          open.y1 = y + 1;
+          open.x0 = Math.min(open.x0, x0);
+          open.x1 = Math.max(open.x1, x1 + 1);
+        } else {
+          open = { y0: y, y1: y + 1, x0, x1: x1 + 1 };
+          bands.push(open);
+        }
+      }
+      rects = bands.map((b) => {
+        // A click between two letters, or just beside a line, still counts.
+        const pad = Math.max(4, Math.round((b.y1 - b.y0) * 0.15));
+        const x0 = Math.max(0, b.x0 - pad);
+        const x1 = Math.min(w, b.x1 + pad);
+        const y0 = Math.max(0, b.y0 - pad);
+        const y1 = Math.min(h, b.y1 + pad);
+        // A canvas texture is flipped: the top row of the canvas is the top of the plane (v = 1).
+        return [x0 / w, 1 - y1 / h, x1 / w, 1 - y0 / h] as const;
+      });
+    }
+  } catch {
+    // A canvas that cannot be read (lost, tainted): the plane stands in.
+    rects = undefined;
+  }
+  drawnCache.set(image, { version, rects });
+  return rects;
+}
+
+/** The region of the lines a layer drew, or null when it drew none, or undefined when there is nothing to read. */
+function linesRegion(mesh: Mesh): Region | null | undefined {
+  const rects = drawnLines(mesh);
+  if (rects === undefined) return undefined;
+  if (rects.length === 0) return null;
+  const rect: UvRect = [Math.min(...rects.map((r) => r[0])), Math.min(...rects.map((r) => r[1])), Math.max(...rects.map((r) => r[2])), Math.max(...rects.map((r) => r[3]))];
+  return { mesh, rect, contains: (u, v) => rects.some((r) => inRect(r)(u, v)) };
+}
+
 /** The rounded-box distance the shape shader uses (negative inside). */
 function roundedBoxDistance(px: number, py: number, bx: number, by: number, r: number): number {
   const qx = Math.abs(px) - bx + r;
@@ -157,9 +247,13 @@ function regionOf(layer: Layer, root: Object3D, camera: Camera): Region | null {
   const mesh = firstMesh(root);
   if (!mesh) return null;
   switch (layer.type) {
-    case "text":
-      return { mesh, rect: [0, 0, 1, 1], contains: () => true };
+    case "text": {
+      const lines = linesRegion(mesh);
+      return lines !== undefined ? lines : { mesh, rect: [0, 0, 1, 1], contains: () => true };
+    }
     case "textBox": {
+      const lines = linesRegion(mesh);
+      if (lines !== undefined) return lines;
       const plane = planeSize(mesh);
       if (!plane || plane.width <= 0 || plane.height <= 0) return null;
       // The text rectangle is the box's width, the padding hangs outside it by the same world
@@ -237,7 +331,8 @@ export function createPicker(probe: SceneProbe): FxPicker {
   const bounded = (layer: Layer, root: Object3D): Region | null => {
     const region = regionOf(layer, root, probe.camera);
     if (!region) return null;
-    if ((layer.type === "shape" || layer.type === "image") && coversFrame(region, probe.camera)) return null;
+    // Whatever its kind: a layer whose content covers the visible frame on both axes is no target.
+    if (coversFrame(region, probe.camera)) return null;
     return region;
   };
 

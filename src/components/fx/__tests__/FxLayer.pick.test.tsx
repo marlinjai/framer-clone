@@ -12,7 +12,7 @@ import { Group, Mesh, MeshBasicMaterial, PerspectiveCamera, PlaneGeometry } from
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import { EditorTool } from '@/stores/EditorUIStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
-import { addFxLayer, fxFromPreset, type FxEdit } from '@/lib/fxScene/edit';
+import { addFxLayer, fxFromPreset, removeFxLayer, type FxEdit } from '@/lib/fxScene/edit';
 import { FX_PROP } from '@/lib/fxScene/marker';
 import { parseFxProp } from '@/lib/fxScene/fxScene';
 
@@ -67,8 +67,9 @@ const positionOf = () => {
   return read.fx.scene.layers.find((l) => l.id === textBoxId)!.params.position.value as [number, number];
 };
 
-const event = (type: string, init: { x?: number; y?: number; button?: number; shift?: boolean; pointerType?: string; key?: string } = {}) => {
-  const e = new MouseEvent(type, { bubbles: true, cancelable: true, button: init.button ?? 0, clientX: init.x ?? 0, clientY: init.y ?? 0, shiftKey: init.shift ?? false });
+const event = (type: string, init: { x?: number; y?: number; button?: number; buttons?: number; shift?: boolean; pointerType?: string; key?: string } = {}) => {
+  // A button is down while the pointer is pressed or moving with it down; a release has none.
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, button: init.button ?? 0, buttons: init.buttons ?? (type === 'pointermove' || type === 'pointerdown' ? 1 : 0), clientX: init.x ?? 0, clientY: init.y ?? 0, shiftKey: init.shift ?? false });
   Object.defineProperty(e, 'pointerId', { value: 1 });
   Object.defineProperty(e, 'isPrimary', { value: true });
   Object.defineProperty(e, 'pointerType', { value: init.pointerType ?? 'mouse' });
@@ -77,7 +78,15 @@ const event = (type: string, init: { x?: number; y?: number; button?: number; sh
 const press = (target: Element, x: number, y: number, extra: Parameters<typeof event>[1] = {}) => act(() => void target.dispatchEvent(event('pointerdown', { x, y, ...extra })));
 const move = (x: number, y: number) => act(() => void window.dispatchEvent(event('pointermove', { x, y })));
 const release = (x: number, y: number) => act(() => void window.dispatchEvent(event('pointerup', { x, y })));
-const escape = () => act(() => void window.dispatchEvent(Object.assign(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))));
+/** A key pressed where the editor's focus is: on the body, so it travels to the window as in the editor. */
+const key = (init: KeyboardEventInit) => act(() => void document.body.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true })));
+const escape = () => key({ key: 'Escape' });
+/** Stands in for the editor's own key handler on the window (bubble phase): Escape drops the pick, as EditorApp's does. */
+let editorKeys: ReturnType<typeof vi.fn<(e: KeyboardEvent) => void>>;
+const editorKeyHandler = (e: KeyboardEvent) => {
+  editorKeys(e);
+  if (e.key === 'Escape') store.editorUI.clearFxLayerPick();
+};
 
 /** The scene's probe: the text box as a real plane (its text rectangle half the frame wide, plus padding). */
 const probe = () => {
@@ -146,9 +155,12 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: false && query.includes('reduce'), addEventListener: () => {}, removeEventListener: () => {} }));
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({ getExtension: () => null })) as never);
   reachedDocument = vi.fn<(e: Event) => void>();
+  editorKeys = vi.fn<(e: KeyboardEvent) => void>();
+  window.addEventListener('keydown', editorKeyHandler);
   document.addEventListener('pointerdown', reachedDocument);
 });
 afterEach(() => {
+  window.removeEventListener('keydown', editorKeyHandler);
   document.removeEventListener('pointerdown', reachedDocument);
   cleanup();
   vi.unstubAllGlobals();
@@ -299,10 +311,15 @@ describe('dragging a picked text box', () => {
     await escape();
     expect(positionOf()).toEqual(start);
     expect(entries()).toBe(0);
+    // The editor's own Escape (which drops the pick) never saw it: the drag took it.
+    expect(editorKeys).not.toHaveBeenCalled();
     expect(store.editorUI.fxLayerPick?.kind).toBe('layer');
-    // The drag is over: a later move does nothing.
+    // The drag is over: a later move does nothing, and Escape is the editor's again.
     await move(CENTRE.x + 90, CENTRE.y);
     expect(positionOf()).toEqual(start);
+    await escape();
+    expect(editorKeys).toHaveBeenCalledTimes(1);
+    expect(store.editorUI.fxLayerPick).toBeUndefined();
   });
 
   it('a press and less than 3 pixels is a click: nothing moves and nothing is recorded', async () => {
@@ -379,19 +396,17 @@ describe('dragging a picked text box', () => {
     expect(getHistoryStore()!.batch).toBeUndefined();
   });
 
-  it('Delete, Cmd+D and Cmd+Z mid-drag are kept from the editor, so they are not folded into the drag\'s undo step', async () => {
+  it('Delete, Cmd+D, Cmd+Z and Escape mid-drag never reach the editor\'s key handler, so they are not folded into the drag\'s undo step; after it they do', async () => {
     await mountLive();
     await press(boxEl, CENTRE.x, CENTRE.y);
     await move(CENTRE.x + 40, CENTRE.y);
-    const reached = vi.fn();
-    document.addEventListener('keydown', reached);
-    for (const init of [{ key: 'Delete' }, { key: 'd', metaKey: true }, { key: 'z', metaKey: true }]) {
-      act(() => void window.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true })));
-    }
-    expect(reached).not.toHaveBeenCalled();
-    document.removeEventListener('keydown', reached);
+    for (const init of [{ key: 'Delete' }, { key: 'Backspace' }, { key: 'd', metaKey: true }, { key: 'z', metaKey: true }, { key: 'x', ctrlKey: true }]) await key(init);
+    expect(editorKeys).not.toHaveBeenCalled();
     await release(CENTRE.x + 40, CENTRE.y);
     expect(entries()).toBe(1);
+    await key({ key: 'Delete' });
+    await key({ key: 'z', metaKey: true });
+    expect(editorKeys).toHaveBeenCalledTimes(2);
   });
 
   it('text written directly in the box over the point is HTML and wins the press', async () => {
@@ -419,5 +434,176 @@ describe('dragging a picked text box', () => {
     await release(lockup.x + 60, lockup.y);
     expect(positionOf()).toEqual(start);
     expect(entries()).toBe(0);
+  });
+});
+
+describe('a drag that loses its release or its batch', () => {
+  const entries = () => getHistoryStore()!.history.length;
+
+  it('a move with no button down means the release was never seen: the drag ends with what it did, and a hovering pointer moves nothing', async () => {
+    await mountLive();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    const moved = positionOf();
+    act(() => void window.dispatchEvent(event('pointermove', { x: CENTRE.x + 80, y: CENTRE.y, buttons: 0 })));
+    expect(positionOf()).toEqual(moved);
+    expect(entries()).toBe(1);
+    expect(getHistoryStore()!.batch).toBeUndefined();
+    // Hovering later does not move the text, and the editor has its keys back.
+    act(() => void window.dispatchEvent(event('pointermove', { x: CENTRE.x + 200, y: CENTRE.y, buttons: 0 })));
+    expect(positionOf()).toEqual(moved);
+    await key({ key: 'Delete' });
+    expect(editorKeys).toHaveBeenCalledTimes(1);
+    // A new press is a new pick (not stopped by a drag that never ended).
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    expect(store.editorUI.fxLayerPick?.kind).toBe('layer');
+  });
+
+  it('a lost pointer capture ends the drag with what it did', async () => {
+    await mountLive();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    const moved = positionOf();
+    act(() => {
+      const lost = new Event('lostpointercapture');
+      Object.defineProperty(lost, 'pointerId', { value: 1 });
+      boxEl.dispatchEvent(lost);
+    });
+    expect(entries()).toBe(1);
+    await move(CENTRE.x + 120, CENTRE.y);
+    expect(positionOf()).toEqual(moved);
+  });
+
+  it('the window losing focus mid-drag puts the text back and records nothing', async () => {
+    await mountLive();
+    const start = positionOf();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    act(() => void window.dispatchEvent(new Event('blur')));
+    expect(positionOf()).toEqual(start);
+    expect(entries()).toBe(0);
+    expect(getHistoryStore()!.batch).toBeUndefined();
+  });
+
+  it('another gesture committing a batch mid-drag ends the drag: later moves are not separate undo steps', async () => {
+    await mountLive();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    act(() => getHistoryStore()!.commitBatch());
+    const stored = positionOf();
+    expect(entries()).toBe(1);
+    await move(CENTRE.x + 90, CENTRE.y);
+    await move(CENTRE.x + 140, CENTRE.y);
+    await release(CENTRE.x + 140, CENTRE.y);
+    expect(positionOf()).toEqual(stored);
+    expect(entries()).toBe(1);
+    expect(getHistoryStore()!.batch).toBeUndefined();
+  });
+});
+
+describe('double-click, and the pointer held by every picking press', () => {
+  const LOCKUP = () => screenAt(0.5 + 0.5 * (2.6 / (frameWidth / 2)), 0.5);
+
+  it('two picking presses make a double-click on the box the pick\'s, not the box\'s (which would edit its text)', async () => {
+    await mountLive();
+    const dbl = vi.fn();
+    document.addEventListener('dblclick', dbl);
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await release(CENTRE.x, CENTRE.y);
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await release(CENTRE.x, CENTRE.y);
+    act(() => void boxEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })));
+    expect(dbl).not.toHaveBeenCalled();
+    document.removeEventListener('dblclick', dbl);
+  });
+
+  it('a double-click on an HTML child of the box (its headline) is the child\'s, right after a pick, and after a press that picked nothing', async () => {
+    await mountLive();
+    const dbl = vi.fn();
+    document.addEventListener('dblclick', dbl);
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await release(CENTRE.x, CENTRE.y);
+    act(() => void child.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })));
+    expect(dbl).toHaveBeenCalledTimes(1);
+    // A press that picks nothing ends the run: the next double-click on the box is the box's.
+    await press(boxEl, CORNER.x, CORNER.y);
+    await release(CORNER.x, CORNER.y);
+    act(() => void boxEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })));
+    expect(dbl).toHaveBeenCalledTimes(2);
+    document.removeEventListener('dblclick', dbl);
+  });
+
+  it('a press that picks a layer which is not dragged still holds the pointer until its release', async () => {
+    await mountLive();
+    const hold = vi.fn();
+    const letGo = vi.fn();
+    (boxEl as unknown as { setPointerCapture: unknown }).setPointerCapture = hold;
+    (boxEl as unknown as { releasePointerCapture: unknown }).releasePointerCapture = letGo;
+    const at = LOCKUP();
+    await press(boxEl, at.x, at.y);
+    expect(store.editorUI.fxLayerPick).toEqual({ componentId: box.id, kind: 'layer', layerId: textId });
+    expect(hold).toHaveBeenCalledWith(1);
+    expect(letGo).not.toHaveBeenCalled();
+    await release(at.x + 300, at.y);
+    expect(letGo).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('the four paths of picking', () => {
+  const outlineLeft = () => parseFloat((document.querySelector('[data-fc-fx-outline-box]') as HTMLElement | null)?.style.left ?? 'NaN');
+
+  it('backtrack: pick one layer, then another: the pick and its outline move to the second', async () => {
+    await mountLive();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await release(CENTRE.x, CENTRE.y);
+    await waitFor(() => expect(document.querySelector('[data-fc-fx-outline-box]')).not.toBeNull());
+    const first = outlineLeft();
+    const lockup = screenAt(0.5 + 0.5 * (2.6 / (frameWidth / 2)), 0.5);
+    await press(boxEl, lockup.x, lockup.y);
+    await release(lockup.x, lockup.y);
+    expect(store.editorUI.fxLayerPick).toEqual({ componentId: box.id, kind: 'layer', layerId: textId });
+    await waitFor(() => expect(outlineLeft()).not.toBe(first));
+    // And back: the first layer again, its outline where it was.
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await release(CENTRE.x, CENTRE.y);
+    await waitFor(() => expect(outlineLeft()).toBe(first));
+  });
+
+  it('resume: a canvas mounted again (a reload has no pick) shows no outline until a layer is clicked', async () => {
+    const view = await mountLive();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await release(CENTRE.x, CENTRE.y);
+    await waitFor(() => expect(document.querySelector('[data-fc-fx-outline-box]')).not.toBeNull());
+    view.unmount();
+    act(() => store.editorUI.clearFxLayerPick());
+    await mountLive();
+    expect(document.querySelector('[data-fc-fx-outline-box]')).toBeNull();
+    expect(store.editorUI.fxLayerPick).toBeUndefined();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await waitFor(() => expect(document.querySelector('[data-fc-fx-outline-box]')).not.toBeNull());
+  });
+
+  it('re-entry: the picked layer is deleted (no outline, back to the box), then another is picked; Live off and on picks again with the new scene', async () => {
+    const view = await mountLive();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await release(CENTRE.x, CENTRE.y);
+    await waitFor(() => expect(document.querySelector('[data-fc-fx-outline-box]')).not.toBeNull());
+    const removed = removeFxLayer((box.props as Record<string, unknown>)[FX_PROP], textBoxId);
+    if (!removed.ok) throw new Error(removed.message);
+    act(() => box.setProps({ [FX_PROP]: removed.stored }));
+    expect(store.editorUI.fxLayerPick).toBeUndefined();
+    await waitFor(() => expect(document.querySelector('[data-fc-fx-outline-box]')).toBeNull());
+    const lockup = screenAt(0.5 + 0.5 * (2.6 / (frameWidth / 2)), 0.5);
+    await press(boxEl, lockup.x, lockup.y);
+    await release(lockup.x, lockup.y);
+    expect(store.editorUI.fxLayerPick).toEqual({ componentId: box.id, kind: 'layer', layerId: textId });
+    // Live off, then on again: a new drawing and a new probe, and the pick works on it.
+    view.unmount();
+    act(() => store.editorUI.stopFxLive());
+    act(() => store.editorUI.startFxLive(box.id, null));
+    await mountLive();
+    act(() => store.editorUI.clearFxLayerPick());
+    await press(boxEl, lockup.x, lockup.y);
+    expect(store.editorUI.fxLayerPick).toEqual({ componentId: box.id, kind: 'layer', layerId: textId });
   });
 });
