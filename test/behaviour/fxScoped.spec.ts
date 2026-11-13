@@ -464,7 +464,7 @@ describe('effects that apply to one layer', () => {
 
     it('a frame drawn long after the edit equals the unscoped text with the same blend, deterministically', async () => {
       const normal = (await draw(unscopedText('normal'))).picture;
-      for (const blend of ['add', 'screen', 'multiply']) {
+      for (const blend of ['add', 'screen', 'overlay', 'multiply']) {
         const unscoped = (await draw(unscopedText(blend))).picture;
         expect.soft(difference(unscoped, normal).differing, `${blend} differs from normal`).toBeGreaterThan(50);
         const edits = await session(scopedText(blend));
@@ -474,9 +474,9 @@ describe('effects that apply to one layer', () => {
 
     it('a blend changed in a mounted scene shows in the frame of the edit and after it, scoped like unscoped', async () => {
       const fresh: Record<string, PNG> = {};
-      for (const blend of ['normal', 'add', 'screen', 'multiply']) fresh[blend] = (await draw(unscopedText(blend))).picture;
+      for (const blend of ['normal', 'add', 'screen', 'overlay', 'multiply']) fresh[blend] = (await draw(unscopedText(blend))).picture;
       const edits = await session(scopedText('normal'));
-      for (const blend of ['add', 'screen', 'normal', 'multiply', 'normal']) {
+      for (const blend of ['add', 'screen', 'normal', 'overlay', 'multiply', 'normal']) {
         // The frame the edit itself produces is the one a visitor with reduced motion keeps.
         expect.soft(difference(await edits.show(scopedText(blend)), fresh[blend]).share, `${blend}, the edit's own frame`).toBeLessThan(0.002);
         expect.soft(difference(await edits.reflow(), fresh[blend]).share, `${blend}, after a reflow`).toBeLessThan(0.002);
@@ -556,12 +556,33 @@ describe('effects that apply to one layer', () => {
       expect.soft(base - mean(multiplied, area), `${type} multiply: darker than normal`).toBeGreaterThan(2);
     }, 240_000);
 
-    it('every content layer in the registry changes the picture with add, screen and multiply compared with normal', async () => {
+    it('a text box at half opacity with multiply: scoped equals unscoped, and nothing is lighter than the background', async () => {
+      const textBoxAt = (extra: Raw[] = []): Raw => withBackground([layer('l', 'textBox', { text: 'Blend', size: 0.25, opacity: 0.5 }, { blend: 'multiply' }), ...extra]);
+      const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 'l' });
+      const plain = (await draw(withBackground([]))).picture;
+      const unscoped = (await draw(textBoxAt())).picture;
+      const scoped = (await draw(textBoxAt([noop]))).picture;
+      expect(difference(unscoped, plain).differing, 'the text box is on the picture').toBeGreaterThan(200);
+      // Every text pixel is partly drawn here, which is where premultiplying twice (the group's reset missing)
+      // changes the picture, and where colour that is not premultiplied lightens it (multiply never lightens).
+      expect.soft(difference(scoped, unscoped).share, 'scoped equals unscoped').toBeLessThan(0.002);
+      for (const [name, picture] of [['unscoped', unscoped], ['scoped', scoped]] as const) {
+        let lighter = 0;
+        for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
+          const [r, g, b] = px(picture, x, y);
+          const [r0, g0, b0] = px(plain, x, y);
+          if (Math.max(r - r0, g - g0, b - b0) > CHANNEL_TOLERANCE) lighter++;
+        }
+        expect.soft(lighter, `${name}: pixels lighter than the background`).toBe(0);
+      }
+    }, 240_000);
+
+    it('every content layer in the registry changes the picture with add, screen, overlay and multiply compared with normal', async () => {
       const types = listLayerSchemas().filter((schema) => schema.kind === 'content').map((schema) => schema.type);
       expect(types.length).toBeGreaterThanOrEqual(6);
       for (const type of types) {
         const normal = (await draw(only(type, 'normal'))).picture;
-        for (const blend of ['add', 'screen', 'multiply']) {
+        for (const blend of ['add', 'screen', 'overlay', 'multiply']) {
           const picture = (await draw(only(type, blend))).picture;
           expect.soft(difference(picture, normal).differing, `${type} with ${blend} differs from normal`).toBeGreaterThan(50);
         }

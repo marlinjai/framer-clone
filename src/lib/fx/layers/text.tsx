@@ -135,8 +135,6 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   // Spec section 8: Safari caps WebGL contexts; never leak textures.
   useEffect(() => () => tex.dispose(), [tex]);
 
-  // The material takes its blend in its ref callback below, which React calls again on every render.
-
   const pointer = useWindowPointer();
   const startedAt = useRef<number | null>(null);
   useFrame((state) => {
@@ -165,6 +163,8 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     >
       <planeGeometry args={[v.width, v.height]} />
       <meshBasicMaterial
+        // The blend is applied here, from the ref callback: React calls it again on every render, so a later
+        // change of `blend` is applied too, and the first frame already has it.
         ref={(m) => {
           matRef.current = m;
           if (m) {

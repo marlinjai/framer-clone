@@ -221,7 +221,12 @@ describe('the text layers (basic materials) take their blend like the shader lay
     expect(shader.uniforms.uPremultiply).toBe(premultiplyUniformOf(m));
     expect(shader.fragmentShader).toContain('uniform float uPremultiply;');
     expect(shader.fragmentShader).not.toContain('#include <premultiplied_alpha_fragment>');
-    expect(shader.fragmentShader.indexOf('uPremultiply);')).toBeGreaterThan(shader.fragmentShader.indexOf('#include <colorspace_fragment>'));
+    const colourSpace = shader.fragmentShader.indexOf('#include <colorspace_fragment>');
+    const colour = shader.fragmentShader.indexOf('gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);');
+    const alpha = shader.fragmentShader.indexOf('gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);');
+    expect(colour, 'the colour is premultiplied').toBeGreaterThan(-1);
+    expect(colour, 'after the conversion').toBeGreaterThan(colourSpace);
+    expect(alpha, 'the alpha is clamped after the colour').toBeGreaterThan(colour);
     expect(m.customProgramCacheKey()).toBe('fx-premultiply-uniform');
   });
 });

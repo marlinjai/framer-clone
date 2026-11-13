@@ -64,7 +64,7 @@ export function premultiplyUniformOf(material: Material): PremultiplyUniform | u
 /**
  * Gives a MeshBasicMaterial (the text lockup and the text box, whose shader is three.js's own) the same
  * `uPremultiply` uniform the shader layers have, so multiply premultiplies it the same way: the basic shader's
- * premultiply step is swapped for the uniform's, after the colour space conversion like in the other layers.
+XX
  * Call it once, before the material is first drawn (its ref callback).
  */
 export function withPremultiplyUniform(material: MeshBasicMaterial): void {
@@ -84,7 +84,8 @@ export function withPremultiplyUniform(material: MeshBasicMaterial): void {
         "gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);\n    gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);",
       );
   };
-  // Without this every basic material would share one compiled program with and without the uniform.
+  // The hook's source is the same for every material that has it, so they share one program (three.js would key
+  // it by the hook's text anyway; this names the key). Nothing recompiles per frame.
   material.customProgramCacheKey = () => "fx-premultiply-uniform";
 }
 

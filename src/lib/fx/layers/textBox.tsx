@@ -332,8 +332,6 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
   // Free the texture when it is replaced or on unmount (Safari caps WebGL contexts).
   useEffect(() => () => built.tex.dispose(), [built.tex]);
 
-  // The material takes its blend in its ref callback below, which React calls again on every render.
-
   const offset = anchorOffset(v.anchor, { width: built.planeWidth, height: built.planeHeight }, built.layout);
   const baseX = (v.position[0] - 0.5) * vw;
   const baseY = (0.5 - v.position[1]) * vh;
@@ -382,6 +380,8 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
         >
           <planeGeometry args={[built.planeWidth, built.planeHeight]} />
           <meshBasicMaterial
+            // The blend is applied here, from the ref callback: React calls it again on every render, so a later
+            // change of `blend` is applied too, and the first frame already has it.
             ref={(m) => {
               matRef.current = m;
               if (m) {
