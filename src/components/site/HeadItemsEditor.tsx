@@ -107,7 +107,14 @@ function candidateOf(d: Draft): Candidate {
   return parsed.ok ? { ok: true, items: [stored] } : { ok: false, message: parsed.refusal.message };
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+// Key order is not a change: an item stored as { kind, content, name } and rebuilt as { kind, name, content } is the same item.
+const canonical = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => [k, canonical(v)]))
+      : value;
+const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 interface FormProps {
   idPrefix: string;
@@ -179,14 +186,14 @@ function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommi
       {draft.kind === 'meta' && (
         <div className="flex flex-col gap-1">
           <label htmlFor={id('name')} className={fieldLabel}>Name</label>
-          <input id={id('name')} list={id('names')} className={inputBase} value={draft.name} spellCheck={false} autoComplete="off" onChange={(e) => set({ name: e.target.value })} />
+          <input id={id('name')} aria-invalid={showMessage || undefined} aria-describedby={id('message')} list={id('names')} className={inputBase} value={draft.name} spellCheck={false} autoComplete="off" onChange={(e) => set({ name: e.target.value })} />
           <datalist id={id('names')}>{[...META_NAMES].map((n) => <option key={n} value={n} />)}</datalist>
         </div>
       )}
       {draft.kind === 'property' && (
         <div className="flex flex-col gap-1">
           <label htmlFor={id('property')} className={fieldLabel}>Property</label>
-          <input id={id('property')} list={id('properties')} className={inputBase} value={draft.property} spellCheck={false} autoComplete="off" onChange={(e) => set({ property: e.target.value })} />
+          <input id={id('property')} aria-invalid={showMessage || undefined} aria-describedby={id('message')} list={id('properties')} className={inputBase} value={draft.property} spellCheck={false} autoComplete="off" onChange={(e) => set({ property: e.target.value })} />
           <datalist id={id('properties')}>
             {[...PROPERTY_NAMES, ...PROPERTY_PREFIXES.map((p) => `${p}tag`)].map((n) => <option key={n} value={n} />)}
           </datalist>
@@ -195,7 +202,7 @@ function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommi
       {(draft.kind === 'meta' || draft.kind === 'property') && (
         <div className="flex flex-col gap-1">
           <label htmlFor={id('content')} className={fieldLabel}>Content</label>
-          <input id={id('content')} className={inputBase} value={draft.content} autoComplete="off" onChange={(e) => set({ content: e.target.value })} />
+          <input id={id('content')} aria-invalid={showMessage || undefined} aria-describedby={id('message')} className={inputBase} value={draft.content} autoComplete="off" onChange={(e) => set({ content: e.target.value })} />
         </div>
       )}
 
@@ -209,13 +216,13 @@ function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommi
           </div>
           <div className="flex flex-col gap-1">
             <label htmlFor={id('href')} className={fieldLabel}>Address</label>
-            <input id={id('href')} className={inputBase} value={draft.href} placeholder="https://example.com/page or /path" spellCheck={false} autoComplete="off" onChange={(e) => set({ href: e.target.value })} />
+            <input id={id('href')} aria-invalid={showMessage || undefined} aria-describedby={id('message')} className={inputBase} value={draft.href} placeholder="https://example.com/page or /path" spellCheck={false} autoComplete="off" onChange={(e) => set({ href: e.target.value })} />
           </div>
           {draft.rel === 'alternate' && (
             <div className="grid grid-cols-2 gap-2">
               <div className="flex flex-col gap-1">
                 <label htmlFor={id('hreflang')} className={fieldLabel}>Language</label>
-                <input id={id('hreflang')} className={inputBase} value={draft.hreflang} placeholder="de, en-GB or x-default" spellCheck={false} autoComplete="off" onChange={(e) => set({ hreflang: e.target.value, type: '' })} />
+                <input id={id('hreflang')} aria-invalid={showMessage || undefined} aria-describedby={id('message')} className={inputBase} value={draft.hreflang} placeholder="de, en-GB or x-default" spellCheck={false} autoComplete="off" onChange={(e) => set({ hreflang: e.target.value, type: '' })} />
               </div>
               <div className="flex flex-col gap-1">
                 <label htmlFor={id('type')} className={fieldLabel}>Or feed type</label>
@@ -228,7 +235,7 @@ function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommi
           )}
           <div className="flex flex-col gap-1">
             <label htmlFor={id('title')} className={fieldLabel}>Title (optional)</label>
-            <input id={id('title')} className={inputBase} value={draft.title} autoComplete="off" onChange={(e) => set({ title: e.target.value })} />
+            <input id={id('title')} aria-invalid={showMessage || undefined} aria-describedby={id('message')} className={inputBase} value={draft.title} autoComplete="off" onChange={(e) => set({ title: e.target.value })} />
           </div>
         </>
       )}

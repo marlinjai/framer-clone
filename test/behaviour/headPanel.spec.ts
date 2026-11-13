@@ -284,12 +284,10 @@ describe.each(ENGINES)('on the real build\'s editor, in %s', (_name, engine) => 
     try {
       await page.getByRole('button', { name: 'Site settings' }).first().click();
       await page.getByTestId('site-settings-dialog').waitFor();
-      await page.waitForTimeout(600);
-      expect(await inWindow(page, 'site-settings-dialog')).toBe(true);
+      await expect.poll(() => inWindow(page, 'site-settings-dialog')).toBe(true);
       await page.getByTestId('site-head-section-open').click();
       await page.getByTestId('head-dialog').waitFor();
-      await page.waitForTimeout(600);
-      expect(await inWindow(page, 'head-dialog')).toBe(true);
+      await expect.poll(() => inWindow(page, 'head-dialog')).toBe(true);
       await addMeta(page, 'google-site-verification', 'abc123');
       await expect.poll(textOf(page.getByTestId('head-item').getByTestId('head-status'))).toBe('Published');
       await page.keyboard.press('Escape');
@@ -312,8 +310,7 @@ describe.each(ENGINES)('on the real build\'s editor, in %s', (_name, engine) => 
       await page.getByRole('button', { name: /Page settings for/ }).first().click({ force: true });
       await page.getByTestId('page-head-section-open').click();
       await page.getByTestId('head-dialog').waitFor();
-      await page.waitForTimeout(600);
-      expect(await inWindow(page, 'head-dialog')).toBe(true);
+      await expect.poll(() => inWindow(page, 'head-dialog')).toBe(true);
       const form = page.getByTestId('head-new');
       await form.getByLabel('Name').fill('og:title');
       await form.getByLabel('Content').fill('x');

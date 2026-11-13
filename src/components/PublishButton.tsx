@@ -325,7 +325,7 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
   React.useEffect(() => {
     ref.current?.focus();
   }, []);
-  const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined) ?? check.tokens?.find((issue) => issue.pageId !== undefined) ?? check.fxText?.find((issue) => issue.pageId !== undefined) ?? check.head?.find((issue) => issue.pageId !== undefined);
+  const first = check.placeholders[0] ?? check.components.find((issue) => issue.pageId !== undefined) ?? check.tokens?.find((issue) => issue.pageId !== undefined) ?? check.head?.find((issue) => issue.pageId !== undefined) ?? check.fxText?.find((issue) => issue.pageId !== undefined);
   const maps = check.maps && check.maps.status !== 'named' ? check.maps : null;
   return (
     <div
@@ -406,7 +406,7 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
           <ul className="list-disc pl-4" data-testid="publish-head-issues">
             {check.head!.map((issue) => (
               <li key={`${issue.pageId ?? issue.title}:${issue.message}`}>
-                {issue.title}: {issue.message}. {issue.pageId ? 'Open the page\'s settings to fix it.' : 'Open Site settings to fix it.'}
+                {issue.title}: {issue.message.replace(/\.$/, '')}. {issue.pageId ? 'Open the page\'s settings, then Head, to fix it.' : 'Open Site settings, then Head, to fix it.'}
               </li>
             ))}
           </ul>

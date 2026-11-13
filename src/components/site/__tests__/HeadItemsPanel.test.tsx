@@ -154,6 +154,17 @@ describe('backtrack and revise', () => {
     expect((home.metadata.head[0].data as { name: string }).name).toBe('Cafe');
   });
 
+  it('leaving a row whose stored keys come in another order is not a change', () => {
+    // A generator or an older write stored { kind, content, name }; the editor rebuilds { kind, name, content }.
+    const items = [{ kind: 'meta', content: 'kept', name: 'author' }];
+    const write = vi.fn(() => ({ ok: true as const, dropped: 0 }));
+    render(<HeadItemsEditor items={items} cap={20} write={write} home="site" />);
+    const row = within(screen.getByTestId('head-row'));
+    fireEvent.focus(row.getByLabelText('Content'));
+    fireEvent.blur(row.getByLabelText('Content'));
+    expect(write).not.toHaveBeenCalled();
+  });
+
   it('each add, edit and delete is one undo step, for the site and for a page', () => {
     site();
     fireEvent.change(newForm().getByLabelText('Name'), { target: { value: 'author' } });
