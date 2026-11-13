@@ -7,10 +7,66 @@
 // depths the layers really use, under the real camera of the engine (position z 5, fov 50).
 
 import { Group, Mesh, MeshBasicMaterial, PerspectiveCamera, PlaneGeometry, ShaderMaterial, Vector2 } from 'three';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { containedImageRect, createPicker, pointerToNdc, positionAfterDrag, type SceneProbe } from '../pick';
 import type { Layer } from '../types';
+
+
+/**
+ * Stands in for OffscreenCanvas, the scratch canvas the read-back draws a copy of a text canvas on. `drawImage` averages the
+ * source's alpha over each block of source pixels (what a browser's downscale does), `getImageData` hands out the copy
+ * through a Proxy that counts every pixel read, and the log says what was made and read. A source is a plain
+ * object `{ width, height, __ink }` (alpha per pixel as RGBA bytes), or `{ __throw: true }` for a canvas that cannot be read.
+ */
+const scratch = { made: [] as [number, number][], drawn: 0, reads: 0, alphaReads: 0 };
+class FakeScratch {
+  constructor(
+    readonly width: number,
+    readonly height: number,
+  ) {
+    scratch.made.push([width, height]);
+  }
+  getContext() {
+    const { width: dw, height: dh } = this;
+    const data = new Uint8ClampedArray(dw * dh * 4);
+    return {
+      drawImage: (src: { width: number; __ink?: Uint8ClampedArray; __throw?: boolean }, _sx: number, _sy: number, sw: number, sh: number) => {
+        if (src.__throw) throw new Error('lost');
+        scratch.drawn++;
+        const ink = src.__ink!;
+        const fx = Math.ceil(sw / dw);
+        const fy = Math.ceil(sh / dh);
+        for (let y = 0; y < dh; y++) {
+          for (let x = 0; x < dw; x++) {
+            let sum = 0;
+            for (let by = 0; by < fy; by++) for (let bx = 0; bx < fx; bx++) sum += ink[((y * fy + by) * sw + x * fx + bx) * 4 + 3] ?? 0;
+            data[(y * dw + x) * 4 + 3] = Math.round(sum / (fx * fy));
+          }
+        }
+      },
+      getImageData: () => {
+        scratch.reads++;
+        return {
+          data: new Proxy(data, {
+            get(target, prop, receiver) {
+              if (typeof prop === 'string' && /^\d+$/.test(prop)) scratch.alphaReads++;
+              return Reflect.get(target, prop, receiver);
+            },
+          }),
+        };
+      },
+    };
+  }
+}
+beforeEach(() => {
+  scratch.made.length = 0;
+  scratch.drawn = 0;
+  scratch.reads = 0;
+  scratch.alphaReads = 0;
+  vi.stubGlobal('OffscreenCanvas', FakeScratch);
+});
+afterEach(() => vi.unstubAllGlobals());
 
 const ASPECT = 1.6;
 const camera = new PerspectiveCamera(50, ASPECT, 0.1, 100);
@@ -197,7 +253,7 @@ const drawn = (l: Layer, width: number, height: number, canvas: { w: number; h: 
   const entry = plane(l, width, height, z);
   const data = new Uint8ClampedArray(canvas.w * canvas.h * 4);
   for (const [y0, y1] of canvas.rows) for (let y = y0; y < y1; y++) for (let x = canvas.x0; x < canvas.x1; x++) data[(y * canvas.w + x) * 4 + 3] = 255;
-  const image = { width: canvas.w, height: canvas.h, getContext: () => ({ getImageData: () => ({ data }) }) };
+  const image = { width: canvas.w, height: canvas.h, __ink: data };
   const mesh = entry.root.children[0] as Mesh;
   (mesh.material as MeshBasicMaterial).map = { image, version: 1 } as never;
   return entry;
@@ -258,23 +314,17 @@ describe('text is hit where it was drawn', () => {
 
   it('a readable canvas is read once per texture and version', () => {
     const entry = lockup();
-    const map = ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map as unknown as { image: { getContext: () => unknown }; version: number };
-    let reads = 0;
-    const original = map.image.getContext;
-    map.image.getContext = () => {
-      reads++;
-      return original();
-    };
+    const map = ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map as unknown as { version: number };
     const picker = createPicker(probeOf([entry]));
     picker.pickAt(0, 0);
     picker.pickAt(0.01, 0);
     picker.boundsOf('t', 800, 500);
-    expect(reads).toBe(1);
+    expect(scratch.drawn).toBe(1);
     // A redraw into the same canvas bumps the texture's version: it is read again, once.
     map.version = 2;
     picker.pickAt(0, 0);
     picker.boundsOf('t', 800, 500);
-    expect(reads).toBe(2);
+    expect(scratch.drawn).toBe(2);
   });
 
   it('a text plane that covers the frame and has no readable canvas is no target (the fallback is checked for cover too)', () => {
@@ -285,36 +335,48 @@ describe('text is hit where it was drawn', () => {
     expect(pick([plane(layer('t', 'text'), 4, 1)], 0, 0)).toBe('t');
   });
 
-  it('a canvas that cannot be read (its context throws) falls back to the plane, with the cover check', () => {
+  it('a canvas that cannot be read (the copy throws) falls back to the plane, with the cover check', () => {
     const throwing = (width: number, height: number) => {
       const entry = plane(layer('t', 'text'), width, height);
-      const image = {
-        width: 100,
-        height: 50,
-        getContext: () => {
-          throw new Error('lost');
-        },
-      };
-      ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map = { image, version: 1 } as never;
+      ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map = { image: { width: 100, height: 50, __throw: true }, version: 1 } as never;
       return entry;
     };
     expect(pick([throwing(4, 1)], 0, 0)).toBe('t');
     expect(pick([throwing(9, 5)], 0, 0)).toBeNull();
   });
 
-  it('reads a canvas once and scans it on a stride, so a rebuilt texture is not a stall', () => {
-    const entry = lockup();
-    const map = ((entry.root.children[0] as Mesh).material as MeshBasicMaterial).map as unknown as { image: { getContext: () => { getImageData: (...a: number[]) => unknown } } };
-    let reads = 0;
-    const context = map.image.getContext();
-    map.image.getContext = () => ({
-      getImageData: (...args: number[]) => {
-        reads++;
-        return context.getImageData(...args);
-      },
-    });
-    createPicker(probeOf([entry])).pickAt(0, 0);
-    expect(reads).toBe(1);
+  it('reads a copy a quarter of the canvas on each axis, whole, and never the canvas itself: a sixteenth of the pixels', () => {
+    createPicker(probeOf([lockup()])).pickAt(0, 0);
+    // The canvas is 1000 by 500: its copy is 250 by 125, one read of it, one look at each pixel's alpha at most.
+    expect(scratch.made).toEqual([[250, 125]]);
+    expect(scratch.reads).toBe(1);
+    expect(scratch.alphaReads).toBeGreaterThan(0);
+    expect(scratch.alphaReads).toBeLessThanOrEqual(250 * 125);
+    // Still the right bands: the lines of a known drawing are found, and the gap between two lines is not.
+    const two = drawn(layer('t', 'text'), 5, 2.5, { w: 1000, h: 500, rows: [[100, 150], [350, 400]], x0: 300, x1: 700 });
+    const picker = createPicker(probeOf([two]));
+    const yAt = (px: number) => (((250 - px) * (2.5 / 500)) / worldHalfHeight(0));
+    expect(picker.pickAt(0, yAt(125))).toBe('t');
+    expect(picker.pickAt(0, yAt(375))).toBe('t');
+    expect(picker.pickAt(0, yAt(250))).toBeNull();
+  });
+
+  it('a thin mark (a one pixel line of dots) survives the smaller copy and is a target', () => {
+    // A single row of ink 1 px tall and 40 px wide, as a hyphen at the smallest size.
+    const dash = drawn(layer('tb', 'textBox', { text: '--' }), 4, 1, { w: 1000, h: 500, rows: [[250, 251]], x0: 480, x1: 520 });
+    expect(pick([dash], 0, 0)).toBe('tb');
+  });
+
+  it('text that left no ink at all (marks too thin to show) falls back to its rectangle, and a blank text is nothing to pick', () => {
+    const blankInk = { w: 1000, h: 500, rows: [] as [number, number][], x0: 0, x1: 0 };
+    const marks = drawn(layer('tb', 'textBox', { text: '...' }), 4, 1, blankInk);
+    // The layer has text and the copy shows none: the text rectangle (no readable canvas path) is the target.
+    expect(pick([marks], 0, 0)).toBe('tb');
+    // The same for a lockup with a headline.
+    const lockupLayer = { ...layer('t', 'text'), params: { headlineText: { type: 'string', value: 'Hi' } } } as unknown as Layer;
+    expect(pick([drawn(lockupLayer, 4, 1, blankInk)], 0, 0)).toBe('t');
+    // A text box with only blanks draws nothing and is not a target.
+    expect(pick([drawn(layer('tb', 'textBox', { text: '  ' }), 4, 1, blankInk)], 0, 0)).toBeNull();
   });
 });
 

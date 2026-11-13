@@ -116,48 +116,74 @@ export function containedImageRect(planeAspect: number, imageAspect: number): Uv
   return [(1 - ratio) / 2, 0, (1 + ratio) / 2, 1];
 }
 
-/** An alpha above this is ink. */
-const INK_ALPHA = 16;
-/** The stride of the read-back, in pixels, along both axes. */
-const INK_STEP = 4;
+/**
+ * An alpha above this is ink. Low on purpose: the canvas is read through a copy at a quarter of its size,
+ * where a one pixel mark (a period, a hyphen) is averaged with its neighbours into a faint alpha.
+ */
+const INK_ALPHA = 4;
+/** The read-back copy is this many times smaller than the canvas along each axis. */
+const INK_SCALE = 4;
 
-interface Readable {
+interface Drawable {
   width: number;
   height: number;
-  getContext: (kind: string) => { getImageData: (x: number, y: number, w: number, h: number) => { data: ArrayLike<number> } } | null;
+}
+
+interface Scratch {
+  getContext: (kind: "2d") => {
+    drawImage: (image: never, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number) => void;
+    getImageData: (x: number, y: number, w: number, h: number) => { data: ArrayLike<number> };
+  } | null;
+}
+
+/** A canvas to draw the copy on, or null where there is none (no OffscreenCanvas, no document). */
+function scratchCanvas(w: number, h: number): Scratch | null {
+  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h) as unknown as Scratch;
+  if (typeof document !== "undefined") {
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    return canvas as unknown as Scratch;
+  }
+  return null;
 }
 
 const drawnCache = new WeakMap<object, { version: number; rects: UvRect[] | undefined }>();
 
 /**
  * The lines a text layer drew, as rectangles in its plane's uv space, read from the canvas its texture
- * holds: `undefined` when there is nothing to read (no canvas, no 2D context), an empty list when it
- * drew no ink at all. Cached per texture and version, because a text texture is rebuilt, not edited.
+ * holds: `undefined` when there is nothing to read (no canvas, no 2D context, a read that throws), an
+ * empty list when it drew no ink at all. Cached per texture and version, because a text texture is rebuilt
+ * (on every keystroke of its text), not edited.
+ *
+ * The canvas is drawn onto a scratch canvas a quarter of its size on each axis and that copy is read and
+ * scanned whole: the browser does the downscale (the full canvas is never copied into script, 8 MB for a
+ * 2048 by 1024 lockup), the scan is a sixteenth of the pixels, and the averaging keeps a thin mark visible.
  */
 function drawnLines(mesh: Mesh): UvRect[] | undefined {
   const map = (mesh.material as { map?: { image?: unknown; version?: number } }).map;
-  const image = map?.image as Readable | undefined;
-  if (!image || typeof image.getContext !== "function" || !(image.width > 0) || !(image.height > 0)) return undefined;
+  const image = map?.image as Drawable | undefined;
+  if (!image || !(image.width > 0) || !(image.height > 0)) return undefined;
   const version = map?.version ?? 0;
   const cached = drawnCache.get(image);
   if (cached && cached.version === version) return cached.rects;
   let rects: UvRect[] | undefined;
   try {
-    const context = image.getContext("2d");
+    const w = image.width;
+    const h = image.height;
+    const qw = Math.max(1, Math.ceil(w / INK_SCALE));
+    const qh = Math.max(1, Math.ceil(h / INK_SCALE));
+    const context = scratchCanvas(qw, qh)?.getContext("2d");
     if (context) {
-      const { width: w, height: h } = image;
+      context.drawImage(image as never, 0, 0, w, h, 0, 0, qw, qh);
+      const data = context.getImageData(0, 0, qw, qh).data;
       const bands: { y0: number; y1: number; x0: number; x1: number }[] = [];
       let open: { y0: number; y1: number; x0: number; x1: number } | null = null;
-      // One read of the canvas (one trip for the pixels, not one per row), then one row in STEP and one pixel in STEP
-      // along it: a texture is rebuilt on every keystroke of its text and read when a frame next asks for the outline,
-      // and a 2048 by 1024 canvas is two million pixels. Line bands are tens of pixels tall and padded by at least 4,
-      // so a stride loses nothing.
-      const data = context.getImageData(0, 0, w, h).data;
-      for (let y = 0; y < h; y += INK_STEP) {
+      for (let y = 0; y < qh; y++) {
         let x0 = -1;
         let x1 = -1;
-        for (let x = 0; x < w; x += INK_STEP) {
-          if (data[(y * w + x) * 4 + 3] > INK_ALPHA) {
+        for (let x = 0; x < qw; x++) {
+          if (data[(y * qw + x) * 4 + 3] > INK_ALPHA) {
             if (x0 < 0) x0 = x;
             x1 = x;
           }
@@ -166,41 +192,52 @@ function drawnLines(mesh: Mesh): UvRect[] | undefined {
           open = null;
           continue;
         }
-        const y1 = Math.min(h, y + INK_STEP);
-        const right = Math.min(w, x1 + INK_STEP);
         if (open) {
-          open.y1 = y1;
+          open.y1 = y + 1;
           open.x0 = Math.min(open.x0, x0);
-          open.x1 = Math.max(open.x1, right);
+          open.x1 = Math.max(open.x1, x1 + 1);
         } else {
-          open = { y0: y, y1, x0, x1: right };
+          open = { y0: y, y1: y + 1, x0, x1: x1 + 1 };
           bands.push(open);
         }
       }
       rects = bands.map((b) => {
-        // A click between two letters, or just beside a line, still counts.
-        const pad = Math.max(4, Math.round((b.y1 - b.y0) * 0.15));
-        const x0 = Math.max(0, b.x0 - pad);
-        const x1 = Math.min(w, b.x1 + pad);
-        const y0 = Math.max(0, b.y0 - pad);
-        const y1 = Math.min(h, b.y1 + pad);
+        // Back to canvas pixels; a click between two letters, or just beside a line, still counts.
+        const bx0 = b.x0 * INK_SCALE;
+        const bx1 = Math.min(w, b.x1 * INK_SCALE);
+        const by0 = b.y0 * INK_SCALE;
+        const by1 = Math.min(h, b.y1 * INK_SCALE);
+        const pad = Math.max(4, Math.round((by1 - by0) * 0.15));
+        const x0 = Math.max(0, bx0 - pad);
+        const x1 = Math.min(w, bx1 + pad);
+        const y0 = Math.max(0, by0 - pad);
+        const y1 = Math.min(h, by1 + pad);
         // A canvas texture is flipped: the top row of the canvas is the top of the plane (v = 1).
         return [x0 / w, 1 - y1 / h, x1 / w, 1 - y0 / h] as const;
       });
     }
   } catch {
-    // A canvas that cannot be read (lost, tainted): the plane stands in.
+    // A canvas that cannot be read (lost, tainted, no 2D context): the plane stands in.
     rects = undefined;
   }
   drawnCache.set(image, { version, rects });
   return rects;
 }
 
-/** The region of the lines a layer drew, or null when it drew none, or undefined when there is nothing to read. */
-function linesRegion(mesh: Mesh): Region | null | undefined {
+/** Whether a layer has text to draw: its `text` or any `...Text` setting holds more than blanks. */
+function hasText(layer: Layer): boolean {
+  return Object.entries(layer.params).some(([key, p]) => (key === "text" || key.endsWith("Text")) && typeof p?.value === "string" && p.value.trim() !== "");
+}
+
+/**
+ * The region of the lines a layer drew; null when it has no text and drew none; undefined when there is nothing
+ * to go by (nothing readable, or text that left no ink, such as a few thin marks at the smallest size), and the
+ * caller falls back to the plane or the text rectangle: a layer that has text stays pickable.
+ */
+function linesRegion(mesh: Mesh, layer: Layer): Region | null | undefined {
   const rects = drawnLines(mesh);
   if (rects === undefined) return undefined;
-  if (rects.length === 0) return null;
+  if (rects.length === 0) return hasText(layer) ? undefined : null;
   const rect: UvRect = [Math.min(...rects.map((r) => r[0])), Math.min(...rects.map((r) => r[1])), Math.max(...rects.map((r) => r[2])), Math.max(...rects.map((r) => r[3]))];
   return { mesh, rect, contains: (u, v) => rects.some((r) => inRect(r)(u, v)) };
 }
@@ -256,11 +293,11 @@ function regionOf(layer: Layer, root: Object3D, camera: Camera): Region | null {
   if (!mesh) return null;
   switch (layer.type) {
     case "text": {
-      const lines = linesRegion(mesh);
+      const lines = linesRegion(mesh, layer);
       return lines !== undefined ? lines : { mesh, rect: [0, 0, 1, 1], contains: () => true };
     }
     case "textBox": {
-      const lines = linesRegion(mesh);
+      const lines = linesRegion(mesh, layer);
       if (lines !== undefined) return lines;
       const plane = planeSize(mesh);
       if (!plane || plane.width <= 0 || plane.height <= 0) return null;

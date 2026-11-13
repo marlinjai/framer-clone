@@ -396,6 +396,19 @@ describe('dragging a picked text box', () => {
     expect(getHistoryStore()!.batch).toBeUndefined();
   });
 
+  it('another selection mid-drag, then the release without another move: the text is put back and nothing is committed onto the box that is no longer selected', async () => {
+    await mountLive();
+    const start = positionOf();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    expect(positionOf()).not.toEqual(start);
+    act(() => store.editorUI.clearSelection());
+    await release(CENTRE.x + 40, CENTRE.y);
+    expect(positionOf()).toEqual(start);
+    expect(entries()).toBe(0);
+    expect(getHistoryStore()!.batch).toBeUndefined();
+  });
+
   it('Delete, Cmd+D, Cmd+Z and Escape mid-drag never reach the editor\'s key handler, so they are not folded into the drag\'s undo step; after it they do', async () => {
     await mountLive();
     await press(boxEl, CENTRE.x, CENTRE.y);

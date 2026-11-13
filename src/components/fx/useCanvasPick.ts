@@ -135,7 +135,10 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
       let lastWritten = start;
       const userSelect = document.body.style.userSelect;
       // `stillDown`: the button is still held (Escape, blur, another selection): the pointer stays held until its release.
-      const finish = (revert: boolean, stillDown: boolean) => {
+      const finish = (revertRequested: boolean, stillDown: boolean) => {
+        // A drag whose box is no longer the selection (another selection came and the pointer was released before it
+        // moved again) is put back too: nothing is committed onto a box that is not selected.
+        const revert = revertRequested || (started && editorUI.selectedComponent?.id !== component.id);
         window.removeEventListener('pointermove', move, true);
         window.removeEventListener('pointerup', up, true);
         window.removeEventListener('pointercancel', cancel, true);
