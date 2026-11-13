@@ -1,42 +1,42 @@
 {
-  "generatedAt": "2026-11-13T08:13:41.114Z",
+  "generatedAt": "2026-11-13T08:26:35.546Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 473,
+  "durationSeconds": 599,
   "matrix": {
     "surfaces": {
       "format": {
-        "pass": 1823,
+        "pass": 1856,
         "fail": 22,
         "notTested": 0,
-        "total": 1845
+        "total": 1878
       },
       "renderer": {
-        "pass": 1796,
+        "pass": 1829,
         "fail": 49,
         "notTested": 0,
-        "total": 1845
+        "total": 1878
       },
       "canvas": {
         "pass": 1748,
-        "fail": 97,
+        "fail": 130,
         "notTested": 0,
-        "total": 1845
+        "total": 1878
       },
       "panel": {
         "pass": 1244,
-        "fail": 601,
+        "fail": 634,
         "notTested": 0,
-        "total": 1845
+        "total": 1878
       },
       "ai": {
         "pass": 1444,
-        "fail": 401,
+        "fail": 434,
         "notTested": 0,
-        "total": 1845
+        "total": 1878
       }
     },
     "acceptedNotTaught": 91,
@@ -523,34 +523,34 @@
       },
       "page-item": {
         "format": {
-          "pass": 9,
+          "pass": 42,
           "fail": 0,
           "notTested": 0,
-          "total": 9
+          "total": 42
         },
         "renderer": {
-          "pass": 9,
+          "pass": 42,
           "fail": 0,
           "notTested": 0,
-          "total": 9
+          "total": 42
         },
         "canvas": {
           "pass": 9,
-          "fail": 0,
+          "fail": 33,
           "notTested": 0,
-          "total": 9
+          "total": 42
         },
         "panel": {
           "pass": 9,
-          "fail": 0,
+          "fail": 33,
           "notTested": 0,
-          "total": 9
+          "total": 42
         },
         "ai": {
           "pass": 3,
-          "fail": 6,
+          "fail": 39,
           "notTested": 0,
-          "total": 9
+          "total": 42
         }
       },
       "fx-scene": {
@@ -586,7 +586,7 @@
         }
       }
     },
-    "included": 1845,
+    "included": 1878,
     "excluded": [
       {
         "kind": "html-element",
@@ -5177,6 +5177,39 @@
       "page-item:theme:document-background": "pass pass pass pass ai-theme-refused",
       "page-item:theme:document-color": "pass pass pass pass ai-theme-refused",
       "page-item:theme:document-font": "pass pass pass pass ai-theme-refused",
+      "page-item:head:meta:author": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:application-name": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:apple-mobile-web-app-title": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:format-detection": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:rating": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:twitter:site": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:twitter:creator": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:geo.region": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:geo.placename": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:geo.position": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:google-site-verification": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:msvalidate.01": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:yandex-verification": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:baidu-site-verification": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:facebook-domain-verification": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:p:domain_verify": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:meta:ahrefs-site-verification": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:property:article:*": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:property:product:*": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:property:profile:*": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:property:book:*": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:property:fb:app_id": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:property:og:locale:alternate": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:property:og:video": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:property:og:audio": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:link:alternate": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:link:me": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:link:author": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:link:license": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:link:help": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:link:privacy-policy": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:link:terms-of-service": "pass pass head-items head-items ai-head-refused",
+      "page-item:head:jsonld": "pass pass head-items head-items ai-head-refused",
       "fx-scene:scene:hub-hero": "pass pass pass pass pass",
       "fx-scene:scene:godrays-hero": "pass pass pass pass pass",
       "fx-scene:scene:noise-gradient": "pass pass pass pass pass"
@@ -7156,7 +7189,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.000011588380716934486,
             "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
@@ -9445,6 +9478,16 @@
       "cost": 66
     },
     {
+      "id": "head-items",
+      "description": "A head item of a page or a site (a meta name, a property, a link rel, JSON-LD; docs/plans/2026-11-02-theme-and-head.md). Stored and published (slice H2); the panel waits for slice H3, and the canvas has no counterpart: a head tag has nothing to draw in the editor, so that cell stays here and says so.",
+      "matrixCells": 66,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 66
+    },
+    {
       "id": "behaviour-state",
       "description": "Behaviour and state: no way to say that one element changes another.",
       "matrixCells": 0,
@@ -9503,6 +9546,16 @@
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 44
+    },
+    {
+      "id": "ai-head-refused",
+      "description": "A head item the generator may not write: a generation has no field for one, and anything it carries beyond its nodes is dropped, so a model cannot add a verification tag, an alternate link or structured data to a site. Decided in the theme and head contract (Score changes): the AI column of the 33 head rows is refused on purpose, and a cell here means the generator still drops it.",
+      "matrixCells": 33,
+      "corpusChecks": 0,
+      "fixtures": [],
+      "onlyGapOf": [],
+      "roundTripCases": 0,
+      "cost": 33
     },
     {
       "id": "react-attribute-handling",
