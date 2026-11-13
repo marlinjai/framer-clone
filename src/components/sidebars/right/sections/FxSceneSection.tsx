@@ -27,6 +27,7 @@ import { ChevronRight, Sparkles } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
+import { isActivatableControl } from '@/lib/canvas/spacePan';
 import { CollapsibleSection, ColorInput, PropertyRow, PropertySelect, PropertySwitch, TextInput } from '../primitives';
 import { FIELD_LABEL } from '../primitives/field';
 import { FX_PROP } from '@/lib/fxScene/marker';
@@ -349,6 +350,9 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
   const [copied, setCopied] = useState('');
   // A kind chosen for the picked layer, waiting for the person to confirm that its settings are replaced.
   const [pendingKind, setPendingKind] = useState<string | null>(null);
+  const kindRef = useRef<HTMLDivElement>(null);
+  /** Back to the Kind field after the confirmation goes away, so a keyboard user is not dropped on the page. */
+  const focusKind = () => requestAnimationFrame(() => kindRef.current?.querySelector('select')?.focus());
   const pickNow = editorUI.fxLayerPick;
   const pickedLayerId = pickNow && pickNow.componentId === component.id && pickNow.kind === 'layer' ? pickNow.layerId : null;
   const pickedLayerType = read.ok && pickedLayerId ? read.fx.scene.layers.find((l) => l.id === pickedLayerId)?.type : undefined;
@@ -364,7 +368,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.defaultPrevented) return;
       const el = e.target as HTMLElement | null;
-      if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName))) return;
+      if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || isActivatableControl(e.target))) return;
       const field = document.querySelector<HTMLElement>('[data-fx-text-primary]');
       if (!field) return;
       e.preventDefault();
@@ -644,6 +648,8 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
       return p && p.type === 'select' && p.value === selected.id;
     });
     const SCENE = '__scene';
+    // A layer some effect reads from the main picture cannot have effects of its own.
+    const readSources = new Set(layers.flatMap((l) => { const p = l.params[FX_SOURCE_LAYER_PARAM]; return p && p.type === 'select' ? [p.value] : []; }));
     // Settings by group: ungrouped first (no heading), then each named group in the order its first setting appears.
     const grouped = new Map<string | null, [string, ParamSchema][]>();
     for (const [key, schema] of Object.entries(selected.params)) {
@@ -664,12 +670,14 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
           <PropertyRow label="Visible" hint="Hide or show this layer in the scene, on the published page too">
             <PropertySwitch checked={selected.visible} onCheckedChange={() => apply(toggleFxLayer(stored, selected.id))} />
           </PropertyRow>
-          <PropertySelect
-            label="Kind"
-            value={pendingKind ?? selected.type}
-            options={addable.map((t) => ({ value: t.type, label: kindName(t.label) }))}
-            onChange={(type) => setPendingKind(type === selected.type ? null : type)}
-          />
+          <div ref={kindRef}>
+            <PropertySelect
+              label="Kind"
+              value={pendingKind ?? selected.type}
+              options={addable.map((t) => ({ value: t.type, label: kindName(t.label) }))}
+              onChange={(type) => setPendingKind(type === selected.type ? null : type)}
+            />
+          </div>
           {pendingKind ? (
             <div role="group" aria-label="Confirm the change of kind" className="flex min-w-0 flex-col gap-1.5 rounded-[6px] border border-border px-2 py-1.5">
               <p className={HINT}>
@@ -678,17 +686,24 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  autoFocus
                   className={TEXT_BUTTON}
                   onClick={() => {
                     const edit = setFxLayerType(currentStored(), selected.id, pendingKind);
                     setPendingKind(null);
+                    focusKind();
                     if (apply(edit) && edit.ok && edit.layerId) editorUI.followFxLayer(component.id, edit.layerId);
                   }}
                 >
                   Change to {kindName2}
                 </button>
-                <button type="button" className={TEXT_BUTTON} onClick={() => setPendingKind(null)}>
+                <button
+                  type="button"
+                  className={TEXT_BUTTON}
+                  onClick={() => {
+                    setPendingKind(null);
+                    focusKind();
+                  }}
+                >
                   Keep {kindLabel(selected.type)}
                 </button>
               </div>
@@ -702,7 +717,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
               <PropertySelect
                 label="Applies to"
                 value={selected.target ?? SCENE}
-                options={[{ value: SCENE, label: 'The whole scene' }, ...contentLayers.map((l) => ({ value: l.id, label: l.name }))]}
+                options={[{ value: SCENE, label: 'The whole scene' }, ...contentLayers.filter((l) => l.id === selected.target || !readSources.has(l.id)).map((l) => ({ value: l.id, label: l.name }))]}
                 onChange={(value) => apply(setFxLayerTarget(currentStored(), selected.id, value === SCENE ? null : value))}
               />
               <p className={HINT}>

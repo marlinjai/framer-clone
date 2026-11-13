@@ -13,6 +13,8 @@ import { parseFxProp } from '@/lib/fxScene/fxScene';
 interface TreeNode {
   type?: unknown;
   props?: Record<string, unknown> | null;
+  /** Data bindings of the node: a heading bound to data has no literal text, but it is text. */
+  bindings?: Record<string, unknown> | null;
   children?: TreeNode[] | null;
 }
 
@@ -27,6 +29,7 @@ function holdsHtmlText(box: TreeNode): boolean {
     seen++;
     const text = node.props?.children;
     if (typeof text === 'string' && text.trim() !== '') return true;
+    if (typeof text === 'number' || node.bindings?.children) return true;
     if (Array.isArray(node.children)) stack.push(...node.children);
   }
   return false;

@@ -123,8 +123,26 @@ describe('edits that change ids keep the target right', () => {
     expect(targetOf(content.stored, content.layerId!)).toBeUndefined();
     const rays = ok(setFxLayerType(s.stored, s.bloom, 'godRays'));
     expect(targetOf(rays.stored, rays.layerId!)).toBeUndefined();
-    // and the god rays read the untargeted layer, not the scoped gradient
-    expect(layers(rays.stored).find((l) => l.id === rays.layerId)!.params.sourceLayerId).not.toBe(s.gradient);
+    // the retyped effect no longer scopes the gradient, so the rays may read it; no layer is scoped to what they read
+    expect(layers(rays.stored).find((l) => l.id === rays.layerId)!.params.sourceLayerId).toBe(s.gradient);
+    expect(layers(rays.stored).some((l) => l.target)).toBe(false);
+  });
+  it('retyping a scoped effect to god rays is allowed when another content layer is free once it is gone, and says it is no longer scoped', () => {
+    const s = scoped(); // bloom scoped to the gradient
+    const both = ok(setFxLayerTarget(s.stored, s.vignette, s.noise)).stored; // every content layer now scoped
+    const rays = ok(setFxLayerType(both, s.bloom, 'godRays'));
+    expect(layers(rays.stored).find((l) => l.id === rays.layerId)!.params.sourceLayerId).toBe(s.gradient);
+    expect(rays.notes.join(' ')).toMatch(/applies to the whole scene/);
+    const content = ok(setFxLayerType(s.stored, s.bloom, 'shape'));
+    expect(content.notes.join(' ')).toMatch(/no longer an effect, so it no longer applies to Gradient/);
+  });
+  it('names the new layer, not its id, when god rays follow a retyped source', () => {
+    const s = scoped();
+    const added = ok(addFxLayer(s.stored, 'godRays'));
+    const source = layers(added.stored).find((l) => l.id === added.layerId)!.params.sourceLayerId as string;
+    const next = ok(setFxLayerType(added.stored, source, 'shape'));
+    expect(next.notes.join(' ')).toMatch(/now reads from (Shape \(SDF\)|shape)/i);
+    expect(next.notes.join(' ')).not.toContain(next.layerId!);
   });
   it('retyping the layer god rays read repoints them to the new layer when it stays content', () => {
     const s = scoped();

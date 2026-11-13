@@ -129,7 +129,7 @@ const withoutTarget = (l: Layer): Layer => {
  * or leaves the readers alone when the scene has no other content layer (the reader repairs that
  * case), or returns the reason it cannot be done when every other content layer is scoped.
  */
-function repointReaders(layers: Layer[], fromId: string, toId: string | null): { layers: Layer[]; notes: string[] } | string {
+function repointReaders(layers: Layer[], fromId: string, toId: string | null, toName?: string): { layers: Layer[]; notes: string[] } | string {
   const readers = layers.filter((l) => sourceOf(l) === fromId);
   if (readers.length === 0) return { layers, notes: [] };
   let replacement = toId;
@@ -143,7 +143,7 @@ function repointReaders(layers: Layer[], fromId: string, toId: string | null): {
     }
   }
   const to = replacement;
-  const name = layers.find((l) => l.id === to)?.name ?? to;
+  const name = toName ?? layers.find((l) => l.id === to)?.name ?? to;
   return {
     layers: layers.map((l) => (sourceOf(l) === fromId ? withSource(l, to) : l)),
     notes: readers.map((r) => `${r.name} now reads from ${name}.`),
@@ -261,7 +261,7 @@ export function removeFxLayer(current: unknown, layerId: string): FxEdit {
 /**
  * Move a layer by `delta` places WITHIN ITS GROUP (`1` toward the front, `-1` toward the back),
  * never across content and post: that would change nothing on screen. At the edge of the group
- * the change is refused with a reason and nothing is stored (`moveFxLayer` keeps its quiet no-op).
+ * the change is refused with a reason and nothing is stored (a drag that lands where it started is not sent at all).
  */
 export function moveFxLayerTo(current: unknown, layerId: string, toIndex: number): FxEdit {
   return change(current, (fx) => {
@@ -348,12 +348,17 @@ export function setFxLayerType(current: unknown, layerId: string, type: string):
     }
     // A post effect keeps what it applies to (the fresh layer has no target of its own); a kind that reads a layer cannot be scoped.
     if (isPost(layer) && layer.target && !becomesContent && !readsSource(type)) replacement = { ...replacement, target: layer.target };
+    else if (isPost(layer) && layer.target) {
+      const was = layers.find((l) => l.id === layer.target)?.name ?? layer.target;
+      notes.push(becomesContent ? `${layer.name} is no longer an effect, so it no longer applies to ${was}.` : `${replacement.name} reads a layer of its own, so it no longer applies to ${was} only: it applies to the whole scene.`);
+    }
     if (readsSource(type)) {
-      const source = sourceFor(layers, layer.id);
+      // The layer being retyped is out of the picture: its own scope no longer takes a layer away from the rays.
+      const source = sourceFor(layers.filter((l) => l !== layer), layer.id);
       if (source === null) return ALL_SCOPED;
       if (source !== undefined) replacement = withSource(replacement, source);
     }
-    const moved = isContent(layer) ? repointReaders(layers, layer.id, becomesContent ? fresh.id : null) : { layers, notes: [] as string[] };
+    const moved = isContent(layer) ? repointReaders(layers, layer.id, becomesContent ? fresh.id : null, becomesContent ? replacement.name : undefined) : { layers, notes: [] as string[] };
     if (typeof moved === 'string') return moved;
     notes.push(...moved.notes);
     return { fx: withLayers(fx, moved.layers.map((l) => (l === layer ? replacement : l))), notes };

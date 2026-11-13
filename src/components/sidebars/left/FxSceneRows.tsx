@@ -108,7 +108,8 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
   };
   // Drag to reorder inside the group: where the dragged row would land, shown as a line above or below this row.
   const [dropPlace, setDropPlace] = useState<'above' | 'below' | null>(null);
-  const canDrop = () => !!dragging && dragging.boxId === box.id && dragging.groupKey === groupKey && dragging.layerId !== row.layerId;
+  // Only our own drag (a file or text dragged over a row is not one), and only while its source is known.
+  const canDrop = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes(DRAG_TYPE) && !!dragging && dragging.boxId === box.id && dragging.groupKey === groupKey && dragging.layerId !== row.layerId;
   const placeOf = (e: React.DragEvent): 'above' | 'below' => {
     const rect = e.currentTarget.getBoundingClientRect();
     return e.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
@@ -142,14 +143,14 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
           setDropPlace(null);
         }}
         onDragOver={(e) => {
-          if (!canDrop()) return;
+          if (!canDrop(e)) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
           setDropPlace(placeOf(e));
         }}
         onDragLeave={() => setDropPlace(null)}
         onDrop={(e) => {
-          if (!canDrop() || !dragging) return;
+          if (!canDrop(e) || !dragging) return;
           e.preventDefault();
           const place = placeOf(e);
           const from = dragging.layerId;

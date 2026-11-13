@@ -28,6 +28,10 @@ describe('the FX text publish warning', () => {
     expect(fxTextWarning(box(lockupScene, [text('Hello')]))).toBeNull();
     expect(fxTextWarning(box(lockupScene, [{ id: 'd', type: 'div', props: {}, children: [text('Hello')] }]))).toBeNull();
   });
+  it('counts text bound to data and numbers as text', () => {
+    expect(fxTextWarning(box(lockupScene, [{ id: 'h', type: 'h1', props: {}, bindings: { children: { source: 'x' } } }]))).toBeNull();
+    expect(fxTextWarning(box(lockupScene, [{ id: 'n', type: 'p', props: { children: 7 } }]))).toBeNull();
+  });
   it('treats blank text as no text', () => {
     expect(countFxBoxesWithoutHtmlText(box(lockupScene, [text('   ')]))).toBe(1);
   });

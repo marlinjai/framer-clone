@@ -845,6 +845,15 @@ describe('changing a layer\'s kind asks first', () => {
     expect(JSON.stringify(layersOf(box))).toBe(before);
   });
 
+  it('the Kind field gets the focus back after the confirmation is answered', async () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    choose('Kind', 'shape');
+    fireEvent.click(screen.getByRole('button', { name: /^Keep / }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Kind')));
+  });
+
   it('picking another layer drops a kind that was waiting', () => {
     const { box } = setup();
     render(<FxSceneSection component={box} />);

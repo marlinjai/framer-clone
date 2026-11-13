@@ -650,7 +650,7 @@ describe('the rows of an FX scene box', () => {
       act(() => box.setProps({ fx: edit.stored }));
     };
     /** A drag as the browser sends it: the data transfer is shared by every event of the gesture. */
-    const transfer = () => ({ data: {} as Record<string, string>, effectAllowed: '', dropEffect: '', setData(t: string, v: string) { this.data[t] = v; }, getData(t: string) { return this.data[t]; } });
+    const transfer = () => ({ data: {} as Record<string, string>, effectAllowed: '', dropEffect: '', get types() { return Object.keys(this.data); }, setData(t: string, v: string) { this.data[t] = v; }, getData(t: string) { return this.data[t]; } });
     const drag = (from: HTMLElement, over: HTMLElement, place: 'above' | 'below') => {
       const dataTransfer = transfer();
       vi.spyOn(over, 'getBoundingClientRect').mockReturnValue({ top: 100, height: 28, left: 0, right: 100, bottom: 128, width: 100, x: 0, y: 100, toJSON: () => ({}) });
@@ -704,6 +704,28 @@ describe('the rows of an FX scene box', () => {
       drag(rowOf('Grain'), rowOf('Noise Field'), 'above'); // effect onto a content row
       drag(rowOf('Noise Field'), rowOf('Grain'), 'above'); // content onto an effect row
       drag(rowOf('Grain'), rowOf('Bloom'), 'above'); // scene effect into the nest of Gradient
+      expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+    });
+
+    it('drag: a nested effect reorders among its siblings only', async () => {
+      render(<LayersPanel />);
+      await scope('bloom', 'gradient-bg');
+      await scope('vignette', 'gradient-bg');
+      // nested under Gradient, front first: Vignette, Bloom
+      expect(rowNames().slice(-2)).toEqual(['Vignette', 'Bloom']);
+      drag(rowOf('Vignette'), rowOf('Bloom'), 'below');
+      expect(rowNames().slice(-2)).toEqual(['Bloom', 'Vignette']);
+      undo();
+      expect(rowNames().slice(-2)).toEqual(['Vignette', 'Bloom']);
+    });
+
+    it('drag: something that is not a layer (a file) dragged over a row is ignored', () => {
+      render(<LayersPanel />);
+      const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
+      const over = rowOf('Vignette');
+      const event = createEvent.drop(over, { dataTransfer: { types: ['Files'], getData: () => '' } });
+      fireEvent(over, event);
+      expect(event.defaultPrevented).toBe(false);
       expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
     });
 
