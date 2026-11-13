@@ -104,15 +104,18 @@ const POINTER_KINDS: ReadonlySet<string> = new Set(["noiseFill", "shape", "image
 /**
  * What a layer of this kind does with its pointer BEFORE it has pointer settings of its own, as
  * the values a first edit starts from (so changing one value never silently changes the rest):
- *  - the noise field follows the pointer in a plain way of its own when it has none (a 0.04
- *    follow of the whole pointer, from the lumitra.co hero's first version): shown as track mouse 1,
- *    momentum 0, spring 0.04;
+ *  - the noise field follows the pointer in a plain way of its own when it has none: a first-order
+ *    lerp, `mouse += (pointer - mouse) * 0.04` (layers/noiseFill.tsx). The engine's pointer
+ *    smoothing is a second-order spring, which at momentum 0 and spring 0.04 would overshoot and
+ *    wobble. Momentum 1 (damping 0.15) with spring 0.225 puts its dominant eigenvalue at the lerp's
+ *    0.96 with no overshoot: the same trajectory within 0.3% (pinned by a side-by-side test in
+ *    src/lib/fx/__tests__/interactivityReduce.test.tsx);
  *  - shape, image and gradient stand still: track mouse 0, but with the soft spring and momentum
  *    the gold preset uses, so raising Track mouse alone makes the layer move (the engine's
  *    smoothing is driven by the spring: a spring of 0 never moves).
  */
 export function pointerBaseOf(type: string): { trackMouse: number; momentum: number; spring: number; axes: "x" | "y" | "both" } {
-  if (type === "noiseFill") return { trackMouse: 1, momentum: 0, spring: 0.04, axes: "both" };
+  if (type === "noiseFill") return { trackMouse: 1, momentum: 1, spring: 0.225, axes: "both" };
   return { trackMouse: 0, momentum: 0.85, spring: 0.05, axes: "both" };
 }
 

@@ -804,30 +804,55 @@ describe('setting groups, the text lines and the pointer', () => {
     expect(document.activeElement).toBe(document.body);
   });
 
-  it('Enter does not leave a focused resize handle or another control, but does from an FX row of the Layers panel', () => {
+  it('Enter focuses the headline only from nowhere or from the picked layer\'s own name button, never from another control', () => {
     const { box } = setup();
     render(<FxSceneSection component={box} />);
     const lockup = add(box, 'text');
     const headline = within(settings(lockup.name)).getByLabelText('Headline') as HTMLInputElement;
+    const attached: HTMLElement[] = [];
+    const press = (el: HTMLElement) => {
+      el.focus();
+      const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    const rowOf = (layerId: string) => {
+      const row = document.createElement('div');
+      row.setAttribute('data-fx-layer-row', layerId);
+      row.setAttribute('data-fx-layer-box', box.id);
+      const name = document.createElement('button');
+      name.setAttribute('data-fx-row-name', '');
+      const del = document.createElement('button');
+      const rename = document.createElement('input');
+      row.append(name, del, rename);
+      document.body.appendChild(row);
+      attached.push(row);
+      return { name, del, rename };
+    };
+    // a resize handle keeps its Enter
     const handle = document.createElement('div');
     handle.setAttribute('role', 'separator');
     handle.tabIndex = 0;
     document.body.appendChild(handle);
-    handle.focus();
-    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
-    handle.dispatchEvent(enter);
-    expect(enter.defaultPrevented).toBe(false);
+    attached.push(handle);
+    expect(press(handle)).toBe(false);
     expect(document.activeElement).toBe(handle);
-    const row = document.createElement('div');
-    row.setAttribute('data-fx-layer-row', 'x');
-    const rowButton = document.createElement('button');
-    row.appendChild(rowButton);
-    document.body.appendChild(row);
-    rowButton.focus();
-    rowButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    // another row (Enter there picks that row), the picked row's action button and its rename field keep theirs
+    const other = rowOf('some-other-layer');
+    expect(press(other.name)).toBe(false);
+    expect(document.activeElement).toBe(other.name);
+    const picked = rowOf(lockup.id);
+    expect(press(picked.del)).toBe(false);
+    expect(document.activeElement).toBe(picked.del);
+    expect(press(picked.rename)).toBe(false);
+    expect(document.activeElement).toBe(picked.rename);
+    // the picked layer's own name button, and the page body, go to the headline
+    expect(press(picked.name)).toBe(true);
     expect(document.activeElement).toBe(headline);
-    handle.remove();
-    row.remove();
+    (document.activeElement as HTMLElement).blur();
+    expect(press(document.body)).toBe(true);
+    expect(document.activeElement).toBe(headline);
+    for (const el of attached) el.remove();
   });
 
   it('a text box has its text first, as a multi-line field', () => {
@@ -870,12 +895,12 @@ describe('the Pointer group tells the truth about a layer without pointer settin
     pick('Noise Field');
     const group = within(settings('Noise Field')).getByRole('group', { name: 'Pointer group' });
     expect((within(group).getByLabelText('Track mouse, as a number') as HTMLInputElement).value).toBe('1');
-    expect((within(group).getByLabelText('Spring, as a number') as HTMLInputElement).value).toBe('0.04');
+    expect((within(group).getByLabelText('Spring, as a number') as HTMLInputElement).value).toBe('0.225');
     expect(within(group).getByText(/follows the pointer in its own plain way/)).toBeTruthy();
     const noise = layersOf(box).find((l) => l.name === 'Noise Field')!;
     expect(noise.interactivity).toBeUndefined();
     choose('Axes', 'x');
-    expect(layerOf(box, noise.id).interactivity).toEqual({ trackMouse: 1, momentum: 0, spring: 0.04, axes: 'x' });
+    expect(layerOf(box, noise.id).interactivity).toEqual({ trackMouse: 1, momentum: 1, spring: 0.225, axes: 'x' });
     fireEvent.click(screen.getByRole('button', { name: 'Reset pointer settings' }));
     expect(layerOf(box, noise.id).interactivity).toBeUndefined();
   });
@@ -926,11 +951,17 @@ describe('changing a layer\'s kind asks first', () => {
     const { box, history } = setup();
     render(<FxSceneSection component={box} />);
     pick('Noise Field');
+    const liveBefore = within(settings('Noise Field')).getAllByRole('status').find((el) => el.className.includes('sr-only'))!;
+    expect(liveBefore.textContent).toBe('');
     choose('Kind', 'shape');
     const group = screen.getByRole('group', { name: 'Confirm the change of kind' });
-    expect(within(group).getByRole('status').textContent).toMatch(/Change Noise Field to .*Its settings will be replaced.*Escape/);
+    // the live region is the same element before and after the confirmation shows, so a screen reader announces its change
+    expect(liveBefore.isConnected).toBe(true);
+    expect(liveBefore.textContent).toMatch(/Change Noise Field to .*Its settings will be replaced.*Escape/);
     fireEvent.keyDown(group, { key: 'Escape' });
     expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
+    expect(liveBefore.isConnected).toBe(true);
+    expect(liveBefore.textContent).toBe('');
     expect(layersOf(box)[1].type).toBe('noiseFill');
     expect(history.canUndo).toBe(false);
     // Escape from the Kind field itself, too

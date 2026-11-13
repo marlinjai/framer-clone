@@ -230,7 +230,7 @@ describe('setFxLayerInteractivity', () => {
     const bare = ok(setFxLayerInteractivity(s.stored, s.noise, null)).stored;
     // the noise field follows the pointer in its own plain way: changing only the axes keeps that follow
     const axes = ok(setFxLayerInteractivity(bare, s.noise, { axes: 'x' }));
-    expect(layers(axes.stored).find((l) => l.id === s.noise)!.interactivity).toEqual({ trackMouse: 1, momentum: 0, spring: 0.04, axes: 'x' });
+    expect(layers(axes.stored).find((l) => l.id === s.noise)!.interactivity).toEqual({ trackMouse: 1, momentum: 1, spring: 0.225, axes: 'x' });
     // a shape stands still, but with a spring, so raising Track mouse alone makes it move
     const withShape = ok(addFxLayer(s.stored, 'shape'));
     const raised = ok(setFxLayerInteractivity(withShape.stored, withShape.layerId!, { trackMouse: 1 }));
@@ -239,8 +239,8 @@ describe('setFxLayerInteractivity', () => {
     const again = ok(setFxLayerInteractivity(raised.stored, withShape.layerId!, { momentum: 0.2 }));
     expect(layers(again.stored).find((l) => l.id === withShape.layerId)!.interactivity).toEqual({ trackMouse: 1, momentum: 0.2, spring: 0.05, axes: 'both' });
   });
-  it('the bases are exactly what the engine does without settings, per kind', () => {
-    expect(pointerBaseOf('noiseFill')).toEqual({ trackMouse: 1, momentum: 0, spring: 0.04, axes: 'both' });
+  it('the bases are the engine\'s values for what a layer does without settings (the noise field\'s is checked against its old lerp in the engine tests)', () => {
+    expect(pointerBaseOf('noiseFill')).toEqual({ trackMouse: 1, momentum: 1, spring: 0.225, axes: 'both' });
     for (const kind of ['shape', 'image', 'gradient']) expect(pointerBaseOf(kind)).toMatchObject({ trackMouse: 0, spring: 0.05 });
   });
   it('an explicit undefined in a patch leaves the value alone instead of erasing it', () => {

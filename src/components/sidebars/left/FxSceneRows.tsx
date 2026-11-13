@@ -187,6 +187,7 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
         ) : (
           <button
             type="button"
+            data-fx-row-name=""
             aria-label={row.ariaLabel}
             aria-current={picked ? 'true' : undefined}
             title={row.ariaLabel}
@@ -398,7 +399,7 @@ export const FxSceneRows = observer(({ box, rows, depth, breakpointId, dimmed }:
                   row={effect}
                   depth={inner + 1}
                   breakpointId={breakpointId}
-                  dimmed={dimmed}
+                  dimmed={dimmed || !row.visible}
                   order={row.nested!.map((n) => n.layerId)}
                   groupKey={`nested:${row.layerId}`}
                   groupLabel={`the effects of ${row.name}`}

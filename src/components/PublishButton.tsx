@@ -355,7 +355,7 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
               ? 'Some components will not show'
               : (check.tokens?.length ?? 0) > 0
                 ? 'Some site colours or fonts will not show'
-                : 'Some FX scene text will not show'}
+                : 'Some FX scene text is missing for search engines and screen readers'}
       </p>
       <div id="publish-legal-text" className="flex flex-col gap-1.5">
         {check.missingImpressum && (

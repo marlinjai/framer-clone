@@ -749,6 +749,31 @@ describe('the rows of an FX scene box', () => {
       expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
     });
 
+    it('drag: the drop handler stores the place fxDropIndex returns, through the row action, and says so', async () => {
+      const { fxDropIndex } = await import('@/lib/layers/fxRows');
+      render(<LayersPanel />);
+      // Effects listed: Grain, Vignette, Bloom (front first). Drop Grain below Bloom.
+      const order = rowNames().slice(0, 3);
+      expect(order).toEqual(['Grain', 'Vignette', 'Bloom']);
+      const expected = fxDropIndex(['grain', 'vignette', 'bloom'], 'grain', 'bloom', 'below');
+      expect(expected).toBe(0);
+      drag(rowOf('Grain'), rowOf('Bloom'), 'below');
+      // stored back to front: index 0 is the back, which is where fxDropIndex said Grain goes
+      expect(layerIds().filter((l) => ['grain', 'vignette', 'bloom'].includes(l.id)).map((l) => l.id)[expected as number]).toBe('grain');
+      expect(store.editorUI.fxLayerNotice).toMatchObject({ problem: false, text: 'Grain moved behind Bloom.' });
+    });
+
+    it('drag: a drop on the dragged row\'s own place stores nothing and says nothing', () => {
+      render(<LayersPanel />);
+      const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
+      drag(rowOf('Vignette'), rowOf('Vignette'), 'above'); // onto itself
+      drag(rowOf('Grain'), rowOf('Vignette'), 'above'); // already above it
+      expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+      expect(store.editorUI.fxLayerNotice).toBeUndefined();
+      expect(store.editorUI.editorNotice).toBeUndefined();
+      expect(getHistoryStore()!.canUndo).toBe(false);
+    });
+
     it('drag: dropping a row where it already is stores nothing', () => {
       render(<LayersPanel />);
       const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);

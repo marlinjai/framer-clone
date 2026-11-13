@@ -5,6 +5,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
 import { useInteractivity, type InteractivityTarget } from '../interactivity';
+import { pointerBaseOf } from '../layerOps';
 import type { InteractivitySpec } from '../types';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,6 +37,52 @@ describe('pointer settings under reduced motion', () => {
     // the same settings without reduced motion do follow the pointer (the control)
     for (let i = 0; i < 60; i += 1) t.step(loud, false);
     expect(Math.abs(t.mouse.x)).toBeGreaterThan(0.1);
+    probe.unmount();
+  });
+});
+
+
+describe('the noise field\'s pointer base reproduces its old plain follow', () => {
+  // Without pointer settings the noise field runs `mouse += (pointer - mouse) * 0.04` (layers/noiseFill.tsx).
+  // A first edit stores pointerBaseOf('noiseFill') and the engine's second-order smoothing takes over:
+  // the two must be the same motion, or changing one value (the axes) would change the feel too.
+  it('follows a pointer step like the lerp does, within a small tolerance, and neither passes the target', () => {
+    const probe = mountTarget();
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: window.innerWidth, clientY: window.innerHeight / 2 }));
+    });
+    const t = probe.target();
+    const base = pointerBaseOf('noiseFill') as InteractivitySpec;
+    let legacy = 0;
+    let worst = 0;
+    let peakEngine = 0;
+    let peakLegacy = 0;
+    for (let frame = 1; frame <= 180; frame += 1) {
+      legacy += (1 - legacy) * 0.04;
+      t.step(base, false);
+      worst = Math.max(worst, Math.abs(t.mouse.x - legacy));
+      peakEngine = Math.max(peakEngine, t.mouse.x);
+      peakLegacy = Math.max(peakLegacy, legacy);
+    }
+    expect(worst).toBeLessThan(0.02);
+    expect(peakEngine).toBeLessThanOrEqual(1.001);
+    expect(peakLegacy).toBeLessThanOrEqual(1);
+    expect(t.mouse.x).toBeGreaterThan(0.99);
+    probe.unmount();
+  });
+
+  it('the earlier base (momentum 0, spring 0.04) is NOT that motion: it overshoots, which is why it was replaced', () => {
+    const probe = mountTarget();
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: window.innerWidth, clientY: window.innerHeight / 2 }));
+    });
+    const t = probe.target();
+    let peak = 0;
+    for (let frame = 0; frame < 180; frame += 1) {
+      t.step({ trackMouse: 1, momentum: 0, spring: 0.04, axes: 'both' }, false);
+      peak = Math.max(peak, t.mouse.x);
+    }
+    expect(peak).toBeGreaterThan(1.1);
     probe.unmount();
   });
 });

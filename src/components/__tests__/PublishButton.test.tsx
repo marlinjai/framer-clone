@@ -274,7 +274,7 @@ describe('PublishButton legal check', () => {
     render(<PublishButton />);
     fireEvent.click(screen.getByRole('button', { name: /publish/i }));
     expect(fetchMock).not.toHaveBeenCalled();
-    const notice = screen.getByRole('dialog', { name: 'Some FX scene text will not show' });
+    const notice = screen.getByRole('dialog', { name: 'Some FX scene text is missing for search engines and screen readers' });
     expect(notice.textContent).not.toContain('Some components will not show');
     expect(screen.getByTestId('publish-fx-text-issues').textContent).toMatch(/text drawn inside the scene/);
     expect(screen.getByRole('button', { name: `Open ${page.metadata.title}` })).toBeTruthy();

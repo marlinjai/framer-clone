@@ -70,7 +70,9 @@ function rowOf(layer: Layer, layers: readonly Layer[], labels: ReadonlyMap<strin
   const source = sourceId ? layers.find((l) => l.id === sourceId) : undefined;
   const reads = group === 'post' && sourceId ? (source?.name ?? sourceId) : undefined;
   // The renderer leaves a pass out when the layer it reads is hidden or gone (src/lib/fx/pipeline.ts).
-  const off = group === 'post' && sourceId && (!source || !source.visible) ? 'off: its layer is hidden' : undefined;
+  // The same for an effect that applies to one layer only: the renderer leaves a hidden layer's effects out.
+  const scope = group === 'post' && layer.target ? layers.find((l) => l.id === layer.target) : undefined;
+  const off = (group === 'post' && sourceId && (!source || !source.visible)) || (scope && !scope.visible) ? 'off: its layer is hidden' : undefined;
   const appliesTo = group === 'post' && layer.target ? (layers.find((l) => l.id === layer.target)?.name ?? layer.target) : undefined;
   const parts = [layer.name, group === 'post' ? 'effect' : typeLabel];
   if (reads) parts.push(`reads ${reads}`);

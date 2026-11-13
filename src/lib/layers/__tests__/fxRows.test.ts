@@ -486,6 +486,19 @@ describe('effects nested under one layer', () => {
     expect(layers().find((l) => l.id === 'bloom')!.target).toBe('gradient-bg');
   });
 
+  it('marks an effect under a hidden layer as off, in its name for a screen reader too, like god rays reading a hidden layer', () => {
+    scope('bloom', 'gradient-bg');
+    expect(deriveFxRows(box)!.content.find((r) => r.layerId === 'gradient-bg')!.nested![0].off).toBeUndefined();
+    const hidden = toggleFxLayer(stored(), 'gradient-bg');
+    if (!hidden.ok) throw new Error(hidden.message);
+    box.setProps({ [FX_PROP]: hidden.stored });
+    const nested = deriveFxRows(box)!.content.find((r) => r.layerId === 'gradient-bg')!.nested![0];
+    expect(nested.off).toBe('off: its layer is hidden');
+    expect(nested.ariaLabel).toBe('Bloom, effect, applies to Gradient, off: its layer is hidden');
+    // an effect of the whole scene is not off because some layer is hidden
+    expect(deriveFxRows(box)!.effects.every((r) => r.off === undefined)).toBe(true);
+  });
+
   it('gives a row a colour hint from its own colour setting, and none when it has none', () => {
     const rows = deriveFxRows(box)!;
     expect(rows.content.find((r) => r.layerId === 'noise')!.swatch).toMatch(/^#[0-9a-f]{6}$/i);

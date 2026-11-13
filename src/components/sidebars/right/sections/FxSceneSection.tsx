@@ -367,13 +367,16 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     if (!hasTextFields) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.defaultPrevented) return;
-      // Only from nowhere in particular (the page body: the canvas, the panels' empty space) or from an FX row of the
-      // Layers panel: never from another control (a resize handle, a menu, a field), which keeps its own Enter.
+      // Only from nowhere in particular (the page body: the canvas, the panels' empty space) or from the picked
+      // layer's own name button in the Layers panel: never from another row, an action button, the rename field or any
+      // other control (a resize handle, a menu, a field), which all keep their own Enter.
       const el = e.target as HTMLElement | null;
-      const fromRow = !!el?.closest?.('[data-fx-layer-row]');
+      const nameButton = el?.closest?.('[data-fx-row-name]') ?? null;
+      const row = nameButton?.closest('[data-fx-layer-row]') ?? null;
+      const fromPickedName = !!row && row.getAttribute('data-fx-layer-row') === pickedLayerId && row.getAttribute('data-fx-layer-box') === component.id;
       const fromNowhere = !el || el === document.body || el === document.documentElement;
-      if (!fromRow && !fromNowhere) return;
-      if (el && !fromRow && (el.isContentEditable || isActivatableControl(e.target))) return;
+      if (!fromPickedName && !fromNowhere) return;
+      if (el && fromNowhere && (el.isContentEditable || isActivatableControl(e.target))) return;
       const field = document.querySelector<HTMLElement>('[data-fx-text-primary]');
       if (!field) return;
       e.preventDefault();
@@ -382,7 +385,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [hasTextFields, pickedLayerId]);
+  }, [hasTextFields, pickedLayerId, component.id]);
 
   // Another box: nothing of the last one's messages or selection carries over.
   useEffect(() => {
@@ -692,6 +695,10 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
               onChange={(type) => setPendingKind(type === selected.type ? null : type)}
             />
           </div>
+          {/* Mounted all the time, and filled when a kind waits: a live region inserted already full is often not announced. */}
+          <p role="status" className="sr-only">
+            {pendingKind ? `Change ${selected.name} to ${kindName2}? Its settings will be replaced. Choose Change to ${kindName2}, or Keep ${kindLabel(selected.type)}, or press Escape to keep it.` : ''}
+          </p>
           {pendingKind ? (
             <div
               role="group"
@@ -705,9 +712,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
                 }
               }}
             >
-              <p role="status" className="sr-only">
-                Change {selected.name} to {kindName2}? Its settings will be replaced. Choose Change to {kindName2}, or Keep {kindLabel(selected.type)}, or press Escape to keep it.
-              </p>
+
               <p className={HINT}>
                 Change {selected.name} to {kindName2}? Its settings below are replaced by {kindName2}&apos;s own, and the layer gets a new identity (effects that apply to it follow it, or go if the new kind is an effect). Undo brings the old settings back.
               </p>
@@ -773,7 +778,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
               <span className={FIELD_LABEL}>Pointer</span>
               <NumberSetting label="Track mouse" value={pointer.trackMouse} min={0} max={1} step={0.01} onChange={(trackMouse) => setPointer({ trackMouse })} />
               <NumberSetting label="Momentum" value={pointer.momentum} min={0} max={1} step={0.01} onChange={(momentum) => setPointer({ momentum })} />
-              <NumberSetting label="Spring" value={pointer.spring} min={0} max={1} step={0.01} onChange={(spring) => setPointer({ spring })} />
+              <NumberSetting label="Spring" value={pointer.spring} min={0} max={1} step={0.005} onChange={(spring) => setPointer({ spring })} />
               <PropertySelect
                 label="Axes"
                 value={pointer.axes}
