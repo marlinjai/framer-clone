@@ -3,7 +3,7 @@ title: Turn off Infisical telemetry and remove its .lumitra.co cookie
 description: Procedure to switch off the product telemetry of self-hosted Infisical, prove it is off, and remove the PostHog cookie it left on the whole lumitra.co domain, with rollback.
 summary: Self-hosted Infisical (infisical.lumitra.co, v0.154.6) runs posthog-js in the browser and a PostHog client on the server while `TELEMETRY_ENABLED` is on, which is its default. The browser library writes `ph_phc_<key>_posthog` on `.lumitra.co`, holding the signed-in operator's email, so every page under lumitra.co, hosted sites included, can read it. One setting on the Coolify service turns both sides off; the old cookie then has to be removed by hand in each operator browser. Waits for Marlin's yes because it restarts the secrets manager.
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-12
 tags: [framer-clone, infisical, privacy, cookies, posthog, security, plan]
 projects: [framer-clone, infra]
@@ -11,7 +11,7 @@ projects: [framer-clone, infra]
 
 # Turn off Infisical telemetry and remove its .lumitra.co cookie
 
-**Status:** draft, waiting for Marlin's yes (coordinator inbox `20261112-213020-framer-clone-posthog-coo`). Nothing here has been applied. Roadmap home: the PostHog cookie line in this repository's `ROADMAP.md`.
+**Status:** in progress. Approved by Marlin on 2026-11-13 (relayed by the coordinator; inbox `20261112-213020-framer-clone-posthog-coo` resolved). Telemetry is off on production and the cookie is removed from the automation profile (section 7). Open: the cookie in other operators' browsers. Roadmap home: the PostHog cookie line in this repository's `ROADMAP.md`.
 
 ## 1. What the deployed source says
 
@@ -64,3 +64,15 @@ Order matters: switch telemetry off first. A cookie removed while telemetry is s
 
 - **Decided, say so if you disagree:** remove the cookie by hand in the few operator browsers rather than have Sites send an expiring `Set-Cookie` for it. The second option would ship Infisical's key in our code and touch every visitor, and it is only worth it if more operators turn up than can be asked.
 - **Marlin's:** the yes for steps 1 to 4 (a production change on the secrets manager); whether to ask Infisical to delete what was already sent; whether hosted sites should move off `lumitra.co`. That last one is the separate roadmap question, because code on a sites host could read or write any other script-readable `.lumitra.co` cookie.
+
+## 7. As run (2026-11-13)
+
+- **Window.** No Coolify deployment was running. The Vercel-to-Coolify cutover worker held every container start until it got the health confirmation, because its containers sign in to Infisical at boot.
+- **Snapshot.** The compose was fetched through the secrets proxy and saved in its scratch directory as `infisical-telemetry/compose-raw-20261113T000245Z.yml` (mode 600, sha256 starting `7653bcf3`). No value entered an agent context.
+- **Change.** One line, `- TELEMETRY_ENABLED=false`, was added to the end of the backend container's `environment`, and the rest was checked to be identical as parsed YAML. It was sent with `PATCH /api/v1/services/wzp79onfjkt2cqorgzdnos1m`, and reading back the stored compose matched the prepared file exactly. The service was restarted with `POST .../restart` at 00:49:48 UTC.
+- **Health.** `/api/status` answered 503 until 00:51:35 UTC (about 1 minute 45 seconds of downtime), then 200. Coolify showed `running:healthy` for the service, with db and redis healthy. A secret fetch through the secrets proxy succeeded afterwards.
+- **Telemetry off.** `runtime-ui-env.js` now has `"TELEMETRY_CAPTURING_ENABLED":false`. In the headless automation profile, loading Infisical pages made zero requests to any `posthog.com` host. The boot-log count (step 5b) was not run, because the host log was not opened. The source reading in section 1 covers the server side.
+- **Cookie.** Only the `ph_phc_…_posthog` cookie (domain `.lumitra.co`, path `/`) was removed, in the visible automation instance (port 9222) and its headless twin (port 9224). It was expired through the Chrome DevTools Protocol by exact name, domain and path; no other cookie was touched (20 lumitra.co cookies remain, `lumitra_session` included), and neither instance was restarted. Afterwards a hosted site (`6zp2te2a5btk.sites.lumitra.co`) showed no `ph_phc_*` cookie in `document.cookie`, even after Infisical had been opened again. The per-host local storage entry on infisical.lumitra.co was left alone, as approved: it was never readable by other hosts and is inert while telemetry is off.
+- **Not done, as decided.** No request to Infisical Inc. to delete data already sent (not approved).
+- **Rollback (unused).** Send the snapshot compose back with the same `PATCH` and restart.
+- **Still open.** Other operators (Sharon among them) remove the cookie in their own browsers by name (section 4, step 6), and the step 7 recheck runs a day later.
