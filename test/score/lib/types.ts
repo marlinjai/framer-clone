@@ -57,7 +57,7 @@ export const KIND_LABEL: Record<RowKind, string> = {
   'css-media-feature': 'CSS media features',
   'aria-pattern': 'WAI-ARIA patterns',
   component: 'Reusable component promises',
-  'page-item': 'Page-level items: a site theme',
+  'page-item': 'Page-level items: a site theme and head items',
   'fx-scene': 'FX scene promises',
 };
 
@@ -112,6 +112,8 @@ export const GAPS = {
   'import-dynamic-logic': 'JSX that is a program, not markup: reported as left over by the static import, as the plan requires.',
   theme: 'A site\'s shared colour and font tokens, its colour mode and its document defaults (docs/plans/2026-11-02-theme-and-head.md). Stored (T1), published (T2), drawn on the canvas (T3), edited in the panel (T4) and used by the generator (T5): a cell under this gap is a regression.',
   'ai-theme-refused': 'The site\'s colour mode and its document defaults: stored, published, drawn and edited, but refused to the generator on purpose. A token applies to every page of the site and a brief is about one, so the generator may use a token and add one, and has no field for the mode or the page defaults. See "What the AI may read and write" in the theme and head plan.',
+  'head-items': 'A head item of a page or a site (a meta name, a property, a link rel, JSON-LD; docs/plans/2026-11-02-theme-and-head.md). Stored and published (slice H2); the panel waits for slice H3, and the canvas has no counterpart: a head tag has nothing to draw in the editor, so that cell stays here and says so.',
+  'ai-head-refused': 'A head item the generator may not write: a generation has no field for one, and anything it carries beyond its nodes is dropped, so a model cannot add a verification tag, an alternate link or structured data to a site. Decided in the theme and head contract (Score changes): the AI column of the 33 head rows is refused on purpose, and a cell here means the generator still drops it.',
   'fx-scene': 'An FX scene (a box that draws a Lumitra FX scene behind its content) that this surface does not handle yet. Stored, published, drawn on the canvas, edited in the properties panel and written by the generator (docs/plans/2026-11-08-lumitra-fx-in-sites.md): a cell under this gap is a regression.',
   'reusable-components': 'A promise of the reusable component format (an input type, a placement, a state or an interaction) that this surface does not keep yet.',
   'published-base': 'The published route ships the root layout\'s sheet to every visitor (Tailwind\'s reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base.',
