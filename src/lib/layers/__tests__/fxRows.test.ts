@@ -9,11 +9,11 @@ import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/R
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
 import { FX_PROP, parseFxProp } from '@/lib/fxScene/fxScene';
-import { addFxLayer, applyFxPreset, importFxScene, removeFxLayer, setFxLayerType, toggleFxLayer } from '@/lib/fxScene/edit';
+import { addFxLayer, applyFxPreset, importFxScene, removeFxLayer, setFxLayerTarget, setFxLayerType, toggleFxLayer } from '@/lib/fxScene/edit';
 import { routeFxLayerShortcut } from '@/lib/canvas/deleteSelection';
 import { deleteSelection } from '@/lib/canvas/deleteSelection';
 import { resolveAction } from '@/lib/keyBindings';
-import { derivedRowsOf, deriveFxRows, runFxLayerAction } from '../fxRows';
+import { derivedRowsOf, deriveFxRows, fxDropIndex, runFxLayerAction } from '../fxRows';
 
 let store: RootStoreType;
 let page: PageModelType;
@@ -437,6 +437,101 @@ describe('the four paths', () => {
     undo();
     pickLayer('bloom');
     expect(ui().fxLayerPick).toMatchObject({ layerId: 'bloom' });
+  });
+});
+
+describe('effects nested under one layer', () => {
+  const scope = (effect: string, target: string | null) => {
+    const edit = setFxLayerTarget(stored(), effect, target);
+    if (!edit.ok) throw new Error(edit.message);
+    box.setProps({ [FX_PROP]: edit.stored });
+  };
+
+  it('lists a scoped effect under its layer and not in the Effects group, with the layer it applies to', () => {
+    scope('bloom', 'gradient-bg');
+    const rows = deriveFxRows(box)!;
+    expect(rows.effects.map((r) => r.name)).toEqual(['Grain', 'Vignette']);
+    const gradient = rows.content.find((r) => r.layerId === 'gradient-bg')!;
+    expect(gradient.nested?.map((r) => r.name)).toEqual(['Bloom']);
+    expect(gradient.nested![0].appliesTo).toBe('Gradient');
+    expect(gradient.nested![0].ariaLabel).toBe('Bloom, effect, applies to Gradient');
+    expect(rows.content.find((r) => r.layerId === 'noise')!.nested).toBeUndefined();
+  });
+
+  it('lists several nested effects front first, and a scene with none has no nested rows', () => {
+    expect(deriveFxRows(box)!.content.every((r) => r.nested === undefined)).toBe(true);
+    scope('bloom', 'noise');
+    scope('vignette', 'noise');
+    expect(deriveFxRows(box)!.content.find((r) => r.layerId === 'noise')!.nested!.map((r) => r.name)).toEqual(['Vignette', 'Bloom']);
+  });
+
+  it('moves a nested effect only among its siblings: refused at the edge, and a scene effect never crosses into the nest', () => {
+    scope('bloom', 'noise');
+    scope('vignette', 'noise');
+    pickLayer('vignette');
+    expect(runFxLayerAction(box, ui(), 'vignette', { type: 'move', delta: 1 }).ok).toBe(false);
+    expect(runFxLayerAction(box, ui(), 'vignette', { type: 'move', delta: -1 }).message).toBe('Vignette moved behind Bloom.');
+    // grain is the only effect of the whole scene: nothing to move among
+    expect(runFxLayerAction(box, ui(), 'grain', { type: 'move', delta: -1 }).ok).toBe(false);
+  });
+
+  it('deleting a layer with nested effects removes them with it, says so, and one undo brings all back', () => {
+    scope('bloom', 'gradient-bg');
+    pickLayer('gradient-bg');
+    const done = runFxLayerAction(box, ui(), 'gradient-bg', { type: 'delete' });
+    expect(done.message).toMatch(/Bloom applied only to Gradient and was removed with it/);
+    expect(names()).not.toContain('Bloom');
+    undo();
+    expect(names()).toEqual(expect.arrayContaining(['Gradient', 'Bloom']));
+    expect(layers().find((l) => l.id === 'bloom')!.target).toBe('gradient-bg');
+  });
+
+  it('marks an effect under a hidden layer as off, in its name for a screen reader too, like god rays reading a hidden layer', () => {
+    scope('bloom', 'gradient-bg');
+    expect(deriveFxRows(box)!.content.find((r) => r.layerId === 'gradient-bg')!.nested![0].off).toBeUndefined();
+    const hidden = toggleFxLayer(stored(), 'gradient-bg');
+    if (!hidden.ok) throw new Error(hidden.message);
+    box.setProps({ [FX_PROP]: hidden.stored });
+    const nested = deriveFxRows(box)!.content.find((r) => r.layerId === 'gradient-bg')!.nested![0];
+    expect(nested.off).toBe('off: its layer is hidden');
+    expect(nested.ariaLabel).toBe('Bloom, effect, applies to Gradient, off: its layer is hidden');
+    // an effect of the whole scene is not off because some layer is hidden
+    expect(deriveFxRows(box)!.effects.every((r) => r.off === undefined)).toBe(true);
+  });
+
+  it('gives a row a colour hint from its own colour setting, and none when it has none', () => {
+    const rows = deriveFxRows(box)!;
+    expect(rows.content.find((r) => r.layerId === 'noise')!.swatch).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(rows.effects.find((r) => r.layerId === 'bloom')?.swatch).toBeUndefined();
+  });
+});
+
+describe('dropping a dragged row (fxDropIndex)', () => {
+  // Listed front first: [a, b, c, d]; stored back to front the same group is d, c, b, a (index 0 is d).
+  const order = ['a', 'b', 'c', 'd'];
+  it('moves a row above or below another, as the stored index inside the group', () => {
+    expect(fxDropIndex(order, 'd', 'a', 'above')).toBe(3); // d to the very front
+    expect(fxDropIndex(order, 'a', 'd', 'below')).toBe(0); // a to the very back
+    expect(fxDropIndex(order, 'a', 'c', 'below')).toBe(1); // list b, c, a, d
+    expect(fxDropIndex(order, 'd', 'b', 'above')).toBe(2); // list a, d, b, c
+  });
+  it('returns null when nothing would change or a row is not in the group', () => {
+    expect(fxDropIndex(order, 'b', 'a', 'below')).toBeNull();
+    expect(fxDropIndex(order, 'a', 'b', 'above')).toBeNull();
+    expect(fxDropIndex(order, 'b', 'b', 'above')).toBeNull();
+    expect(fxDropIndex(order, 'x', 'a', 'above')).toBeNull();
+    expect(fxDropIndex(order, 'a', 'x', 'above')).toBeNull();
+  });
+  it('a drop stored through the row action is one undo step, and a drop outside the group is refused', () => {
+    pickLayer('noise');
+    const before = names().join();
+    expect(runFxLayerAction(box, ui(), 'noise', { type: 'moveTo', toIndex: 0, relativeTo: 'behind Gradient' }).message).toBe('Noise Field moved behind Gradient.');
+    expect(names().join()).not.toBe(before);
+    undo();
+    expect(names().join()).toBe(before);
+    // index 5 is outside the two content layers: refused, nothing stored
+    expect(runFxLayerAction(box, ui(), 'noise', { type: 'moveTo', toIndex: 5 }).ok).toBe(false);
+    expect(names().join()).toBe(before);
   });
 });
 

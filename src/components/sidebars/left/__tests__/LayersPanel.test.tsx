@@ -5,7 +5,7 @@
 // DragManager and check the action ran and no drag was armed.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, within, act } from '@testing-library/react';
+import { render, cleanup, createEvent, fireEvent, screen, within, act } from '@testing-library/react';
 import { createRootStore, getDragManager, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
@@ -640,5 +640,146 @@ describe('the rows of an FX scene box', () => {
     expect(rowNames()).not.toContain('Bloom');
     expect(store.editorUI.fxLayerPick).toBeUndefined();
     expect(store.editorUI.selectedComponent?.id).toBe(box.id);
+  });
+
+  describe('nested effects and drag to reorder', () => {
+    const scope = async (effect: string, target: string) => {
+      const { setFxLayerTarget } = await import('@/lib/fxScene/edit');
+      const edit = setFxLayerTarget((box.props as Record<string, unknown>)[FX], effect, target);
+      if (!edit.ok) throw new Error(edit.message);
+      act(() => box.setProps({ fx: edit.stored }));
+    };
+    /** A drag as the browser sends it: the data transfer is shared by every event of the gesture. */
+    const transfer = () => ({ data: {} as Record<string, string>, effectAllowed: '', dropEffect: '', get types() { return Object.keys(this.data); }, setData(t: string, v: string) { this.data[t] = v; }, getData(t: string) { return this.data[t]; } });
+    const drag = (from: HTMLElement, over: HTMLElement, place: 'above' | 'below') => {
+      const dataTransfer = transfer();
+      vi.spyOn(over, 'getBoundingClientRect').mockReturnValue({ top: 100, height: 28, left: 0, right: 100, bottom: 128, width: 100, x: 0, y: 100, toJSON: () => ({}) });
+      const y = place === 'above' ? 105 : 124;
+      fireEvent.dragStart(from, { dataTransfer });
+      // jsdom's drag events carry no pointer position: set it on the event, as a browser has it.
+      for (const make of [createEvent.dragOver, createEvent.drop]) {
+        const event = make(over, { dataTransfer });
+        Object.defineProperty(event, 'clientY', { value: y });
+        fireEvent(over, event);
+      }
+      fireEvent.dragEnd(from, { dataTransfer });
+    };
+
+    it('shows a scoped effect nested under its layer, indented, and not in the Effects group', async () => {
+      render(<LayersPanel />);
+      await scope('bloom', 'gradient-bg');
+      // Effects group: Grain, Vignette. Content: Noise Field, Gradient, then Gradient's nested Bloom.
+      expect(rowNames()).toEqual(['Grain', 'Vignette', 'Noise Field', 'Gradient', 'Bloom']);
+      expect(rowOf('Bloom').getAttribute('data-fx-layer-group')).toBe('nested:gradient-bg');
+      expect(nameButton('Bloom').getAttribute('aria-label')).toBe('Bloom, effect, applies to Gradient');
+      const indent = (name: string) => parseInt(rowOf(name).style.paddingLeft, 10);
+      expect(indent('Bloom')).toBeGreaterThan(indent('Gradient'));
+      // Picking it works like any layer.
+      fireEvent.click(nameButton('Bloom'));
+      expect(store.editorUI.fxLayerPick).toMatchObject({ layerId: 'bloom' });
+    });
+
+    it('shows a colour hint for a layer with a colour of its own', () => {
+      render(<LayersPanel />);
+      expect(rowOf('Noise Field').querySelector('[data-fx-swatch]')).not.toBeNull();
+      expect(rowOf('Bloom').querySelector('[data-fx-swatch]')).toBeNull();
+    });
+
+    it('drag: dropping a row below another in its group reorders it as one undo step', () => {
+      render(<LayersPanel />);
+      const before = layerIds().map((l) => l.name);
+      // Effects listed: Grain, Vignette, Bloom. Drop Grain below Bloom: it becomes the back-most effect.
+      drag(rowOf('Grain'), rowOf('Bloom'), 'below');
+      const after = layerIds().map((l) => l.name);
+      expect(after).not.toEqual(before);
+      expect(rowNames().slice(0, 3)).toEqual(['Vignette', 'Bloom', 'Grain']);
+      undo();
+      expect(layerIds().map((l) => l.name)).toEqual(before);
+    });
+
+    it('drag: a row dropped into another group is refused with the reason, and nothing is stored', async () => {
+      render(<LayersPanel />);
+      await scope('bloom', 'gradient-bg');
+      const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
+      drag(rowOf('Grain'), rowOf('Noise Field'), 'above'); // effect onto a content row
+      expect(store.editorUI.fxLayerNotice).toMatchObject({ problem: true, text: expect.stringMatching(/Grain stays among the scene's effects: it cannot be moved into the layers that draw/) });
+      expect(store.editorUI.editorNotice).toMatchObject({ kind: 'refused', message: expect.stringMatching(/Grain stays among the scene's effects/) });
+      drag(rowOf('Noise Field'), rowOf('Grain'), 'above'); // content onto an effect row
+      expect(store.editorUI.fxLayerNotice?.text).toMatch(/Noise Field stays among the layers that draw: it cannot be moved into the scene's effects/);
+      drag(rowOf('Grain'), rowOf('Bloom'), 'above'); // scene effect into the nest of Gradient
+      expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+      expect(store.editorUI.fxLayerNotice).toMatchObject({ problem: true, text: expect.stringMatching(/Grain stays among the scene's effects: it cannot be moved into the effects of Gradient/) });
+    });
+
+    it('drag: another group\'s row is marked refused while hovering, and a valid drop afterwards clears the banner', () => {
+      render(<LayersPanel />);
+      const dataTransfer = transfer();
+      fireEvent.dragStart(rowOf('Grain'), { dataTransfer });
+      const over = createEvent.dragOver(rowOf('Noise Field'), { dataTransfer });
+      fireEvent(rowOf('Noise Field'), over);
+      expect(rowOf('Noise Field').getAttribute('data-fx-drop')).toBe('refused');
+      expect(over.defaultPrevented).toBe(true);
+      fireEvent.dragEnd(rowOf('Grain'), { dataTransfer });
+      drag(rowOf('Grain'), rowOf('Noise Field'), 'above');
+      expect(store.editorUI.editorNotice?.kind).toBe('refused');
+      drag(rowOf('Grain'), rowOf('Bloom'), 'below'); // a valid reorder inside the Effects group
+      expect(store.editorUI.fxLayerNotice?.problem).toBe(false);
+      expect(store.editorUI.editorNotice).toBeUndefined();
+    });
+
+    it('drag: a nested effect reorders among its siblings only', async () => {
+      render(<LayersPanel />);
+      await scope('bloom', 'gradient-bg');
+      await scope('vignette', 'gradient-bg');
+      // nested under Gradient, front first: Vignette, Bloom
+      expect(rowNames().slice(-2)).toEqual(['Vignette', 'Bloom']);
+      drag(rowOf('Vignette'), rowOf('Bloom'), 'below');
+      expect(rowNames().slice(-2)).toEqual(['Bloom', 'Vignette']);
+      undo();
+      expect(rowNames().slice(-2)).toEqual(['Vignette', 'Bloom']);
+    });
+
+    it('drag: something that is not a layer (a file) dragged over a row is ignored', () => {
+      render(<LayersPanel />);
+      const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
+      const over = rowOf('Vignette');
+      const event = createEvent.drop(over, { dataTransfer: { types: ['Files'], getData: () => '' } });
+      fireEvent(over, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+    });
+
+    it('drag: the drop handler stores the place fxDropIndex returns, through the row action, and says so', async () => {
+      const { fxDropIndex } = await import('@/lib/layers/fxRows');
+      render(<LayersPanel />);
+      // Effects listed: Grain, Vignette, Bloom (front first). Drop Grain below Bloom.
+      const order = rowNames().slice(0, 3);
+      expect(order).toEqual(['Grain', 'Vignette', 'Bloom']);
+      const expected = fxDropIndex(['grain', 'vignette', 'bloom'], 'grain', 'bloom', 'below');
+      expect(expected).toBe(0);
+      drag(rowOf('Grain'), rowOf('Bloom'), 'below');
+      // stored back to front: index 0 is the back, which is where fxDropIndex said Grain goes
+      expect(layerIds().filter((l) => ['grain', 'vignette', 'bloom'].includes(l.id)).map((l) => l.id)[expected as number]).toBe('grain');
+      expect(store.editorUI.fxLayerNotice).toMatchObject({ problem: false, text: 'Grain moved behind Bloom.' });
+    });
+
+    it('drag: a drop on the dragged row\'s own place stores nothing and says nothing', () => {
+      render(<LayersPanel />);
+      const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
+      drag(rowOf('Vignette'), rowOf('Vignette'), 'above'); // onto itself
+      drag(rowOf('Grain'), rowOf('Vignette'), 'above'); // already above it
+      expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+      expect(store.editorUI.fxLayerNotice).toBeUndefined();
+      expect(store.editorUI.editorNotice).toBeUndefined();
+      expect(getHistoryStore()!.canUndo).toBe(false);
+    });
+
+    it('drag: dropping a row where it already is stores nothing', () => {
+      render(<LayersPanel />);
+      const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
+      drag(rowOf('Grain'), rowOf('Vignette'), 'above');
+      expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+      expect(getHistoryStore()!.canUndo).toBe(false);
+    });
   });
 });

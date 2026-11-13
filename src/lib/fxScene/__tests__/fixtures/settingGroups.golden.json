@@ -1,0 +1,451 @@
+{
+ "presets": {
+  "gold-noise-gradient": {
+   "version": 1,
+   "id": "lumitra-hub-hero",
+   "size": {
+    "mode": "fill"
+   },
+   "background": "#000000",
+   "fps": 60,
+   "dpr": [
+    1,
+    1.75
+   ],
+   "layers": [
+    {
+     "id": "gradient-bg",
+     "type": "gradient",
+     "name": "Gradient",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "colorA": "#4a3610",
+      "colorB": "#8a6a1e",
+      "colorC": "#241a06",
+      "colorD": "#000000",
+      "speed": 0.2,
+      "scale": 1.05,
+      "falloff": 3,
+      "opacity": 1
+     },
+     "interactivity": {
+      "trackMouse": 0.3,
+      "momentum": 0.8,
+      "spring": 0.04,
+      "axes": "both"
+     }
+    },
+    {
+     "id": "noise",
+     "type": "noiseFill",
+     "name": "Noise Field",
+     "visible": true,
+     "blend": "screen",
+     "params": {
+      "color": "#d9b552",
+      "scale": 2.6,
+      "speed": 0.3,
+      "intensity": 0.3
+     },
+     "interactivity": {
+      "trackMouse": 0.5,
+      "momentum": 0.85,
+      "spring": 0.05,
+      "axes": "both"
+     }
+    },
+    {
+     "id": "bloom",
+     "type": "bloom",
+     "name": "Bloom",
+     "visible": true,
+     "blend": "add",
+     "params": {
+      "intensity": 0.35,
+      "threshold": 0.45,
+      "radius": 0.7
+     }
+    },
+    {
+     "id": "vignette",
+     "type": "vignette",
+     "name": "Vignette",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "offset": 0.3,
+      "darkness": 0.75
+     }
+    },
+    {
+     "id": "grain",
+     "type": "grain",
+     "name": "Grain",
+     "visible": true,
+     "blend": "overlay",
+     "params": {
+      "opacity": 0.12,
+      "premultiply": false
+     }
+    }
+   ]
+  },
+  "godrays-hero": {
+   "version": 1,
+   "id": "lumitra-preset-godrays-hero",
+   "size": {
+    "mode": "fill"
+   },
+   "background": "#08080b",
+   "fps": 60,
+   "dpr": [
+    1,
+    1.75
+   ],
+   "layers": [
+    {
+     "id": "noise",
+     "type": "noiseFill",
+     "name": "Noise Field",
+     "visible": true,
+     "blend": "add",
+     "params": {
+      "color": "#b89cff",
+      "scale": 2.4,
+      "speed": 1,
+      "intensity": 0.22
+     }
+    },
+    {
+     "id": "text-lockup",
+     "type": "text",
+     "name": "Lockup",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "eyebrowText": "Introducing",
+      "headlineText": "Lumitra",
+      "taglineText": "we bring your project to life",
+      "eyebrowFont": "Georgia",
+      "bodyFont": "Helvetica Neue",
+      "headlineWeight": "500",
+      "eyebrowSize": 88,
+      "headlineSize": 300,
+      "taglineSize": 60,
+      "color": "#dfe6ff",
+      "width": 5,
+      "height": 2.5,
+      "reveal": 2,
+      "parallax": 0.16
+     }
+    },
+    {
+     "id": "god-rays",
+     "type": "godRays",
+     "name": "God Rays",
+     "visible": true,
+     "blend": "screen",
+     "params": {
+      "sourceLayerId": "text-lockup",
+      "density": 0.92,
+      "decay": 0.9,
+      "weight": 0.3,
+      "exposure": 0.18,
+      "samples": 60,
+      "clampMax": 0.9
+     }
+    },
+    {
+     "id": "bloom",
+     "type": "bloom",
+     "name": "Bloom",
+     "visible": true,
+     "blend": "add",
+     "params": {
+      "intensity": 0.7,
+      "threshold": 0.5,
+      "radius": 0.62
+     }
+    },
+    {
+     "id": "chromatic",
+     "type": "chromaticAberration",
+     "name": "Lens / Chromatic",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "offset": [
+       0.0007,
+       0.0004
+      ]
+     }
+    },
+    {
+     "id": "vignette",
+     "type": "vignette",
+     "name": "Vignette",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "offset": 0.45,
+      "darkness": 0.55
+     }
+    }
+   ]
+  },
+  "noise-gradient": {
+   "version": 1,
+   "id": "lumitra-preset-noise-gradient",
+   "size": {
+    "mode": "fill"
+   },
+   "background": "#040409",
+   "fps": 60,
+   "dpr": [
+    1,
+    1.75
+   ],
+   "layers": [
+    {
+     "id": "gradient-bg",
+     "type": "gradient",
+     "name": "Gradient",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "colorA": "#0d2a52",
+      "colorB": "#3a1361",
+      "colorC": "#0a3556",
+      "colorD": "#04040a",
+      "speed": 0.35,
+      "scale": 1.1,
+      "falloff": 2.4,
+      "opacity": 1
+     },
+     "interactivity": {
+      "trackMouse": 0.4,
+      "momentum": 0.8,
+      "spring": 0.04,
+      "axes": "both"
+     }
+    },
+    {
+     "id": "noise",
+     "type": "noiseFill",
+     "name": "Noise Field",
+     "visible": true,
+     "blend": "screen",
+     "params": {
+      "color": "#9fb6ff",
+      "scale": 2,
+      "speed": 0.5,
+      "intensity": 0.32
+     },
+     "interactivity": {
+      "trackMouse": 0.65,
+      "momentum": 0.85,
+      "spring": 0.05,
+      "axes": "both"
+     }
+    },
+    {
+     "id": "bloom",
+     "type": "bloom",
+     "name": "Bloom",
+     "visible": true,
+     "blend": "add",
+     "params": {
+      "intensity": 0.45,
+      "threshold": 0.4,
+      "radius": 0.75
+     }
+    },
+    {
+     "id": "vignette",
+     "type": "vignette",
+     "name": "Vignette",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "offset": 0.38,
+      "darkness": 0.62
+     }
+    },
+    {
+     "id": "grain",
+     "type": "grain",
+     "name": "Grain",
+     "visible": true,
+     "blend": "overlay",
+     "params": {
+      "opacity": 0.16,
+      "premultiply": false
+     }
+    }
+   ]
+  },
+  "bokeh-focuspull": {
+   "version": 1,
+   "id": "lumitra-preset-bokeh-focuspull",
+   "size": {
+    "mode": "fill"
+   },
+   "background": "#070710",
+   "fps": 60,
+   "dpr": [
+    1,
+    1.75
+   ],
+   "layers": [
+    {
+     "id": "gradient-bg",
+     "type": "gradient",
+     "name": "Backdrop",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "colorA": "#1d0a3a",
+      "colorB": "#3c1361",
+      "colorC": "#0c2856",
+      "colorD": "#07070f",
+      "speed": 0.25,
+      "scale": 1.05,
+      "falloff": 2.6,
+      "opacity": 1
+     }
+    },
+    {
+     "id": "shape-orb-a",
+     "type": "shape",
+     "name": "Orb A",
+     "visible": true,
+     "blend": "screen",
+     "params": {
+      "shape": "blob",
+      "position": [
+       -0.55,
+       0.2
+      ],
+      "size": 0.4,
+      "aspect": 1,
+      "radius": 0.18,
+      "softness": 0.35,
+      "color": "#9fb6ff",
+      "opacity": 0.85,
+      "wobble": 0.3
+     },
+     "interactivity": {
+      "trackMouse": 0.5,
+      "momentum": 0.75,
+      "spring": 0.06,
+      "axes": "both"
+     }
+    },
+    {
+     "id": "shape-orb-b",
+     "type": "shape",
+     "name": "Orb B",
+     "visible": true,
+     "blend": "screen",
+     "params": {
+      "shape": "blob",
+      "position": [
+       0.55,
+       -0.18
+      ],
+      "size": 0.32,
+      "aspect": 1,
+      "radius": 0.18,
+      "softness": 0.4,
+      "color": "#ff7eb6",
+      "opacity": 0.75,
+      "wobble": 0.4
+     },
+     "interactivity": {
+      "trackMouse": 0.5,
+      "momentum": 0.75,
+      "spring": 0.06,
+      "axes": "both"
+     }
+    },
+    {
+     "id": "text-lockup",
+     "type": "text",
+     "name": "Lockup",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "eyebrowText": "Introducing",
+      "headlineText": "Lumitra",
+      "taglineText": "we bring your project to life",
+      "eyebrowFont": "Georgia",
+      "bodyFont": "Helvetica Neue",
+      "headlineWeight": "500",
+      "eyebrowSize": 88,
+      "headlineSize": 300,
+      "taglineSize": 60,
+      "color": "#f4f6ff",
+      "width": 5,
+      "height": 2.5,
+      "reveal": 1.6,
+      "parallax": 0.12
+     }
+    },
+    {
+     "id": "bokeh",
+     "type": "bokeh",
+     "name": "Bokeh Focus-Pull",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "radius": 0.045,
+      "mixRadius": 0.18,
+      "easing": 0.4,
+      "focusPos": [
+       0,
+       0
+      ],
+      "invert": false,
+      "reveal": 2.4
+     }
+    },
+    {
+     "id": "bloom",
+     "type": "bloom",
+     "name": "Bloom",
+     "visible": true,
+     "blend": "add",
+     "params": {
+      "intensity": 0.55,
+      "threshold": 0.35,
+      "radius": 0.7
+     }
+    },
+    {
+     "id": "vignette",
+     "type": "vignette",
+     "name": "Vignette",
+     "visible": true,
+     "blend": "normal",
+     "params": {
+      "offset": 0.4,
+      "darkness": 0.65
+     }
+    },
+    {
+     "id": "grain",
+     "type": "grain",
+     "name": "Grain",
+     "visible": true,
+     "blend": "overlay",
+     "params": {
+      "opacity": 0.14,
+      "premultiply": false
+     }
+    }
+   ]
+  }
+ },
+ "docs": "## FX scene (an animated WebGL background)\n\nA box that draws an animated scene (a gradient, a noise field, god rays, bloom, grain) behind its children:\n{\"type\":\"div\",\"preset\":\"fxScene\",\"label\":\"Hero\",\"props\":{\"fx\":{\"preset\":\"<preset id>\"},\"style\":{...}},\n\"children\":[...the content over the scene...]}. Use it for a hero or one feature band, never as decoration\non every section: a page draws ONE scene (a second FX scene on a page is kept as a plain box).\n\nThe scene is drawn only where the browser can (JavaScript, WebGL, and by default no reduced motion asked\nfor). Everywhere else a visitor sees the box's own CSS background, which you get from the preset: keep it,\nor set style.background to a still background that works with your content, and always give the content\nover the scene a colour that reads on both.\n\nprops.fx:\n- \"preset\": one of the presets below. The only way to start a scene; without fx the box is \"gold-noise-gradient\".\n- \"start\": \"settled\", \"visible\", \"immediate\": after the page has loaded (the default), when the box scrolls into view, or at once.\n- \"calm\": \"background\", \"frame\": what a visitor who asked for reduced motion gets, the box background (the default) or one still frame of the scene.\n- \"background\": the scene's own background colour, as #rrggbb.\n- \"layers\": [{\"id\":\"<a layer id of the preset>\",\"visible\":true|false,\"params\":{\"<setting>\":<value>}}]: recolour and\n  retune the preset's layers. Name only the layers and settings you change. A value outside a range is moved\n  into it.\n- You cannot add a layer, change a layer's kind, change a text layer's font, or write a picture address: an\n  entry that names no layer of the preset is left out.\n- A text layer draws its own words. Give it eyebrowText, headlineText, taglineText (leave one out to leave it empty), or set\n  \"visible\": false; a text layer given no text is hidden. Text for people who cannot see the scene belongs in\n  the children, not in the scene.\n- A \"textBox\" layer draws free-positioned words (its \"text\", where \"position\" puts its \"anchor\" point, \"width\" the\n  share of the scene it wraps in). It is decorative only: pixels no search engine or screen reader reads, never\n  the page's headline or any text a visitor needs. The page's real text goes in the children.\n\nPresets (each layer: id, kind, then its settings with the range and, in brackets, the preset's value):\n\n### FX preset \"gold-noise-gradient\" (Gold Noise Gradient): The lumitra.co hero: a slow gold noise field on black, soft grain.\n- \"gradient-bg\" (gradient): colorA colour (#4a3610); colorB colour (#8a6a1e); colorC colour (#241a06); colorD colour (#000000); speed 0 to 4 (0.2); scale 0.2 to 2.5 (1.05); falloff 0.5 to 6 (3); opacity 0 to 1 (1)\n- \"noise\" (noiseFill): color colour (#d9b552); scale 0.5 to 6 (2.6); speed 0 to 4 (0.3); intensity 0 to 1 (0.3)\n- \"bloom\" (bloom): intensity 0 to 3 (0.35); threshold 0 to 1 (0.45); radius 0 to 1 (0.7)\n- \"vignette\" (vignette): offset 0 to 1 (0.3); darkness 0 to 1 (0.75)\n- \"grain\" (grain): opacity 0 to 1 (0.12); premultiply true or false (false)\n\n### FX preset \"godrays-hero\" (God Rays Hero): Large centred words with rays of light streaming out of them, over a violet noise field.\n- \"noise\" (noiseFill): color colour (#b89cff); scale 0.5 to 6 (2.4); speed 0 to 4 (1); intensity 0 to 1 (0.22)\n- \"text-lockup\" (text): eyebrowText text, at most 200 characters; headlineText text, at most 200 characters; taglineText text, at most 200 characters; headlineWeight one of \"300\", \"400\", \"500\", \"600\", \"700\", \"800\" (\"500\"); eyebrowSize 30 to 200 (88); headlineSize 80 to 480 (300); taglineSize 24 to 160 (60); color colour (#dfe6ff); width 2 to 9 (5); height 1 to 5 (2.5); reveal 0 to 5 (2); parallax 0 to 0.6 (0.16)\n- \"god-rays\" (godRays): sourceLayerId a layer id of this preset (text-lockup); density 0.8 to 1 (0.92); decay 0.8 to 0.99 (0.9); weight 0 to 1 (0.3); exposure 0 to 0.6 (0.18); samples 20 to 120 (60); clampMax 0.5 to 1 (0.9)\n- \"bloom\" (bloom): intensity 0 to 3 (0.7); threshold 0 to 1 (0.5); radius 0 to 1 (0.62)\n- \"chromatic\" (chromaticAberration): offset [x, y], each 0 to 0.006 ([0.0007, 0.0004])\n- \"vignette\" (vignette): offset 0 to 1 (0.45); darkness 0 to 1 (0.55)\n\n### FX preset \"noise-gradient\" (Noise Gradient): Calm mesh gradient under a layered noise field; soft grain top.\n- \"gradient-bg\" (gradient): colorA colour (#0d2a52); colorB colour (#3a1361); colorC colour (#0a3556); colorD colour (#04040a); speed 0 to 4 (0.35); scale 0.2 to 2.5 (1.1); falloff 0.5 to 6 (2.4); opacity 0 to 1 (1)\n- \"noise\" (noiseFill): color colour (#9fb6ff); scale 0.5 to 6 (2); speed 0 to 4 (0.5); intensity 0 to 1 (0.32)\n- \"bloom\" (bloom): intensity 0 to 3 (0.45); threshold 0 to 1 (0.4); radius 0 to 1 (0.75)\n- \"vignette\" (vignette): offset 0 to 1 (0.38); darkness 0 to 1 (0.62)\n- \"grain\" (grain): opacity 0 to 1 (0.16); premultiply true or false (false)\n\n### FX preset \"bokeh-focuspull\" (Bokeh Focus-Pull): Two soft orbs and centred words that come into focus out of a blur, over a violet and blue gradient.\n- \"gradient-bg\" (gradient): colorA colour (#1d0a3a); colorB colour (#3c1361); colorC colour (#0c2856); colorD colour (#07070f); speed 0 to 4 (0.25); scale 0.2 to 2.5 (1.05); falloff 0.5 to 6 (2.6); opacity 0 to 1 (1)\n- \"shape-orb-a\" (shape): shape one of \"circle\", \"roundedRect\", \"blob\" (\"blob\"); position [x, y], each -1.6 to 1.6 ([-0.55, 0.2]); size 0.05 to 2 (0.4); aspect 0.2 to 3 (1); radius 0 to 1 (0.18); softness 0 to 1 (0.35); color colour (#9fb6ff); opacity 0 to 1 (0.85); wobble 0 to 1 (0.3)\n- \"shape-orb-b\" (shape): shape one of \"circle\", \"roundedRect\", \"blob\" (\"blob\"); position [x, y], each -1.6 to 1.6 ([0.55, -0.18]); size 0.05 to 2 (0.32); aspect 0.2 to 3 (1); radius 0 to 1 (0.18); softness 0 to 1 (0.4); color colour (#ff7eb6); opacity 0 to 1 (0.75); wobble 0 to 1 (0.4)\n- \"text-lockup\" (text): eyebrowText text, at most 200 characters; headlineText text, at most 200 characters; taglineText text, at most 200 characters; headlineWeight one of \"300\", \"400\", \"500\", \"600\", \"700\", \"800\" (\"500\"); eyebrowSize 30 to 200 (88); headlineSize 80 to 480 (300); taglineSize 24 to 160 (60); color colour (#f4f6ff); width 2 to 9 (5); height 1 to 5 (2.5); reveal 0 to 5 (1.6); parallax 0 to 0.6 (0.12)\n- \"bokeh\" (bokeh): radius 0 to 0.08 (0.045); mixRadius 0 to 1 (0.18); easing 0 to 0.6 (0.4); focusPos [x, y], each -1 to 1 ([0, 0]); invert true or false (false); reveal 0 to 5 (2.4)\n- \"bloom\" (bloom): intensity 0 to 3 (0.55); threshold 0 to 1 (0.35); radius 0 to 1 (0.7)\n- \"vignette\" (vignette): offset 0 to 1 (0.4); darkness 0 to 1 (0.65)\n- \"grain\" (grain): opacity 0 to 1 (0.14); premultiply true or false (false)"
+}

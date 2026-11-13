@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
+import { addFxLayer, fxFromPreset } from '@/lib/fxScene/edit';
 import {
   MalformedRevisionError,
   parseRevisionDocument,
@@ -90,7 +91,26 @@ describe('revisionPublishCheck', () => {
       placeholders: [{ kind: 'privacy', pageId: 'privacy', title: 'Datenschutz', count: 1 }],
       components: [],
       tokens: [],
+      fxText: [],
     });
+  });
+
+  it('reports FX scene text that has no HTML text in its box, as the editor does, on its own list', () => {
+    const made = fxFromPreset('gold-noise-gradient');
+    if (!made.ok) throw new Error(made.message);
+    const withText = addFxLayer(made.stored, 'text');
+    if (!withText.ok) throw new Error(withText.message);
+    const box = (children: unknown[]) => ({ id: 'box', type: 'div', props: { 'data-fx': 'scene', fx: withText.stored }, children });
+    const doc = (children: unknown[]) =>
+      parseRevisionDocument({
+        schemaVersion,
+        pages: [{ pageId: 'home', slug: '', snapshot: { metadata: { title: 'Home' }, appComponentTree: { id: 'root', type: 'div', props: {}, children: [box(children)] } } }],
+      });
+    const check = revisionPublishCheck(doc([]));
+    expect(check.fxText).toEqual([{ pageId: 'home', title: 'Home', message: expect.stringMatching(/text drawn inside the scene but no text in its box/) }]);
+    expect(check.components).toEqual([]);
+    // the box holds a headline: nothing to report
+    expect(revisionPublishCheck(doc([{ id: 'h', type: 'h1', props: { children: 'Hello' } }])).fxText).toEqual([]);
   });
 
   it('reports a frozen definition that cannot be read, as the editor reports it', () => {
@@ -107,6 +127,7 @@ describe('revisionPublishCheck', () => {
       placeholders: [],
       components: [],
       tokens: [],
+      fxText: [],
     });
   });
 
