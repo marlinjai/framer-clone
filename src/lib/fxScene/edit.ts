@@ -23,13 +23,14 @@ import {
   FX_DEFAULT_CALM,
   FX_DEFAULT_START,
   FX_LIMITS,
+  FX_SOURCE_LAYER_PARAM,
   FX_START_MODES,
   PRESETS,
   appendLayer,
   duplicateLayer,
   getLayerSchema,
   instantiateLayer,
-  moveLayer,
+  layerReadsPointer,
   moveLayerTo,
   placeInGroup,
   removeLayer,
@@ -38,6 +39,7 @@ import {
   type BlendMode,
   type FxCalm,
   type FxStart,
+  type InteractivitySpec,
   type Layer,
   type ParamSchema,
   type ParsedFx,
@@ -84,16 +86,79 @@ function finish(next: ParsedFx, earlier: readonly string[] = []): FxEdit {
 }
 
 /** Read `current`, apply `change` to the scene, and check the result. */
-function change(current: unknown, apply: (fx: ParsedFx) => ParsedFx | string): FxEdit {
+function change(current: unknown, apply: (fx: ParsedFx) => ParsedFx | string | { fx: ParsedFx; notes: string[] }): FxEdit {
   const read = parseFxProp(current);
   if (!read.ok) return read;
   const next = apply(read.fx);
-  return typeof next === 'string' ? { ok: false, message: next } : finish(next, read.notes);
+  if (typeof next === 'string') return { ok: false, message: next };
+  if ('scene' in next) return finish(next, read.notes);
+  return finish(next.fx, [...read.notes, ...next.notes]);
 }
 
 const withScene = (fx: ParsedFx, scene: SceneConfig): ParsedFx => ({ ...fx, scene });
 const withLayers = (fx: ParsedFx, layers: Layer[]): ParsedFx => withScene(fx, { ...fx.scene, layers });
 const NO_LAYER = 'That layer is no longer in the scene.';
+
+// --- effects that apply to one content layer (`Layer.target`) ----------------------------------
+// The strict reader DROPS a target it cannot keep (the effect then applies to the whole scene) and
+// says so in a note. These helpers make sure no edit of ours leads there silently: a change that
+// would un-scope an effect either keeps the target right or is refused with a reason.
+
+const isPost = (l: Layer): boolean => fxLayerKind(l.type) === 'post';
+const isContent = (l: Layer): boolean => fxLayerKind(l.type) === 'content';
+/** Whether this kind of layer names another layer it reads (god rays). */
+const readsSource = (type: string): boolean => getLayerSchema(type)?.defaultParams[FX_SOURCE_LAYER_PARAM]?.type === 'select';
+const sourceOf = (l: Layer): string | null => {
+  const p = l.params[FX_SOURCE_LAYER_PARAM];
+  return p && p.type === 'select' ? p.value : null;
+};
+const targetedIds = (layers: readonly Layer[]): Set<string> => new Set(layers.flatMap((l) => (l.target ? [l.target] : [])));
+const withSource = (l: Layer, id: string): Layer => {
+  const p = l.params[FX_SOURCE_LAYER_PARAM];
+  return p && p.type === 'select' ? { ...l, params: { ...l.params, [FX_SOURCE_LAYER_PARAM]: { ...p, value: id } } } : l;
+};
+const withoutTarget = (l: Layer): Layer => {
+  const { target: _target, ...rest } = l;
+  void _target;
+  return rest as Layer;
+};
+
+/**
+ * Point every layer that reads `fromId` at `toId` instead. `toId === null` picks the first content
+ * layer that has no effects of its own (an effect that reads a layer needs it in the main picture),
+ * or leaves the readers alone when the scene has no other content layer (the reader repairs that
+ * case), or returns the reason it cannot be done when every other content layer is scoped.
+ */
+function repointReaders(layers: Layer[], fromId: string, toId: string | null): { layers: Layer[]; notes: string[] } | string {
+  const readers = layers.filter((l) => sourceOf(l) === fromId);
+  if (readers.length === 0) return { layers, notes: [] };
+  let replacement = toId;
+  if (replacement === null) {
+    const content = layers.filter((l) => isContent(l) && l.id !== fromId);
+    if (content.length === 0) return { layers, notes: [] };
+    const taken = targetedIds(layers);
+    replacement = content.find((l) => !taken.has(l.id))?.id ?? null;
+    if (replacement === null) {
+      return `${readers[0].name} reads this layer, and every other layer of the scene has effects of its own, which ${readers[0].name} cannot read from. Move those effects to the whole scene first.`;
+    }
+  }
+  const to = replacement;
+  const name = layers.find((l) => l.id === to)?.name ?? to;
+  return {
+    layers: layers.map((l) => (sourceOf(l) === fromId ? withSource(l, to) : l)),
+    notes: readers.map((r) => `${r.name} now reads from ${name}.`),
+  };
+}
+
+/** The layer a new or retyped god rays should read: the first content layer with no effects of its own, or why there is none. `undefined` when the scene has no content layer at all. */
+function sourceFor(layers: readonly Layer[], exceptId?: string): string | null | undefined {
+  const content = layers.filter((l) => isContent(l) && l.id !== exceptId);
+  if (content.length === 0) return undefined;
+  const taken = targetedIds(layers);
+  return content.find((l) => !taken.has(l.id))?.id ?? null;
+}
+const ALL_SCOPED = 'Every content layer of this scene has effects of its own, and this kind of layer reads a layer from the main picture. Move one layer\'s effects to the whole scene first.';
+
 
 /** A new scene from a preset: the prop to store and the CSS background the box falls back to. */
 export function fxFromPreset(presetId: string = FX_DEFAULT_PRESET): (FxEdit & { ok: true; background: string }) | { ok: false; message: string } {
@@ -141,6 +206,10 @@ export function setFxParam(current: unknown, layerId: string, key: string, value
     if (!layer) return NO_LAYER;
     const schema = layer.params[key];
     if (!schema) return `This layer has no setting called "${key}".`;
+    if (key === FX_SOURCE_LAYER_PARAM && typeof value === 'string' && targetedIds(fx.scene.layers).has(value)) {
+      const name = fx.scene.layers.find((l) => l.id === value)?.name ?? value;
+      return `${name} has effects of its own, so ${layer.name} cannot read it. Move those effects to the whole scene, or pick another layer.`;
+    }
     const next = { ...layer, params: { ...layer.params, [key]: { ...schema, value } as ParamSchema } };
     return withLayers(fx, fx.scene.layers.map((l) => (l === layer ? next : l)));
   });
@@ -151,21 +220,42 @@ export function addFxLayer(current: unknown, type: string): FxEdit & { layerId?:
   let layerId: string | undefined;
   const edit = change(current, (fx) => {
     if (fx.scene.layers.length >= FX_LIMITS.layers) return `A scene can hold at most ${FX_LIMITS.layers} layers. Remove one first.`;
-    const layer = instantiateLayer(type, fx.scene.layers);
+    let layer = instantiateLayer(type, fx.scene.layers);
     if (!layer) return `"${type}" is not a kind of layer.`;
+    if (readsSource(layer.type)) {
+      const source = sourceFor(fx.scene.layers);
+      if (source === null) return ALL_SCOPED;
+      if (source !== undefined) layer = withSource(layer, source);
+    }
     layerId = layer.id;
     return withLayers(fx, appendLayer(fx.scene.layers, layer));
   });
   return edit.ok ? { ...edit, layerId } : edit;
 }
 
+/**
+ * Remove a layer. The effects that applied only to it go with it (never silently to the whole
+ * scene), and an effect that read it moves to another layer, or the removal is refused.
+ */
 export function removeFxLayer(current: unknown, layerId: string): FxEdit {
-  return change(current, (fx) => (fx.scene.layers.some((l) => l.id === layerId) ? withLayers(fx, removeLayer(fx.scene.layers, layerId)) : NO_LAYER));
-}
-
-/** Move a layer one place: `-1` toward the back (drawn earlier), `1` toward the front. At either end nothing changes. */
-export function moveFxLayer(current: unknown, layerId: string, delta: -1 | 1): FxEdit {
-  return change(current, (fx) => (fx.scene.layers.some((l) => l.id === layerId) ? withLayers(fx, moveLayer(fx.scene.layers, layerId, delta)) : NO_LAYER));
+  return change(current, (fx) => {
+    const layer = fx.scene.layers.find((l) => l.id === layerId);
+    if (!layer) return NO_LAYER;
+    let layers = removeLayer(fx.scene.layers, layerId);
+    const notes: string[] = [];
+    if (isContent(layer)) {
+      const nested = layers.filter((l) => l.target === layerId);
+      if (nested.length > 0) {
+        layers = layers.filter((l) => l.target !== layerId);
+        notes.push(`${nested.map((l) => l.name).join(', ')} applied only to ${layer.name} and ${nested.length === 1 ? 'was' : 'were'} removed with it.`);
+      }
+      const moved = repointReaders(layers, layerId, null);
+      if (typeof moved === 'string') return moved;
+      layers = moved.layers;
+      notes.push(...moved.notes);
+    }
+    return { fx: withLayers(fx, layers), notes };
+  });
 }
 
 /**
@@ -243,10 +333,82 @@ export function setFxLayerType(current: unknown, layerId: string, type: string):
     const fresh = instantiateLayer(type, others);
     if (!fresh) return `"${type}" is not a kind of layer.`;
     nextId = fresh.id;
-    const replacement: Layer = { ...fresh, visible: layer.visible, blend: layer.blend };
-    return withLayers(fx, fx.scene.layers.map((l) => (l === layer ? replacement : l)));
+    const becomesContent = fxLayerKind(type) === 'content';
+    const notes: string[] = [];
+    let replacement: Layer = { ...fresh, visible: layer.visible, blend: layer.blend };
+    // The new layer has a new id: whatever pointed at the old one (effects scoped to it, a god rays reading it) follows or goes.
+    let layers = fx.scene.layers;
+    if (isContent(layer)) {
+      const nested = layers.filter((l) => l.target === layer.id);
+      if (becomesContent) layers = layers.map((l) => (l.target === layer.id ? { ...l, target: fresh.id } : l));
+      else if (nested.length > 0) {
+        layers = layers.filter((l) => l.target !== layer.id);
+        notes.push(`${nested.map((l) => l.name).join(', ')} applied only to ${layer.name} and ${nested.length === 1 ? 'was' : 'were'} removed.`);
+      }
+    }
+    // A post effect keeps what it applies to (the fresh layer has no target of its own); a kind that reads a layer cannot be scoped.
+    if (isPost(layer) && layer.target && !becomesContent && !readsSource(type)) replacement = { ...replacement, target: layer.target };
+    if (readsSource(type)) {
+      const source = sourceFor(layers, layer.id);
+      if (source === null) return ALL_SCOPED;
+      if (source !== undefined) replacement = withSource(replacement, source);
+    }
+    const moved = isContent(layer) ? repointReaders(layers, layer.id, becomesContent ? fresh.id : null) : { layers, notes: [] as string[] };
+    if (typeof moved === 'string') return moved;
+    notes.push(...moved.notes);
+    return { fx: withLayers(fx, moved.layers.map((l) => (l === layer ? replacement : l))), notes };
   });
   return edit.ok ? { ...edit, layerId: nextId } : edit;
+}
+
+/**
+ * Make one effect apply to one content layer only (`targetId`) or to the whole scene (`null`).
+ * Refused, with the reason and nothing stored: the layer is not an effect, it reads a layer of its
+ * own (god rays), the target is not a content layer, some effect reads the target, or a fifth
+ * layer would have effects of its own.
+ */
+export function setFxLayerTarget(current: unknown, layerId: string, targetId: string | null): FxEdit {
+  return change(current, (fx) => {
+    const layer = fx.scene.layers.find((l) => l.id === layerId);
+    if (!layer) return NO_LAYER;
+    if (!isPost(layer)) return `${layer.name} draws something itself. Only an effect can apply to one layer.`;
+    if (readsSource(layer.type)) return `${layer.name} reads a layer of its own, so it cannot also apply to one layer. Pick the layer it reads under "Reads from".`;
+    if (targetId === null) return withLayers(fx, fx.scene.layers.map((l) => (l === layer ? withoutTarget(l) : l)));
+    const target = fx.scene.layers.find((l) => l.id === targetId);
+    if (!target) return 'The layer this effect should apply to is no longer in the scene.';
+    if (!isContent(target)) return `${target.name} is an effect, not a layer that draws. An effect can apply to a layer that draws.`;
+    if (fx.scene.layers.some((l) => sourceOf(l) === targetId)) return `An effect reads ${target.name} from the main picture, so ${target.name} cannot have effects of its own.`;
+    const others = targetedIds(fx.scene.layers.filter((l) => l !== layer));
+    if (!others.has(targetId) && others.size >= FX_LIMITS.targetedLayers) {
+      return `At most ${FX_LIMITS.targetedLayers} layers of a scene can have effects of their own. Move another layer's effects to the whole scene first.`;
+    }
+    return withLayers(fx, fx.scene.layers.map((l) => (l === layer ? { ...l, target: targetId } : l)));
+  });
+}
+
+/** What a layer without pointer settings does: nothing (the engine's own default). */
+const NO_POINTER: InteractivitySpec = { trackMouse: 0, momentum: 0, spring: 0, axes: 'both' };
+
+/**
+ * Change a layer's pointer settings (track mouse, momentum, spring, axes), or remove them with
+ * `null`. Only for kinds that read them. The values go through the strict reader like every
+ * other change, which holds each amount to 0..1; anything else (not a number, an unknown axis)
+ * is refused here with a reason rather than left to be dropped.
+ */
+export function setFxLayerInteractivity(current: unknown, layerId: string, patch: Partial<InteractivitySpec> | null): FxEdit {
+  return change(current, (fx) => {
+    const layer = fx.scene.layers.find((l) => l.id === layerId);
+    if (!layer) return NO_LAYER;
+    if (!layerReadsPointer(layer.type)) return `${layer.name} does not react to the pointer.`;
+    if (patch === null) return withLayers(fx, fx.scene.layers.map((l) => (l === layer ? ((): Layer => { const { interactivity: _i, ...rest } = l; void _i; return rest as Layer; })() : l)));
+    for (const key of ['trackMouse', 'momentum', 'spring'] as const) {
+      const v = patch[key];
+      if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v))) return `The pointer setting "${key}" must be a number.`;
+    }
+    if (patch.axes !== undefined && patch.axes !== 'x' && patch.axes !== 'y' && patch.axes !== 'both') return 'The pointer axes can be x, y or both.';
+    const next: InteractivitySpec = { ...NO_POINTER, ...layer.interactivity, ...patch };
+    return withLayers(fx, fx.scene.layers.map((l) => (l === layer ? { ...l, interactivity: next } : l)));
+  });
 }
 
 /** The scene as text, for "Copy scene JSON": exactly what is stored under `fx.scene`. */

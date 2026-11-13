@@ -12,6 +12,7 @@
  */
 
 import { getLayerSchema, listLayerSchemas } from "./registry";
+import { SETTING_GROUPS } from "./schemas";
 import type { Layer, ParamSchema, ParamsSchema, SceneConfig } from "./types";
 
 /** Defensive deep-clone for a `ParamSchema` entry. Vec2 has a tuple value. */
@@ -80,9 +81,38 @@ export function moveLayer(layers: Layer[], id: string, delta: number): Layer[] {
   return next;
 }
 
-/** Which half of the scene a layer is in: content layers draw, post effects change what was drawn. `null` for an unregistered type. */
-function groupOf(layer: Layer): "content" | "post" | null {
-  return getLayerSchema(layer.type)?.kind ?? null;
+/**
+ * The set of layers a layer moves among: content layers among content layers; effects that apply
+ * to the whole scene among themselves; effects that apply to one content layer among the effects
+ * of THAT layer (its siblings). Moving across sets would change nothing on screen. `null` for an
+ * unregistered type.
+ */
+function groupOf(layer: Layer): string | null {
+  const kind = getLayerSchema(layer.type)?.kind;
+  if (!kind) return null;
+  return kind === "content" ? "content" : `post:${layer.target ?? ""}`;
+}
+
+/**
+ * The kinds whose component reads a layer's `interactivity` (track mouse, momentum, spring,
+ * axes). The text layers and the distortion pass follow the pointer through their own
+ * `parallax` / strength settings instead and ignore it. A test reads the layer sources and
+ * fails when this list drifts from them.
+ */
+const POINTER_KINDS: ReadonlySet<string> = new Set(["noiseFill", "shape", "image", "gradient"]);
+
+/** Whether a layer of this kind reads its pointer settings, so the panel may offer them. */
+export function layerReadsPointer(type: string): boolean {
+  return POINTER_KINDS.has(type);
+}
+
+/**
+ * The presentation group of one setting in the properties panel ("Text", "Type", "Layout",
+ * "Motion", ...), or `null` for the default group. A map by kind and key, never part of a
+ * layer's schema or of the stored scene: grouping cannot change what is serialized or drawn.
+ */
+export function settingGroupOf(type: string, key: string): string | null {
+  return SETTING_GROUPS[type]?.[key] ?? null;
 }
 
 export type MoveResult = { ok: true; layers: Layer[] } | { ok: false; reason: string };

@@ -378,3 +378,62 @@ export const LAYER_SCHEMAS: readonly LayerSchemaDefinition[] = [
   vignetteSchema,
   grainSchema,
 ];
+
+// --- properties panel groups (presentation only)
+
+/**
+ * Which group of the properties panel each setting is shown in, by layer kind and setting key.
+ * A group is where a control sits in the panel and nothing else: it is not a field of any
+ * setting's schema, never serialized, never read by the generator's schema documents or by a
+ * renderer, so adding or moving one cannot change a stored scene or a pixel. A setting not
+ * listed falls in the default group (shown first, without a heading), so a new kind or a new
+ * setting needs no entry. Groups appear in the order their first setting appears in the schema.
+ */
+export const SETTING_GROUPS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  text: {
+    eyebrowText: "Text",
+    headlineText: "Text",
+    taglineText: "Text",
+    eyebrowFont: "Type",
+    bodyFont: "Type",
+    headlineWeight: "Type",
+    eyebrowSize: "Type",
+    headlineSize: "Type",
+    taglineSize: "Type",
+    color: "Type",
+    width: "Layout",
+    height: "Layout",
+    reveal: "Motion",
+    parallax: "Motion",
+  },
+  textBox: {
+    text: "Text",
+    font: "Type",
+    weight: "Type",
+    size: "Type",
+    lineHeight: "Type",
+    letterSpacing: "Type",
+    align: "Type",
+    color: "Type",
+    strokeColor: "Type",
+    strokeWidth: "Type",
+    position: "Layout",
+    anchor: "Layout",
+    width: "Layout",
+    rotation: "Layout",
+    opacity: "Layout",
+    reveal: "Motion",
+    parallax: "Motion",
+  },
+  shape: {
+    shape: "Shape",
+    size: "Shape",
+    aspect: "Shape",
+    radius: "Shape",
+    softness: "Shape",
+    position: "Layout",
+    color: "Look",
+    opacity: "Look",
+    wobble: "Motion",
+  },
+};
