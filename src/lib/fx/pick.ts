@@ -157,7 +157,7 @@ function newScratchCanvas(w: number, h: number): ScratchCanvas | null {
 /** The one scratch canvas, kept between reads: a text texture is rebuilt on every keystroke, and its size rarely changes. */
 let scratch: { w: number; h: number; context: ScratchContext } | null = null;
 
-/** Let go of the scratch canvas (about 2 MB for a lockup), for a caller that is done with picking. The next read makes a new one. */
+/** Let go of the scratch canvas (up to about 2 MB, for the tallest text box), for a caller that is done with picking. The next read makes a new one. */
 export function releaseScratch(): void {
   scratch = null;
 }
