@@ -295,16 +295,6 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   // each time the step down drops the last targeted effect.
   const [scoped, setScoped] = useState(false);
   if (groups.length > 0 && !scoped) setScoped(true);
-  useEffect(() => {
-    if (groups.length > 0) return;
-    // No group left: nothing keeps ranks or channels, put the objects back where they started.
-    for (const root of roots.current.values()) {
-      setChannel(root, 0);
-      root.traverse((o) => {
-        o.renderOrder = 0;
-      });
-    }
-  }, [groups.length]);
   const layerById = new Map(config.layers.map((l) => [l.id, l]));
   // The drawn content layers, for the probe: paired with their groups when a click asks, not here,
   // because the groups are set by their refs after this render.
@@ -390,6 +380,8 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
                 ))}
               </EffectComposer>
             )}
+            <ResetWhenUngrouped grouped={groups.length > 0} roots={roots} />
+            <RedrawOnChange token={config} />
           </Canvas>
         </WebGLErrorBoundary>
       ) : (
@@ -399,6 +391,47 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
       )}
     </div>
   );
+}
+
+/**
+ * When the last group goes, nothing keeps the channels and render orders the groups gave the
+ * content layers: put the objects back where they started. It lives inside the Canvas so it
+ * runs in the same commit as the group's unmount, in the same batch as RedrawOnChange.
+ */
+function ResetWhenUngrouped({ grouped, roots }: { grouped: boolean; roots: { current: Map<string, Object3D> } }) {
+  useEffect(() => {
+    if (grouped) return;
+    for (const root of roots.current.values()) {
+      setChannel(root, 0);
+      root.traverse((o) => {
+        o.renderOrder = 0;
+      });
+    }
+  }, [grouped, roots]);
+  return null;
+}
+
+/**
+ * A layer writes a changed setting (a uniform, a blend) onto its material from an effect, which
+ * runs after React has committed. A scene drawn on demand (reduced motion) is asked for a frame
+ * by the commit itself, and that frame can be drawn BEFORE the effects have run, leaving the old
+ * picture standing until something else asks for a frame.
+ *
+ * This asks again from an effect of its own, once per new `token` (the scene config, a new object
+ * for every edit, and nothing else). The frame it requests cannot be drawn before the layers'
+ * effects of the same commit, in whatever order they run: all passive effects of a commit run in one
+ * synchronous batch, and an animation frame callback never runs inside it. It cannot loop: it
+ * renders nothing, depends only on `token` and the stable `invalidate` function, and a requested
+ * frame does not change the config. With nothing changed no frame is requested (tested).
+ * A layer that changes itself from its own state (the image, when its file has loaded) asks for its
+ * own frame, as image.tsx does.
+ */
+function RedrawOnChange({ token }: { token: unknown }) {
+  const invalidate = useThree((state) => state.invalidate);
+  useEffect(() => {
+    invalidate();
+  }, [invalidate, token]);
+  return null;
 }
 
 function LayerHost({ layer, ctx }: { layer: Layer; ctx: LayerContext }) {

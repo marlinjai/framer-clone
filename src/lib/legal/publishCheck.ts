@@ -21,6 +21,7 @@ import type { ExpansionFailureKind } from '@/lib/components/expand';
 import { literalPageTree, type LiteralPageSource } from '@/lib/renderer/server/snapshotToComponentNode';
 import { LEGAL_KINDS, findLegalPage, type LegalKind, type LegalPageLike } from './legalPages';
 import { findPlaceholders } from './templates';
+import { fxTextWarning } from './fxTextCheck';
 import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { colorPartialProblem, findToken, referenceState, tokenUsage, type SiteTheme } from '@/lib/site/theme';
 
@@ -86,6 +87,8 @@ export interface PublishCheck {
    * hold, or to a colour whose value no longer parses. Absent on a check from before themes.
    */
   tokens?: ComponentIssue[];
+  /** FX scene boxes that draw text inside the scene but hold no HTML text. Absent on a check from before FX text was checked. */
+  fxText?: ComponentIssue[];
 }
 
 const FAILURE_COPY: Record<ExpansionFailureKind, string> = {
@@ -205,6 +208,13 @@ export function checkBeforePublish(
     }
   }
 
+  // Scene text is pixels: a box that holds no HTML text shows none of it without WebGL.
+  const fxText: ComponentIssue[] = [];
+  for (const page of pages) {
+    const message = fxTextWarning(trees.get(page.id)?.root);
+    if (message) fxText.push({ pageId: page.id, title: page.metadata.title, message });
+  }
+
   const tokens: ComponentIssue[] = [];
   if (theme) {
     // The expanded tree: a reference inside a component counts on every page that places it.
@@ -218,6 +228,7 @@ export function checkBeforePublish(
 
   return {
     tokens,
+    fxText,
     missingImpressum: hasBusinessData(business) && !findLegalPage(pages, 'impressum'),
     maps: mapsPrivacyCheck(pages, (id) => trees.get(id)?.root as NodeLike | null | undefined),
     placeholders,
@@ -233,6 +244,7 @@ export function hasPublishIssues(check: PublishCheck): boolean {
     (check.maps != null && check.maps.status !== 'named') ||
     check.placeholders.length > 0 ||
     check.components.length > 0 ||
-    (check.tokens?.length ?? 0) > 0
+    (check.tokens?.length ?? 0) > 0 ||
+    (check.fxText?.length ?? 0) > 0
   );
 }

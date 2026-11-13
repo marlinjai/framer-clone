@@ -12,6 +12,7 @@
  */
 
 import { getLayerSchema, listLayerSchemas } from "./registry";
+import { SETTING_GROUPS } from "./schemas";
 import type { Layer, ParamSchema, ParamsSchema, SceneConfig } from "./types";
 
 /** Defensive deep-clone for a `ParamSchema` entry. Vec2 has a tuple value. */
@@ -80,22 +81,70 @@ export function moveLayer(layers: Layer[], id: string, delta: number): Layer[] {
   return next;
 }
 
-/** Which half of the scene a layer is in: content layers draw, post effects change what was drawn. `null` for an unregistered type. */
-function groupOf(layer: Layer): "content" | "post" | null {
-  return getLayerSchema(layer.type)?.kind ?? null;
+/**
+ * The set of layers a layer moves among: content layers among content layers; effects that apply
+ * to the whole scene among themselves; effects that apply to one content layer among the effects
+ * of THAT layer (its siblings). Moving across sets would change nothing on screen. `null` for an
+ * unregistered type.
+ */
+function groupOf(layer: Layer): string | null {
+  const kind = getLayerSchema(layer.type)?.kind;
+  if (!kind) return null;
+  return kind === "content" ? "content" : `post:${layer.target ?? ""}`;
+}
+
+/**
+ * The kinds whose component reads a layer's `interactivity` (track mouse, momentum, spring,
+ * axes). The text layers and the distortion pass follow the pointer through their own
+ * `parallax` / strength settings instead and ignore it. A test reads the layer sources and
+ * fails when this list drifts from them.
+ */
+const POINTER_KINDS: ReadonlySet<string> = new Set(["noiseFill", "shape", "image", "gradient"]);
+
+/**
+ * What a layer of this kind does with its pointer BEFORE it has pointer settings of its own, as
+ * the values a first edit starts from (so changing one value never silently changes the rest):
+ *  - the noise field follows the pointer in a plain way of its own when it has none: a first-order
+ *    lerp, `mouse += (pointer - mouse) * 0.04` (layers/noiseFill.tsx). The engine's pointer
+ *    smoothing is a second-order spring, which at momentum 0 and spring 0.04 would overshoot and
+ *    wobble. Momentum 1 (damping 0.15) with spring 0.225 puts its dominant eigenvalue at the lerp's
+ *    0.96 with no overshoot: the same trajectory within 0.3% (pinned by a side-by-side test in
+ *    src/lib/fx/__tests__/interactivityReduce.test.tsx);
+ *  - shape, image and gradient stand still: track mouse 0, but with the soft spring and momentum
+ *    the gold preset uses, so raising Track mouse alone makes the layer move (the engine's
+ *    smoothing is driven by the spring: a spring of 0 never moves).
+ */
+export function pointerBaseOf(type: string): { trackMouse: number; momentum: number; spring: number; axes: "x" | "y" | "both" } {
+  if (type === "noiseFill") return { trackMouse: 1, momentum: 1, spring: 0.225, axes: "both" };
+  return { trackMouse: 0, momentum: 0.85, spring: 0.05, axes: "both" };
+}
+
+/** Whether a layer of this kind reads its pointer settings, so the panel may offer them. */
+export function layerReadsPointer(type: string): boolean {
+  return POINTER_KINDS.has(type);
+}
+
+/**
+ * The presentation group of one setting in the properties panel ("Text", "Type", "Layout",
+ * "Motion", ...), or `null` for the default group. A map by kind and key, never part of a
+ * layer's schema or of the stored scene: grouping cannot change what is serialized or drawn.
+ */
+export function settingGroupOf(type: string, key: string): string | null {
+  return SETTING_GROUPS[type]?.[key] ?? null;
 }
 
 export type MoveResult = { ok: true; layers: Layer[] } | { ok: false; reason: string };
 
 /**
- * Move a layer to a place WITHIN ITS GROUP. `toIndex` counts inside the layer's own
- * group (content layers among content layers, post effects among post effects), back
- * to front, so `0` is the back of its group and `size - 1` the front.
+ * Move a layer to a place WITHIN ITS GROUP. `toIndex` counts inside the layer's own group, back
+ * to front, so `0` is the back of its group and `size - 1` the front. A group is: the content
+ * layers among themselves, the scene's effects among themselves, or the effects of one content
+ * layer among themselves (see `groupOf`).
  *
- * Content and post layers are never moved across: where a post effect sits among the
- * content layers in the stored array changes nothing on screen (post effects run after
- * all content, in their own order), so allowing it would only mislead. The slots of
- * the other group stay exactly where they are in the array.
+ * A layer is never moved across groups: where an effect sits among the content layers in
+ * the stored array changes nothing on screen (effects run after all content, in their own
+ * order), and an effect of one layer has no place among the scene's effects, so allowing it
+ * would only mislead. The slots of the other groups stay exactly where they are in the array.
  *
  * Refused, with a reason a person can act on, when the layer is unknown, when `toIndex`
  * is outside the group or is where the layer already is.

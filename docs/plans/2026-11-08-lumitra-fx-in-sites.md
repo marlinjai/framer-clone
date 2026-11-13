@@ -177,11 +177,12 @@ Following the map embed and the 3D primitive: an ordinary `div` with a marker at
 
 ### Safety
 
-- The registry is not reachable from stored data. A stored scene can only name the 15 built-in layer types; unknown types
+- The registry is not reachable from stored data. A stored scene can only name the 16 built-in layer types (15 until the `textBox`
+  kind of the [FX layer plan](2026-11-13-fx-layers-in-layers-panel.md) landed on 2026-11-13); unknown types
   are dropped by the engine's loader. No author-supplied shader code exists, so the render gate stays intact.
 - `image` layers load only from the site image route (`/site-images/...`, the site's own uploads). Any other address is
   refused at parse time with a message, and again at render time.
-- `text` layers draw into a `CanvasTexture`; their string is length-clamped and is not HTML.
+- `text` and `textBox` layers draw into a `CanvasTexture`; their strings are length-clamped and are not HTML.
 - Flash safety: clamps on animated luminance parameters so no full-screen luminance change exceeds three per second, as
   the 3D plan requires for its light presets.
 

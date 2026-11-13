@@ -14,7 +14,6 @@ import {
   fxPresetOptions,
   fxSceneJson,
   importFxScene,
-  moveFxLayer,
   removeFxLayer,
   renameFxLayer,
   setFxBackground,
@@ -111,7 +110,7 @@ describe('each change', () => {
     const before = JSON.stringify(stored);
     expect(refused(setFxParam(stored, 'missing', 'x', 1))).toBe('That layer is no longer in the scene.');
     expect(refused(setFxParam(stored, layers(stored)[0].id, 'nope', 1))).toMatch(/no setting called "nope"/);
-    for (const edit of [removeFxLayer(stored, 'missing'), moveFxLayer(stored, 'missing', 1), toggleFxLayer(stored, 'missing'), renameFxLayer(stored, 'missing', 'x'), setFxLayerBlend(stored, 'missing', 'screen'), setFxLayerType(stored, 'missing', 'grain')]) {
+    for (const edit of [removeFxLayer(stored, 'missing'), toggleFxLayer(stored, 'missing'), renameFxLayer(stored, 'missing', 'x'), setFxLayerBlend(stored, 'missing', 'screen'), setFxLayerType(stored, 'missing', 'grain')]) {
       expect(refused(edit)).toBe('That layer is no longer in the scene.');
     }
     expect(JSON.stringify(stored)).toBe(before);
@@ -139,8 +138,6 @@ describe('each change', () => {
     const stored = start();
     const ids = layers(stored).map((l) => l.id);
     expect(layers(ok(removeFxLayer(stored, ids.at(-1)!)).stored).map((l) => l.id)).toEqual(ids.slice(0, -1));
-    expect(layers(ok(moveFxLayer(stored, ids.at(-1)!, -1)).stored).map((l) => l.id)).toEqual([...ids.slice(0, -2), ids.at(-1), ids.at(-2)]);
-    expect(layers(ok(moveFxLayer(stored, ids.at(-1)!, 1)).stored).map((l) => l.id)).toEqual(ids);
     const hidden = ok(toggleFxLayer(stored, ids.at(-1)!)).stored;
     expect(layer(hidden, ids.at(-1)!).visible).toBe(false);
     expect(layers(hidden).slice(0, -1)).toEqual(layers(stored).slice(0, -1));
@@ -177,7 +174,7 @@ describe('a change with consequences elsewhere in the scene', () => {
     const moved = layer(removed.stored, rays.id).params.sourceLayerId as string;
     expect(moved).not.toBe(source);
     expect(layers(removed.stored).some((l) => l.id === moved)).toBe(true);
-    expect(removed.notes).toEqual([expect.stringMatching(/read from a layer that is not in this scene/)]);
+    expect(removed.notes).toEqual([expect.stringMatching(/now reads from/)]);
     // Undo is the prop from before: nothing of the change is left in it.
     expect(layer(stored, rays.id).params.sourceLayerId).toBe(source);
   });
