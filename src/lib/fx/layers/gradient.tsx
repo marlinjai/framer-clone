@@ -42,6 +42,7 @@ interface GradientValues {
 
 interface GradientUniforms {
   [key: string]: THREE.IUniform<unknown>;
+  uPremultiply: THREE.IUniform<number>;
   uColorA: THREE.IUniform<THREE.Color>;
   uColorB: THREE.IUniform<THREE.Color>;
   uColorC: THREE.IUniform<THREE.Color>;
@@ -63,6 +64,7 @@ const GRADIENT_VERT = /* glsl */ `
 `;
 
 const GRADIENT_FRAG = /* glsl */ `
+  uniform float uPremultiply;
   precision highp float;
   uniform vec3 uColorA;
   uniform vec3 uColorB;
@@ -105,6 +107,8 @@ const GRADIENT_FRAG = /* glsl */ `
     // to the screen converted nothing. Into the composer's buffer this is the
     // identity, so a scene with a post pass is drawn exactly as before.
     #include <colorspace_fragment>
+    // Multiply blends premultiplied colour (see contentBlend): uPremultiply is 1 for it, 0 otherwise.
+    gl_FragColor.rgb *= mix(1.0, gl_FragColor.a, uPremultiply);
   }
 `;
 
@@ -116,6 +120,7 @@ function GradientLayerComponent({ layer, values, ctx }: LayerComponentProps) {
 
   const initialUniforms = useMemo<GradientUniforms>(
     () => ({
+      uPremultiply: { value: 0 },
       uColorA: { value: new THREE.Color(v.colorA) },
       uColorB: { value: new THREE.Color(v.colorB) },
       uColorC: { value: new THREE.Color(v.colorC) },

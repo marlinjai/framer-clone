@@ -3,8 +3,8 @@
 /**
  * Content-layer blend mapping (spec section 3 "Blend modes").
  *
- * Three.js fixed-function blending covers `normal` (NormalBlending),
- * `add` (AdditiveBlending), and `multiply` (MultiplyBlending) directly.
+ * Three.js fixed-function blending covers `normal` (NormalBlending) and
+ * `add` (AdditiveBlending) directly.
  *
  * `screen` we wire as CustomBlending with the textbook screen equation:
  *
@@ -32,17 +32,24 @@ import {
   AdditiveBlending,
   AddEquation,
   CustomBlending,
+  DstColorFactor,
   type Material,
-  MultiplyBlending,
   NormalBlending,
+  type ShaderMaterial,
   OneFactor,
   OneMinusDstColorFactor,
+  OneMinusSrcAlphaFactor,
   OneMinusSrcColorFactor,
+  ZeroFactor,
 } from "three";
 
 import type { BlendMode } from "../types";
 
 export function applyContentBlend(material: Material, mode: BlendMode): void {
+  // Multiply is drawn from premultiplied colour (see the case below), every other mode from plain
+  // colour: the layers' shaders multiply their colour by their alpha when this uniform is 1.
+  const premultiply = (material as Partial<ShaderMaterial>).uniforms?.uPremultiply;
+  if (premultiply) premultiply.value = mode === "multiply" ? 1 : 0;
   switch (mode) {
     case "normal":
       material.blending = NormalBlending;
@@ -51,7 +58,20 @@ export function applyContentBlend(material: Material, mode: BlendMode): void {
       material.blending = AdditiveBlending;
       return;
     case "multiply":
-      material.blending = MultiplyBlending;
+      // Colour = destination x source, and a pixel the layer does not cover leaves the destination
+      // alone. With the source premultiplied (the layers' shaders multiply their colour by their alpha
+      // when their `uPremultiply` uniform is 1, set above):
+      //   out = src * dst + dst * (1 - srcAlpha) = dst * (1 - a + a * colour)
+      // which is the colour mixed toward white by the alpha, times the destination. Written as custom
+      // blending because three.js 0.184 refuses `MultiplyBlending` unless the material is premultiplied
+      // and then draws with whatever function was set before it.
+      material.blending = CustomBlending;
+      material.blendEquation = AddEquation;
+      material.blendSrc = DstColorFactor;
+      material.blendDst = OneMinusSrcAlphaFactor;
+      material.blendEquationAlpha = AddEquation;
+      material.blendSrcAlpha = ZeroFactor;
+      material.blendDstAlpha = OneFactor; // the destination's alpha stays
       return;
     case "screen":
       material.blending = CustomBlending;

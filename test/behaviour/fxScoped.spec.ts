@@ -135,12 +135,14 @@ async function session(
 }
 
 /** A scene as the real engine draws it, held still (reduced motion, stopped clock). `touch` is a phone: the step down starts on. */
-async function draw(raw: Raw, options: { touch?: boolean; dev?: boolean } = {}): Promise<{ picture: PNG; notes: string[] }> {
+async function draw(raw: Raw, options: { touch?: boolean; dev?: boolean } = {}): Promise<{ picture: PNG; notes: string[]; consoleErrors: string[] }> {
   const context = await browser.newContext({ ...ORACLE_CONTEXT, ...(options.touch ? { isMobile: true, hasTouch: true } : {}) });
   contexts.push(context);
   const page: Page = await context.newPage();
   const problems: string[] = [];
+  const consoleErrors: string[] = [];
   page.on('pageerror', (error) => problems.push(error.message));
+  page.on('console', (message) => message.type() === 'error' && consoleErrors.push(message.text()));
   await page.addInitScript(STOP_THE_CLOCK);
   if (options.dev) await page.addInitScript(() => ((window as unknown as { __strict: boolean }).__strict = true));
   await serveStage(page, ORIGIN, { '/scoped.js': options.dev ? devBundle : bundle });
@@ -148,7 +150,7 @@ async function draw(raw: Raw, options: { touch?: boolean; dev?: boolean } = {}):
   const notes = await page.evaluate((config) => (window as unknown as { __mount: (scene: unknown) => string[] }).__mount(config), raw);
   const picture = await settledCanvas(page, '#stage canvas');
   expect(problems).toEqual([]);
-  return { picture, notes };
+  return { picture, notes, consoleErrors };
 }
 
 const px = (png: PNG, x: number, y: number): [number, number, number] => {
@@ -245,9 +247,8 @@ describe('effects that apply to one layer', () => {
   }, 120_000);
 
   it('a no-op effect on a layer with a screen or multiply blend leaves the picture as it was', async () => {
-    // The text lockup ignores its stored blend, so every row here draws it normally. The multiply row
-    // proves nothing about multiply: three.js 0.184 refuses MultiplyBlending without premultipliedAlpha
-    // and draws with the previous blend function (a known defect of the engine, tracked in ROADMAP.md).
+    // The text lockup ignores its stored blend, so every row here draws it normally, the multiply row
+    // included. Multiply itself is covered by the noise field below and by the colour test after it.
     for (const blend of ['screen', 'multiply', 'add']) {
       const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 't' });
       const plain = (await draw(scene([gradient(), text({ blend })]))).picture;
@@ -268,16 +269,54 @@ describe('effects that apply to one layer', () => {
       const plain = (await draw(scene([gradient(), noise(blend)]))).picture;
       const scoped = (await draw(scene([gradient(), noise(blend), noop]))).picture;
       expect.soft(difference(scoped, plain).share, blend).toBeLessThan(0.002);
-      // Multiply is skipped from here on, not covered: three.js 0.184 refuses MultiplyBlending without
-      // premultipliedAlpha and draws with the previous blend function, so there is no multiply picture
-      // to control, and the equality above says little for that row. Tracked in ROADMAP.md.
-      if (blend === 'multiply') continue;
       const normal = (await draw(scene([gradient(), noise('normal')]))).picture;
       expect.soft(difference(plain, normal).differing, `${blend} differs from normal`).toBeGreaterThan(1000);
       const real = (await draw(scene([gradient(), noise(blend), layer('px', 'pixelate', { granularity: 24 }, { target: 'n' })]))).picture;
       expect.soft(difference(real, plain).differing, `${blend} with a real effect`).toBeGreaterThan(100);
     }
   }, 240_000);
+
+  describe('multiply', () => {
+    const background = '#ff8040';
+    const flat = (colour: string, opacity = 1, extra: Raw = {}) =>
+      layer('f', 'gradient', { colorA: colour, colorB: colour, colorC: colour, colorD: colour, opacity }, { blend: 'multiply', ...extra });
+    const withBackground = (layers: Raw[]): Raw => ({ ...scene(layers), background });
+    const middle = (png: PNG) => px(png, WIDTH / 2, HEIGHT / 2);
+
+    it('a layer of a known colour over a known background gives the product, per channel, without a console error', async () => {
+      const result = await draw(withBackground([flat('#80c0ff')]));
+      const [r, g, b] = middle(result.picture);
+      // 0xff * 0x80 / 255, 0x80 * 0xc0 / 255, 0x40 * 0xff / 255 (the framebuffer holds encoded colour, so the product is of encoded values)
+      expect.soft(Math.abs(r - 128), `red ${r}`).toBeLessThanOrEqual(3);
+      expect.soft(Math.abs(g - 96), `green ${g}`).toBeLessThanOrEqual(3);
+      expect.soft(Math.abs(b - 64), `blue ${b}`).toBeLessThanOrEqual(3);
+      expect(result.consoleErrors.filter((message) => message.includes('MultiplyBlending')), 'three.js refuses the blend').toEqual([]);
+    }, 120_000);
+
+    it('a layer that is not drawn leaves the background as it is, and a half-drawn one is half way to the product', async () => {
+      const empty = (await draw(withBackground([]))).picture;
+      const hidden = (await draw(withBackground([flat('#000000', 0)]))).picture;
+      expect(difference(hidden, empty).differing, 'opacity 0, black').toBe(0);
+      const half = middle((await draw(withBackground([flat('#000000', 0.5)]))).picture);
+      const bg = middle(empty);
+      // Black at half alpha: destination x (1 - 0.5 + 0.5 x 0) = half the background.
+      expect.soft(Math.abs(half[0] - bg[0] / 2), `red ${half[0]} of ${bg[0]}`).toBeLessThanOrEqual(3);
+      expect.soft(Math.abs(half[1] - bg[1] / 2), `green ${half[1]} of ${bg[1]}`).toBeLessThanOrEqual(3);
+    }, 120_000);
+
+    it('a scoped no-op effect on a multiply layer leaves the same product, and a real one changes it', async () => {
+      const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 'f' });
+      const plain = (await draw(withBackground([flat('#80c0ff')]))).picture;
+      const scoped = (await draw(withBackground([flat('#80c0ff'), noop]))).picture;
+      expect(difference(scoped, plain).share).toBeLessThan(0.002);
+      const [r, g, b] = middle(scoped);
+      expect.soft(Math.abs(r - 128), `red ${r}`).toBeLessThanOrEqual(3);
+      expect.soft(Math.abs(g - 96), `green ${g}`).toBeLessThanOrEqual(3);
+      expect.soft(Math.abs(b - 64), `blue ${b}`).toBeLessThanOrEqual(3);
+      const real = (await draw(withBackground([flat('#80c0ff'), layer('vg2', 'vignette', { darkness: 1, offset: 0 }, { target: 'f' })]))).picture;
+      expect(difference(real, plain).differing, 'a real effect').toBeGreaterThan(1000);
+    }, 180_000);
+  });
 
   it('a blend changed in a mounted scene drawn on demand (reduced motion) reaches the picture', async () => {
     const noise = (blend: string) => layer('n', 'noiseFill', { intensity: 0.8 }, { blend });

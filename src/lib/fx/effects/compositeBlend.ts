@@ -10,14 +10,12 @@
  * a frame behind the layer (a blend applied from an effect, after the first frame, was).
  *
  * Also changes what a scoped text lockup or text box looks like when its stored blend is add,
- * screen or overlay: they ignore it, and so does the group now, in every frame. (Multiply is
- * inert for every layer in three.js 0.184, which refuses it without `premultipliedAlpha`; the
- * copy keeps that equally inert.)
+ * screen, overlay or multiply: they ignore it, and so does the group now, in every frame.
  *
  * RENDER-FREE: three.js types only, no React.
  */
 
-import { CustomBlending, MultiplyBlending, type Material, type ShaderMaterial } from "three";
+import { CustomBlending, DstColorFactor, type Material, type ShaderMaterial } from "three";
 
 /** `uMode` of the composite shader: how a pixel with no alpha must behave under the blend. */
 export const COMPOSITE_MODE = { alpha: 0, ignoresAlpha: 1, multiply: 2 } as const;
@@ -25,7 +23,8 @@ export const COMPOSITE_MODE = { alpha: 0, ignoresAlpha: 1, multiply: 2 } as cons
 /**
  * Copy `from`'s blend state onto `to` and return the shader mode that goes with it:
  * normal and add weigh the colour by alpha in the blend state itself, screen and
- * overlay (custom blending) do not, multiply leaves the picture alone where nothing is drawn.
+ * overlay (custom blending) do not, multiply is drawn from premultiplied colour (the quad
+ * premultiplies after the colour space conversion, as the layer's own shader does).
  */
 export function copyBlendState(from: Material, to: ShaderMaterial): number {
   // Assumes what every content layer's material is: `transparent`, so three.js draws it with the blend
@@ -43,6 +42,7 @@ export function copyBlendState(from: Material, to: ShaderMaterial): number {
   to.blendAlpha = from.blendAlpha;
   // No `needsUpdate`: this only selects blend factors when drawing; the quad's shader has no premultiplied chunk to recompile.
   to.premultipliedAlpha = from.premultipliedAlpha;
-  if (blending === MultiplyBlending) return COMPOSITE_MODE.multiply;
-  return blending === CustomBlending ? COMPOSITE_MODE.ignoresAlpha : COMPOSITE_MODE.alpha;
+  if (blending !== CustomBlending) return COMPOSITE_MODE.alpha;
+  // The layers' multiply is custom blending with the destination colour as the source factor.
+  return from.blendSrc === DstColorFactor ? COMPOSITE_MODE.multiply : COMPOSITE_MODE.ignoresAlpha;
 }
