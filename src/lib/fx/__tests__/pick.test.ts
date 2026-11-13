@@ -472,7 +472,26 @@ describe('an image', () => {
     expect(pick([image('img', 0, 1.5, 0.3)], 0, 0)).toBe('img');
   });
 
-  it('under cover a plane that covers the frame is never picked', () => {
+  it('under cover a click just off a small plane misses, just inside it hits', () => {
+    // The plane (scale 0.3: 7.8 by 4.8 world units at z -2.6) reaches ndc about 0.688 across and 0.677 up.
+    const img = image('img', 0, 1.5, 0.3);
+    expect(pick([img], 0.67, 0)).toBe('img');
+    expect(pick([img], 0.7, 0)).toBeNull();
+    expect(pick([img], 0, 0.66)).toBe('img');
+    expect(pick([img], 0, 0.7)).toBeNull();
+  });
+
+  it('under cover the outline of a small image is its whole plane', () => {
+    const rect = createPicker(probeOf([image('img', 0, 1.5, 0.3)])).boundsOf('img', 800, 500)!;
+    const halfHeight = worldHalfHeight(-2.6);
+    expect(rect.width).toBeCloseTo(((7.8 / (halfHeight * ASPECT * 2)) * 800), 0);
+    expect(rect.height).toBeCloseTo(((4.8 / (halfHeight * 2)) * 500), 0);
+    expect(rect.left + rect.width / 2).toBeCloseTo(400, 0);
+    expect(rect.top + rect.height / 2).toBeCloseTo(250, 0);
+  });
+
+  it('under cover a plane that covers the frame is never picked, and has no outline', () => {
+    expect(createPicker(probeOf([image('img', 0, 1.5, 1)])).boundsOf('img', 800, 500)).toBeNull();
     expect(pick([image('img', 0, 1.5, 1)], 0, 0)).toBeNull();
   });
 

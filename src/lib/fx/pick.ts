@@ -17,7 +17,9 @@
  *    the text rectangle (`textBox`) stands in.
  *  - `shape`: the extent of its shape (the quad it is drawn on is 26 by 16 and is no target),
  *    including the pointer's pull on it.
- *  - `image`: under `contain`, the fitted picture. `cover` fills the frame.
+ *  - `image`: under `contain`, the fitted picture; under `cover`, its whole plane (the plane is
+ *    26 by 16 times the image's scale, so a small cover image is a bounded picture, and one whose
+ *    plane covers the frame, as at the default scale, is unbounded: see below).
  * A layer whose content covers the visible frame on both axes is unbounded and never
  * picked, as `noiseFill` and `gradient` (they fill the frame by nature) are never picked. A click
  * on any of these falls through to the box.
