@@ -36,10 +36,9 @@ import {
   type Texture,
 } from "three";
 
-import { applyContentBlend } from "../layers/contentBlend";
+import { copyBlendState } from "./compositeBlend";
 import type { PipelineGroup } from "../pipeline";
 import { textureSize } from "../textureSize";
-import type { BlendMode } from "../types";
 
 /** Groups render after every layer has animated, before the main picture. */
 export const GROUP_PRIORITY = 1;
@@ -75,11 +74,6 @@ const QUAD_FRAG = /* glsl */ `
     #include <colorspace_fragment>
   }
 `;
-
-function modeOf(blend: BlendMode): number {
-  if (blend === "normal" || blend === "add") return 0;
-  return blend === "multiply" ? 2 : 1;
-}
 
 function meshesOf(root: Object3D): Mesh[] {
   const out: Mesh[] = [];
@@ -206,11 +200,14 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
       }),
     [],
   );
+  // A change of the target's blend reaches its material in that layer's own effect, after this
+  // render. A scene drawn on demand (reduced motion) can draw the commit's frame before that effect
+  // has run, so ask for another from an effect: it is drawn after the batch of this commit's effects.
+  // (The scene's own RedrawOnChange does the same for every edit; this one keeps the group correct on its own.)
+  const invalidate = useThree((state) => state.invalidate);
   useEffect(() => {
-    applyContentBlend(material, group.target.blend);
-    material.uniforms.uMode.value = modeOf(group.target.blend);
-    material.needsUpdate = true;
-  }, [material, group.target.blend]);
+    invalidate();
+  }, [invalidate, group.target.blend]);
   useEffect(() => () => material.dispose(), [material]);
   const channel = group.channel;
   const targetId = group.target.id;
@@ -249,6 +246,9 @@ export function ScopedGroup({ group, roots, order, renderLayer }: ScopedGroupPro
 
     // Draw the layer as plain colour plus alpha: its own blend mode is applied
     // when the result is composited, and multiply against an empty buffer is black.
+    const first = meshesOf(root)[0];
+    // The quad draws with the blend its layer draws with, read before it is switched off below.
+    if (first) material.uniforms.uMode.value = copyBlendState(materialsOf(first)[0], material);
     const saved: Array<[Material, Blending]> = [];
     for (const mesh of meshesOf(root)) {
       for (const m of materialsOf(mesh)) {
