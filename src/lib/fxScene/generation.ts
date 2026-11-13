@@ -51,9 +51,15 @@ export type GeneratedFx =
     }
   | { ok: false; message: string };
 
-/** The text settings of a text layer: sample words in a preset, which a page must replace or do without. */
-const TEXT_LAYER_TYPE = 'text';
-const TEXT_KEYS = ['eyebrowText', 'headlineText', 'taglineText'] as const;
+/**
+ * The text settings of each layer kind that draws words: sample words in a preset, which a page must
+ * replace or do without. The text lockup has three lines; the free-positioned text box has one text.
+ */
+const TEXT_SETTINGS: Readonly<Record<string, readonly string[]>> = {
+  text: ['eyebrowText', 'headlineText', 'taglineText'],
+  textBox: ['text'],
+};
+const TEXT_KEYS = TEXT_SETTINGS.text;
 
 const FORM_KEYS = new Set(['preset', 'start', 'calm', 'background', 'layers']);
 const LAYER_KEYS = new Set(['id', 'type', 'visible', 'params']);
@@ -207,7 +213,7 @@ function fromPreset(value: Record<string, unknown> & { preset: string }): Genera
         continue;
       }
       apply(edit, `Layer "${layer.id}", ${key}`);
-      if (layer.type === TEXT_LAYER_TYPE && (TEXT_KEYS as readonly string[]).includes(key)) {
+      if (TEXT_SETTINGS[layer.type]?.includes(key)) {
         textGiven.set(layer.id, (textGiven.get(layer.id) ?? new Set()).add(key));
       }
     }
@@ -217,16 +223,17 @@ function fromPreset(value: Record<string, unknown> & { preset: string }): Genera
   // someone else's name: the text the entry did not give is emptied, and a text layer that was given no
   // text at all is hidden, with a note, unless the entry hid it itself.
   for (const layer of presetLayers.values()) {
-    if (layer.type !== TEXT_LAYER_TYPE || !layer.visible || textSettled.has(layer.id)) continue;
+    const textKeys = TEXT_SETTINGS[layer.type];
+    if (!textKeys || !layer.visible || textSettled.has(layer.id)) continue;
     const given = textGiven.get(layer.id);
     if (!given) {
       apply(toggleFxLayer(stored, layer.id), `Layer "${layer.id}"`);
       note(
-        `Layer "${layer.id}" of the preset "${value.preset}" draws text, and its sample text is not this page's: it was hidden. Give it ${TEXT_KEYS.join(', ')} in its params, or set "visible": false yourself.`,
+        `Layer "${layer.id}" of the preset "${value.preset}" draws text, and its sample text is not this page's: it was hidden. Give it ${textKeys.join(', ')} in its params, or set "visible": false yourself.`,
       );
       continue;
     }
-    for (const key of TEXT_KEYS) {
+    for (const key of textKeys) {
       if (!given.has(key) && layer.params[key]) apply(setFxParam(stored, layer.id, key, ''), `Layer "${layer.id}", ${key}`);
     }
   }
@@ -252,7 +259,7 @@ function settingDoc(key: string, schema: ParamSchema, layer: Layer): string | nu
       if (key === FX_SOURCE_LAYER_PARAM) return `${key} a layer id of this preset (${schema.value})`;
       // The fonts a text layer can draw with are the engine's own short list of system fonts, among
       // them typefaces the page generator is told not to use: the preset's font stays, untaught.
-      if (/Font$/.test(key)) return null;
+      if (/Font$/.test(key) || (layer.type === 'textBox' && key === 'font')) return null;
       return `${key} one of ${schema.options.map((o) => `"${o}"`).join(', ')} ("${schema.value}")`;
     case 'vec2':
       return `${key} [x, y]${schema.min && schema.max ? `, each ${round(schema.min[0])} to ${round(schema.max[0])}` : ''} ([${schema.value.map(round).join(', ')}])`;
@@ -296,6 +303,9 @@ export function fxGenerationDocs(): string {
     `- A text layer draws its own words. Give it ${TEXT_KEYS.join(', ')} (leave one out to leave it empty), or set`,
     '  "visible": false; a text layer given no text is hidden. Text for people who cannot see the scene belongs in',
     '  the children, not in the scene.',
+    '- A "textBox" layer draws free-positioned words (its "text", where "position" puts its "anchor" point, "width" the',
+    '  share of the scene it wraps in). It is decorative only: pixels no search engine or screen reader reads, never',
+    '  the page\'s headline or any text a visitor needs. The page\'s real text goes in the children.',
     '',
     'Presets (each layer: id, kind, then its settings with the range and, in brackets, the preset\'s value):',
   ];
