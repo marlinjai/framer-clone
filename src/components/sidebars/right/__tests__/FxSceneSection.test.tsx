@@ -777,6 +777,15 @@ describe('setting groups, the text lines and the pointer', () => {
     expect(history.canUndo).toBe(false);
   });
 
+  it('a shape layer groups its settings as Form, Layout, Look and Motion', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const shape = add(box, 'shape');
+    const groups = within(settings(shape.name)).getAllByRole('group').map((g) => g.getAttribute('aria-label'));
+    expect(groups).toEqual(expect.arrayContaining(['Form group', 'Layout group', 'Look group', 'Motion group', 'Pointer group']));
+    expect(within(within(settings(shape.name)).getByRole('group', { name: 'Form group' })).getByLabelText('Shape')).toBeTruthy();
+  });
+
   it('Enter with a text layer picked focuses its headline, not while typing; it does nothing for other kinds', () => {
     const { box } = setup();
     render(<FxSceneSection component={box} />);

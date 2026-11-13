@@ -76,8 +76,9 @@ const GroupRow = observer(
 
 /**
  * The row being dragged, shared by every row of every box (a drag is one gesture at a time). A row
- * accepts a drop only from the same group of the same box: a layer never leaves its group by
- * dragging, as it never does by the keys or the menu. These rows use the browser's own drag and
+ * of the same group accepts a drop and reorders; a row of another group of the same box accepts it
+ * only to refuse it with its reason (a red outline while hovering, a notice on drop): a layer never
+ * leaves its group by dragging, as it never does by the keys or the menu. These rows use the browser's own drag and
  * drop (a layer is not a node, so the node tree's pointer drag never sees them).
  */
 let dragging: { boxId: string; layerId: string; name: string; groupKey: string; groupLabel: string } | null = null;

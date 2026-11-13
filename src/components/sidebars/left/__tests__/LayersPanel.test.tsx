@@ -702,10 +702,29 @@ describe('the rows of an FX scene box', () => {
       await scope('bloom', 'gradient-bg');
       const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
       drag(rowOf('Grain'), rowOf('Noise Field'), 'above'); // effect onto a content row
+      expect(store.editorUI.fxLayerNotice).toMatchObject({ problem: true, text: expect.stringMatching(/Grain stays among the scene's effects: it cannot be moved into the layers that draw/) });
+      expect(store.editorUI.editorNotice).toMatchObject({ kind: 'refused', message: expect.stringMatching(/Grain stays among the scene's effects/) });
       drag(rowOf('Noise Field'), rowOf('Grain'), 'above'); // content onto an effect row
+      expect(store.editorUI.fxLayerNotice?.text).toMatch(/Noise Field stays among the layers that draw: it cannot be moved into the scene's effects/);
       drag(rowOf('Grain'), rowOf('Bloom'), 'above'); // scene effect into the nest of Gradient
       expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
       expect(store.editorUI.fxLayerNotice).toMatchObject({ problem: true, text: expect.stringMatching(/Grain stays among the scene's effects: it cannot be moved into the effects of Gradient/) });
+    });
+
+    it('drag: another group\'s row is marked refused while hovering, and a valid drop afterwards clears the banner', () => {
+      render(<LayersPanel />);
+      const dataTransfer = transfer();
+      fireEvent.dragStart(rowOf('Grain'), { dataTransfer });
+      const over = createEvent.dragOver(rowOf('Noise Field'), { dataTransfer });
+      fireEvent(rowOf('Noise Field'), over);
+      expect(rowOf('Noise Field').getAttribute('data-fx-drop')).toBe('refused');
+      expect(over.defaultPrevented).toBe(true);
+      fireEvent.dragEnd(rowOf('Grain'), { dataTransfer });
+      drag(rowOf('Grain'), rowOf('Noise Field'), 'above');
+      expect(store.editorUI.editorNotice?.kind).toBe('refused');
+      drag(rowOf('Grain'), rowOf('Bloom'), 'below'); // a valid reorder inside the Effects group
+      expect(store.editorUI.fxLayerNotice?.problem).toBe(false);
+      expect(store.editorUI.editorNotice).toBeUndefined();
     });
 
     it('drag: a nested effect reorders among its siblings only', async () => {
