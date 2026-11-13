@@ -43,6 +43,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState, type Reac
 import type { Object3D } from "three";
 
 import { planPipeline } from "./pipeline";
+import { MAIN_PRIORITY, MainRender, ScopedGroup, setChannel } from "./effects/ScopedGroup";
 import { getLayerDefinition } from "./registry";
 import { FrameRateMonitor } from "./FrameRateMonitor";
 import type {
@@ -245,11 +246,17 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
 
   // What to draw: visible layers, minus the heavy ones after the step down,
   // minus post passes whose source layer is not drawn (see ./pipeline).
-  const { content: contentLayers, post: postLayers, postReady } = planPipeline(
+  const { content: contentLayers, post: postLayers, postReady, groups } = planPipeline(
     config.layers,
     perfLow,
     (layerId) => objects[layerId] != null,
   );
+
+  // Content layers by id for the groups (only read when `groups` is not empty).
+  const roots = useRef(new Map<string, Object3D>());
+  const channelOf = new Map(groups.map((g) => [g.target.id, g.channel]));
+  const mainComposer = postReady && postLayers.length > 0;
+  const layerById = new Map(config.layers.map((l) => [l.id, l]));
 
   const dprClamp = perfLow ? ([1, 1] as [number, number]) : config.dpr;
 
@@ -293,11 +300,30 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
             {!perfLow && <FrameRateMonitor onDecline={() => setPerfLow(true)} />}
             {onFirstFrame && <FirstFrame onFirstFrame={onFirstFrame} />}
             <color attach="background" args={[config.background]} />
-            {contentLayers.map((layer) => (
-              <LayerHost key={layer.id} layer={layer} ctx={ctx} />
+            {contentLayers.map((layer) =>
+              groups.length === 0 ? (
+                <LayerHost key={layer.id} layer={layer} ctx={ctx} />
+              ) : (
+                <ScopedRoot key={layer.id} layer={layer} ctx={ctx} roots={roots} channel={channelOf.get(layer.id)} />
+              ),
+            )}
+            {/* Only when the scene has targeted effects: each group draws itself and its
+                effects in its own composer, and the main picture is drawn after them. */}
+            {groups.map((group) => (
+              <ScopedGroup
+                key={group.target.id}
+                group={group}
+                roots={roots}
+                order={contentLayers.map((l) => l.id)}
+                renderLayer={(id) => {
+                  const layer = layerById.get(id);
+                  return layer ? <LayerHost layer={layer} ctx={ctx} /> : null;
+                }}
+              />
             ))}
-            {postReady && postLayers.length > 0 && (
-              <EffectComposer multisampling={0}>
+            {groups.length > 0 && !mainComposer && <MainRender />}
+            {mainComposer && (
+              <EffectComposer multisampling={0} renderPriority={groups.length > 0 ? MAIN_PRIORITY : undefined}>
                 {postLayers.map((layer) => (
                   <LayerHost key={layer.id} layer={layer} ctx={ctx} />
                 ))}
@@ -320,4 +346,36 @@ function LayerHost({ layer, ctx }: { layer: Layer; ctx: LayerContext }) {
   const values = extractValues(layer.params);
   const Component = def.Component;
   return <Component layer={layer} values={values} ctx={ctx} />;
+}
+
+/**
+ * A content layer of a scene that has targeted effects: held in a group so its
+ * object (and everything under it) can be moved to the group's channel, and
+ * given a render order. The group only exists in scenes with targeted effects.
+ */
+function ScopedRoot({
+  layer,
+  ctx,
+  roots,
+  channel,
+}: {
+  layer: Layer;
+  ctx: LayerContext;
+  roots: { current: Map<string, Object3D> };
+  channel: number | undefined;
+}) {
+  return (
+    <group
+      ref={(g) => {
+        if (!g) {
+          roots.current.delete(layer.id);
+          return;
+        }
+        roots.current.set(layer.id, g);
+        setChannel(g, channel ?? 0);
+      }}
+    >
+      <LayerHost layer={layer} ctx={ctx} />
+    </group>
+  );
 }
