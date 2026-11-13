@@ -56,9 +56,11 @@ interface Draft {
   type: string;
   title: string;
   json: string;
+  /** The kind was changed in the form: the stored item is replaced by a new one of that kind, so it carries nothing over. */
+  kindEdited: boolean;
 }
 
-const BLANK: Draft = { kind: 'meta', name: '', property: '', content: '', rel: 'alternate', href: '', hreflang: '', type: '', title: '', json: '' };
+const BLANK: Draft = { kind: 'meta', name: '', property: '', content: '', rel: 'alternate', href: '', hreflang: '', type: '', title: '', json: '', kindEdited: false };
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
@@ -78,6 +80,7 @@ function draftOf(stored: StoredHeadItem | null): Draft {
     type: text(stored.type),
     title: text(stored.title),
     json: data && typeof data === 'object' ? JSON.stringify(data, null, 2) : '',
+    kindEdited: false,
   };
 }
 
@@ -97,7 +100,7 @@ const MODELED: Record<string, ReadonlySet<string>> = {
  * user changes the field they belong to (for the link's language and type, its rel).
  */
 function carriedFrom(base: StoredHeadItem | null, d: Draft, stored: StoredHeadItem): StoredHeadItem {
-  if (!base || base.kind !== d.kind) return stored;
+  if (!base || base.kind !== d.kind || d.kindEdited) return stored;
   const modeled = MODELED[d.kind];
   const out: StoredHeadItem = { ...stored };
   for (const [key, value] of Object.entries(base)) {
@@ -107,7 +110,8 @@ function carriedFrom(base: StoredHeadItem | null, d: Draft, stored: StoredHeadIt
       continue;
     }
     if (!modeled?.has(key)) out[key] = value;
-    else if ((key === 'hreflang' || key === 'type') && d.rel === base.rel) out[key] = value;
+    // Only while the fields are hidden (the relation is not alternate) and the relation is the stored one.
+    else if ((key === 'hreflang' || key === 'type') && d.rel !== 'alternate' && d.rel === base.rel) out[key] = value;
     else if (typeof value !== 'string') out[key] = value;
   }
   return out;
@@ -118,7 +122,13 @@ function candidateOf(d: Draft, base: StoredHeadItem | null): Candidate {
   if (d.kind === 'jsonld') {
     if (d.json.trim() === '') return { ok: false, message: 'Paste the structured data.' };
     const read = parseJsonLdInput(d.json);
-    return read.ok ? { ok: true, items: read.items.map((data) => ({ kind: 'jsonld', data })) } : { ok: false, message: read.message };
+    if (!read.ok) return { ok: false, message: read.message };
+    // The keys the stored item holds besides its data stay with it, as for the other kinds. A pasted list
+    // that splits into several items gives them to the first only.
+    const extras = base && base.kind === 'jsonld' && !d.kindEdited ? Object.fromEntries(Object.entries(base).filter(([k]) => k !== 'kind' && k !== 'data')) : {};
+    const items = read.items.map((data, index) => ({ ...(index === 0 ? extras : {}), kind: 'jsonld', data }));
+    const refused = items.length === 1 ? parseHeadItem(items[0]) : null;
+    return refused && !refused.ok ? { ok: false, message: refused.refusal.message } : { ok: true, items };
   }
   const shown: StoredHeadItem =
     d.kind === 'meta'
@@ -187,7 +197,7 @@ function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommi
     // What was typed, not what was stored: the content is the one field meta and property share.
     const carried = changeHeadKind({ kind: draft.kind, content: draft.content }, kind);
     setTouched(true);
-    setDraft({ ...BLANK, kind, content: text(carried.content) });
+    setDraft({ ...BLANK, kind, content: text(carried.content), kindEdited: true });
   };
   // Nothing is written for a row the user has not changed: what the form shows is not all the stored item holds.
   const dirty = touched && !(candidate.ok && value && candidate.items.length === 1 && same(candidate.items[0], value));

@@ -204,6 +204,46 @@ describe('backtrack and revise', () => {
     expect((write.mock.calls[0] as unknown as [unknown[]])[0]).toEqual([{ kind: 'link', rel: 'alternate', href: 'https://example.com/en', hreflang: 'en' }]);
   });
 
+  it('lets a visible alternate link\'s language be cleared for a feed type, and the type for none', () => {
+    const lang = [{ kind: 'link', rel: 'alternate', href: '/en', hreflang: 'en' }];
+    const write = vi.fn(() => ({ ok: true as const, dropped: 0 }));
+    const { unmount } = render(<HeadItemsEditor items={lang} cap={20} write={write} home="site" />);
+    let row = within(screen.getByTestId('head-row'));
+    fireEvent.change(row.getByLabelText('Or feed type'), { target: { value: 'application/rss+xml' } });
+    fireEvent.blur(row.getByLabelText('Or feed type'));
+    expect(write).toHaveBeenCalledTimes(1);
+    expect((write.mock.calls[0] as unknown as [unknown[]])[0]).toEqual([{ kind: 'link', rel: 'alternate', href: '/en', type: 'application/rss+xml' }]);
+    unmount();
+    write.mockClear();
+    render(<HeadItemsEditor items={[{ kind: 'link', rel: 'alternate', href: '/feed', type: 'application/rss+xml' }]} cap={20} write={write} home="site" />);
+    row = within(screen.getByTestId('head-row'));
+    fireEvent.change(row.getByLabelText('Or feed type'), { target: { value: '' } });
+    fireEvent.change(row.getByLabelText('Language'), { target: { value: 'de' } });
+    fireEvent.blur(row.getByLabelText('Language'));
+    expect((write.mock.calls[0] as unknown as [unknown[]])[0]).toEqual([{ kind: 'link', rel: 'alternate', href: '/feed', hreflang: 'de' }]);
+  });
+
+  it('keeps the unknown keys of a JSON-LD row when its data is edited, and carries nothing into a new kind', () => {
+    const data = { '@context': 'https://schema.org', '@type': 'Organization', name: 'A' };
+    const write = vi.fn(() => ({ ok: true as const, dropped: 0 }));
+    render(<HeadItemsEditor items={[{ kind: 'jsonld', data, note: 'older write' }]} cap={20} write={write} home="site" />);
+    let row = within(screen.getByTestId('head-row'));
+    fireEvent.change(row.getByLabelText('JSON-LD'), { target: { value: JSON.stringify({ ...data, name: 'B' }) } });
+    fireEvent.blur(row.getByLabelText('JSON-LD'));
+    expect(write).not.toHaveBeenCalled();
+    expect(row.getByTestId('head-message').textContent).toContain('"note"');
+    cleanup();
+    // meta -> link -> meta again is a new item: the old item's unknown key does not come back.
+    render(<HeadItemsEditor items={[{ kind: 'meta', name: 'author', content: 'a', x: 1 }]} cap={20} write={write} home="site" />);
+    row = within(screen.getByTestId('head-row'));
+    fireEvent.change(row.getByLabelText('Kind'), { target: { value: 'link' } });
+    fireEvent.change(row.getByLabelText('Kind'), { target: { value: 'meta' } });
+    fireEvent.change(row.getByLabelText('Name'), { target: { value: 'rating' } });
+    fireEvent.change(row.getByLabelText('Content'), { target: { value: 'general' } });
+    fireEvent.blur(row.getByLabelText('Content'));
+    expect((write.mock.calls[0] as unknown as [unknown[]])[0]).toEqual([{ kind: 'meta', name: 'rating', content: 'general' }]);
+  });
+
   it('each add, edit and delete is one undo step, for the site and for a page', () => {
     site();
     fireEvent.change(newForm().getByLabelText('Name'), { target: { value: 'author' } });
