@@ -23,6 +23,7 @@ import type {
   LayerDefinition,
 } from "../types";
 import { useWindowPointer } from "../interactivity";
+import { applyContentBlend, withPremultiplyUniform } from "./contentBlend";
 import { textSchema } from "../schemas";
 
 interface TextValues {
@@ -162,7 +163,15 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     >
       <planeGeometry args={[v.width, v.height]} />
       <meshBasicMaterial
-        ref={matRef}
+        // The blend is applied here, from the ref callback: React calls it again on every render, so a later
+        // change of `blend` is applied too, and the first frame already has it.
+        ref={(m) => {
+          matRef.current = m;
+          if (m) {
+            withPremultiplyUniform(m);
+            applyContentBlend(m, layer.blend);
+          }
+        }}
         map={tex}
         transparent
         opacity={0}

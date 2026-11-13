@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
 import { useWindowPointer } from "../interactivity";
+import { applyContentBlend, withPremultiplyUniform } from "./contentBlend";
 import { textBoxSchema, TEXT_BOX_ANCHORS } from "../schemas";
 import type { LayerComponentProps, LayerDefinition } from "../types";
 import { fontStack } from "./text";
@@ -379,7 +380,15 @@ function TextBoxLayerComponent({ layer, values, ctx }: LayerComponentProps) {
         >
           <planeGeometry args={[built.planeWidth, built.planeHeight]} />
           <meshBasicMaterial
-            ref={matRef}
+            // The blend is applied here, from the ref callback: React calls it again on every render, so a later
+            // change of `blend` is applied too, and the first frame already has it.
+            ref={(m) => {
+              matRef.current = m;
+              if (m) {
+                withPremultiplyUniform(m);
+                applyContentBlend(m, layer.blend);
+              }
+            }}
             map={built.tex}
             transparent
             opacity={ctx.reduce ? v.opacity : 0}

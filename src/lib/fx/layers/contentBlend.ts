@@ -34,6 +34,7 @@ import {
   CustomBlending,
   DstColorFactor,
   type Material,
+  type MeshBasicMaterial,
   NormalBlending,
   type ShaderMaterial,
   OneFactor,
@@ -50,10 +51,49 @@ export function isMultiplyBlend(material: Material): boolean {
   return material.blending === CustomBlending && material.blendSrc === DstColorFactor;
 }
 
+type PremultiplyUniform = { value: number };
+
+/**
+ * The `uPremultiply` uniform of a content material: a shader layer's own, or the one `withPremultiplyUniform`
+ * gave a basic material (the text layers). Undefined for a material that has neither.
+ */
+export function premultiplyUniformOf(material: Material): PremultiplyUniform | undefined {
+  return (material as Partial<ShaderMaterial>).uniforms?.uPremultiply ?? (material.userData?.uPremultiply as PremultiplyUniform | undefined);
+}
+
+/**
+ * Gives a MeshBasicMaterial (the text lockup and the text box, whose shader is three.js's own) the same
+ * `uPremultiply` uniform the shader layers have, so multiply premultiplies it the same way: the basic shader's
+ * premultiply step is swapped for the uniform's, after the colour space conversion like in the other layers.
+ * The swap drops three.js's own premultiply step, which only matters if `premultipliedAlpha` is ever set on such
+ * a material (nothing sets it today). Call it once, before the material is first drawn (its ref callback).
+ */
+export function withPremultiplyUniform(material: MeshBasicMaterial): void {
+  if (material.userData.uPremultiply) return;
+  const uniform: PremultiplyUniform = { value: 0 };
+  material.userData.uPremultiply = uniform;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uPremultiply = uniform;
+    if (!shader.fragmentShader.includes("#include <premultiplied_alpha_fragment>")) {
+      // A three.js that renamed the step would leave multiply drawing plain colour (brighter than it should): say so.
+      console.error("[lumitra-fx] the basic material shader has no premultiplied_alpha_fragment step; multiply text will not be premultiplied.");
+    }
+    shader.fragmentShader =
+      "uniform float uPremultiply;\n" +
+      shader.fragmentShader.replace(
+        "#include <premultiplied_alpha_fragment>",
+        "gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);\n    gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);",
+      );
+  };
+  // The hook's source is the same for every material that has it, so they share one program (three.js would key
+  // it by the hook's text anyway; this names the key). Nothing recompiles per frame.
+  material.customProgramCacheKey = () => "fx-premultiply-uniform";
+}
+
 export function applyContentBlend(material: Material, mode: BlendMode): void {
   // Multiply is drawn from premultiplied colour (see the case below), every other mode from plain
   // colour: the layers' shaders multiply their colour by their alpha when this uniform is 1.
-  const premultiply = (material as Partial<ShaderMaterial>).uniforms?.uPremultiply;
+  const premultiply = premultiplyUniformOf(material);
   if (premultiply) premultiply.value = mode === "multiply" ? 1 : 0;
   else if (mode === "multiply") {
     // Without the uniform the colour would stay plain and multiply would brighten the pixels the layer

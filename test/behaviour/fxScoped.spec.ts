@@ -12,6 +12,7 @@ import { build } from 'esbuild';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import path from 'node:path';
 import { PNG as PngWriter, type PNG } from 'pngjs';
+import { listLayerSchemas } from '@/lib/fx/format';
 import { CHANNEL_TOLERANCE, HEIGHT, ORACLE_CONTEXT, STOP_THE_CLOCK, WIDTH, difference, serveStage, settledCanvas } from '../fx-oracle/oracle';
 
 type Raw = Record<string, unknown>;
@@ -247,8 +248,8 @@ describe('effects that apply to one layer', () => {
   }, 120_000);
 
   it('a no-op effect on a layer with a screen or multiply blend leaves the picture as it was', async () => {
-    // The text lockup ignores its stored blend, so every row here draws it normally, the multiply row
-    // included. Multiply itself is covered by the noise field below and by the colour test after it.
+    // The text lockup applies its stored blend like the other layers (rows for it are in the describe of
+    // every content layer below); here the scoped and the unscoped pictures must agree for each blend.
     for (const blend of ['screen', 'multiply', 'add']) {
       const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 't' });
       const plain = (await draw(scene([gradient(), text({ blend })]))).picture;
@@ -457,26 +458,30 @@ describe('effects that apply to one layer', () => {
     }, 240_000);
   });
 
-  describe('scoped text with a stored blend (the text lockup ignores it)', () => {
+  describe('scoped text with a stored blend: the scoped picture is the unscoped one', () => {
     const scopedText = (blend: string) => scene([gradient(), text({ blend }), layer('vg', 'vignette', { darkness: 0 }, { target: 't' })]);
+    const unscopedText = (blend: string) => scene([gradient(), text({ blend })]);
 
-    it('a frame drawn long after the edit draws the text normally, deterministically (fails on main every time)', async () => {
-      const plain = (await draw(scene([gradient(), text()]))).picture;
-      for (const blend of ['add', 'screen']) {
+    it('a frame drawn long after the edit equals the unscoped text with the same blend, deterministically', async () => {
+      const normal = (await draw(unscopedText('normal'))).picture;
+      for (const blend of ['add', 'screen', 'overlay', 'multiply']) {
+        const unscoped = (await draw(unscopedText(blend))).picture;
+        expect.soft(difference(unscoped, normal).differing, `${blend} differs from normal`).toBeGreaterThan(50);
         const edits = await session(scopedText(blend));
-        expect.soft(difference(await edits.reflow(), plain).share, `${blend} after a reflow`).toBeLessThan(0.002);
+        expect.soft(difference(await edits.reflow(), unscoped).share, `${blend} after a reflow`).toBeLessThan(0.002);
       }
-    }, 240_000);
+    }, 300_000);
 
-    it('a blend changed in a mounted scene never changes the picture of the text, in the frame of the edit or after it', async () => {
-      const plain = (await draw(scene([gradient(), text()]))).picture;
+    it('a blend changed in a mounted scene shows in the frame of the edit and after it, scoped like unscoped', async () => {
+      const fresh: Record<string, PNG> = {};
+      for (const blend of ['normal', 'add', 'screen', 'overlay', 'multiply']) fresh[blend] = (await draw(unscopedText(blend))).picture;
       const edits = await session(scopedText('normal'));
-      for (const blend of ['add', 'screen', 'normal', 'overlay']) {
+      for (const blend of ['add', 'screen', 'normal', 'overlay', 'multiply', 'normal']) {
         // The frame the edit itself produces is the one a visitor with reduced motion keeps.
-        expect.soft(difference(await edits.show(scopedText(blend)), plain).share, `${blend}, the edit's own frame`).toBeLessThan(0.002);
-        expect.soft(difference(await edits.reflow(), plain).share, `${blend}, after a reflow`).toBeLessThan(0.002);
+        expect.soft(difference(await edits.show(scopedText(blend)), fresh[blend]).share, `${blend}, the edit's own frame`).toBeLessThan(0.002);
+        expect.soft(difference(await edits.reflow(), fresh[blend]).share, `${blend}, after a reflow`).toBeLessThan(0.002);
       }
-    }, 240_000);
+    }, 300_000);
   });
 
   it('adds and removes an effect that applies to one layer in a mounted scene (on, off, on)', async () => {
@@ -501,6 +506,89 @@ describe('effects that apply to one layer', () => {
     // A new layer starts at render order 0: left-over ranks would draw the noise field over it.
     expect(difference(await edits.show(withText), fresh).differing).toBe(0);
   }, 240_000);
+
+  describe('every content layer applies its stored blend', () => {
+    const background = '#606060';
+    const withBackground = (layers: Raw[]): Raw => ({ ...scene(layers), background });
+    const solidPng = (): string => {
+      const png = new PngWriter({ width: 64, height: 64 });
+      for (let i = 0; i < png.data.length; i += 4) png.data.set([0xdf, 0xe6, 0xff, 255], i);
+      return `data:image/png;base64,${PngWriter.sync.write(png).toString('base64')}`;
+    };
+    /** What each kind needs to show something with a blend over the background; everything else is drawn from its defaults. */
+    const visible: Record<string, Raw> = {
+      noiseFill: { intensity: 0.8 },
+      image: { src: solidPng(), opacity: 1 },
+      textBox: { text: 'Blend', size: 0.25 },
+    };
+    const only = (type: string, blend: string): Raw => withBackground([layer('l', type, visible[type] ?? {}, { blend })]);
+    /** The pixels a layer changes over the plain background, and the mean of the three channels there. */
+    const box = (a: PNG, b: PNG): Array<[number, number]> => {
+      const mask: Array<[number, number]> = [];
+      for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
+        const [r1, g1, b1] = px(a, x, y);
+        const [r2, g2, b2] = px(b, x, y);
+        if (Math.max(Math.abs(r1 - r2), Math.abs(g1 - g2), Math.abs(b1 - b2)) > CHANNEL_TOLERANCE) mask.push([x, y]);
+      }
+      return mask;
+    };
+    /** The mean of the three channels over the pixels the layer changed (a mask, not its box, whose corners are background). */
+    const mean = (png: PNG, mask: Array<[number, number]>): number => {
+      let sum = 0;
+      for (const [x, y] of mask) {
+        const [r, g, b] = px(png, x, y);
+        sum += r + g + b;
+      }
+      return sum / Math.max(1, mask.length * 3);
+    };
+
+    it.each(['text', 'textBox'])('a %s layer is lighter with add and screen, and darker with multiply, than with a normal blend', async (type) => {
+      const normal = (await draw(only(type, 'normal'))).picture;
+      const plain = (await draw(withBackground([]))).picture;
+      const area = box(normal, plain);
+      expect(area.length, 'the layer is on the picture').toBeGreaterThan(200);
+      const base = mean(normal, area);
+      for (const blend of ['add', 'screen']) {
+        const picture = (await draw(only(type, blend))).picture;
+        expect.soft(mean(picture, area) - base, `${type} ${blend}: lighter than normal`).toBeGreaterThan(2);
+      }
+      const multiplied = (await draw(only(type, 'multiply'))).picture;
+      expect.soft(base - mean(multiplied, area), `${type} multiply: darker than normal`).toBeGreaterThan(2);
+    }, 240_000);
+
+    it('a text box at half opacity with multiply: scoped equals unscoped, and nothing is lighter than the background', async () => {
+      const textBoxAt = (extra: Raw[] = []): Raw => withBackground([layer('l', 'textBox', { text: 'Blend', size: 0.25, opacity: 0.5 }, { blend: 'multiply' }), ...extra]);
+      const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 'l' });
+      const plain = (await draw(withBackground([]))).picture;
+      const unscoped = (await draw(textBoxAt())).picture;
+      const scoped = (await draw(textBoxAt([noop]))).picture;
+      expect(difference(unscoped, plain).differing, 'the text box is on the picture').toBeGreaterThan(200);
+      // Every text pixel is partly drawn here, which is where premultiplying twice (the group's reset missing)
+      // changes the picture, and where colour that is not premultiplied lightens it (multiply never lightens).
+      expect.soft(difference(scoped, unscoped).share, 'scoped equals unscoped').toBeLessThan(0.002);
+      for (const [name, picture] of [['unscoped', unscoped], ['scoped', scoped]] as const) {
+        let lighter = 0;
+        for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
+          const [r, g, b] = px(picture, x, y);
+          const [r0, g0, b0] = px(plain, x, y);
+          if (Math.max(r - r0, g - g0, b - b0) > CHANNEL_TOLERANCE) lighter++;
+        }
+        expect.soft(lighter, `${name}: pixels lighter than the background`).toBe(0);
+      }
+    }, 240_000);
+
+    it('every content layer in the registry changes the picture with add, screen, overlay and multiply compared with normal', async () => {
+      const types = listLayerSchemas().filter((schema) => schema.kind === 'content').map((schema) => schema.type);
+      expect(types.length).toBeGreaterThanOrEqual(6);
+      for (const type of types) {
+        const normal = (await draw(only(type, 'normal'))).picture;
+        for (const blend of ['add', 'screen', 'overlay', 'multiply']) {
+          const picture = (await draw(only(type, blend))).picture;
+          expect.soft(difference(picture, normal).differing, `${type} with ${blend} differs from normal`).toBeGreaterThan(50);
+        }
+      }
+    }, 600_000);
+  });
 
   it('on a phone the step down leaves out a heavy effect of a group, and the layer is drawn plainly', async () => {
     const bloom = layer('bl', 'bloom', { intensity: 2.5, threshold: 0.1, radius: 0.9 }, { target: 't' });

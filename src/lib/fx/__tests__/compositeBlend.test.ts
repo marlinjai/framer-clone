@@ -44,8 +44,8 @@ describe('the composite quad blend', () => {
     }
   });
 
-  it('draws a layer that ignores its stored blend (the text lockup) normally, however the scene is stored', () => {
-    // The text lockup's material never gets applyContentBlend: its stored blend is not what it draws with.
+  it('draws a layer that keeps normal blending normally, however the scene is stored', () => {
+    // A material that never got applyContentBlend keeps normal blending, whatever the scene stored for it.
     const lockup = new MeshBasicMaterial({ transparent: true });
     const to = quad();
     to.blending = AdditiveBlending; // what a quad set up from the stored `add` would have
