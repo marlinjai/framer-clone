@@ -164,3 +164,25 @@ describe('every layer that applies a blend draws multiply from premultiplied col
     expect(clampAlpha, 'clamps the alpha factor for multiply only, after the premultiply').toBeGreaterThan(premultiply);
   });
 });
+
+describe('the composite quad of a scoped multiply layer', () => {
+  // The group's buffer is half float, so alpha above 1 survives into the quad: it must clamp rgb and alpha the way the
+  // layers do (the browser rows cannot see it, the noise's alpha peaks at 1.008). The quad shader is a string in the component.
+  const source = fs.readFileSync(path.resolve(__dirname, '../effects/ScopedGroup.tsx'), 'utf8');
+  const quad = source.slice(source.indexOf('const QUAD_FRAG'), source.indexOf('`;', source.indexOf('const QUAD_FRAG') + 20));
+
+  it('premultiplies after the colour space conversion, with the alpha clamped', () => {
+    const colourSpace = quad.indexOf('#include <colorspace_fragment>');
+    const premultiply = quad.indexOf('gl_FragColor.rgb *= clamp(gl_FragColor.a, 0.0, 1.0);');
+    const clampAlpha = quad.indexOf('gl_FragColor.a = clamp(gl_FragColor.a, 0.0, 1.0);');
+    expect(colourSpace, 'conversion').toBeGreaterThan(-1);
+    expect(premultiply, 'premultiply after the conversion').toBeGreaterThan(colourSpace);
+    expect(clampAlpha, 'alpha clamp after the premultiply').toBeGreaterThan(premultiply);
+  });
+
+  it('does it for multiply only (mode 2), so the other modes draw exactly what they did', () => {
+    const multiplyBranch = quad.slice(quad.indexOf('if (uMode > 1.5)'));
+    expect(multiplyBranch).toContain('gl_FragColor.rgb *= clamp(');
+    expect(quad.indexOf('clamp(gl_FragColor.a'), 'no clamp before the multiply branch').toBeGreaterThan(quad.indexOf('if (uMode > 1.5)'));
+  });
+});

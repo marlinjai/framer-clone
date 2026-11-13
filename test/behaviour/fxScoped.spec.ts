@@ -288,7 +288,7 @@ describe('effects that apply to one layer', () => {
       for (let i = 0; i < png.data.length; i += 4) png.data.set([0x80, 0xc0, 0xff, 255], i);
       return `data:image/png;base64,${PngWriter.sync.write(png).toString('base64')}`;
     };
-    const flatShape = (colour: string): Raw => layer('f', 'shape', { colorA: colour, colorB: colour, colorC: colour, colorD: colour, opacity: 1 }, { blend: 'multiply' });
+    const flatShape = (colour: string): Raw => layer('f', 'shape', { color: colour, opacity: 1, wobble: 0 }, { blend: 'multiply' });
     const flatImage = (): Raw => layer('f', 'image', { src: solidImage(), opacity: 1, fit: 'cover' }, { blend: 'multiply' });
 
     it.each([
@@ -337,7 +337,10 @@ describe('effects that apply to one layer', () => {
       }
     }, 180_000);
 
-    it('a noise field at full intensity (its alpha reaches 1.1): scoped and unscoped give the same picture', async () => {
+    // The noise's alpha peaks at 1.008 (1.1 times a vignette that is 0.92 at its brightest), so this row cannot see a
+    // missing clamp: that is guarded by the source tests in contentBlend.test.ts (layers and quad). What it does show is
+    // that scoped and unscoped multiply agree at the highest intensity the schema allows.
+    it('a noise field at full intensity: scoped and unscoped give the same picture', async () => {
       const noise = layer('n', 'noiseFill', { intensity: 1 }, { blend: 'multiply' });
       const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 'n' });
       const unscoped = (await draw(withBackground([noise]))).picture;
@@ -346,11 +349,12 @@ describe('effects that apply to one layer', () => {
       expect(difference(unscoped, (await draw(withBackground([]))).picture).differing, 'the noise multiplies something').toBeGreaterThan(1000);
     }, 180_000);
 
-    it('a blend changed in a mounted scene, multiply to normal and back, with and without an effect on the layer', async () => {
+    // At opacity 0.5: premultiplying twice (the group's buffer must hold plain colour) only shows where alpha is below 1.
+    it('a blend changed in a mounted scene, multiply to normal and back at half opacity, with and without an effect on the layer', async () => {
       const noop = layer('vg', 'vignette', { darkness: 0 }, { target: 'f' });
       const cases: Array<[string, Raw, Raw]> = [
-        ['unscoped', withBackground([flat('#80c0ff')]), withBackground([flat('#80c0ff', 1, { blend: 'normal' })])],
-        ['scoped', withBackground([flat('#80c0ff'), noop]), withBackground([flat('#80c0ff', 1, { blend: 'normal' }), noop])],
+        ['unscoped', withBackground([flat('#80c0ff', 0.5)]), withBackground([flat('#80c0ff', 0.5, { blend: 'normal' })])],
+        ['scoped', withBackground([flat('#80c0ff', 0.5), noop]), withBackground([flat('#80c0ff', 0.5, { blend: 'normal' }), noop])],
       ];
       for (const [name, multiply, normal] of cases) {
         const fresh = { multiply: (await draw(multiply)).picture, normal: (await draw(normal)).picture };
