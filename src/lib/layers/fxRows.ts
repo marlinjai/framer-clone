@@ -172,6 +172,25 @@ export function fxDropIndex(order: readonly string[], fromId: string, overId: st
   return order.length - 1 - next.indexOf(fromId);
 }
 
+
+/**
+ * Say, in the Layers panel's live region and in the editor's own notice, why a change to a layer was
+ * not made. The Layers panel's message may be out of sight (a folded box, a phone with its sheets
+ * closed): the editor's notice shows a refusal wherever the person is. It never displaces a notice
+ * that carries a button (Load the newer version, Open the page, Undo the delete, Show first values).
+ */
+export function reportFxRefusal(box: ComponentInstance, editorUI: EditorUIType, message: string): void {
+  editorUI.setFxLayerNotice({ componentId: box.id, about: JSON.stringify(storedOf(box) ?? null), text: message, problem: true });
+  const shown = editorUI.editorNotice;
+  const holdsAction = !!shown && (shown.kind === 'changedElsewhere' || shown.kind === 'previewState' || shown.kind === 'pageDeleted' || !!shown.preview || (shown.kind === 'newPage' && !!shown.pageId));
+  if (!holdsAction) editorUI.setEditorNotice({ kind: 'refused', message });
+}
+
+/** A row dropped into another group: nothing changes, and the reason is said. */
+export function refuseFxDrop(box: ComponentInstance, editorUI: EditorUIType, name: string, fromLabel: string, toLabel: string): void {
+  reportFxRefusal(box, editorUI, `${name} stays among ${fromLabel}: it cannot be moved into ${toLabel}. Layers that draw, the scene's effects and the effects of one layer are ordered separately.`);
+}
+
 /**
  * Do one action on one layer of a box: through the one edit module, as one undo step, and
  * say what happened (or why not) in the editor's layer notice, which the Layers panel reads
@@ -208,14 +227,7 @@ export function runFxLayerAction(box: ComponentInstance, editorUI: EditorUIType,
   }
 
   if (!edit.ok) {
-    editorUI.setFxLayerNotice({ componentId: box.id, about: JSON.stringify(before ?? null), text: edit.message, problem: true });
-    // The Layers panel's own message may be out of sight (a folded box, a phone with its sheets closed): the
-    // editor's notice shows a refusal wherever the person is.
-    // Only where it displaces nothing: another notice may carry a button (Load the newer version, Undo, Show first values).
-    const shown = editorUI.editorNotice;
-    // Notices with an action: Load the newer version, Open the page, Undo the delete, Show first values.
-    const holdsAction = !!shown && (shown.kind === 'changedElsewhere' || shown.kind === 'previewState' || shown.kind === 'pageDeleted' || !!shown.preview || (shown.kind === 'newPage' && !!shown.pageId));
-    if (!holdsAction) editorUI.setEditorNotice({ kind: 'refused', message: edit.message });
+    reportFxRefusal(box, editorUI, edit.message);
     return { ok: false, message: edit.message };
   }
 

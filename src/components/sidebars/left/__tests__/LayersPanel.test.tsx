@@ -697,7 +697,7 @@ describe('the rows of an FX scene box', () => {
       expect(layerIds().map((l) => l.name)).toEqual(before);
     });
 
-    it('drag: a row cannot be dropped into another group, or the nest of another layer', async () => {
+    it('drag: a row dropped into another group is refused with the reason, and nothing is stored', async () => {
       render(<LayersPanel />);
       await scope('bloom', 'gradient-bg');
       const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
@@ -705,6 +705,7 @@ describe('the rows of an FX scene box', () => {
       drag(rowOf('Noise Field'), rowOf('Grain'), 'above'); // content onto an effect row
       drag(rowOf('Grain'), rowOf('Bloom'), 'above'); // scene effect into the nest of Gradient
       expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+      expect(store.editorUI.fxLayerNotice).toMatchObject({ problem: true, text: expect.stringMatching(/Grain stays among the scene's effects: it cannot be moved into the effects of Gradient/) });
     });
 
     it('drag: a nested effect reorders among its siblings only', async () => {

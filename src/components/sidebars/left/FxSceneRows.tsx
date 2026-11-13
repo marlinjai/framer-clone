@@ -24,7 +24,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import { FX_PROP } from '@/lib/fxScene/marker';
 import { toggleFold } from '@/lib/layers/foldState';
 import { layerActionsWidth } from '@/lib/layers/sidebarWidth';
-import { fxDropIndex, fxEffectsGroupKey, fxSceneGroupKey, runFxLayerAction, type FxLayerRowModel, type FxRowsModel } from '@/lib/layers/fxRows';
+import { fxDropIndex, fxEffectsGroupKey, fxSceneGroupKey, refuseFxDrop, runFxLayerAction, type FxLayerRowModel, type FxRowsModel } from '@/lib/layers/fxRows';
 import { FX_BACKGROUND_ICON, FX_EFFECTS_GROUP_ICON, FX_SCENE_GROUP_ICON, fxLayerIconOf } from '../layerIcon';
 import { ContextMenu, type MenuCloseReason, type MenuItem } from './ContextMenu';
 
@@ -80,11 +80,11 @@ const GroupRow = observer(
  * dragging, as it never does by the keys or the menu. These rows use the browser's own drag and
  * drop (a layer is not a node, so the node tree's pointer drag never sees them).
  */
-let dragging: { boxId: string; layerId: string; groupKey: string } | null = null;
+let dragging: { boxId: string; layerId: string; name: string; groupKey: string; groupLabel: string } | null = null;
 const DRAG_TYPE = 'application/x-fx-layer';
 
 /** One layer of the scene. `order` is the ids of its group as listed (front first), `groupKey` names the group. */
-const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, groupKey }: { box: ComponentInstance; row: FxLayerRowModel; depth: number; breakpointId?: string; dimmed?: boolean; order: readonly string[]; groupKey: string }) => {
+const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, groupKey, groupLabel }: { box: ComponentInstance; row: FxLayerRowModel; depth: number; breakpointId?: string; dimmed?: boolean; order: readonly string[]; groupKey: string; groupLabel: string }) => {
   const { editorUI } = useStore();
   const pick = editorUI.fxLayerPick;
   // Highlighted in the frame whose box is selected, as node rows are.
@@ -107,9 +107,10 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
     editorUI.startFxLayerRename(box.id, row.layerId);
   };
   // Drag to reorder inside the group: where the dragged row would land, shown as a line above or below this row.
-  const [dropPlace, setDropPlace] = useState<'above' | 'below' | null>(null);
-  // Only our own drag (a file or text dragged over a row is not one), and only while its source is known.
-  const canDrop = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes(DRAG_TYPE) && !!dragging && dragging.boxId === box.id && dragging.groupKey === groupKey && dragging.layerId !== row.layerId;
+  const [dropPlace, setDropPlace] = useState<'above' | 'below' | 'refused' | null>(null);
+  // Our own drag over a row of this box (a file or text dragged over a row is not one): a row of another group is shown as refused, and says why when dropped.
+  const ours = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes(DRAG_TYPE) && !!dragging && dragging.boxId === box.id && dragging.layerId !== row.layerId;
+  const canDrop = (e: React.DragEvent) => ours(e) && dragging!.groupKey === groupKey;
   const placeOf = (e: React.DragEvent): 'above' | 'below' => {
     const rect = e.currentTarget.getBoundingClientRect();
     return e.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
@@ -134,7 +135,7 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
         data-fx-drop={dropPlace ?? undefined}
         draggable={!isRenaming}
         onDragStart={(e) => {
-          dragging = { boxId: box.id, layerId: row.layerId, groupKey };
+          dragging = { boxId: box.id, layerId: row.layerId, name: row.name, groupKey, groupLabel };
           e.dataTransfer.effectAllowed = 'move';
           e.dataTransfer.setData(DRAG_TYPE, row.layerId);
         }}
@@ -143,15 +144,22 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
           setDropPlace(null);
         }}
         onDragOver={(e) => {
-          if (!canDrop(e)) return;
+          if (!ours(e)) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
-          setDropPlace(placeOf(e));
+          setDropPlace(canDrop(e) ? placeOf(e) : 'refused');
         }}
         onDragLeave={() => setDropPlace(null)}
         onDrop={(e) => {
-          if (!canDrop(e) || !dragging) return;
+          if (!ours(e) || !dragging) return;
           e.preventDefault();
+          if (!canDrop(e)) {
+            const gone = dragging;
+            dragging = null;
+            setDropPlace(null);
+            refuseFxDrop(box, editorUI, gone.name, gone.groupLabel, groupLabel);
+            return;
+          }
           const place = placeOf(e);
           const from = dragging.layerId;
           dragging = null;
@@ -159,7 +167,7 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
           const toIndex = fxDropIndex(order, from, row.layerId, place);
           if (toIndex !== null) runFxLayerAction(box, editorUI, from, { type: 'moveTo', toIndex, relativeTo: `${place === 'above' ? 'in front of' : 'behind'} ${row.name}` });
         }}
-        className={`@container group relative flex ${ROW_HEIGHT} items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${picked ? 'bg-brand/10' : ''} ${dropPlace === 'above' ? 'shadow-[inset_0_2px_0_0_var(--brand,currentColor)]' : ''} ${dropPlace === 'below' ? 'shadow-[inset_0_-2px_0_0_var(--brand,currentColor)]' : ''}`}
+        className={`@container group relative flex ${ROW_HEIGHT} items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${picked ? 'bg-brand/10' : ''} ${dropPlace === 'above' ? 'shadow-[inset_0_2px_0_0_var(--brand,currentColor)]' : ''} ${dropPlace === 'below' ? 'shadow-[inset_0_-2px_0_0_var(--brand,currentColor)]' : ''} ${dropPlace === 'refused' ? 'shadow-[inset_0_0_0_1px_var(--destructive,red)]' : ''}`}
         style={{ paddingLeft: `${6 + depth * 14}px`, ['--layer-actions-w' as string]: `${layerActionsWidth(3)}px` }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -374,13 +382,13 @@ export const FxSceneRows = observer(({ box, rows, depth, breakpointId, dimmed }:
               {effectsFolded
                 ? null
                 : rows.effects.map((row) => (
-                    <FxLayerRow key={row.layerId} box={box} row={row} depth={inner + 1} breakpointId={breakpointId} dimmed={dimmed} order={effectOrder} groupKey="effects" />
+                    <FxLayerRow key={row.layerId} box={box} row={row} depth={inner + 1} breakpointId={breakpointId} dimmed={dimmed} order={effectOrder} groupKey="effects" groupLabel="the scene's effects" />
                   ))}
             </>
           ) : null}
           {rows.content.map((row) => (
             <React.Fragment key={row.layerId}>
-              <FxLayerRow box={box} row={row} depth={inner} breakpointId={breakpointId} dimmed={dimmed} order={contentOrder} groupKey="content" />
+              <FxLayerRow box={box} row={row} depth={inner} breakpointId={breakpointId} dimmed={dimmed} order={contentOrder} groupKey="content" groupLabel="the layers that draw" />
               {/* Effects that apply to this layer only, nested under it (their own group: they move among themselves). */}
               {row.nested?.map((effect) => (
                 <FxLayerRow
@@ -392,6 +400,7 @@ export const FxSceneRows = observer(({ box, rows, depth, breakpointId, dimmed }:
                   dimmed={dimmed}
                   order={row.nested!.map((n) => n.layerId)}
                   groupKey={`nested:${row.layerId}`}
+                  groupLabel={`the effects of ${row.name}`}
                 />
               ))}
             </React.Fragment>
