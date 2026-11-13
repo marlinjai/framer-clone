@@ -206,7 +206,7 @@ function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId,
       handle.current = null;
       layer.style.opacity = '0';
     };
-  }, [draws, idle, start, layoutSize]);
+  }, [draws, idle, start, layoutSize, layerRef, onProbe]);
 
   // A changed scene is drawn in the same context.
   useEffect(() => {

@@ -21,7 +21,7 @@
 // The engine side is the editor-only `@/lib/fx/pick`, loaded by the caller (FxLayer.tsx) by its own
 // dynamic import; this file takes its functions as a parameter and imports none of it.
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import type { RefObject } from 'react';
 
 import { EditorTool, type EditorUIType } from '@/stores/EditorUIStore';
@@ -33,8 +33,8 @@ import { parseFxProp } from '@/lib/fxScene/fxScene';
 
 /** What a drag must travel before it is a drag and not a click. */
 export const DRAG_THRESHOLD_PX = 3;
-/** How long a swallowed press may wait for its click, and the window of a double-click, in ms. */
-const CLICK_WAIT_MS = 400;
+/** The window of a double-click after a picking press or the end of a drag, in ms. */
+const DOUBLE_CLICK_MS = 800;
 
 /** The editor-only `@/lib/fx/pick`, as this hook uses it (spelled out here: only FxLayer.tsx may import that entry). */
 export interface CanvasPickTools {
@@ -51,6 +51,19 @@ interface Options {
   tools: CanvasPickTools | null;
 }
 
+/** Whether text written directly in the box (a text node is never an event target) lies under the point: it is HTML, and wins. */
+function textOver(box: HTMLElement, x: number, y: number): boolean {
+  for (const node of Array.from(box.childNodes)) {
+    if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    // jsdom has no layout: no rectangles, no text over the point.
+    const rects = typeof range.getClientRects === 'function' ? Array.from(range.getClientRects()) : [];
+    if (rects.some((r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom)) return true;
+  }
+  return false;
+}
+
 export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
   useEffect(() => {
     const layer = layerRef.current;
@@ -58,18 +71,20 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
     if (!tools || !layer || !box) return;
     const { picker, pointerToNdc, positionAfterDrag } = tools;
 
-    let swallowClickUntil = 0;
+    // The click that follows a press this hook took (and the end of its drag) is not the box's. Kept until the
+    // next press, never by time: a drag or a held press outlasts any window, and its click comes at its end.
+    let swallowNextClick = false;
     let lastPickAt = -Infinity;
     let drag: { stop: (revert: boolean) => void } | null = null;
 
     const swallowClick = (e: Event) => {
-      if (performance.now() > swallowClickUntil) return;
-      swallowClickUntil = 0;
+      if (!swallowNextClick) return;
+      swallowNextClick = false;
       e.stopPropagation();
     };
     const swallowDoubleClick = (e: Event) => {
       // Two presses that both picked a layer are not a double-click on the box (which edits its text).
-      if (performance.now() - lastPickAt > CLICK_WAIT_MS * 2) return;
+      if (performance.now() - lastPickAt > DOUBLE_CLICK_MS) return;
       e.stopPropagation();
     };
 
@@ -82,28 +97,34 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
       return Array.isArray(value) && value.length === 2 && value.every((n) => typeof n === 'number') ? [value[0] as number, value[1] as number] : null;
     };
 
-    const beginDrag = (e: PointerEvent, layerId: string, start: [number, number]) => {
+    const beginDrag = (e: PointerEvent, component: NonNullable<typeof editorUI.selectedComponent>, layerId: string, start: [number, number]) => {
       const origin = { x: e.clientX, y: e.clientY };
       const pointerId = e.pointerId;
       let started = false;
-      let ownsBatch = false;
+      let ownBatch: unknown;
+      let lastWritten = start;
+      const userSelect = document.body.style.userSelect;
       const finish = (revert: boolean) => {
         window.removeEventListener('pointermove', move, true);
         window.removeEventListener('pointerup', up, true);
         window.removeEventListener('pointercancel', cancel, true);
         window.removeEventListener('keydown', key, true);
         drag = null;
+        lastPickAt = performance.now();
+        document.body.style.userSelect = userSelect;
         try {
           box.releasePointerCapture(pointerId);
         } catch {
           // Already released: the pointer is gone.
         }
-        if (!ownsBatch) return;
-        ownsBatch = false;
         const history = getHistoryStore();
+        const own = ownBatch;
+        ownBatch = undefined;
+        // Only the drag's own batch: another gesture's is never committed or undone from here.
+        if (!own || !history || history.batch !== own) return;
         // Escape, a cancelled pointer, the scene going away: nothing of the drag stays, and nothing is recorded.
-        if (revert) history?.revertBatch();
-        else history?.commitBatch();
+        if (revert) history.revertBatch();
+        else history.commitBatch();
       };
       const move = (ev: PointerEvent) => {
         if (ev.pointerId !== pointerId) return;
@@ -118,10 +139,15 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
             return;
           }
           history.startBatch('Move text');
-          ownsBatch = true;
+          ownBatch = history.batch;
+          document.body.style.userSelect = 'none';
           started = true;
         }
-        const component = editorUI.selectedComponent;
+        // The box the drag began on, and still the selection: another selection (a shortcut, an agent, the Layers panel) ends it.
+        if (editorUI.selectedComponent?.id !== component.id) {
+          finish(true);
+          return;
+        }
         const rect = layer.getBoundingClientRect();
         const layout = { width: layer.offsetWidth, height: layer.offsetHeight };
         if (!component || layout.width <= 0 || layout.height <= 0 || rect.width <= 0) {
@@ -129,6 +155,9 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
           return;
         }
         const next = positionAfterDrag(start, { dx, dy }, rect.width / layout.width, layout);
+        // The same place: nothing to store (each write keeps a copy of the scene in the undo step).
+        if (Math.abs(next[0] - lastWritten[0]) < 1e-4 && Math.abs(next[1] - lastWritten[1]) < 1e-4) return;
+        lastWritten = next;
         const current = (component.props as Record<string, unknown>)[FX_PROP];
         const edit = setFxParam(current, layerId, 'position', next);
         if (!edit.ok) {
@@ -142,14 +171,19 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
         if (ev.pointerId === pointerId) finish(false);
       };
       const cancel = (ev: PointerEvent) => {
-        if (ev.pointerId === pointerId) finish(true);
+        if (ev.pointerId !== pointerId) return;
+        // A cancelled pointer has no click after it.
+        swallowNextClick = false;
+        finish(true);
       };
       const key = (ev: KeyboardEvent) => {
-        if (ev.key !== 'Escape') return;
-        // Escape ends the drag only: the editor's own Escape (which would drop the pick) does not see it.
+        const edit = ev.key === 'Delete' || ev.key === 'Backspace' || ((ev.metaKey || ev.ctrlKey) && ['d', 'z', 'y', 'x', 'v'].includes(ev.key.toLowerCase()));
+        if (ev.key !== 'Escape' && !edit) return;
+        // Escape ends the drag only (the editor's own Escape, which would drop the pick, does not see it); an edit
+        // of the layer or the history while the drag runs would be folded into its undo step, or undone by it.
         ev.stopPropagation();
         ev.preventDefault();
-        finish(true);
+        if (ev.key === 'Escape') finish(true);
       };
       window.addEventListener('pointermove', move, true);
       window.addEventListener('pointerup', up, true);
@@ -165,14 +199,14 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
 
     const onPointerDown = (e: PointerEvent) => {
       // A new press ends the wait for the last one's click: it is not left to eat a later click.
-      swallowClickUntil = 0;
+      swallowNextClick = false;
       if (drag) return;
       // Only a plain left press of a mouse or pen with the Select tool.
       if (e.button !== 0 || !e.isPrimary || isTouchLike(e.pointerType)) return;
       if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
       if (editorUI.selectedTool !== EditorTool.SELECT || getDragManager()?.isActive) return;
       // An HTML child of the box is on top of the point: it is the one pressed.
-      if (e.target !== box) return;
+      if (e.target !== box || textOver(box, e.clientX, e.clientY)) return;
       const live = editorUI.fxLive;
       const component = editorUI.selectedComponent;
       // Only a box that is already the one selection; the first click on a box selects it.
@@ -185,7 +219,7 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
       if (layerId === null) return;
       // A hit is not the box's press: no selection, no box drag.
       e.stopPropagation();
-      swallowClickUntil = performance.now() + CLICK_WAIT_MS;
+      swallowNextClick = true;
       lastPickAt = performance.now();
       const picked = editorUI.fxLayerPick;
       const alreadyPicked = picked?.kind === 'layer' && picked.layerId === layerId;
@@ -194,7 +228,7 @@ export function useCanvasPick({ editorUI, layerRef, tools }: Options): void {
       const isTextBox = type.ok && type.fx.scene.layers.find((l) => l.id === layerId)?.type === 'textBox';
       const start = isTextBox ? layerPosition(layerId) : null;
       // Pressing the layer that was picked already, or one that is picked by this press, can drag it.
-      if (start) beginDrag(e, layerId, start);
+      if (start) beginDrag(e, component, layerId, start);
     };
 
     box.addEventListener('pointerdown', onPointerDown, true);

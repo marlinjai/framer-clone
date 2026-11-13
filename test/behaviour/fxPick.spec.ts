@@ -84,6 +84,32 @@ describe('holding every content layer in a group so it can be picked', () => {
   }, 120_000);
 });
 
+describe('holding the layers of every kind a pick can hit', () => {
+  it('draws a scene with a text, a text box, an image, a shape and a targeted effect with 0 differing pixels, with the probe and without', async () => {
+    const layer = (id: string, type: string, params: Raw = {}, extra: Raw = {}): Raw => ({ id, type, name: id, visible: true, blend: 'normal', params, ...extra });
+    const scene: Raw = {
+      version: 1,
+      id: 'mixed',
+      size: { mode: 'fill' },
+      background: '#10131a',
+      fps: 60,
+      dpr: [1, 1],
+      layers: [
+        layer('g', 'gradient'),
+        layer('s', 'shape', { shape: 'circle', size: 0.3, softness: 0.1 }),
+        layer('i', 'image', { fit: 'contain', scale: 0.4 }),
+        layer('t', 'text'),
+        layer('tb', 'textBox', { text: 'Hello there', width: 0.5 }),
+        layer('px', 'pixelate', { granularity: 24 }, { target: 'tb' }),
+      ],
+    };
+    const plain = await open(scene, false);
+    const probed = await open(scene, true);
+    expect(await probed.page.evaluate(() => (window as unknown as Win).__probe())).toBe(true);
+    expect(difference(probed.picture, plain.picture).differing).toBe(0);
+  }, 120_000);
+});
+
 describe('a real ray against the real scene', () => {
   const layer = (id: string, type: string, params: Raw = {}, extra: Raw = {}): Raw => ({ id, type, name: id, visible: true, blend: 'normal', params, ...extra });
   const scene = (layers: Raw[]): Raw => ({ version: 1, id: 'pick', size: { mode: 'fill' }, background: '#10131a', fps: 60, dpr: [1, 1], layers });

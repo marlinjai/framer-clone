@@ -97,7 +97,6 @@ const probe = () => {
       { layer, root },
       { layer: lockupLayer, root: lockup },
     ],
-    invalidate: () => {},
   };
 };
 
@@ -349,6 +348,65 @@ describe('dragging a picked text box', () => {
     expect(positionOf()).toEqual(start);
     expect(entries()).toBe(0);
     expect(getHistoryStore()!.batch).toBeUndefined();
+  });
+
+  it('the click at the end of a long drag (or a long press) is not the box\'s: the pick and its outline stay', async () => {
+    await mountLive();
+    const now = vi.spyOn(performance, 'now');
+    now.mockReturnValue(1_000);
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    now.mockReturnValue(9_000);
+    await release(CENTRE.x + 40, CENTRE.y);
+    const clicked = vi.fn();
+    document.addEventListener('click', clicked);
+    act(() => void boxEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+    expect(clicked).not.toHaveBeenCalled();
+    document.removeEventListener('click', clicked);
+    expect(store.editorUI.fxLayerPick?.kind).toBe('layer');
+  });
+
+  it('another selection mid-drag ends the drag and puts the text back; the new selection is not moved', async () => {
+    await mountLive();
+    const start = positionOf();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    expect(positionOf()).not.toEqual(start);
+    act(() => store.editorUI.clearSelection());
+    await move(CENTRE.x + 80, CENTRE.y);
+    expect(positionOf()).toEqual(start);
+    expect(entries()).toBe(0);
+    expect(getHistoryStore()!.batch).toBeUndefined();
+  });
+
+  it('Delete, Cmd+D and Cmd+Z mid-drag are kept from the editor, so they are not folded into the drag\'s undo step', async () => {
+    await mountLive();
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    await move(CENTRE.x + 40, CENTRE.y);
+    const reached = vi.fn();
+    document.addEventListener('keydown', reached);
+    for (const init of [{ key: 'Delete' }, { key: 'd', metaKey: true }, { key: 'z', metaKey: true }]) {
+      act(() => void window.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true })));
+    }
+    expect(reached).not.toHaveBeenCalled();
+    document.removeEventListener('keydown', reached);
+    await release(CENTRE.x + 40, CENTRE.y);
+    expect(entries()).toBe(1);
+  });
+
+  it('text written directly in the box over the point is HTML and wins the press', async () => {
+    await mountLive();
+    boxEl.prepend(document.createTextNode('Headline'));
+    const range = document.createRange();
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: CENTRE.x - 20, right: CENTRE.x + 20, top: CENTRE.y - 10, bottom: CENTRE.y + 10 }],
+    });
+    void range;
+    await press(boxEl, CENTRE.x, CENTRE.y);
+    expect(store.editorUI.fxLayerPick).toBeUndefined();
+    expect(reachedDocument).toHaveBeenCalledTimes(1);
+    delete (Range.prototype as unknown as Record<string, unknown>).getClientRects;
   });
 
   it('a layer that is not a text box is picked and never dragged', async () => {

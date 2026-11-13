@@ -26,7 +26,7 @@ interface Entry {
   layer: Layer;
   root: Group;
 }
-const probeOf = (entries: Entry[]): SceneProbe => ({ camera, canvas: {} as HTMLCanvasElement, layers: () => entries, invalidate: () => {} });
+const probeOf = (entries: Entry[]): SceneProbe => ({ camera, canvas: {} as HTMLCanvasElement, layers: () => entries });
 
 /** A text plane (or any plain plane) at depth z. */
 const plane = (l: Layer, width: number, height: number, z = 0): Entry => {

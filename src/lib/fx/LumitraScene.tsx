@@ -105,8 +105,6 @@ export interface SceneProbe {
   canvas: HTMLCanvasElement;
   /** The drawn content layers in stored order (back to front), each with its identity group. */
   layers: () => { layer: Layer; root: Object3D }[];
-  /** Draw a frame now (a scene held still under reduced motion draws only on a change). */
-  invalidate: () => void;
 }
 
 /** The canvas measured by its layout size, see `layoutSize`. */
@@ -119,13 +117,12 @@ export type SceneFailure = "no-webgl" | "renderer-error" | "context-lost";
 function ProbeBridge({ onProbe, layers }: { onProbe: (probe: SceneProbe | null) => void; layers: () => { layer: Layer; root: Object3D }[] }) {
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
-  const invalidate = useThree((s) => s.invalidate);
   const latest = useRef({ onProbe, layers });
   latest.current = { onProbe, layers };
   useEffect(() => {
-    latest.current.onProbe({ camera, canvas: gl.domElement, layers: () => latest.current.layers(), invalidate: () => invalidate() });
+    latest.current.onProbe({ camera, canvas: gl.domElement, layers: () => latest.current.layers() });
     return () => latest.current.onProbe(null);
-  }, [camera, gl, invalidate]);
+  }, [camera, gl]);
   return null;
 }
 
