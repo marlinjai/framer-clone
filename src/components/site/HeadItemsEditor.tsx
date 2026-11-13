@@ -83,14 +83,44 @@ function draftOf(stored: StoredHeadItem | null): Draft {
 
 type Candidate = { ok: true; items: StoredHeadItem[] } | { ok: false; message: string };
 
+/** The keys the editor has a field for, per kind (the parser's own list). */
+const MODELED: Record<string, ReadonlySet<string>> = {
+  meta: new Set(['kind', 'name', 'content']),
+  property: new Set(['kind', 'property', 'content']),
+  link: new Set(['kind', 'rel', 'href', 'hreflang', 'type', 'title']),
+};
+
+/**
+ * What an edit keeps of the stored item that the form cannot show: a key the editor has no field
+ * for, a value that was not text (the form shows it empty), and the language or type a link keeps
+ * while its rel is not alternate. They are the stored item's, not the user's: they stay unless the
+ * user changes the field they belong to (for the link's language and type, its rel).
+ */
+function carriedFrom(base: StoredHeadItem | null, d: Draft, stored: StoredHeadItem): StoredHeadItem {
+  if (!base || base.kind !== d.kind) return stored;
+  const modeled = MODELED[d.kind];
+  const out: StoredHeadItem = { ...stored };
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || key in out) {
+      // A modeled field that was not text and is still empty in the form: the user did not touch it.
+      if (modeled?.has(key) && key in out && typeof value !== 'string' && out[key] === '') out[key] = value;
+      continue;
+    }
+    if (!modeled?.has(key)) out[key] = value;
+    else if ((key === 'hreflang' || key === 'type') && d.rel === base.rel) out[key] = value;
+    else if (typeof value !== 'string') out[key] = value;
+  }
+  return out;
+}
+
 /** What the draft would store: an item parseHeadItem accepts, or why not. A JSON-LD box can hold several. */
-function candidateOf(d: Draft): Candidate {
+function candidateOf(d: Draft, base: StoredHeadItem | null): Candidate {
   if (d.kind === 'jsonld') {
     if (d.json.trim() === '') return { ok: false, message: 'Paste the structured data.' };
     const read = parseJsonLdInput(d.json);
     return read.ok ? { ok: true, items: read.items.map((data) => ({ kind: 'jsonld', data })) } : { ok: false, message: read.message };
   }
-  const stored: StoredHeadItem =
+  const shown: StoredHeadItem =
     d.kind === 'meta'
       ? { kind: 'meta', name: d.name.trim(), content: d.content }
       : d.kind === 'property'
@@ -103,6 +133,7 @@ function candidateOf(d: Draft): Candidate {
             ...(d.rel === 'alternate' && d.type !== '' ? { type: d.type } : {}),
             ...(d.title.trim() !== '' ? { title: d.title } : {}),
           };
+  const stored = carriedFrom(base, d, shown);
   const parsed = parseHeadItem(stored);
   return parsed.ok ? { ok: true, items: [stored] } : { ok: false, message: parsed.refusal.message };
 }
@@ -140,7 +171,7 @@ function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stamp]);
 
-  const found = candidateOf(draft);
+  const found = candidateOf(draft, value);
   // An edit may add items by splitting a pasted list; a new item adds all of them.
   const added = found.ok ? found.items.length - (mode === 'edit' ? 1 : 0) : 0;
   const candidate: Candidate =
@@ -158,7 +189,8 @@ function HeadItemForm({ idPrefix, value, refusal, mode, room, autoFocus, onCommi
     setTouched(true);
     setDraft({ ...BLANK, kind, content: text(carried.content) });
   };
-  const dirty = !(candidate.ok && value && candidate.items.length === 1 && same(candidate.items[0], value));
+  // Nothing is written for a row the user has not changed: what the form shows is not all the stored item holds.
+  const dirty = touched && !(candidate.ok && value && candidate.items.length === 1 && same(candidate.items[0], value));
   const commit = () => {
     if (candidate.ok && dirty) onCommit(candidate.items);
   };

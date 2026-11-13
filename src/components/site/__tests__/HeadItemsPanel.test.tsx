@@ -165,6 +165,45 @@ describe('backtrack and revise', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  // What the stored item holds beyond what the form shows is the item's, not the user's.
+  it('does not rewrite a refused stored item the user has not changed', () => {
+    const items = [{ kind: 'meta', name: 'author', content: 'kept', note: 'from an older write' }];
+    const write = vi.fn(() => ({ ok: true as const, dropped: 0 }));
+    render(<HeadItemsEditor items={items} cap={20} write={write} home="site" />);
+    const row = within(screen.getByTestId('head-row'));
+    fireEvent.focus(row.getByLabelText('Name'));
+    fireEvent.blur(row.getByLabelText('Name'));
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('keeps a field the form cannot show when another field is edited: the edit is refused, not repaired by dropping it', () => {
+    const items = [{ kind: 'meta', name: 'author', content: 'kept', note: 'from an older write' }];
+    const write = vi.fn(() => ({ ok: true as const, dropped: 0 }));
+    render(<HeadItemsEditor items={items} cap={20} write={write} home="site" />);
+    const row = within(screen.getByTestId('head-row'));
+    fireEvent.change(row.getByLabelText('Content'), { target: { value: 'changed' } });
+    fireEvent.blur(row.getByLabelText('Content'));
+    expect(write).not.toHaveBeenCalled();
+    expect(row.getByTestId('head-message').textContent).toContain('"note"');
+  });
+
+  it('keeps a link\'s hidden language while its relation is left alone, and lets it go only when the relation is changed', () => {
+    const items = [{ kind: 'link', rel: 'canonical', href: 'https://example.com/', hreflang: 'de' }];
+    const write = vi.fn(() => ({ ok: true as const, dropped: 0 }));
+    render(<HeadItemsEditor items={items} cap={20} write={write} home="site" />);
+    const row = within(screen.getByTestId('head-row'));
+    // Another field edited, relation untouched: the language is still carried, so the item stays refused and nothing is written.
+    fireEvent.change(row.getByLabelText('Address'), { target: { value: 'https://example.com/en' } });
+    fireEvent.blur(row.getByLabelText('Address'));
+    expect(write).not.toHaveBeenCalled();
+    // The user changes the relevant field: the relation clears the language, and the new alternate link takes the one typed.
+    fireEvent.change(row.getByLabelText('Relation'), { target: { value: 'alternate' } });
+    fireEvent.change(row.getByLabelText('Language'), { target: { value: 'en' } });
+    fireEvent.blur(row.getByLabelText('Language'));
+    expect(write).toHaveBeenCalledTimes(1);
+    expect((write.mock.calls[0] as unknown as [unknown[]])[0]).toEqual([{ kind: 'link', rel: 'alternate', href: 'https://example.com/en', hreflang: 'en' }]);
+  });
+
   it('each add, edit and delete is one undo step, for the site and for a page', () => {
     site();
     fireEvent.change(newForm().getByLabelText('Name'), { target: { value: 'author' } });
