@@ -73,16 +73,36 @@ describe('the composite quad blend', () => {
     expect(to.blending).toBe(AdditiveBlending);
   });
 
-  it('every content layer draws a transparent material (the assumption copyBlendState documents)', () => {
+  describe('every content layer draws a transparent material (the assumption copyBlendState documents)', () => {
     const dir = path.resolve(__dirname, '../layers');
-    const contentLayers = fs.readdirSync(dir).filter((f) => f.endsWith('.tsx'));
-    expect(contentLayers.length).toBeGreaterThanOrEqual(6);
-    for (const file of contentLayers) {
-      const source = fs.readFileSync(path.join(dir, file), 'utf8');
-      // The bare JSX prop (`transparent` on its own line); `transparent={false}` is refused.
-      expect(source, `${file}: bare transparent prop`).toMatch(/^\s*transparent\s*$/m);
-      expect(source, `${file}: transparent={false}`).not.toMatch(/transparent=\{\s*false\s*\}/);
-    }
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.tsx'));
+
+    /** What is wrong with a layer source's `transparent`, after comments are removed; empty when it is fine. */
+    const problems = (source: string): string[] => {
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      const out: string[] = [];
+      if (!/^\s*transparent\s*$/m.test(code)) out.push('no bare transparent prop');
+      if (/\btransparent\b\s*[:=]\s*\{?\s*false/.test(code)) out.push('transparent is set to false');
+      return out;
+    };
+
+    it('holds for all six layer sources', () => {
+      expect(files.length).toBeGreaterThanOrEqual(6);
+      for (const file of files) expect(problems(fs.readFileSync(path.join(dir, file), 'utf8')), file).toEqual([]);
+    });
+
+    it.each([
+      ['the prop is removed and the word stays in a block comment', (t: string) => t.replace(/^\s*transparent\s*$/m, '/* transparent */')],
+      ['the prop is removed and the word stays in a line comment', (t: string) => t.replace(/^\s*transparent\s*$/m, '// transparent')],
+      ['the prop is removed and the word stays in a JSX comment', (t: string) => t.replace(/^\s*transparent\s*$/m, '{/* transparent */}')],
+      ['the prop is false', (t: string) => t.replace(/^\s*transparent\s*$/m, 'transparent={false}')],
+      ['the bare prop stays and the material is set to false', (t: string) => `${t}\nmat.transparent = false;`],
+      ['the bare prop stays and an options object says false', (t: string) => `${t}\nconst o = { transparent: false };`],
+    ])('fails a layer when %s', (_name, mutate) => {
+      const text = fs.readFileSync(path.join(dir, 'text.tsx'), 'utf8'); // a throwaway copy of the source, in memory
+      expect(problems(text)).toEqual([]);
+      expect(problems(mutate(text)).length).toBeGreaterThan(0);
+    });
   });
 
   it('follows the layer when its blend changes between two frames', () => {
