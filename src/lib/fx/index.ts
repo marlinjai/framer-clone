@@ -31,7 +31,7 @@
 
 import "./builtins";
 
-export { LumitraScene, type SceneFailure } from "./LumitraScene";
+export { LumitraScene, type SceneFailure, type SceneProbe } from "./LumitraScene";
 export { createScene, type LumitraSceneHandle } from "./createScene";
 export {
   registerNode,

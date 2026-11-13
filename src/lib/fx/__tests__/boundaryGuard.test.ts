@@ -274,6 +274,11 @@ describe('the repository as it is', () => {
     SCAN_TIMEOUT_MS,
   );
 
+  it('keeps the editor-only pick entry out of the published island: one importer, the editor\'s canvas layer, by dynamic import', () => {
+    const importers = importersOf(path.join(REPO_ROOT, FX_DIR, 'pick')).filter((importer) => !importer.file.includes('/__tests__/'));
+    expect(importers).toEqual([{ file: 'src/components/fx/FxLayer.tsx', dynamic: true }]);
+  });
+
   it('has importers of the render-free entry', () => {
     const formatEntry = '@/lib/fx/format';
     expect([...sources.values()].some((code) => code.includes(`'${formatEntry}'`))).toBe(true);
