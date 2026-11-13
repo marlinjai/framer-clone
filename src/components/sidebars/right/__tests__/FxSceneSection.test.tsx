@@ -76,6 +76,11 @@ const listed = () => within(screen.getByRole('list', { name: 'Layers in this sce
 /** The summary lists the front first; these are in stored order, back to front. */
 const listedNames = () => listed().map((item) => within(item).getAllByRole('button')[0].querySelector('span')!.textContent).reverse();
 const settings = (name: string) => screen.getByRole('group', { name: `Settings of ${name}` });
+/** Choose another kind for the picked layer and confirm that its settings are replaced. */
+const changeKind = (type: string) => {
+  choose('Kind', type);
+  fireEvent.click(screen.getByRole('button', { name: /^Change to / }));
+};
 const undo = () => act(() => getHistoryStore()!.undo());
 
 /** Add a layer of `type` and return it: the panel selects what it adds. */
@@ -639,10 +644,11 @@ describe('the four paths of editing a scene', () => {
 
     // The same kind again: nothing derived is thrown away.
     choose('Kind', 'noiseFill');
+    expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
     expect(JSON.stringify(layersOf(box)[1])).toBe(noiseBefore);
 
     // Another kind: its own defaults, in the same place, shown and blended as before.
-    choose('Kind', 'shape');
+    changeKind('shape');
     const replaced = layersOf(box)[1];
     expect(replaced.type).toBe('shape');
     expect(Object.keys(replaced.params)).not.toContain('intensity');
@@ -654,7 +660,7 @@ describe('the four paths of editing a scene', () => {
     expect(within(shown).queryByLabelText('Intensity')).toBeNull();
 
     // And back again: the first kind starts from its defaults, not from what was typed before.
-    choose('Kind', 'noiseFill');
+    changeKind('noiseFill');
     expect(layersOf(box)[1].type).toBe('noiseFill');
     expect(layersOf(box)[1].params.color.value).not.toBe('#445566');
     expect(others()).toBe(othersBefore);

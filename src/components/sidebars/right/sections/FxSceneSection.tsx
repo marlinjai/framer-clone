@@ -715,7 +715,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
           {!isEffect && readByEffect ? <p className={HINT}>An effect reads this layer from the main picture, so it cannot have effects of its own.</p> : null}
           {loose.map(([key, schema]) => settingControl(selected, key, schema))}
           {named.map(([group, entries]) => (
-            <div key={group} role="group" aria-label={group} className="flex min-w-0 flex-col gap-2.5 border-t border-border pt-2.5">
+            <div key={group} role="group" aria-label={`${group} group`} className="flex min-w-0 flex-col gap-2.5 border-t border-border pt-2.5">
               <span className={FIELD_LABEL}>{group}</span>
               {entries.map(([key, schema]) => settingControl(selected, key, schema))}
               {group === 'Text' ? (
@@ -726,7 +726,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
             </div>
           ))}
           {layerReadsPointer(selected.type) ? (
-            <div role="group" aria-label="Pointer" className="flex min-w-0 flex-col gap-2.5 border-t border-border pt-2.5">
+            <div role="group" aria-label="Pointer group" className="flex min-w-0 flex-col gap-2.5 border-t border-border pt-2.5">
               <span className={FIELD_LABEL}>Pointer</span>
               <NumberSetting label="Track mouse" value={pointer.trackMouse} min={0} max={1} step={0.01} onChange={(trackMouse) => setPointer({ trackMouse })} />
               <NumberSetting label="Momentum" value={pointer.momentum} min={0} max={1} step={0.01} onChange={(momentum) => setPointer({ momentum })} />

@@ -5,7 +5,7 @@
 // DragManager and check the action ran and no drag was armed.
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent, screen, within, act } from '@testing-library/react';
+import { render, cleanup, createEvent, fireEvent, screen, within, act } from '@testing-library/react';
 import { createRootStore, getDragManager, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
@@ -640,5 +640,79 @@ describe('the rows of an FX scene box', () => {
     expect(rowNames()).not.toContain('Bloom');
     expect(store.editorUI.fxLayerPick).toBeUndefined();
     expect(store.editorUI.selectedComponent?.id).toBe(box.id);
+  });
+
+  describe('nested effects and drag to reorder', () => {
+    const scope = async (effect: string, target: string) => {
+      const { setFxLayerTarget } = await import('@/lib/fxScene/edit');
+      const edit = setFxLayerTarget((box.props as Record<string, unknown>)[FX], effect, target);
+      if (!edit.ok) throw new Error(edit.message);
+      act(() => box.setProps({ fx: edit.stored }));
+    };
+    /** A drag as the browser sends it: the data transfer is shared by every event of the gesture. */
+    const transfer = () => ({ data: {} as Record<string, string>, effectAllowed: '', dropEffect: '', setData(t: string, v: string) { this.data[t] = v; }, getData(t: string) { return this.data[t]; } });
+    const drag = (from: HTMLElement, over: HTMLElement, place: 'above' | 'below') => {
+      const dataTransfer = transfer();
+      vi.spyOn(over, 'getBoundingClientRect').mockReturnValue({ top: 100, height: 28, left: 0, right: 100, bottom: 128, width: 100, x: 0, y: 100, toJSON: () => ({}) });
+      const y = place === 'above' ? 105 : 124;
+      fireEvent.dragStart(from, { dataTransfer });
+      // jsdom's drag events carry no pointer position: set it on the event, as a browser has it.
+      for (const make of [createEvent.dragOver, createEvent.drop]) {
+        const event = make(over, { dataTransfer });
+        Object.defineProperty(event, 'clientY', { value: y });
+        fireEvent(over, event);
+      }
+      fireEvent.dragEnd(from, { dataTransfer });
+    };
+
+    it('shows a scoped effect nested under its layer, indented, and not in the Effects group', async () => {
+      render(<LayersPanel />);
+      await scope('bloom', 'gradient-bg');
+      // Effects group: Grain, Vignette. Content: Noise Field, Gradient, then Gradient's nested Bloom.
+      expect(rowNames()).toEqual(['Grain', 'Vignette', 'Noise Field', 'Gradient', 'Bloom']);
+      expect(rowOf('Bloom').getAttribute('data-fx-layer-group')).toBe('nested:gradient-bg');
+      expect(nameButton('Bloom').getAttribute('aria-label')).toBe('Bloom, effect, applies to Gradient');
+      const indent = (name: string) => parseInt(rowOf(name).style.paddingLeft, 10);
+      expect(indent('Bloom')).toBeGreaterThan(indent('Gradient'));
+      // Picking it works like any layer.
+      fireEvent.click(nameButton('Bloom'));
+      expect(store.editorUI.fxLayerPick).toMatchObject({ layerId: 'bloom' });
+    });
+
+    it('shows a colour hint for a layer with a colour of its own', () => {
+      render(<LayersPanel />);
+      expect(rowOf('Noise Field').querySelector('[data-fx-swatch]')).not.toBeNull();
+      expect(rowOf('Bloom').querySelector('[data-fx-swatch]')).toBeNull();
+    });
+
+    it('drag: dropping a row below another in its group reorders it as one undo step', () => {
+      render(<LayersPanel />);
+      const before = layerIds().map((l) => l.name);
+      // Effects listed: Grain, Vignette, Bloom. Drop Grain below Bloom: it becomes the back-most effect.
+      drag(rowOf('Grain'), rowOf('Bloom'), 'below');
+      const after = layerIds().map((l) => l.name);
+      expect(after).not.toEqual(before);
+      expect(rowNames().slice(0, 3)).toEqual(['Vignette', 'Bloom', 'Grain']);
+      undo();
+      expect(layerIds().map((l) => l.name)).toEqual(before);
+    });
+
+    it('drag: a row cannot be dropped into another group, or the nest of another layer', async () => {
+      render(<LayersPanel />);
+      await scope('bloom', 'gradient-bg');
+      const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
+      drag(rowOf('Grain'), rowOf('Noise Field'), 'above'); // effect onto a content row
+      drag(rowOf('Noise Field'), rowOf('Grain'), 'above'); // content onto an effect row
+      drag(rowOf('Grain'), rowOf('Bloom'), 'above'); // scene effect into the nest of Gradient
+      expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+    });
+
+    it('drag: dropping a row where it already is stores nothing', () => {
+      render(<LayersPanel />);
+      const before = JSON.stringify((box.props as Record<string, unknown>)[FX]);
+      drag(rowOf('Grain'), rowOf('Vignette'), 'above');
+      expect(JSON.stringify((box.props as Record<string, unknown>)[FX])).toBe(before);
+      expect(getHistoryStore()!.canUndo).toBe(false);
+    });
   });
 });
