@@ -29,6 +29,7 @@
 
 import { getLayerSchema } from "./registry";
 import { serializeScene, type SerializedScene } from "./serialize";
+import { MAX_TARGETED_LAYERS, settleTargets } from "./targets";
 import {
   SCENE_SCHEMA_VERSION,
   type BlendMode,
@@ -95,6 +96,8 @@ export const FX_LIMITS = {
   name: 80,
   /** Characters of a scene or layer id. */
   id: 64,
+  /** Content layers that may have effects of their own (each costs render targets). */
+  targetedLayers: MAX_TARGETED_LAYERS,
 } as const;
 
 /** The pixel ratio range a scene may ask for (the engine's own invariant). */
@@ -315,6 +318,8 @@ function parseLayer(raw: unknown, index: number, usedIds: Set<string>, notes: st
     // stored `animate` would do nothing. Left out, and said so, until it does.
     notes.push(`${layerLabel}: per-parameter animation is not supported and was left out.`);
   }
+  if (typeof raw.target === "string") layer.target = raw.target;
+  else if (raw.target !== undefined) notes.push(`${layerLabel}: the layer it applies to (${quote(raw.target)}) is not valid, so it applies to the whole scene.`);
   const interactivity = parseInteractivity(raw.interactivity);
   if (interactivity) layer.interactivity = interactivity;
   else if (raw.interactivity !== undefined) notes.push(`${layerLabel}: the pointer settings were not valid and were left out.`);
@@ -406,6 +411,7 @@ export function parseFxScene(raw: unknown, options: FxParseOptions = {}): FxScen
     if (outcome.layer) layers.push(outcome.layer);
   }
   settleSources(layers, notes);
+  notes.push(...settleTargets(layers));
 
   return {
     ok: true,
