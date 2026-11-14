@@ -1,7 +1,7 @@
 {
   "comparedWith": {
     "file": "docs/primitives-score/latest.json",
-    "generatedAt": "2026-11-13T12:23:17.677Z",
+    "generatedAt": "2026-11-14T14:56:32.112Z",
     "included": 1878
   },
   "framerPlugin": {
@@ -19,7 +19,7 @@
     },
     "framerTyped": 549,
     "ourRenderer": 1829,
-    "ourPanel": 1244,
+    "ourPanel": 1277,
     "documentedNotMeasured": 83
   },
   "byKind": [
@@ -290,7 +290,7 @@
       },
       "framerTyped": 3,
       "ourRenderer": 42,
-      "ourPanel": 9,
+      "ourPanel": 42,
       "framerTypedOursFails": 0,
       "oursPassesFramerUntyped": 39,
       "framerTypedPanelFails": 0
@@ -16671,7 +16671,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:link:alternate",
@@ -16683,7 +16683,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:link:author",
@@ -16695,7 +16695,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:link:help",
@@ -16707,7 +16707,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:link:license",
@@ -16719,7 +16719,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:link:me",
@@ -16731,7 +16731,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:link:privacy-policy",
@@ -16743,7 +16743,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:link:terms-of-service",
@@ -16755,7 +16755,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:ahrefs-site-verification",
@@ -16767,7 +16767,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:apple-mobile-web-app-title",
@@ -16779,7 +16779,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:application-name",
@@ -16791,7 +16791,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:author",
@@ -16803,7 +16803,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:baidu-site-verification",
@@ -16815,7 +16815,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:facebook-domain-verification",
@@ -16827,7 +16827,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:format-detection",
@@ -16839,7 +16839,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:geo.placename",
@@ -16851,7 +16851,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:geo.position",
@@ -16863,7 +16863,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:geo.region",
@@ -16875,7 +16875,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:google-site-verification",
@@ -16887,7 +16887,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:msvalidate.01",
@@ -16899,7 +16899,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:p:domain_verify",
@@ -16911,7 +16911,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:rating",
@@ -16923,7 +16923,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:twitter:creator",
@@ -16935,7 +16935,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:twitter:site",
@@ -16947,7 +16947,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:meta:yandex-verification",
@@ -16959,7 +16959,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:property:article:*",
@@ -16971,7 +16971,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:property:book:*",
@@ -16983,7 +16983,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:property:fb:app_id",
@@ -16995,7 +16995,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:property:og:audio",
@@ -17007,7 +17007,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:property:og:locale:alternate",
@@ -17019,7 +17019,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:property:og:video",
@@ -17031,7 +17031,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:property:product:*",
@@ -17043,7 +17043,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:head:property:profile:*",
@@ -17055,7 +17055,7 @@
         "WithWebPageInfoTrait"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:color-token",
