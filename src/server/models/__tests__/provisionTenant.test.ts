@@ -183,13 +183,13 @@ describe('deploy/model-tenant/provision.sh against fake services', () => {
   afterEach(async () => { await fakes.stop(); rmSync(work, { recursive: true, force: true }); });
 
   function run(args: string[], env: Record<string, string> = {}): Promise<Run> {
-    const full = {
+    const full: NodeJS.ProcessEnv = {
       PATH: `${shim}:${process.env.PATH}`, HOME: work, STATE_DIR: state, CAPTURE_DIR: capture,
       STORAGE_BRAIN_ADMIN_KEY: fakes.storageAdmin, STORAGE_BRAIN_URL: fakes.sbUrl,
       ADMIN_API_KEY: fakes.authAdmin, AUTH_BRAIN_URL: fakes.abUrl, ACTOR_EMAIL: 'actor@example.test', ...env,
     };
     return new Promise((resolve) => {
-      execFile('bash', [SCRIPT, ...args], { env: full, timeout: 60_000 }, (err, stdout, stderr) => {
+      execFile('bash', [SCRIPT, ...args], { env: full, timeout: 60_000 }, (err: Error | null, stdout: string, stderr: string) => {
         const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
         resolve({ code, out: `${stdout}\n${stderr}`, argv: existsSync(argvLog) ? readFileSync(argvLog, 'utf8') : '' });
       });
