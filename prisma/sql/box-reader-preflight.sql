@@ -81,3 +81,26 @@ SELECT count(*) AS advisory_lock_functions_open_to_public
    AND EXISTS (
          SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
           WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE');
+
+\echo '== 9. Tables, views and sequences outside the system schemas on which PUBLIC holds any right. box_reader'
+\echo '==    would hold it too, and "never a row of the application" would be false. Expected: none.'
+SELECT n.nspname || '.' || c.relname AS relation, c.relkind AS kind, a.privilege_type
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault((CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END)::"char", c.relowner))) a
+ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+   AND a.grantee = 0
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
+ ORDER BY 1, 3;
+
+\echo '== 10. Schemas outside the system schemas where PUBLIC holds a right.'
+\echo '==     Expected: public, USAGE only (it lets a role see names there, not read rows). Anything else, above'
+\echo '==     all CREATE: look at it first.'
+SELECT n.nspname AS schema, a.privilege_type
+  FROM pg_namespace n
+  CROSS JOIN LATERAL aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a
+ WHERE a.grantee = 0
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
+ ORDER BY 1, 2;

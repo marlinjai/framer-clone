@@ -10,9 +10,10 @@
 -- sandboxed custom code (services/box), and a hardening of the database it is
 -- applied to. The box is the one host that serves customer code, so its
 -- password is the one most likely to be stolen. With this file applied, that
--- password can no longer take a lock the application waits for, write a large
--- object or a temporary file in this database, or be used by any role that was
--- not named. It narrows what a thief can do; it does not make the role
+-- password can no longer take an advisory lock the application waits for,
+-- write a large object or a temporary file or write straight to the
+-- write-ahead log in this database, or be used by any role that was not
+-- named. It narrows what a thief can do; it does not make the role
 -- harmless. What is left is listed below, in full, so nobody takes this file
 -- for more than it is.
 --
@@ -22,7 +23,9 @@
 -- if they do not exist). It is idempotent: running it again changes nothing
 -- and fails nothing, and re-applying it is how an upgrade of this file, or a
 -- restore of a dump, gets the same shape again. It names no database: every
--- database-level statement uses current_database().
+-- database-level statement uses current_database(). The role and its defaults
+-- belong to the whole cluster, so it also resets the role's defaults for every
+-- database of the cluster (see "Defaults" below).
 --
 -- NO PASSWORD, NO LOGIN. The role is created NOLOGIN. The operator's script
 -- gives it a login and a freshly generated password and writes the connection
@@ -34,7 +37,9 @@
 --     one thing the box may call, the function box_document(text, text),
 --     belongs to the application's migration (plan, slice C1b), which is not
 --     approved; that migration grants EXECUTE on it to box_reader.
---   - It does not touch other databases of the cluster (see "What is left").
+--   - It takes nothing from PUBLIC in the other databases of the cluster (see
+--     "What is left"). Only the role's own defaults, which belong to the
+--     cluster, are reset there too.
 --   - It does not grant TEMPORARY to anyone. commerce-roles.sql already takes
 --     it from PUBLIC and the application's roles do without it; this file only
 --     takes it away again, in case it is applied to a database where it came
@@ -56,6 +61,9 @@
 --      RIGHT: run prisma/sql/box-reader-preflight.sql first and grant CONNECT
 --      by name to every role it lists that should keep it.
 --   4. TEMPORARY on this database (already taken by commerce-roles.sql).
+--   5. EXECUTE on pg_logical_emit_message (every signature), which writes
+--      straight to the write-ahead log, the server's change log on disk.
+--      Nobody gets it back: the application does not use it.
 --
 -- WHAT IT SETS ON box_reader.
 --   - No superuser, database creation, role creation, replication or row
@@ -79,7 +87,10 @@
 --     one database (Postgres lets every role do that). A thief could set a one
 --     millisecond statement timeout that stops the box and survives a password
 --     rotation. Re-applying this file puts every default back, and the
---     operator's script should check them on every run.
+--     operator's script should check them on every run. Neither re-applying
+--     this file nor a new password ends a session the thief already holds:
+--     the operator's script (step O1) ends every session of box_reader after
+--     it rotates the password and re-applies this file.
 --   - It lifts its own session timeouts, holds its 4 connections, and ends
 --     sessions of its own role (the box's own connections).
 --   - It can make a statement wait: PREPARE on a table takes a lock on it
@@ -88,9 +99,11 @@
 --     The operator ends the session; idle_in_transaction_session_timeout ends
 --     it after 5 seconds unless the thief lifted that for the session.
 --   - It can use the server: memory (work_mem is a session setting), processor
---     time on 4 connections, transaction ids, the NOTIFY queue, and, if PUBLIC
---     may call pg_logical_emit_message, the write-ahead log. An open
---     transaction also holds back vacuum.
+--     time on 4 connections, transaction ids, and the NOTIFY queue. That queue
+--     is kept on disk and can grow to several gigabytes while a session of the
+--     role listens with a transaction left open. The NOTIFY command needs no
+--     right, so taking pg_notify from PUBLIC would close nothing; it is left as
+--     it is. An open transaction also holds back vacuum.
 --   - It may execute any function outside pg_catalog that the application
 --     leaves executable by PUBLIC. Today that is four trigger functions of the
 --     site branches migrations, which cannot be called directly; the rehearsal
@@ -102,15 +115,19 @@
 --     disk can still be filled from there. Advisory locks there are not locks
 --     in this database. Closing this is a cluster-wide change, or a rule in
 --     pg_hba.conf limiting box_reader to this database, and belongs to the
---     operator step O1. UNTIL THEN THIS FILE DOES NOT PROTECT THE DISK.
+--     operator step O1. UNTIL THEN THE DISK CAN BE FILLED FROM THERE.
+--   Even after O1 this file only narrows how the role can use the disk (the
+--   NOTIFY queue above stays). IT DOES NOT PROTECT THE DISK.
 --
--- ROLLBACK: prisma/sql/box-reader-rollback.sql gives PUBLIC back what this
--- file took and takes the login away from box_reader.
+-- ROLLBACK: prisma/sql/box-reader-rollback.sql takes the login away from
+-- box_reader and ends its sessions, then gives PUBLIC back what this file
+-- took.
 --
 -- REQUIRES POSTGRES 16 OR LATER, like commerce-roles.sql.
 
--- Everything in one transaction: it is applied whole or not at all, and no
--- session of the role can start between two of its statements.
+-- Everything in one transaction: it is applied whole or not at all. A session
+-- that starts meanwhile sees the database as it was before the file, never
+-- half of it.
 BEGIN;
 
 DO $$
@@ -142,7 +159,9 @@ $$;
 -- LOGIN is not named: the operator's script grants it, and a re-run keeps it.
 ALTER ROLE box_reader NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT CONNECTION LIMIT 4;
 
--- It is a member of no role and no role is a member of it.
+-- It is a member of no role and no role is a member of it. CASCADE: if it held a
+-- membership with the admin option and handed it on, the memberships it handed
+-- on go too, so no role keeps one that came through box_reader.
 DO $$
 DECLARE
   m record;
@@ -236,6 +255,26 @@ BEGIN
       FROM pg_proc p
      WHERE p.pronamespace = 'pg_catalog'::regnamespace
        AND (p.proname LIKE 'lo!_%' ESCAPE '!' OR p.proname IN ('loread', 'lowrite'))
+  LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', f.signature);
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM box_reader', f.signature);
+  END LOOP;
+END
+$$;
+
+-- =====================================================================
+-- The write-ahead log: nobody writes to it directly through PUBLIC
+-- =====================================================================
+
+DO $$
+DECLARE
+  f record;
+BEGIN
+  FOR f IN
+    SELECT p.oid::regprocedure AS signature
+      FROM pg_proc p
+     WHERE p.pronamespace = 'pg_catalog'::regnamespace
+       AND p.proname = 'pg_logical_emit_message'
   LOOP
     EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', f.signature);
     EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM box_reader', f.signature);

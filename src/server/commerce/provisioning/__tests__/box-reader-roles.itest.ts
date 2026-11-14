@@ -27,8 +27,10 @@
 //      change in either direction is noticed.
 //   5. Re-applying commerce-roles.sql afterwards changes nothing; the rollback
 //      gives PUBLIC its rights back and takes the box's login away; applying
-//      the file again closes everything again. Each file, made to stop
-//      partway, leaves nothing of what it had done before the stop.
+//      the file again closes everything again. The role file, made to stop
+//      partway, leaves nothing of what it had done; the rollback shuts the box
+//      out and ends its sessions before PUBLIC gets anything back, and,
+//      stopped in that last step, leaves PUBLIC with nothing.
 //   6. What a dump and restore does to the rights.
 //
 // No password literal exists anywhere: the container uses TRUST auth, as
@@ -38,6 +40,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import postgres from 'postgres';
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 
@@ -83,21 +86,21 @@ async function apply(file: SqlFile, database = DB_NAME): Promise<string> {
   return output;
 }
 
-/**
- * Applies a file that the test makes stop partway, the same way, and returns what psql printed.
- * `options` reaches the session as PGOPTIONS (a lock timeout, for instance).
- */
-async function applyStopped(file: SqlFile, options = ''): Promise<string> {
-  const { exitCode, output } = await container!.exec(['env', `PGOPTIONS=${options}`, 'psql', '-v', 'ON_ERROR_STOP=1', '-q', '-U', 'postgres', '-d', DB_NAME, '-f', `/tmp/${file}`]);
+/** Applies a file that the test makes stop partway, the same way, and returns what psql printed. */
+async function applyStopped(file: SqlFile): Promise<string> {
+  const { exitCode, output } = await container!.exec(['psql', '-v', 'ON_ERROR_STOP=1', '-q', '-U', 'postgres', '-d', DB_NAME, '-f', `/tmp/${file}`]);
   expect(exitCode).not.toBe(0);
   return output;
 }
 
+type MayOf = { may: number; of: number };
+
 /**
- * How many of the advisory lock functions, and of the large object functions, a role may execute,
- * and how many there are. Selected exactly as the files select them.
+ * How many of the advisory lock functions, of the large object functions and of the signatures of
+ * pg_logical_emit_message (it writes straight to the write-ahead log) a role may execute, and how
+ * many there are. Selected exactly as the files select them.
  */
-async function mayExecute(role: string, sql: postgres.Sql = su!): Promise<{ locks: { may: number; of: number }; largeObjects: { may: number; of: number } }> {
+async function mayExecute(role: string, sql: postgres.Sql = su!): Promise<{ locks: MayOf; largeObjects: MayOf; wal: MayOf }> {
   const [locks] = await sql`
     SELECT count(*) FILTER (WHERE has_function_privilege(${role}, p.oid, 'EXECUTE'))::int AS may, count(*)::int AS of
       FROM pg_proc p
@@ -110,9 +113,15 @@ async function mayExecute(role: string, sql: postgres.Sql = su!): Promise<{ lock
      WHERE p.pronamespace = 'pg_catalog'::regnamespace
        AND (p.proname LIKE 'lo\\_%' OR p.proname IN ('loread', 'lowrite'))
   `;
+  const [wal] = await sql`
+    SELECT count(*) FILTER (WHERE has_function_privilege(${role}, p.oid, 'EXECUTE'))::int AS may, count(*)::int AS of
+      FROM pg_proc p
+     WHERE p.pronamespace = 'pg_catalog'::regnamespace AND p.proname = 'pg_logical_emit_message'
+  `;
   return {
     locks: { may: locks!.may as number, of: locks!.of as number },
     largeObjects: { may: largeObjects!.may as number, of: largeObjects!.of as number },
+    wal: { may: wal!.may as number, of: wal!.of as number },
   };
 }
 
@@ -225,6 +234,12 @@ describe('the database, built the way a deploy builds it', () => {
     // Section 5: the functions PUBLIC may execute, each with what it returns.
     const section5 = output.slice(output.indexOf('== 5.'), output.indexOf('== 6.'));
     expect(section5.match(/\|\s*trigger/g)).toHaveLength(4);
+    // Section 9: no right of PUBLIC on any table, view or sequence. Section 10: on schemas, only USAGE
+    // on public (commerce-roles.sql took CREATE there).
+    const section9 = output.slice(output.indexOf('== 9.'), output.indexOf('== 10.'));
+    expect(section9).toContain('(0 rows)');
+    const section10 = output.slice(output.indexOf('== 10.'));
+    expect(section10).toMatch(/\n\s*public\s*\|\s*USAGE\s*\n\(1 row\)/);
   });
 
   it('before the file: PUBLIC may take advisory locks, use large objects and connect; nobody but the superuser has TEMPORARY', async () => {
@@ -237,6 +252,8 @@ describe('the database, built the way a deploy builds it', () => {
     expect(anyone.largeObjects.of).toBeGreaterThanOrEqual(10);
     // lo_import and lo_export are kept from PUBLIC by Postgres itself.
     expect(anyone.largeObjects.may).toBe(anyone.largeObjects.of - 3);
+    expect(anyone.wal.of).toBeGreaterThanOrEqual(2);
+    expect(anyone.wal.may).toBe(anyone.wal.of);
     expect((await rightsOf('commerce_app')).temporary).toBe(false);
   });
 });
@@ -346,18 +363,27 @@ describe('box-reader.sql applied', () => {
     await su!`ALTER ROLE box_reader CREATEDB CREATEROLE INHERIT CONNECTION LIMIT -1`;
     await su!`GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_lock(bigint) TO box_reader`;
     await su!`GRANT EXECUTE ON FUNCTION pg_catalog.lo_creat(integer) TO box_reader`;
+    await su!`GRANT EXECUTE ON FUNCTION pg_catalog.pg_logical_emit_message(boolean, text, text) TO box_reader`;
     await su!`GRANT TEMPORARY, CREATE ON DATABASE framer_clone_box_reader_test TO box_reader`;
     const handed = await rightsOf('box_reader');
     expect(handed.temporary).toBe(true);
     expect(handed.create).toBe(true);
     expect(handed.locks.may).toBeGreaterThan(0);
     expect(handed.largeObjects.may).toBeGreaterThan(0);
+    expect(handed.wal.may).toBeGreaterThan(0);
     expect(await su!`SELECT 1 FROM pg_auth_members WHERE roleid = 'box_reader'::regrole OR member = 'box_reader'::regrole`).toHaveLength(2);
 
     await apply('box-reader.sql');
 
     const after = await rightsOf('box_reader');
-    expect(after).toEqual({ connect: true, temporary: false, create: false, locks: { may: 0, of: after.locks.of }, largeObjects: { may: 0, of: after.largeObjects.of } });
+    expect(after).toEqual({
+      connect: true,
+      temporary: false,
+      create: false,
+      locks: { may: 0, of: after.locks.of },
+      largeObjects: { may: 0, of: after.largeObjects.of },
+      wal: { may: 0, of: after.wal.of },
+    });
     expect(await su!`SELECT 1 FROM pg_auth_members WHERE roleid = 'box_reader'::regrole OR member = 'box_reader'::regrole`).toHaveLength(0);
     const [role] = await su!`SELECT rolcreatedb, rolcreaterole, rolinherit, rolconnlimit, rolcanlogin FROM pg_roles WHERE rolname = 'box_reader'`;
     expect(role).toEqual({ rolcreatedb: false, rolcreaterole: false, rolinherit: false, rolconnlimit: 4, rolcanlogin: true });
@@ -372,6 +398,7 @@ describe('box-reader.sql applied', () => {
       const rights = await rightsOf(role);
       expect(rights.locks.may, role).toBe(rights.locks.of);
       expect(rights.largeObjects.may, role).toBe(0);
+      expect(rights.wal.may, role).toBe(0);
       expect(rights.connect, role).toBe(true);
       // Not granted by this file: commerce_app still cannot create a temporary table.
       expect(rights.temporary, role).toBe(false);
@@ -388,6 +415,7 @@ describe('box-reader.sql applied', () => {
       create: false,
       locks: { may: 0, of: anyone.locks.of },
       largeObjects: { may: 0, of: anyone.largeObjects.of },
+      wal: { may: 0, of: anyone.wal.of },
     });
     const sql = as('anyone_else');
     // 42501: permission denied for the database.
@@ -404,6 +432,7 @@ describe('box_reader, by allow-list', () => {
       create: false,
       locks: { may: 0, of: rights.locks.of },
       largeObjects: { may: 0, of: rights.largeObjects.of },
+      wal: { may: 0, of: rights.wal.of },
     });
 
     // No right of any kind on any table, view or sequence outside the system schemas.
@@ -477,13 +506,14 @@ describe('box_reader, by allow-list', () => {
       'end a session of the application': () => box`SELECT pg_terminate_backend(${pid}::int)`,
       'cancel a statement of the application': () => box`SELECT pg_cancel_backend(${pid}::int)`,
       'read a server file': () => box`SELECT pg_read_file('/etc/passwd')`,
+      'write straight to the write-ahead log': () => box`SELECT pg_logical_emit_message(false, 'box', 'x')`,
     };
     const refused: Record<string, string> = {};
     for (const [name, attempt] of Object.entries(attempts)) refused[name] = await codeOf(attempt);
     // And the application's session is still there.
     expect(await codeOf(() => app`SELECT 1`)).toBe('ok');
     expect(refused).toEqual(Object.fromEntries(Object.keys(refused).map((name) => [name, '42501'])));
-    expect(Object.keys(refused)).toHaveLength(20);
+    expect(Object.keys(refused)).toHaveLength(21);
 
     // The four trigger functions PUBLIC may execute cannot be called: 0A000, "trigger functions can
     // only be called as triggers".
@@ -606,8 +636,10 @@ describe('what is left, stated in the file and held here as it is', () => {
 
   it('RESIDUAL: box_reader sees who is connected and how many rows each table has', async () => {
     const box = as('box_reader');
-    const tables = await box`SELECT relname FROM pg_stat_user_tables WHERE relname IN ('sites', 'tenant_groups') ORDER BY 1`;
+    const tables = await box`SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE relname IN ('sites', 'tenant_groups') ORDER BY 1`;
     expect(tables.map((row) => row.relname)).toEqual(['sites', 'tenant_groups']);
+    // The live row count of each table, never a row.
+    expect(tables.every((row) => Number.isInteger(Number(row.n_live_tup)))).toBe(true);
     const app = as('commerce_app');
     await app`SELECT 1`;
     const seen = await box`SELECT DISTINCT usename FROM pg_stat_activity WHERE usename IN ('commerce_app', 'postgres') ORDER BY 1`;
@@ -640,11 +672,11 @@ describe('what is left, stated in the file and held here as it is', () => {
   it('RESIDUAL: box_reader may send notifications, and what else of the server it may use', async () => {
     const box = as('box_reader');
     expect(await codeOf(() => box`SELECT pg_notify('box_reader_was_here', 'x')`)).toBe('ok');
+    // The NOTIFY command checks no right at all, so taking pg_notify from PUBLIC would close nothing:
+    // the file leaves it as it is.
+    expect(await codeOf(() => box`NOTIFY box_reader_was_here`)).toBe('ok');
     expect(await codeOf(() => box`SET work_mem = '1GB'`)).toBe('ok');
     expect(await codeOf(() => box`SELECT pg_current_xact_id()`)).toBe('ok');
-    // Whether it may write to the write-ahead log directly: recorded as found.
-    const [wal] = await su!`SELECT has_function_privilege('box_reader', 'pg_catalog.pg_logical_emit_message(boolean, text, text)', 'EXECUTE') AS may`;
-    expect(wal!.may).toBe(true);
     // Prepared transactions are switched off on a default server, so it cannot leave one behind.
     const [prepared] = await su!`SHOW max_prepared_transactions`;
     expect((prepared as { max_prepared_transactions: string }).max_prepared_transactions).toBe('0');
@@ -672,28 +704,76 @@ describe('afterwards', () => {
     expect(output).toContain('anyone_else');
   });
 
-  it('the rollback is whole or nothing: stopped after it gave PUBLIC the functions back, nothing of it stays', async () => {
+  it('the rollback, stopped before PUBLIC has its rights back, leaves the box shut out and PUBLIC with nothing', async () => {
     const before = await wholeShape();
     expect(before.anyone.locks.may).toBe(0);
     expect(before.role.rolcanlogin).toBe(true);
-    // Another session holds the role catalog, so the rollback's ALTER ROLE, which comes after its
-    // grants to PUBLIC, waits for it and gives up after two seconds.
-    const holder = postgres(urlOf('postgres'), { max: 1, prepare: false, onnotice: () => {} });
-    opened.push(holder);
-    let output = '';
-    await holder.begin(async (tx) => {
-      await tx`LOCK TABLE pg_catalog.pg_authid IN SHARE MODE`;
-      output = await applyStopped('box-reader-rollback.sql', '-c lock_timeout=2s');
-    });
-    expect(output).toContain('lock timeout');
-    expect(await wholeShape()).toEqual(before);
+    expect(before.box.connect).toBe(true);
+    // Step 3 gives PUBLIC CONNECT first and the functions after it, so a stop at its first GRANT on a
+    // function comes after something of it was done (a GRANT on a database fires no event trigger).
+    const rollback = readFileSync(path.join(SQL_DIR, 'box-reader-rollback.sql'), 'utf8');
+    const step3 = rollback.indexOf('-- Step 3.');
+    const connectToPublic = rollback.indexOf('GRANT CONNECT ON DATABASE %I TO PUBLIC');
+    expect(step3).toBeGreaterThan(rollback.indexOf('-- Step 2.'));
+    expect(connectToPublic).toBeGreaterThan(step3);
+    expect(rollback.indexOf('GRANT EXECUTE ON FUNCTION %s TO PUBLIC')).toBeGreaterThan(connectToPublic);
+    await su!`CREATE FUNCTION public.box_reader_test_stop() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'box_reader_test_stop: stopped at %', tg_tag; END $$`;
+    try {
+      await su!`REVOKE EXECUTE ON FUNCTION public.box_reader_test_stop() FROM PUBLIC`;
+      await su!`CREATE EVENT TRIGGER box_reader_test_stop ON ddl_command_start WHEN TAG IN ('GRANT') EXECUTE FUNCTION public.box_reader_test_stop()`;
+      const output = await applyStopped('box-reader-rollback.sql');
+      expect(output).toContain('box_reader_test_stop: stopped at GRANT');
+      expect(output).toContain('GRANT EXECUTE ON FUNCTION');
+      // Steps 1 and 2 stay done: the box has no login and no grant of CONNECT. Of step 3 nothing stays:
+      // PUBLIC has neither CONNECT nor a function back.
+      expect(await wholeShape()).toEqual({ ...before, role: { ...before.role, rolcanlogin: false }, box: { ...before.box, connect: false } });
+    } finally {
+      await su!`DROP EVENT TRIGGER IF EXISTS box_reader_test_stop`;
+      await su!`DROP FUNCTION IF EXISTS public.box_reader_test_stop()`;
+      await apply('box-reader.sql');
+      await su!`ALTER ROLE box_reader LOGIN`;
+    }
   }, 120_000);
 
   it('the rollback gives PUBLIC its rights back, takes the box\'s login and connection away, ends its open sessions, and can be run twice', async () => {
     // A session of the box that is already connected when the rollback runs.
     const connected = as('box_reader');
     await connected`SELECT 1`;
-    await apply('box-reader-rollback.sql');
+    // Step 3 is held for three seconds at its first GRANT on a function, to look at the box meanwhile.
+    await su!`
+      CREATE FUNCTION public.box_reader_test_pause() RETURNS event_trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF current_setting('box_reader_test.paused', true) IS DISTINCT FROM 'yes' THEN
+          PERFORM set_config('box_reader_test.paused', 'yes', false);
+          PERFORM pg_sleep(3);
+        END IF;
+      END $$
+    `;
+    let running: Promise<string> | undefined;
+    let duringStep3: { sessions: number; login: string } | undefined;
+    try {
+      await su!`REVOKE EXECUTE ON FUNCTION public.box_reader_test_pause() FROM PUBLIC`;
+      await su!`CREATE EVENT TRIGGER box_reader_test_pause ON ddl_command_start WHEN TAG IN ('GRANT') EXECUTE FUNCTION public.box_reader_test_pause()`;
+      running = apply('box-reader-rollback.sql');
+      // Seen from the server, not guessed from a delay: the rollback's session sleeps in the trigger.
+      let paused = false;
+      for (let tries = 0; tries < 100 && !paused; tries += 1) {
+        paused = (await su!`SELECT 1 FROM pg_stat_activity WHERE wait_event = 'PgSleep'`).length > 0;
+        if (!paused) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(paused).toBe(true);
+      const sessions = await su!`SELECT 1 FROM pg_stat_activity WHERE usename = 'box_reader'`;
+      const late = as('box_reader');
+      duringStep3 = { sessions: sessions.length, login: await codeOf(() => late`SELECT 1`) };
+      await running;
+    } finally {
+      await running?.catch(() => {});
+      await su!`DROP EVENT TRIGGER IF EXISTS box_reader_test_pause`;
+      await su!`DROP FUNCTION IF EXISTS public.box_reader_test_pause()`;
+    }
+    // While PUBLIC was being given its rights back, the box had no session left and could open none
+    // (28000: the role may not log in).
+    expect(duringStep3).toEqual({ sessions: 0, login: '28000' });
     // It was ended: it does not go on with PUBLIC's rights back.
     expect(await codeOf(() => connected`SELECT pg_advisory_lock(6)`)).not.toBe('ok');
     expect(await su!`SELECT 1 FROM pg_stat_activity WHERE usename = 'box_reader'`).toHaveLength(0);
@@ -709,6 +789,7 @@ describe('afterwards', () => {
         FROM pg_proc p WHERE p.pronamespace = 'pg_catalog'::regnamespace AND p.proname IN ('lo_import', 'lo_export') ORDER BY 1
     `;
     expect(serverFiles.map((row) => row.may)).toEqual([false, false, false]);
+    expect(anyone.wal.may).toBe(anyone.wal.of);
     // TEMPORARY stays as commerce-roles.sql left it.
     expect(anyone.temporary).toBe(false);
     const sql = as('anyone_else');
@@ -735,12 +816,13 @@ describe('afterwards', () => {
       await su!`CREATE EVENT TRIGGER box_reader_test_stop ON ddl_command_start WHEN TAG IN ('REVOKE') EXECUTE FUNCTION public.box_reader_test_stop()`;
       const output = await applyStopped('box-reader.sql');
       expect(output).toContain('box_reader_test_stop: stopped at REVOKE');
+      expect(output).toContain('REVOKE EXECUTE ON FUNCTION');
       expect(await wholeShape()).toEqual(before);
     } finally {
       await su!`DROP EVENT TRIGGER IF EXISTS box_reader_test_stop`;
       await su!`DROP FUNCTION IF EXISTS public.box_reader_test_stop()`;
-      await su!`ALTER ROLE box_reader IN DATABASE framer_clone_box_reader_test RESET ALL`;
-      await su!`ALTER ROLE box_reader RESET ALL`;
+      // Back to the shape the file gives, whatever test runs next.
+      await apply('box-reader.sql');
     }
   }, 120_000);
 
@@ -751,6 +833,7 @@ describe('afterwards', () => {
     expect(anyone.connect).toBe(false);
     expect(anyone.locks.may).toBe(0);
     expect(anyone.largeObjects.may).toBe(0);
+    expect(anyone.wal.may).toBe(0);
     const box = await rightsOf('box_reader');
     expect(box.connect).toBe(true);
     expect(box.locks.may).toBe(0);
