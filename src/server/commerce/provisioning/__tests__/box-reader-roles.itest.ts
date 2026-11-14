@@ -27,7 +27,8 @@
 //      change in either direction is noticed.
 //   5. Re-applying commerce-roles.sql afterwards changes nothing; the rollback
 //      gives PUBLIC its rights back and takes the box's login away; applying
-//      the file again closes everything again.
+//      the file again closes everything again. Each file, made to stop
+//      partway, leaves nothing of what it had done before the stop.
 //   6. What a dump and restore does to the rights.
 //
 // No password literal exists anywhere: the container uses TRUST auth, as
@@ -79,6 +80,16 @@ async function codeOf(run: () => PromiseLike<unknown>): Promise<string> {
 async function apply(file: SqlFile, database = DB_NAME): Promise<string> {
   const { exitCode, output } = await container!.exec(['psql', '-v', 'ON_ERROR_STOP=1', '-q', '-U', 'postgres', '-d', database, '-f', `/tmp/${file}`]);
   if (exitCode !== 0) throw new Error(`${file} failed (exit ${exitCode}): ${output}`);
+  return output;
+}
+
+/**
+ * Applies a file that the test makes stop partway, the same way, and returns what psql printed.
+ * `options` reaches the session as PGOPTIONS (a lock timeout, for instance).
+ */
+async function applyStopped(file: SqlFile, options = ''): Promise<string> {
+  const { exitCode, output } = await container!.exec(['env', `PGOPTIONS=${options}`, 'psql', '-v', 'ON_ERROR_STOP=1', '-q', '-U', 'postgres', '-d', DB_NAME, '-f', `/tmp/${file}`]);
+  expect(exitCode).not.toBe(0);
   return output;
 }
 
@@ -140,6 +151,24 @@ async function rightsOf(role: string) {
     temporary: db!.temporary as boolean,
     create: db!.create as boolean,
     ...(await mayExecute(role)),
+  };
+}
+
+/** Everything either file changes: box_reader's login, limit and defaults, and the rights of every role. */
+async function wholeShape() {
+  const [role] = await su!`SELECT rolcanlogin, rolconnlimit FROM pg_roles WHERE rolname = 'box_reader'`;
+  const settings = (await su!`
+    SELECT COALESCE(d.datname, 'every database') AS database, s.setconfig AS settings
+      FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid = s.setdatabase
+     WHERE s.setrole = 'box_reader'::regrole ORDER BY 1
+  `).map((row) => ({ ...row }));
+  return {
+    role: { ...role },
+    settings,
+    box: await rightsOf('box_reader'),
+    anyone: await rightsOf('anyone_else'),
+    app: await rightsOf('commerce_app'),
+    ddl: await rightsOf('commerce_ddl'),
   };
 }
 
@@ -643,6 +672,23 @@ describe('afterwards', () => {
     expect(output).toContain('anyone_else');
   });
 
+  it('the rollback is whole or nothing: stopped after it gave PUBLIC the functions back, nothing of it stays', async () => {
+    const before = await wholeShape();
+    expect(before.anyone.locks.may).toBe(0);
+    expect(before.role.rolcanlogin).toBe(true);
+    // Another session holds the role catalog, so the rollback's ALTER ROLE, which comes after its
+    // grants to PUBLIC, waits for it and gives up after two seconds.
+    const holder = postgres(urlOf('postgres'), { max: 1, prepare: false, onnotice: () => {} });
+    opened.push(holder);
+    let output = '';
+    await holder.begin(async (tx) => {
+      await tx`LOCK TABLE pg_catalog.pg_authid IN SHARE MODE`;
+      output = await applyStopped('box-reader-rollback.sql', '-c lock_timeout=2s');
+    });
+    expect(output).toContain('lock timeout');
+    expect(await wholeShape()).toEqual(before);
+  }, 120_000);
+
   it('the rollback gives PUBLIC its rights back, takes the box\'s login and connection away, ends its open sessions, and can be run twice', async () => {
     // A session of the box that is already connected when the rollback runs.
     const connected = as('box_reader');
@@ -672,6 +718,30 @@ describe('afterwards', () => {
     const box = as('box_reader');
     expect(await codeOf(() => box`SELECT 1`)).not.toBe('ok');
     expect(await applicationPaths()).toEqual(ALL_WORK);
+  }, 120_000);
+
+  it('the file is whole or nothing: stopped at its first right on a function, nothing of it stays', async () => {
+    // Defaults the file resets, set as a thief could have set them.
+    await su!`ALTER ROLE box_reader SET lock_timeout = '1ms'`;
+    await su!`ALTER ROLE box_reader IN DATABASE framer_clone_box_reader_test SET statement_timeout = '1ms'`;
+    const before = await wholeShape();
+    expect(before.anyone.connect).toBe(true);
+    expect(before.settings).toHaveLength(2);
+    // An event trigger stops the file at its first REVOKE on a function. By then it has reset the
+    // defaults and taken CONNECT from PUBLIC (statements on roles and databases fire no event trigger).
+    await su!`CREATE FUNCTION public.box_reader_test_stop() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'box_reader_test_stop: stopped at %', tg_tag; END $$`;
+    try {
+      await su!`REVOKE EXECUTE ON FUNCTION public.box_reader_test_stop() FROM PUBLIC`;
+      await su!`CREATE EVENT TRIGGER box_reader_test_stop ON ddl_command_start WHEN TAG IN ('REVOKE') EXECUTE FUNCTION public.box_reader_test_stop()`;
+      const output = await applyStopped('box-reader.sql');
+      expect(output).toContain('box_reader_test_stop: stopped at REVOKE');
+      expect(await wholeShape()).toEqual(before);
+    } finally {
+      await su!`DROP EVENT TRIGGER IF EXISTS box_reader_test_stop`;
+      await su!`DROP FUNCTION IF EXISTS public.box_reader_test_stop()`;
+      await su!`ALTER ROLE box_reader IN DATABASE framer_clone_box_reader_test RESET ALL`;
+      await su!`ALTER ROLE box_reader RESET ALL`;
+    }
   }, 120_000);
 
   it('applying the file again after a rollback closes everything again', async () => {
