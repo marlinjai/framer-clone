@@ -226,6 +226,26 @@ describe('deploy/model-tenant/provision.sh against fake services', () => {
     expectNoLeak(ok);
   });
 
+  it('invalidates the workspace when the resolved company changes, preserving it for the same company', async () => {
+    await prepare();
+    const workspace = path.join(state, 'model-tenant-workspace-id');
+    await run(['resolve-company']);
+    expect(existsSync(workspace)).toBe(true);
+    writeFileSync(path.join(state, 'model-tenant-company-id'), crypto.randomUUID());
+    await run(['resolve-company']);
+    expect(existsSync(workspace)).toBe(false);
+    expect((await run(['create-tenant'])).code).toBe(2);
+    expect((await run(['mint-key'])).code).toBe(2);
+  });
+
+  it('does not rotate an existing tenant bound to another workspace', async () => {
+    await prepare();
+    fakes.tenants.push({ id: crypto.randomUUID(), name: 'framer-site-models', authWorkspaceId: crypto.randomUUID(), quotaBytes: 1, usedBytes: 0, allowedFileTypes: null });
+    fakes.calls = [];
+    expect((await run(['create-tenant'])).code).toBe(4);
+    expect(mutations()).toEqual([]);
+  });
+
   it('ensure-workspace creates the workspace once under the company and is idempotent', async () => {
     const first = await prepare();
     expect(first.code).toBe(0);
@@ -262,15 +282,15 @@ describe('deploy/model-tenant/provision.sh against fake services', () => {
     expectNoLeak(r);
   });
 
-  it('create-tenant is idempotent: a second run creates nothing and only rotates the legacy key again', async () => {
+  it('create-tenant refuses to mutate an existing tenant whose binding cannot be checked', async () => {
     await prepare();
     await run(['create-tenant']);
     fakes.calls = [];
     const again = await run(['create-tenant']);
-    expect(again.code).toBe(0);
-    expect(again.out).toContain('already exists');
+    expect(again.code).toBe(4);
+    expect(again.out).toContain('binding cannot be checked');
     expect(fakes.tenants).toHaveLength(1);
-    expect(mutations()).toEqual([`SB POST /api/v1/admin/tenants/${fakes.tenants[0].id}/regenerate-key`]);
+    expect(mutations()).toEqual([]);
   });
 
   it('create-tenant refuses a workspace another tenant already claims (unique binding) and a paged tenant list', async () => {
@@ -307,11 +327,11 @@ describe('deploy/model-tenant/provision.sh against fake services', () => {
     expect(r.out).toContain('NOT rotated');
     expectNoLeak(r);
     expect(fakes.tenants).toHaveLength(1);
-    // The rerun closes the gap: it rotates the legacy key of the existing tenant.
+    // A rerun refuses to mutate an existing tenant whose binding is unknown.
     fakes.faults.regenerateKey = 0;
     const rerun = await run(['create-tenant']);
-    expect(rerun.code).toBe(0);
-    expect(rerun.out).toContain('rotated again');
+    expect(rerun.code).toBe(4);
+    expect(rerun.out).toContain('binding cannot be checked');
     expect(fakes.tenants).toHaveLength(1);
   });
 
@@ -444,9 +464,11 @@ describe('deploy/model-tenant/provision.sh against fake services', () => {
   });
 
   it('refuses a plain http address that is not loopback, before any request is made', async () => {
-    const r = await run(['status'], { STORAGE_BRAIN_URL: 'http://storage.example.test' });
-    expect(r.code).toBe(2);
-    expect(r.out).toContain('non-https');
+    for (const url of ['http://storage.example.test', 'http://localhost:80@storage.example.test']) {
+      const r = await run(['status'], { STORAGE_BRAIN_URL: url });
+      expect(r.code).toBe(2);
+      expect(r.out).toContain('non-https');
+    }
     expect(fakes.calls).toEqual([]);
   });
 

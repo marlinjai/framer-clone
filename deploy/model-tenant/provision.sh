@@ -11,7 +11,7 @@
 # the company: one credential, one tenant, nothing else reaches it (blast-radius isolation per app, as D2 intends).
 #
 # THIS SCRIPT NEVER PRINTS A SECRET. Run it only through the secrets proxy, which injects the secrets of ONE Infisical
-# project per call, so the steps are split by which project holds the admin key they need. Every step is idempotent.
+# project per call, so the steps are split by which project holds the admin key they need. Existing resources are never mutated without verifying their identity.
 # It is tested against fake services (src/server/models/__tests__/provisionTenant.test.ts); do not change it without
 # running that test.
 #
@@ -55,7 +55,10 @@ fail() { echo "$*" >&2; exit "${2:-1}"; }
 
 proto_for() { # url -> curl --proto value
   case "$1" in
-    http://127.0.0.1:*|http://127.0.0.1/*|http://localhost:*|http://localhost/*) echo '=http' ;;
+    http://*)
+      local authority="${1#http://}"
+      authority="${authority%%[/?#]*}"
+      if [[ "$authority" =~ ^(localhost|127\.0\.0\.1)(:[0-9]+)?$ ]]; then echo '=http'; else fail "refusing a non-https address" 2; fi ;;
     https://*) echo '=https' ;;
     *) fail "refusing a non-https address" 2 ;;
   esac
@@ -106,6 +109,10 @@ case "$cmd" in
     [ "$(printf '%s' "$json" | jq -r '.next_cursor // empty')" = "" ] || fail "company list is paged: refusing to guess" 1
     ids="$(printf '%s' "$json" | jq -r --arg s "$COMPANY_SLUG" '[.items[]? | select(.slug == $s) | .id] | .[]')"
     [ "$(printf '%s\n' "$ids" | grep -c .)" -eq 1 ] || fail "company slug $COMPANY_SLUG matched no company or more than one" 1
+    f="$(state_file)"
+    if [ ! -s "$f" ] || [ "$(cat "$f")" != "$ids" ]; then
+      rm -f "${f%-company-id}-workspace-id"
+    fi
     keep company "$ids"
     echo "resolved company $COMPANY_SLUG (id kept for the next step)"
     ;;
@@ -145,22 +152,17 @@ case "$cmd" in
     [ "$total" -le "$shown" ] || fail "tenant list is paged ($shown of $total shown): refusing to guess whether the tenant exists" 1
     id="$(printf '%s' "$list" | jq -r --arg n "$NAME" '.tenants[]? | select(.name == $n) | .id' | head -n 1)"
     if [ -n "$id" ]; then
-      # The admin API does not show a tenant's binding, so an existing tenant is not re-bound or checked here: verify-key
-      # proves the stored key resolves to it. A rerun does rotate the legacy key again (nobody holds it; this closes the
-      # gap when an earlier run was cut off between the create and the rotation).
-      api "$STORAGE_BRAIN_ADMIN_KEY" "$base" POST "/tenants/$id/regenerate-key" >/dev/null || fail "tenant $NAME exists but its legacy key could not be rotated" 4
-      echo "tenant $NAME already exists; legacy key rotated again, nothing else changed (its binding is proven by verify-key)"
-      exit 0
+      fail "tenant $NAME already exists: its workspace binding cannot be checked through the admin API. Verify its identity separately before any recovery or key rotation" 4
     fi
     body="$(jq -nc --arg n "$NAME" --argjson q "$QUOTA_BYTES" --argjson t "$TYPES" --arg a "$wid" '{name:$n, quotaBytes:$q, allowedFileTypes:$t, authWorkspaceId:$a}')"
     # The create answer carries a one-time legacy API key. Only the id is kept; the key is dropped here, never stored.
     created="$(api "$STORAGE_BRAIN_ADMIN_KEY" "$base" POST /tenants "$body")"
     id="$(printf '%s' "$created" | jq -r '.id // empty')"; unset created
-    [ -n "$id" ] || fail "create answered without an id: the tenant may exist, run create-tenant again (it rotates the legacy key of an existing tenant)" 4
+    [ -n "$id" ] || fail "create answered without an id: the tenant may exist, verify the existing tenant identity and recover manually" 4
     # Replace the legacy key with one nobody has seen, so the tenant is reachable only through Auth Brain. If this fails the
     # tenant exists with an unseen legacy key; a second run reports "already exists", so rotate it by hand (see the README).
     api "$STORAGE_BRAIN_ADMIN_KEY" "$base" POST "/tenants/$id/regenerate-key" >/dev/null \
-      || fail "tenant $NAME was created but its legacy key was NOT rotated: run the rotation step in the README before anything else" 4
+      || fail "tenant $NAME was created but its legacy key was NOT rotated: verify its identity independently before manual recovery" 4
     echo "created tenant $NAME, quota $QUOTA_BYTES bytes, legacy key discarded"
     ;;
 
