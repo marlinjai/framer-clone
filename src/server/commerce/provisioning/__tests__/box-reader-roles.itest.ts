@@ -755,13 +755,20 @@ describe('afterwards', () => {
       await su!`REVOKE EXECUTE ON FUNCTION public.box_reader_test_pause() FROM PUBLIC`;
       await su!`CREATE EVENT TRIGGER box_reader_test_pause ON ddl_command_start WHEN TAG IN ('GRANT') EXECUTE FUNCTION public.box_reader_test_pause()`;
       running = apply('box-reader-rollback.sql');
+      let settled = false;
+      running.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
       // Seen from the server, not guessed from a delay: the rollback's session sleeps in the trigger.
+      // The wait ends as soon as the rollback ends, so one that stops early fails here at once.
       let paused = false;
-      for (let tries = 0; tries < 100 && !paused; tries += 1) {
+      for (let tries = 0; tries < 100 && !paused && !settled; tries += 1) {
         paused = (await su!`SELECT 1 FROM pg_stat_activity WHERE wait_event = 'PgSleep'`).length > 0;
         if (!paused) await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      expect(paused).toBe(true);
+      // Reached its last step and paused there, while still running.
+      expect({ paused, settled }).toEqual({ paused: true, settled: false });
       const sessions = await su!`SELECT 1 FROM pg_stat_activity WHERE usename = 'box_reader'`;
       const late = as('box_reader');
       duringStep3 = { sessions: sessions.length, login: await codeOf(() => late`SELECT 1`) };

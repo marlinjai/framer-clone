@@ -63,7 +63,9 @@
 --   4. TEMPORARY on this database (already taken by commerce-roles.sql).
 --   5. EXECUTE on pg_logical_emit_message (every signature), which writes
 --      straight to the write-ahead log, the server's change log on disk.
---      Nobody gets it back: the application does not use it.
+--      Nobody gets it back: the application does not use it. A role of the
+--      real database that calls it (replication or change capture) would lose
+--      it too; the preflight lists every role besides the commerce roles.
 --
 -- WHAT IT SETS ON box_reader.
 --   - No superuser, database creation, role creation, replication or row

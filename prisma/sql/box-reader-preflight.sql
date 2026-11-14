@@ -26,7 +26,8 @@ SELECT r.rolname AS role
 
 \echo '== 2. Non-superuser roles besides commerce_app and commerce_ddl (roles that cannot log in are listed too:'
 \echo '==    another role may act through them). Any of them that takes advisory locks needs:'
-\echo '==    a line for it in box-reader.sql. Expected: only box_reader, or none.'
+\echo '==    a line for it in box-reader.sql. One that calls pg_logical_emit_message (replication or change'
+\echo '==    capture) would lose that too. Expected: only box_reader, or none.'
 SELECT rolname AS role, rolcanlogin AS can_log_in
   FROM pg_roles
  WHERE NOT rolsuper

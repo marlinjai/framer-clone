@@ -595,7 +595,7 @@ What the rehearsal showed:
 **Gates before production, none of them passed by the rehearsal:**
 
 1. **Marlin's yes by name** to applying `box-reader.sql` to the production database. Default if he says nothing: not applied. Rollback: `box-reader-rollback.sql`, one command, and the box is not deployed anyway.
-2. **The preflight on the real database, read by a person.** The rehearsal database is built from this repository, not copied from production. Any login role there that connects only through PUBLIC would be locked out; any role there that takes advisory locks and is not one of the two commerce roles would start failing.
+2. **The preflight on the real database, read by a person.** The rehearsal database is built from this repository, not copied from production. Any login role there that connects only through PUBLIC would be locked out; any role there that takes advisory locks, or calls `pg_logical_emit_message` (replication or change capture), and is not one of the two commerce roles would start failing.
 3. **A copy of production, not of the migrations,** for a second rehearsal if the preflight lists anything unexpected.
 4. **Other databases of the cluster.** `box_reader` can connect to them while PUBLIC may. Closing that is cluster-wide (or a `pg_hba.conf` rule) and belongs to the operator step O1.
 5. **The operator's role script** (infra repository): it gives `box_reader` its login and password, checks the role's defaults on every run (the role can change them for itself), and after rotating the password and re-applying the file ends every session of `box_reader`, because neither ends a session a thief already holds.
