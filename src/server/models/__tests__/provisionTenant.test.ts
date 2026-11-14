@@ -19,7 +19,7 @@ const hex = (n = 24) => randomBytes(n).toString('hex');
 
 interface Tenant { id: string; name: string; authWorkspaceId: string | null; quotaBytes: number; usedBytes: number; allowedFileTypes: string[] | null }
 interface Faults { regenerateKey?: number; issueKey?: number; omitApiKey?: boolean; pagedTotal?: number; createServiceAccount?: number; createWorkspace?: number; pagedWorkspaces?: boolean; noStorageGrant?: boolean; nonJsonKey?: boolean }
-interface RequestBody { actor_email: string; allowedFileTypes: string[] | null; app_slug: string; authTenantId: string; authWorkspaceId: string; name: string; owner_email: string; quotaBytes: number; role: string; scope: string; slug: string; tenant_id: string }
+interface RequestBody { actor_email: string; allowedFileTypes: string[] | null; app_slug: string; authTenantId: string; authWorkspaceId: string; name: string; owner_email: string; quotaBytes: number; role: string; scope: { workspace_id?: string; tenant_id?: string }; slug: string; tenant_id: string }
 
 class Fakes {
   readonly storageAdmin = `sb-admin-${hex()}`;
