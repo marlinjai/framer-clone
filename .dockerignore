@@ -61,6 +61,11 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# the box (services/box) is its own image, built by Dockerfile.box with its own context
+services
+Dockerfile.box
+Dockerfile.box.dockerignore
+
 # claude / orchestrator state
 .claude
 .worktrees

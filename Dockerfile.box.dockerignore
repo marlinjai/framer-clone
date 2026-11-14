@@ -1,0 +1,15 @@
+# The build context of Dockerfile.box: the box and the one contract module, nothing else.
+*
+!services
+services/*
+!services/box
+services/box/node_modules
+services/box/dist
+services/box/test
+!src
+src/*
+!src/lib
+src/lib/*
+!src/lib/customCode
+src/lib/customCode/*
+!src/lib/customCode/contract.ts
