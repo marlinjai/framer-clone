@@ -92,6 +92,7 @@ describe('revisionPublishCheck', () => {
       components: [],
       tokens: [],
       fxText: [],
+      head: [],
     });
   });
 
@@ -128,6 +129,7 @@ describe('revisionPublishCheck', () => {
       components: [],
       tokens: [],
       fxText: [],
+      head: [],
     });
   });
 

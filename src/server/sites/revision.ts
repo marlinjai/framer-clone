@@ -163,5 +163,5 @@ export function revisionPublishCheck(document: SiteRevisionDocument): PublishChe
   // The frozen definitions, read as a visitor's render reads them: one that cannot
   // be read is reported, exactly as the editor's check reports it.
   const { definitions, refused } = parseComponents(document.components);
-  return checkBeforePublish(document.siteSettings.business, pages, { definitions, refused }, normalizeTheme(document.siteSettings.theme));
+  return checkBeforePublish(document.siteSettings.business, pages, { definitions, refused }, normalizeTheme(document.siteSettings.theme), normalizeSiteSettings(document.siteSettings).head);
 }
