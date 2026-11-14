@@ -58,7 +58,9 @@ const urlOf = (user: string, database = DB_NAME) => `postgresql://${user}@${host
 
 /** A connection as a role. Closed at the end of the test that opened it (box_reader may hold only four). */
 function as(user: string, database = DB_NAME): postgres.Sql {
-  const sql = postgres(urlOf(user, database), { max: 1, prepare: false, onnotice: () => {}, connect_timeout: 10 });
+  // No look at the type catalogue at connect: with it, a session whose every statement is cancelled
+  // (the one millisecond default below) would fail outside the statement the test is watching.
+  const sql = postgres(urlOf(user, database), { max: 1, prepare: false, fetch_types: false, onnotice: () => {}, connect_timeout: 10 });
   opened.push(sql);
   return sql;
 }
@@ -182,6 +184,20 @@ describe('the database, built the way a deploy builds it', () => {
     expect(provisioned.applied.length).toBeGreaterThan(0);
   }, 240_000);
 
+  it('the preflight, run before the file as it is meant to be, names the role that would lose its connection right', async () => {
+    const output = await apply('box-reader-preflight.sql');
+    // Section 1: anyone_else connects only through PUBLIC, so it is listed there.
+    const section1 = output.slice(output.indexOf('== 1.'), output.indexOf('== 2.'));
+    expect(section1).toMatch(/\n\s*anyone_else\s*\n/);
+    expect(section1).not.toMatch(/commerce_app|commerce_ddl/);
+    // Section 8: nothing is hardened yet.
+    const section8 = output.slice(output.indexOf('== 8.'));
+    expect(section8).toMatch(/advisory_lock_functions_open_to_public\s*\n-+\s*\n\s*[1-9]/);
+    // Section 5: the functions PUBLIC may execute, each with what it returns.
+    const section5 = output.slice(output.indexOf('== 5.'), output.indexOf('== 6.'));
+    expect(section5.match(/\|\s*trigger/g)).toHaveLength(4);
+  });
+
   it('before the file: PUBLIC may take advisory locks, use large objects and connect; nobody but the superuser has TEMPORARY', async () => {
     const anyone = await rightsOf('anyone_else');
     expect(anyone.connect).toBe(true);
@@ -291,6 +307,31 @@ describe('box-reader.sql applied', () => {
     });
     const members = await su!`SELECT 1 FROM pg_auth_members WHERE roleid = 'box_reader'::regrole OR member = 'box_reader'::regrole`;
     expect(members).toHaveLength(0);
+  });
+
+  it('a re-run takes away what was added to the role by hand: memberships, powers, grants by name', async () => {
+    // Someone, some day: the role made a member of the application's role and the other way round,
+    // given the power to create databases and roles, and given by name what the file took from PUBLIC.
+    await su!`GRANT commerce_app TO box_reader`;
+    await su!`GRANT box_reader TO commerce_ddl`;
+    await su!`ALTER ROLE box_reader CREATEDB CREATEROLE INHERIT CONNECTION LIMIT -1`;
+    await su!`GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_lock(bigint) TO box_reader`;
+    await su!`GRANT EXECUTE ON FUNCTION pg_catalog.lo_creat(integer) TO box_reader`;
+    await su!`GRANT TEMPORARY, CREATE ON DATABASE framer_clone_box_reader_test TO box_reader`;
+    const handed = await rightsOf('box_reader');
+    expect(handed.temporary).toBe(true);
+    expect(handed.create).toBe(true);
+    expect(handed.locks.may).toBeGreaterThan(0);
+    expect(handed.largeObjects.may).toBeGreaterThan(0);
+    expect(await su!`SELECT 1 FROM pg_auth_members WHERE roleid = 'box_reader'::regrole OR member = 'box_reader'::regrole`).toHaveLength(2);
+
+    await apply('box-reader.sql');
+
+    const after = await rightsOf('box_reader');
+    expect(after).toEqual({ connect: true, temporary: false, create: false, locks: { may: 0, of: after.locks.of }, largeObjects: { may: 0, of: after.largeObjects.of } });
+    expect(await su!`SELECT 1 FROM pg_auth_members WHERE roleid = 'box_reader'::regrole OR member = 'box_reader'::regrole`).toHaveLength(0);
+    const [role] = await su!`SELECT rolcreatedb, rolcreaterole, rolinherit, rolconnlimit, rolcanlogin FROM pg_roles WHERE rolname = 'box_reader'`;
+    expect(role).toEqual({ rolcreatedb: false, rolcreaterole: false, rolinherit: false, rolconnlimit: 4, rolcanlogin: true });
   });
 
   it('the application keeps every path that takes a lock', async () => {
@@ -476,12 +517,33 @@ describe('what is left, stated in the file and held here as it is', () => {
     expect(await codeOf(() => box`ALTER ROLE box_reader SET temp_file_limit = -1`)).toBe('42501');
     expect(await codeOf(() => box`ALTER ROLE box_reader CONNECTION LIMIT 100`)).toBe('42501');
     expect(await codeOf(() => box`ALTER ROLE box_reader CREATEDB`)).toBe('42501');
+    // And a default for this one database, which wins over the role-wide one and which the role-wide
+    // list does not show.
+    expect(await codeOf(() => box`ALTER ROLE box_reader IN DATABASE framer_clone_box_reader_test SET statement_timeout = '1ms'`)).toBe('ok');
     const [changed] = await su!`SELECT rolconfig FROM pg_roles WHERE rolname = 'box_reader'`;
     expect(changed!.rolconfig).toContain('statement_timeout=1ms');
     expect(changed!.rolconfig).toContain('lock_timeout=1ms');
+    const settingsOf = async () =>
+      (await su!`
+        SELECT COALESCE(d.datname, 'every database') AS database, s.setconfig AS settings
+          FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid = s.setdatabase
+         WHERE s.setrole = 'box_reader'::regrole ORDER BY 1
+      `).map((row) => ({ ...row }));
+    expect(await settingsOf()).toHaveLength(2);
+    // What that does: a new session of the role gets the one millisecond, and whatever it runs is
+    // cancelled (57014). The box is stopped, and rotating its password would not start it again.
+    const stopped = as('box_reader');
+    expect(await codeOf(() => stopped`SELECT pg_sleep(0.2)`)).toBe('57014');
+    await stopped.end({ timeout: 2 }).catch(() => {});
+
     await apply('box-reader.sql');
-    const [restored] = await su!`SELECT rolconfig FROM pg_roles WHERE rolname = 'box_reader'`;
-    expect(restored!.rolconfig).toEqual(['statement_timeout=2s', 'idle_in_transaction_session_timeout=5s', 'idle_session_timeout=60s', 'temp_file_limit=0']);
+
+    // Every default of the role, for every database: only the four the file sets, role-wide.
+    expect(await settingsOf()).toEqual([
+      { database: 'every database', settings: ['statement_timeout=2s', 'idle_in_transaction_session_timeout=5s', 'idle_session_timeout=60s', 'temp_file_limit=0'] },
+    ]);
+    const fresh = as('box_reader');
+    expect(((await fresh`SHOW statement_timeout`)[0] as { statement_timeout: string }).statement_timeout).toBe('2s');
     // The password it set stays until the operator rotates it; the file sets none.
     await su!`ALTER ROLE box_reader PASSWORD NULL`;
   });
@@ -503,7 +565,60 @@ describe('what is left, stated in the file and held here as it is', () => {
     const here = as('commerce_ddl');
     expect(((await here`SELECT pg_try_advisory_lock(72707369) AS locked`)[0] as { locked: boolean }).locked).toBe(true);
     await here`SELECT pg_advisory_unlock(72707369)`;
+    // And there it writes to the same disk: a large object and a temporary table, which the file
+    // closes in the application's database only. Until the operator step closes the other databases
+    // to it, the file does not protect the disk.
+    const [{ oid }] = (await elsewhere`SELECT lo_from_bytea(0, '\\x00'::bytea) AS oid`) as unknown as [{ oid: number }];
+    expect(Number(oid)).toBeGreaterThan(0);
+    expect(await codeOf(() => elsewhere`CREATE TEMP TABLE scratch AS SELECT g FROM generate_series(1, 1000) g`)).toBe('ok');
+    await elsewhere`SELECT lo_unlink(${oid}::oid)`;
     await elsewhere.end({ timeout: 2 });
+  });
+
+  it('RESIDUAL: box_reader sees who is connected and how many rows each table has', async () => {
+    const box = as('box_reader');
+    const tables = await box`SELECT relname FROM pg_stat_user_tables WHERE relname IN ('sites', 'tenant_groups') ORDER BY 1`;
+    expect(tables.map((row) => row.relname)).toEqual(['sites', 'tenant_groups']);
+    const app = as('commerce_app');
+    await app`SELECT 1`;
+    const seen = await box`SELECT DISTINCT usename FROM pg_stat_activity WHERE usename IN ('commerce_app', 'postgres') ORDER BY 1`;
+    expect(seen.map((row) => row.usename)).toEqual(['commerce_app', 'postgres']);
+    // The text of another role's statement is not shown to it.
+    const queries = await box`SELECT query FROM pg_stat_activity WHERE usename = 'commerce_app'`;
+    expect(queries.every((row) => row.query === '<insufficient privilege>')).toBe(true);
+  });
+
+  it('RESIDUAL: box_reader can make a migration wait, by a lock on a table it may not read', async () => {
+    // What is found here is written down as it is, whichever way it comes out.
+    const box = as('box_reader');
+    const held = await box
+      .begin(async (tx) => {
+        await tx`SET LOCAL idle_in_transaction_session_timeout = 0`;
+        const prepared = await codeOf(() => tx`PREPARE peek AS SELECT * FROM public.sites`);
+        const locks = await su!`
+          SELECT l.mode FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+           WHERE a.usename = 'box_reader' AND l.relation = 'public.sites'::regclass
+        `;
+        return { prepared, modes: locks.map((row) => row.mode as string) };
+      })
+      .catch((error: { code?: string }) => ({ prepared: error.code ?? 'failed', modes: [] as string[] }));
+    // Preparing a statement on a table checks no right (that happens when it is run), and takes the
+    // weakest lock on the table, which the open transaction keeps. A migration that alters that
+    // table waits for it, and readers queue behind the migration.
+    expect(held).toEqual({ prepared: 'ok', modes: ['AccessShareLock'] });
+  });
+
+  it('RESIDUAL: box_reader may send notifications, and what else of the server it may use', async () => {
+    const box = as('box_reader');
+    expect(await codeOf(() => box`SELECT pg_notify('box_reader_was_here', 'x')`)).toBe('ok');
+    expect(await codeOf(() => box`SET work_mem = '1GB'`)).toBe('ok');
+    expect(await codeOf(() => box`SELECT pg_current_xact_id()`)).toBe('ok');
+    // Whether it may write to the write-ahead log directly: recorded as found.
+    const [wal] = await su!`SELECT has_function_privilege('box_reader', 'pg_catalog.pg_logical_emit_message(boolean, text, text)', 'EXECUTE') AS may`;
+    expect(wal!.may).toBe(true);
+    // Prepared transactions are switched off on a default server, so it cannot leave one behind.
+    const [prepared] = await su!`SHOW max_prepared_transactions`;
+    expect((prepared as { max_prepared_transactions: string }).max_prepared_transactions).toBe('0');
   });
 });
 
@@ -528,14 +643,26 @@ describe('afterwards', () => {
     expect(output).toContain('anyone_else');
   });
 
-  it('the rollback gives PUBLIC its rights back, takes the box\'s login and connection away, and can be run twice', async () => {
+  it('the rollback gives PUBLIC its rights back, takes the box\'s login and connection away, ends its open sessions, and can be run twice', async () => {
+    // A session of the box that is already connected when the rollback runs.
+    const connected = as('box_reader');
+    await connected`SELECT 1`;
     await apply('box-reader-rollback.sql');
+    // It was ended: it does not go on with PUBLIC's rights back.
+    expect(await codeOf(() => connected`SELECT pg_advisory_lock(6)`)).not.toBe('ok');
+    expect(await su!`SELECT 1 FROM pg_stat_activity WHERE usename = 'box_reader'`).toHaveLength(0);
     await apply('box-reader-rollback.sql');
     const anyone = await rightsOf('anyone_else');
     expect(anyone.connect).toBe(true);
     expect(anyone.locks.may).toBe(anyone.locks.of);
-    // As before the file: everything but lo_import and lo_export, which were never PUBLIC's.
+    // As before the file: everything but lo_import and lo_export, which were never PUBLIC's and which
+    // the rollback never grants, not even for a moment.
     expect(anyone.largeObjects.may).toBe(anyone.largeObjects.of - 3);
+    const serverFiles = await su!`
+      SELECT p.oid::regprocedure::text AS function, has_function_privilege('anyone_else', p.oid, 'EXECUTE') AS may
+        FROM pg_proc p WHERE p.pronamespace = 'pg_catalog'::regnamespace AND p.proname IN ('lo_import', 'lo_export') ORDER BY 1
+    `;
+    expect(serverFiles.map((row) => row.may)).toEqual([false, false, false]);
     // TEMPORARY stays as commerce-roles.sql left it.
     expect(anyone.temporary).toBe(false);
     const sql = as('anyone_else');

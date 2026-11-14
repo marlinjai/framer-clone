@@ -8,7 +8,8 @@
 --
 --   psql -v ON_ERROR_STOP=1 -U <bootstrap superuser> -d <database> -f prisma/sql/box-reader-preflight.sql
 
-\echo '== 1. Login roles that would LOSE CONNECT on this database (they have it only through PUBLIC).'
+\echo '== 1. Login roles that would LOSE CONNECT on this database (no grant of it by their own name; a role'
+\echo '==    that has it through a role it is a member of is listed too and keeps it).'
 \echo '==    Expected: none. For each role listed that should keep it: GRANT CONNECT ON DATABASE <db> TO <role>;'
 SELECT r.rolname AS role
   FROM pg_roles r
@@ -29,7 +30,7 @@ SELECT r.rolname AS role
 SELECT rolname AS role, rolcanlogin AS can_log_in
   FROM pg_roles
  WHERE NOT rolsuper
-   AND rolname NOT LIKE 'pg\_%'
+   AND rolname NOT LIKE 'pg!_%' ESCAPE '!'
    AND rolname NOT IN ('commerce_app', 'commerce_ddl')
  ORDER BY 1;
 
@@ -42,12 +43,13 @@ SELECT rolname AS superuser FROM pg_roles WHERE rolsuper ORDER BY 1;
 SELECT count(*) AS large_objects FROM pg_largeobject_metadata;
 
 \echo '== 5. Functions outside the system schemas that PUBLIC may execute (box_reader could call them).'
-\echo '==    Expected: none.'
-SELECT p.oid::regprocedure AS function
+\echo '==    Expected: only functions that return "trigger" (they cannot be called directly); today the four'
+\echo '==    of the site branches migrations. Anything else here is callable by box_reader: look at it first.'
+SELECT p.oid::regprocedure AS function, p.prorettype::regtype AS returns
   FROM pg_proc p
   JOIN pg_namespace n ON n.oid = p.pronamespace
  WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-   AND n.nspname NOT LIKE 'pg\_%'
+   AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
    AND has_schema_privilege('public', n.oid, 'USAGE')
    AND EXISTS (
          SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
@@ -75,7 +77,7 @@ SELECT d.datname AS database
 SELECT count(*) AS advisory_lock_functions_open_to_public
   FROM pg_proc p
  WHERE p.pronamespace = 'pg_catalog'::regnamespace
-   AND (p.proname LIKE 'pg\_advisory\_%' OR p.proname LIKE 'pg\_try\_advisory\_%')
+   AND (p.proname LIKE 'pg!_advisory!_%' ESCAPE '!' OR p.proname LIKE 'pg!_try!_advisory!_%' ESCAPE '!')
    AND EXISTS (
          SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
           WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE');
