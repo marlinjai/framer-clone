@@ -23,6 +23,7 @@ import { LEGAL_KINDS, findLegalPage, type LegalKind, type LegalPageLike } from '
 import { findPlaceholders } from './templates';
 import { fxTextWarning } from './fxTextCheck';
 import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { resolveHead } from '@/lib/site/headItems';
 import { colorPartialProblem, findToken, referenceState, tokenUsage, type SiteTheme } from '@/lib/site/theme';
 
 interface NodeLike {
@@ -89,6 +90,12 @@ export interface PublishCheck {
   tokens?: ComponentIssue[];
   /** FX scene boxes that draw text inside the scene but hold no HTML text. Absent on a check from before FX text was checked. */
   fxText?: ComponentIssue[];
+  /**
+   * Head items the published page will leave out: refused by the parser, past the cap, a repeated
+   * name, or a fourth structured data block (src/lib/site/headItems.ts). Absent on a check from
+   * before head items.
+   */
+  head?: ComponentIssue[];
 }
 
 const FAILURE_COPY: Record<ExpansionFailureKind, string> = {
@@ -178,11 +185,40 @@ function tokenProblem(value: unknown, theme: SiteTheme): string | null {
   return parts.length > 0 ? parts.join('; ') : null;
 }
 
+/**
+ * What the published pages will leave out of the head items stored for them, the same way
+ * resolveHead decides it at emission, so the warning and the page cannot disagree. The site's own
+ * list is read once; a page reports its own items and the structured data cap it hits when merged.
+ */
+function headIssues(siteHead: unknown, pages: PublishCheckPage[]): ComponentIssue[] {
+  const issues: ComponentIssue[] = [];
+  const position = (index: number) => `item ${index + 1}`;
+  const siteOnly = resolveHead(siteHead, []).problems;
+  for (const problem of siteOnly) {
+    issues.push({ title: 'Head items in Site settings', message: `${position(problem.index)} is left out: ${problem.message}` });
+  }
+  const reported = new Set(siteOnly.map((p) => `${p.index}|${p.reason}|${p.message}`));
+  for (const page of pages) {
+    const stored = (page.snapshot as { metadata?: { head?: unknown } } | undefined)?.metadata?.head;
+    for (const problem of resolveHead(siteHead, stored).problems) {
+      // What the site's own list already told, once above, is not told again on every page.
+      if (problem.home === 'site' && reported.has(`${problem.index}|${problem.reason}|${problem.message}`)) continue;
+      issues.push({
+        pageId: page.id,
+        title: page.metadata.title,
+        message: `${problem.home === 'site' ? 'site head ' : 'head '}${position(problem.index)} is left out: ${problem.message}`,
+      });
+    }
+  }
+  return issues;
+}
+
 export function checkBeforePublish(
   business: BusinessInfo,
   pages: PublishCheckPage[],
   { definitions, refused }: PublishCheckComponents,
   theme?: SiteTheme,
+  siteHead?: unknown,
 ): PublishCheck {
   const trees = new Map(pages.map((page) => [page.id, literalPageTree(page.snapshot, definitions)]));
 
@@ -226,9 +262,12 @@ export function checkBeforePublish(
     if (documentMessage) tokens.push({ title: 'Page defaults in Theme', message: documentMessage });
   }
 
+  const head = headIssues(siteHead, pages);
+
   return {
     tokens,
     fxText,
+    head,
     missingImpressum: hasBusinessData(business) && !findLegalPage(pages, 'impressum'),
     maps: mapsPrivacyCheck(pages, (id) => trees.get(id)?.root as NodeLike | null | undefined),
     placeholders,
@@ -245,6 +284,7 @@ export function hasPublishIssues(check: PublishCheck): boolean {
     check.placeholders.length > 0 ||
     check.components.length > 0 ||
     (check.tokens?.length ?? 0) > 0 ||
-    (check.fxText?.length ?? 0) > 0
+    (check.fxText?.length ?? 0) > 0 ||
+    (check.head?.length ?? 0) > 0
   );
 }

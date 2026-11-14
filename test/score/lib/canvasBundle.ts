@@ -95,6 +95,18 @@ export const toSnapshot = (node: ComponentNode, parentId?: string): Record<strin
   children: (node.children ?? []).map((child) => toSnapshot(child, node.id)),
 });
 
+/**
+ * The cascade layer order the built editor's own stylesheet opens with (`@layer properties;` then
+ * theme, base, components, utilities), stated first. The published base sheet below declares the
+ * four without `properties`, and a layer takes its place at its first mention, so the editor sheet's
+ * `@layer properties` block would otherwise come last and win over every utility. That block is
+ * Tailwind's fallback for browsers without `margin-trim: inline`, which includes the WebKit build
+ * Playwright ships and Safari: it sets `--tw-translate-x: 0` and its kin on every element, and there
+ * the editor's dialogs came out uncentred, below the window (found in slice H3, measured against the
+ * real build, where the order is right and a dialog sits where it should).
+ */
+const LAYER_ORDER = '@layer properties, theme, base, components, utilities;';
+
 export interface MountOptions {
   /** Keep every breakpoint frame, for a contract that compares them. */
   allFrames?: boolean;
@@ -150,7 +162,7 @@ export async function openBundle(
   // window ignores it.
   const { css, meta } = readPublishedBase();
   const editorCss = await editorSheet();
-  await page.setContent(`<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style><style>${editorCss}</style></head><body class="${meta.bodyClass}"><div id="root"></div></body></html>`);
+  await page.setContent(`<!doctype html><html lang="en" class="${meta.htmlClass}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${LAYER_ORDER}</style><style>${css}</style><style>${editorCss}</style></head><body class="${meta.bodyClass}"><div id="root"></div></body></html>`);
   await page.addScriptTag({ path: bundle });
   return { page, crashes };
 }

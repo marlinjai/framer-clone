@@ -282,6 +282,18 @@ describe('PublishButton legal check', () => {
     expect(screen.getByRole('button', { name: `Open ${page.metadata.title}` })).toBeTruthy();
   });
 
+  it('names a refused head item once, with one full stop before the way to fix it', () => {
+    const project = (currentStore.editorUI.currentProject as ReturnType<typeof makeProject>);
+    const block = (name: string) => ({ kind: 'jsonld', data: { '@context': 'https://schema.org', '@type': 'Organization', name } });
+    project.updateSiteHead([block('a'), block('b'), block('c'), block('d')] as never);
+    render(<PublishButton />);
+    fireEvent.click(screen.getByRole('button', { name: /publish/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    const text = screen.getByTestId('publish-head-issues').textContent ?? '';
+    expect(text).toMatch(/Open Site settings, then Head, to fix it\.$/);
+    expect(text).not.toContain('..');
+  });
+
   it('publishes straight away for a site without business data', () => {
     fetchMock.mockResolvedValue(ok);
     render(<PublishButton />);
