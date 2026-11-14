@@ -19,6 +19,7 @@ const hex = (n = 24) => randomBytes(n).toString('hex');
 
 interface Tenant { id: string; name: string; authWorkspaceId: string | null; quotaBytes: number; usedBytes: number; allowedFileTypes: string[] | null }
 interface Faults { regenerateKey?: number; issueKey?: number; omitApiKey?: boolean; pagedTotal?: number; createServiceAccount?: number; createWorkspace?: number; pagedWorkspaces?: boolean; noStorageGrant?: boolean; nonJsonKey?: boolean }
+interface RequestBody { actor_email: string; allowedFileTypes: string[] | null; app_slug: string; authTenantId: string; authWorkspaceId: string; name: string; owner_email: string; quotaBytes: number; role: string; scope: string; slug: string; tenant_id: string }
 
 class Fakes {
   readonly storageAdmin = `sb-admin-${hex()}`;
@@ -44,7 +45,7 @@ class Fakes {
   }
   async stop() { await Promise.all(this.servers.map((s) => new Promise((r) => s.close(r)))); }
 
-  private listen(handler: (req: IncomingMessage, body: any) => { status: number; json?: unknown }): Promise<string> {
+  private listen(handler: (req: IncomingMessage, body: RequestBody) => { status: number; json?: unknown }): Promise<string> {
     return new Promise((resolve) => {
       const server = createServer((req, res) => {
         let raw = '';
@@ -63,7 +64,7 @@ class Fakes {
     });
   }
 
-  private storage(req: IncomingMessage, body: any) {
+  private storage(req: IncomingMessage, body: RequestBody) {
     const url = new URL(req.url!, 'http://x');
     this.calls.push(`SB ${req.method} ${url.pathname}`);
     // The tenant API: a minted key resolves through its workspace, like middleware/auth.ts (workspace scope needs the grant).
@@ -105,7 +106,7 @@ class Fakes {
     return { status: 404, json: {} };
   }
 
-  private auth(req: IncomingMessage, body: any) {
+  private auth(req: IncomingMessage, body: RequestBody) {
     const url = new URL(req.url!, 'http://x');
     this.calls.push(`AB ${req.method} ${url.pathname}`);
     if (req.headers.authorization !== `Bearer ${this.authAdmin}`) return { status: 401, json: {} };
@@ -183,8 +184,8 @@ describe('deploy/model-tenant/provision.sh against fake services', () => {
   afterEach(async () => { await fakes.stop(); rmSync(work, { recursive: true, force: true }); });
 
   function run(args: string[], env: Record<string, string> = {}): Promise<Run> {
-    const full: Record<string, string> = {
-      PATH: `${shim}:${process.env.PATH}`, HOME: work, STATE_DIR: state, CAPTURE_DIR: capture,
+    const full: NodeJS.ProcessEnv = {
+      NODE_ENV: 'test', PATH: `${shim}:${process.env.PATH}`, HOME: work, STATE_DIR: state, CAPTURE_DIR: capture,
       STORAGE_BRAIN_ADMIN_KEY: fakes.storageAdmin, STORAGE_BRAIN_URL: fakes.sbUrl,
       ADMIN_API_KEY: fakes.authAdmin, AUTH_BRAIN_URL: fakes.abUrl, ACTOR_EMAIL: 'actor@example.test', ...env,
     };
