@@ -7,7 +7,7 @@
 # This script NEVER prints a secret. Run it only through the secrets proxy (execute_with_secrets), so the admin key is
 # injected server-side and output is redacted. Subcommands:
 #   plan    (default) prints what would be created, touches nothing, needs no secret
-#   apply   creates the tenant if absent, then discards the legacy key (see below). Idempotent: a second run changes nothing
+#   apply   creates the tenant if absent (an existing one must match the requested binding, else exit 4), then discards the legacy key (see below). Idempotent: a second run changes nothing
 #   status  prints used bytes, quota bytes and percent for the tenant; exits 3 at or above the alert threshold
 #
 # Required environment for apply and status (never printed):
@@ -48,12 +48,23 @@ call() { # method path [json-body]
 
 find_tenant() { call GET "/tenants?limit=100" | jq -r --arg n "$NAME" '.tenants[] | select(.name == $n) | .id' | head -n 1; }
 
+# Stops with an explicit error unless the existing tenant is bound to the requested Auth Brain company and carries the
+# expected quota and file types. A missing field counts as a mismatch: an unverifiable binding is never reported as success.
+verify_tenant() { # id
+  local t
+  t="$(call GET "/tenants/$1")"
+  echo "$t" | jq -e --arg a "$AUTH_BRAIN_TENANT_ID" --argjson q "$QUOTA_BYTES" --argjson ty "$TYPES" \
+    '.authTenantId == $a and .quotaBytes == $q and ((.allowedFileTypes // []) | sort) == ($ty | sort)' >/dev/null \
+    || { echo "tenant $NAME ($1) exists but its binding or configuration does not match AUTH_BRAIN_TENANT_ID, the quota or the allowed file types; refusing to report success" >&2; exit 4; }
+}
+
 case "$cmd" in
   apply)
     : "${AUTH_BRAIN_TENANT_ID:?not set}"
     id="$(find_tenant)"
     if [ -n "$id" ]; then
-      echo "tenant $NAME already exists ($id); no change"
+      verify_tenant "$id"
+      echo "tenant $NAME already exists ($id) and matches; no change"
       exit 0
     fi
     body="$(jq -nc --arg n "$NAME" --argjson q "$QUOTA_BYTES" --argjson t "$TYPES" --arg a "$AUTH_BRAIN_TENANT_ID" \
@@ -70,8 +81,8 @@ case "$cmd" in
     [ -n "$id" ] || { echo "tenant $NAME not found" >&2; exit 1; }
     q="$(call GET "/tenants/$id/quota")"
     echo "$q" | jq -r '"used \(.usedBytes) of \(.quotaBytes) bytes, \(.usagePercent) percent"'
-    pct="$(echo "$q" | jq -r '.usagePercent')"
-    [ "$pct" -lt "$ALERT_PERCENT" ] || { echo "at or above the ${ALERT_PERCENT} percent alert threshold" >&2; exit 3; }
+    over="$(echo "$q" | jq -r --argjson alert "$ALERT_PERCENT" '.usagePercent | if type == "number" then . >= $alert else error("usagePercent is not a number") end')"
+    [ "$over" = "false" ] || { echo "at or above the ${ALERT_PERCENT} percent alert threshold" >&2; exit 3; }
     ;;
   *) echo "usage: $0 [plan|apply|status]" >&2; exit 2 ;;
 esac
