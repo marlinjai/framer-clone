@@ -30,6 +30,7 @@ import { receiptTaxCountry } from './027_receipt_tax_country';
 import { checkoutRequest } from './028_checkout_request';
 import { companyErasure } from './029_company_erasure';
 import { booksContactPerson } from './030_books_contact_person';
+import { formNotification } from './031_form_notification';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -173,4 +174,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   checkoutRequest,
   companyErasure,
   booksContactPerson,
+  formNotification,
 ];

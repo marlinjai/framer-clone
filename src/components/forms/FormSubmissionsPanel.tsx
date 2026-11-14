@@ -24,6 +24,12 @@ export interface SubmissionItem {
   fields: StoredField[];
   readAt: string | null;
   createdAt: string;
+  /** The email to the site owner about this submission; null for a submission from before notifications. */
+  notification?: {
+    status: 'pending' | 'sent' | 'blocked' | 'failed' | 'skipped';
+    reason: string | null;
+    recipient: string | null;
+  } | null;
 }
 
 export interface FormSummaryItem {
@@ -63,6 +69,31 @@ function formatDate(iso: string): string {
 function fieldText(f: StoredField): string {
   if (typeof f.value === 'boolean') return f.value ? 'Yes' : 'No';
   return f.value === '' ? '(empty)' : f.value;
+}
+
+type NotificationItem = NonNullable<SubmissionItem['notification']>;
+
+/** What the owner is told about the email of one submission, and whether it can be sent again. */
+export function notificationNote(n: NotificationItem | null | undefined): { text: string; tone: 'ok' | 'warn'; canResend: boolean } | null {
+  if (!n) return null;
+  const to = n.recipient ? ` to ${n.recipient}` : '';
+  switch (n.status) {
+    case 'sent':
+      return { text: `Email sent${to}.`, tone: 'ok', canResend: false };
+    case 'pending':
+      return { text: `Email${to} is being sent${n.reason ? ' (trying again after a problem)' : ''}.`, tone: 'ok', canResend: false };
+    case 'blocked':
+      return { text: `Email${to} was not sent: Lumitra Mail blocks that address (an earlier bounce or complaint). Use another address in the form settings, or lift the block in Lumitra Mail, then send again.`, tone: 'warn', canResend: true };
+    case 'failed':
+      return { text: `Email${to} could not be sent${n.reason ? `: ${n.reason}` : ''}.`, tone: 'warn', canResend: true };
+    case 'skipped':
+      if (n.reason === 'no_company') {
+        return { text: 'No email was sent: this site is not linked to a company yet, so there is no Lumitra Mail connection to send from.', tone: 'warn', canResend: false };
+      }
+      return n.reason === 'not_connected'
+        ? { text: 'No email was sent: connect Lumitra Mail on the payments page to be told about new messages.', tone: 'warn', canResend: true }
+        : { text: 'No email was sent: neither this form nor the site settings name an address. Set a notification address in the form settings, publish, then send again.', tone: 'warn', canResend: true };
+  }
 }
 
 /** The one-line preview of a submission: its first non-empty text values. */
@@ -193,6 +224,29 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
     }
   };
 
+  const resend = async (item: SubmissionItem) => {
+    setBusyId(item.id);
+    setRowError(null);
+    try {
+      const res = await fetch(`${base}/${encodeURIComponent(item.id)}/resend`, { method: 'POST' });
+      if (res.status === 404) {
+        await refresh();
+        return;
+      }
+      if (!res.ok) {
+        setRowError({ id: item.id, message: await readError(res, 'Could not send the email again') });
+        return;
+      }
+      setItems((prev) =>
+        prev.map((s) => (s.id === item.id && s.notification ? { ...s, notification: { ...s.notification, status: 'pending', reason: null } } : s)),
+      );
+    } catch {
+      setRowError({ id: item.id, message: 'The server did not answer. Try again.' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const toggleOpen = (item: SubmissionItem) => {
     const next = openId === item.id ? null : item.id;
     setOpenId(next);
@@ -277,6 +331,7 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
                     </span>
                     <span className="truncate text-xs text-muted-foreground">
                       {item.formName} on {item.pagePath} · {formatDate(item.createdAt)}
+                      {notificationNote(item.notification)?.tone === 'warn' && ' · no email sent'}
                     </span>
                   </span>
                 </button>
@@ -292,6 +347,22 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
                         </React.Fragment>
                       ))}
                     </dl>
+                    {(() => {
+                      const note = notificationNote(item.notification);
+                      if (!note) return null;
+                      return (
+                        <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="submission-email-status">
+                          <p className={note.tone === 'warn' ? 'text-destructive' : 'text-muted-foreground'} role={note.tone === 'warn' ? 'alert' : 'status'}>
+                            {note.text}
+                          </p>
+                          {note.canResend && (
+                            <Button type="button" size="sm" variant="outline" disabled={busyId === item.id} onClick={() => void resend(item)}>
+                              <Mail /> Send email again
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <div className="flex flex-wrap items-center gap-2">
                       <Button type="button" size="sm" variant="outline" disabled={busyId === item.id} onClick={() => void setRead(item, unread)}>
                         {unread ? <MailOpen /> : <Mail />} {unread ? 'Mark read' : 'Mark unread'}

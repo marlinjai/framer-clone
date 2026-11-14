@@ -30,6 +30,25 @@ import { JOB_LEASE_MS, JobRefused, type JobContext } from '../types';
 
 const { handler } = vi.hoisted(() => ({ handler: { run: (async () => undefined) as (ctx: unknown) => Promise<void> } }));
 
+// The stuck-purge count, held back after it has counted once for a group that has stuck purges: it makes two groups' reads overlap
+// on purpose, which is what the watchdog's totals must survive (see the lost-update test).
+const { purgeCount } = vi.hoisted(() => ({ purgeCount: { holdFirstPositiveMs: 0 } }));
+vi.mock('@/server/forms/purge', async (original) => {
+  const real = await original<typeof import('@/server/forms/purge')>();
+  return {
+    ...real,
+    countStuckPurges: async (db: Parameters<typeof real.countStuckPurges>[0]) => {
+      const count = await real.countStuckPurges(db);
+      if (count > 0 && purgeCount.holdFirstPositiveMs > 0) {
+        const wait = purgeCount.holdFirstPositiveMs;
+        purgeCount.holdFirstPositiveMs = 0;
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+      return count;
+    },
+  };
+});
+
 vi.mock('../consumers', async (original) => {
   const { z } = await import('zod');
   const { defineJobKind } = await import('../types');
@@ -111,6 +130,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  // A test that failed before the hold was used must not hand it to the next one.
+  purgeCount.holdFirstPositiveMs = 0;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const group of [groupA, groupB]) await su`DELETE FROM ${su(tenantSchema(group))}."commerce_job"`;
@@ -187,6 +208,8 @@ describe('F: forward', () => {
       ran: 0,
       failed: 0,
       deadUnacknowledged: 0,
+      purgesStuck: 0,
+      purges: 'ok',
       findingsOpen: 0,
       oldestDueSeconds: 0,
       receiptsUnissued: 0,
@@ -354,6 +377,44 @@ describe('E: re-entry after completion or failure', () => {
     const report = await res.json();
     expect(report.oldestDueSeconds).toBeGreaterThanOrEqual(120);
     expect(report.oldestDueSeconds).toBeLessThan(10 * 60);
+  });
+
+  it('a form purge that keeps failing is reported as stuck (purgesStuck, purges "stuck") and the route stays 200; below five failures it is not', async () => {
+    // Not due yet, so the pass does not run it: this is a job waiting out its backoff after failures.
+    const purge = await schedule(groupA, { kind: 'form_purge', runAt: new Date(Date.now() + 60 * MINUTE) });
+    await su`UPDATE ${su(tenantSchema(groupA))}."commerce_job" SET attempts = 4 WHERE id = ${purge}`;
+    let res = await watchdog();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ purgesStuck: 0, purges: 'ok' });
+
+    await su`UPDATE ${su(tenantSchema(groupA))}."commerce_job" SET attempts = 5 WHERE id = ${purge}`;
+    res = await watchdog();
+    // The status code is the other monitors' business: a stuck purge is a count with its own keyword, never a 500.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ purgesStuck: 1, purges: 'stuck', failed: 0, deadUnacknowledged: 0 });
+
+    // Another kind with many attempts is not a purge; a second group's stuck purge adds up.
+    const other = await schedule(groupB, { kind: 'form_purge', runAt: new Date(Date.now() + 60 * MINUTE) });
+    await su`UPDATE ${su(tenantSchema(groupB))}."commerce_job" SET attempts = 9 WHERE id = ${other}`;
+    expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
+    // The totals survive overlapping reads: the first group's count is held back while the second group's is added. With a total
+    // read before the wait (`total += await count()`) the held group's addition overwrote the other's and this was 1.
+    // Long enough that the other group's whole read (connection, two queries, its count) is over before this one resumes.
+    purgeCount.holdFirstPositiveMs = 1500;
+    expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
+    expect(purgeCount.holdFirstPositiveMs).toBe(0);
+    // Once a purge is gone (it finished and was cleaned up) it no longer counts.
+    await su`DELETE FROM ${su(tenantSchema(groupA))}."commerce_job" WHERE id = ${purge}`;
+    expect((await runCommerceWatchdogPass()).purgesStuck).toBe(1);
+  });
+
+  it('a purge that keeps outliving its lease sits in running and still counts as stuck', async () => {
+    const purge = await schedule(groupA, { kind: 'form_purge', runAt: new Date(Date.now() + 60 * MINUTE) });
+    await su`UPDATE ${su(tenantSchema(groupA))}."commerce_job" SET status = 'running', claim_token = 'held-by-a-worker', attempts = 6 WHERE id = ${purge}`;
+    expect(await (await watchdog()).json()).toMatchObject({ purgesStuck: 1, purges: 'stuck' });
+    // Below the threshold a running purge is just a purge in progress.
+    await su`UPDATE ${su(tenantSchema(groupA))}."commerce_job" SET attempts = 2 WHERE id = ${purge}`;
+    expect(await (await watchdog()).json()).toMatchObject({ purgesStuck: 0, purges: 'ok' });
   });
 
   it('the route answers 200 with a count on a dead job, and the count falls when a person acknowledges it', async () => {

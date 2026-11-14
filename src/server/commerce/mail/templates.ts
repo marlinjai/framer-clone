@@ -15,6 +15,16 @@ import type { TemplateCreate, TemplateDocument, TemplateInputMap } from '@marlin
 export const SHOP_MAIL_KINDS = ['order_confirmation', 'late_refund'] as const;
 export type ShopMailKind = (typeof SHOP_MAIL_KINDS)[number];
 
+/**
+ * The notice to the site owner about a form submission (docs/plans/2026-10-23-published-site-essentials.md). Kept
+ * out of SHOP_MAIL_KINDS on purpose: that list is the buyer's letters (the `shop_mail` job payload and its CHECK
+ * constraint), which this is not. It is installed with them, so one connection serves both.
+ */
+export const FORM_MAIL_KIND = 'form_notification';
+export type MailKind = ShopMailKind | typeof FORM_MAIL_KIND;
+/** Every template a connection installs. */
+export const MAIL_TEMPLATE_KINDS: readonly MailKind[] = [...SHOP_MAIL_KINDS, FORM_MAIL_KIND];
+
 export const MAIN_LOCALE = 'de';
 export const TEMPLATE_LOCALES = ['de', 'en'] as const;
 export type ShopMailLocale = (typeof TEMPLATE_LOCALES)[number];
@@ -68,13 +78,13 @@ const FOOTER = {
 };
 
 interface MailSpec {
-  kind: ShopMailKind;
+  kind: MailKind;
   name: string;
   description: string;
   copy: Record<ShopMailLocale, Copy>;
 }
 
-const SPECS: Record<ShopMailKind, MailSpec> = {
+const SPECS: Record<MailKind, MailSpec> = {
   order_confirmation: {
     kind: 'order_confirmation',
     name: 'Lumitra Sites: order confirmation with receipt',
@@ -147,6 +157,38 @@ const SPECS: Record<ShopMailKind, MailSpec> = {
       },
     },
   },
+  form_notification: {
+    kind: 'form_notification',
+    name: 'Lumitra Sites: new form submission',
+    description:
+      'Sent to the site owner when a visitor submits a form on a published site. Installed by Lumitra Sites; edits here are replaced when the shop connects again.',
+    copy: {
+      de: {
+        title: 'Neue Formularnachricht',
+        subject: 'Neue Nachricht über {{form_name}} auf {{site_name}}',
+        preheader: '{{summary_text}}',
+        blocks: [
+          { id: 'what', html: p('über das Formular <strong>{{form_name}}</strong> auf {{site_name}} ist eine neue Nachricht eingegangen.') },
+          { id: 'when', html: p('Eingegangen: {{received_text}}<br>Seite: {{page_path}}') },
+          { id: 'summary', html: p('{{summary_text}}') },
+          { id: 'inbox', html: p('<a href="{{inbox_url}}">Alle Nachrichten im Editor ansehen</a>') },
+          { id: 'footer', html: p('Sie bekommen diese Mail, weil Sie für {{site_name}} Formularbenachrichtigungen eingerichtet haben. Die Nachricht der Besucherin oder des Besuchers steht oben gekürzt; vollständig sehen Sie sie im Editor.') },
+        ],
+      },
+      en: {
+        title: 'New form message',
+        subject: 'New message through {{form_name}} on {{site_name}}',
+        preheader: '{{summary_text}}',
+        blocks: [
+          { id: 'what', html: p('a new message arrived through the form <strong>{{form_name}}</strong> on {{site_name}}.') },
+          { id: 'when', html: p('Received: {{received_text}}<br>Page: {{page_path}}') },
+          { id: 'summary', html: p('{{summary_text}}') },
+          { id: 'inbox', html: p('<a href="{{inbox_url}}">See all messages in the editor</a>') },
+          { id: 'footer', html: p('You are getting this mail because you set up form notifications for {{site_name}}. The visitor\'s message is shortened above; the full text is in the editor.') },
+        ],
+      },
+    },
+  },
 };
 
 const derived = (note: string) => ({ kind: 'derived' as const, note });
@@ -165,7 +207,7 @@ const COMMON = {
 } satisfies TemplateInputMap;
 
 /** What each mail receives: declared on its template, and the only names the shop sends. */
-export const MAIL_INPUTS: Record<ShopMailKind, TemplateInputMap> = {
+export const MAIL_INPUTS: Record<MailKind, TemplateInputMap> = {
   order_confirmation: {
     ...COMMON,
     order_date_text: {
@@ -183,10 +225,33 @@ export const MAIL_INPUTS: Record<ShopMailKind, TemplateInputMap> = {
     },
   },
   late_refund: { ...COMMON },
+  form_notification: {
+    site_name: { kind: 'text', label: "The site's name", source: derived("The published site's name."), example: 'Schmuck Testshop' },
+    form_name: { kind: 'text', label: 'The name the owner gave the form', source: derived("The form's name in the editor."), example: 'Contact form' },
+    page_path: { kind: 'text', label: 'The page the form is on', source: derived("The page's address on the site."), example: '/contact' },
+    received_text: {
+      kind: 'text',
+      label: 'When the message arrived',
+      source: derived("The submission's time, written in the letter's language (Europe/Berlin)."),
+      example: '12. November 2026, 14:05',
+    },
+    summary_text: {
+      kind: 'text',
+      label: "The visitor's answers, shortened",
+      source: derived('Each field as "label: value", separated by " | ", each value and the whole shortened; a consent box shows as yes or no.'),
+      example: 'Name: Anna | Email: anna@example.com | Message: Hello',
+    },
+    inbox_url: {
+      kind: 'url',
+      label: 'The link to the editor',
+      source: derived('The address of the site in the editor on app.lumitra.co, where the full message is.'),
+      example: 'https://app.lumitra.co/projects/example',
+    },
+  },
 };
 
 /** The body of `templates.create` for one mail: German main version, English ready translation, the greeting. */
-export function templateCreate(kind: ShopMailKind): TemplateCreate & { name: string } {
+export function templateCreate(kind: MailKind): TemplateCreate & { name: string } {
   const spec = SPECS[kind];
   const de = spec.copy.de;
   const en = spec.copy.en;
@@ -197,26 +262,27 @@ export function templateCreate(kind: ShopMailKind): TemplateCreate & { name: str
     subject: de.subject,
     preheader: de.preheader,
     document: document(de),
-    insertions: { greeting: { by: GREETING.by, choices: {}, filled: GREETING.de.filled, otherwise: GREETING.de.otherwise } },
+    // The notice to the owner has no buyer to greet.
+    insertions: kind === FORM_MAIL_KIND ? {} : { greeting: { by: GREETING.by, choices: {}, filled: GREETING.de.filled, otherwise: GREETING.de.otherwise } },
     translations: {
       en: {
         subject: en.subject,
         preheader: en.preheader,
         document: document(en),
         status: 'ready',
-        insertions: { greeting: { choices: {}, filled: GREETING.en.filled, otherwise: GREETING.en.otherwise } },
+        insertions: kind === FORM_MAIL_KIND ? {} : { greeting: { choices: {}, filled: GREETING.en.filled, otherwise: GREETING.en.otherwise } },
       },
     },
   } as TemplateCreate & { name: string };
 }
 
 /** The template's name in the workspace (how an install finds it again). */
-export function templateName(kind: ShopMailKind): string {
+export function templateName(kind: MailKind): string {
   return SPECS[kind].name;
 }
 
 /** A digest of everything an install writes: a stored version that differs means the workspace needs an update. */
 export function templatesVersion(): string {
-  const everything = SHOP_MAIL_KINDS.map((kind) => ({ kind, template: templateCreate(kind), inputs: MAIL_INPUTS[kind] }));
+  const everything = MAIL_TEMPLATE_KINDS.map((kind) => ({ kind, template: templateCreate(kind), inputs: MAIL_INPUTS[kind] }));
   return createHash('sha256').update(JSON.stringify(everything)).digest('hex').slice(0, 16);
 }

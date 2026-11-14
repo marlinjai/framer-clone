@@ -395,7 +395,10 @@ monitors watch the route, all every 5 minutes, alerting by Telegram: id 39 "Lumi
 (app.lumitra.co)" is red on any non-2xx, id 40 "Lumitra Shop: dead jobs unacknowledged = 0" is red when
 `deadUnacknowledged` is above 0, so a receipt job that died alerts, and id 41 "Lumitra Shop: every paid order has
 an invoice" is red unless `receipts` is `"ok"` (a JSON query `$.receipts == "ok"`), so a paid order still without
-an invoice alerts. Each monitor call runs one pass, which is cheap and safe beside the timer. **Rotation:** the monitors read a copy of `CUSTOM_DOMAIN_SYNC_TOKEN`, stored in
+an invoice alerts. **A fourth monitor is still to be created** (a live change, left to Marlin): "Lumitra Shop: form
+submission purges = ok", the same call, red unless `purges` is `"ok"` (`$.purges == "ok"`). A deleted project's form submissions
+are removed by a purge job that never gives up (src/server/forms/purge.ts), so a permanent fault only shows there, as
+`purgesStuck` above 0 after five failures; without this monitor nobody is told. Each monitor call runs one pass, which is cheap and safe beside the timer. **Rotation:** the monitors read a copy of `CUSTOM_DOMAIN_SYNC_TOKEN`, stored in
 the infra Infisical project at prod `/monitoring` as `FRAMER_CLONE_COMMERCE_WATCHDOG_TOKEN`. After rotating
 `CUSTOM_DOMAIN_SYNC_TOKEN`, copy it again with `copy_secret` (overwrite), update the header file on the host and
 edit monitors 39, 40 and 41, or all three turn red with 401.

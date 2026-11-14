@@ -74,6 +74,10 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
     uses: 1, kind: 'sees-branches',
     why: 'resolves the scope of an editor forms request by site id; a branch collects no submissions (it has no host)',
   },
+  'src/server/forms/purge.ts': {
+    uses: 1, kind: 'sees-branches',
+    why: 'the purge job of a deleted project reads the site row by id only to learn whether it is gone: a row there, a branch included, means the delete has not happened and nothing is purged; submissions only ever name published mains, and a project delete refuses a branch',
+  },
   'src/server/forms/repository.ts': { uses: 1, kind: 'mains-only', why: 'sites of submissions, posted only to published sites' },
   'src/lib/auth-machine.ts': {
     uses: 1, kind: 'sees-branches',

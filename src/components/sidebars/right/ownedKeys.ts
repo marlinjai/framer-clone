@@ -85,7 +85,7 @@ const FORM_FIELD_PROPS = [
 const CATEGORY_PROPS: Partial<Record<ComponentCategory, readonly string[]>> = {
   link: ['href'],
   image: ['src', 'alt'],
-  form: ['formName', 'successBehavior', 'successMessage', 'redirectPageId'],
+  form: ['formName', 'successBehavior', 'successMessage', 'redirectPageId', 'notifyEmail'],
   formField: FORM_FIELD_PROPS,
   formSubmit: ['loadingLabel'],
   stickyCta: ['ctaLabel', 'ctaHref', 'buttonBackground', 'buttonTextColor', 'buttonRadius'],

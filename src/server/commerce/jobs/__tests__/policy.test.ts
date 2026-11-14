@@ -51,8 +51,8 @@ describe('defineJobKind', () => {
 });
 
 describe('the production registries', () => {
-  it('hold the expiry, receipt and mail jobs, and nothing else yet', () => {
-    expect(Object.keys(JOB_KINDS)).toEqual(['payment_expiry', 'receipt_issue', 'shop_mail']);
+  it('hold the expiry, receipt, buyer mail, form notification and form purge jobs, and nothing else yet', () => {
+    expect(Object.keys(JOB_KINDS)).toEqual(['payment_expiry', 'receipt_issue', 'shop_mail', 'form_mail', 'form_purge']);
     expect(COMMERCE_CONSUMERS['order.placed']).toEqual([paymentExpiryConsumer]);
     expect(COMMERCE_CONSUMERS['payment.paid']).toEqual([receiptIssueConsumer]);
     expect(COMMERCE_CONSUMERS['receipt.issued']).toEqual([receiptIssuedMailConsumer]);

@@ -33,7 +33,7 @@ import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CommerceIsland, { type CommerceIslandProps } from './CommerceIsland';
 import FormIsland, { FormFieldIsland, FormSubmitIsland } from '../forms/FormIsland';
-import { formKindOf } from '@/lib/forms/definition';
+import { formKindOf, withoutPrivateFormProps } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
@@ -201,7 +201,7 @@ export function renderComponentNode(
   // time feeds the no-JavaScript fill-time check of the submit endpoint.
   const formKind = formKindOf(node.props as Record<string, unknown> | undefined);
   if (formKind === 'form') {
-    return <FormIsland key={key} node={node} scope={scope} renderedAt={Date.now()} />;
+    return <FormIsland key={key} node={withoutPrivateFormProps(node)} scope={scope} renderedAt={Date.now()} />;
   }
   if (formKind === 'form-field') return <FormFieldIsland key={key} node={node} />;
   if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={node} />;
