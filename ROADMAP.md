@@ -338,7 +338,7 @@ connections to the suite. The four lines below are in that order.
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.
-- [ ] Re-evaluate `docs/specs/build-2026-06-arbosano/` (a draft plan of 2026-06-26 to mature the
+- [ ] Re-evaluate `docs/specs/build-2026-06-arbosano/` (a plan of 2026-06-26, now marked `status: archived` and kept as a reference, to mature the
   builder UX with the ArboSano site as the forcing spec). Re-checked 2026-11-15: the directory still
   exists in the main checkout, but it is no longer untracked (its file was committed in #108, so
   the main checkout matches origin/main there). ArboSano has since been built on WordPress, so the
