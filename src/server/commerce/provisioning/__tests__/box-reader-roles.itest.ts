@@ -459,7 +459,7 @@ describe('box-reader.sql applied', () => {
       rolbypassrls: false,
       rolinherit: false,
       rolconnlimit: 4,
-      rolconfig: ['statement_timeout=2s', 'idle_in_transaction_session_timeout=5s', 'idle_session_timeout=60s', 'temp_file_limit=0'],
+      rolconfig: ['statement_timeout=2s', 'idle_in_transaction_session_timeout=5s', 'idle_session_timeout=60s', 'temp_file_limit=0', 'search_path=pg_catalog'],
     });
     const members = await su!`SELECT 1 FROM pg_auth_members WHERE roleid = 'box_reader'::regrole OR member = 'box_reader'::regrole`;
     expect(members).toHaveLength(0);
@@ -844,9 +844,9 @@ describe('what is left, stated in the file and held here as it is', () => {
 
     await apply('box-reader.sql');
 
-    // Every default of the role, for every database: only the four the file sets, role-wide.
+    // Every default of the role, for every database: only the five the file sets, role-wide.
     expect(await settingsOf()).toEqual([
-      { database: 'every database', settings: ['statement_timeout=2s', 'idle_in_transaction_session_timeout=5s', 'idle_session_timeout=60s', 'temp_file_limit=0'] },
+      { database: 'every database', settings: ['statement_timeout=2s', 'idle_in_transaction_session_timeout=5s', 'idle_session_timeout=60s', 'temp_file_limit=0', 'search_path=pg_catalog'] },
     ]);
     const fresh = as('box_reader');
     expect(((await fresh`SHOW statement_timeout`)[0] as { statement_timeout: string }).statement_timeout).toBe('2s');

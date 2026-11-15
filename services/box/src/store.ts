@@ -146,9 +146,12 @@ export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: numbe
   return {
     async find(siteId, sha256) {
       refuseWhilePaused();
+      // Every name the statement uses is schema-qualified: the application's owner role may create functions in
+      // `public` and schemas in the database, so an unqualified `to_json` or `box_document` could resolve to one of
+      // its own (a `public.to_json(text[])` matches exactly, a schema `box_reader` comes first as "$user").
       const rows = await sql<{ document: unknown; live: unknown; subdomain_labels: unknown; custom_hostnames: unknown }[]>`
-        SELECT document, live, to_json(subdomain_labels) AS subdomain_labels, to_json(custom_hostnames) AS custom_hostnames
-        FROM box_document(${siteId}, ${sha256})
+        SELECT document, live, pg_catalog.to_json(subdomain_labels) AS subdomain_labels, pg_catalog.to_json(custom_hostnames) AS custom_hostnames
+        FROM public.box_document(${siteId}, ${sha256})
         LIMIT 1
       `;
       const row = rows[0];
@@ -158,7 +161,7 @@ export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: numbe
     async ping() {
       refuseWhilePaused();
       // A pair no site can have: the call itself is what is checked.
-      await sql`SELECT 1 AS ok FROM box_document(${'00000000-0000-0000-0000-000000000000'}, ${'0'.repeat(64)})`;
+      await sql`SELECT 1 AS ok FROM public.box_document(${'00000000-0000-0000-0000-000000000000'}, ${'0'.repeat(64)})`;
     },
     end: () => sql.end({ timeout: 2 }),
     destroy() {

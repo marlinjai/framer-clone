@@ -97,6 +97,10 @@
 --   - statement_timeout 2s, idle_in_transaction_session_timeout 5s,
 --     idle_session_timeout 60s. These are defaults a session can change, so
 --     they bound the box, not a thief.
+--   - search_path pg_catalog, role-wide: commerce_ddl may create functions in
+--     public and schemas in this database (a schema named box_reader would be
+--     searched first as "$user"), so the box's sessions search no schema that
+--     role can write; the box also schema-qualifies every name it uses.
 --
 -- WHAT IS LEFT to someone who holds the role's password. None of it reads or
 -- writes a row of the application. The rehearsal test holds the first six as
@@ -237,6 +241,8 @@ ALTER ROLE box_reader SET idle_session_timeout = '60s';
 -- Only a superuser can change temp_file_limit, so the role cannot lift this
 -- one.
 ALTER ROLE box_reader SET temp_file_limit = 0;
+-- No schema the application's owner role can write is searched (see the header).
+ALTER ROLE box_reader SET search_path = pg_catalog;
 
 -- =====================================================================
 -- This database: who may connect, and no temporary tables for PUBLIC
