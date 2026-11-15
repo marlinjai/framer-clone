@@ -3,8 +3,9 @@
 // The one thing the box may do in the database: call the function
 // `box_document(site_id, sha256)`, as the role `box_reader`, which can read no
 // table and no view. A caller gets the row of a pair it already knows and can
-// list nothing. The function is the contract the application's migration has
-// to meet (decision D18, and the fixture in test/integration/fixture.sql):
+// list nothing. The function is made by the application's migration
+// prisma/migrations/20261115000000_custom_code (decision D18), which the
+// integration suite applies with the whole migration chain:
 //
 //   box_document(text, text) RETURNS TABLE (
 //     document text, live boolean, subdomain_labels text[], custom_hostnames text[])

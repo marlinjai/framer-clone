@@ -65,11 +65,13 @@ beforeAll(async () => {
   image = boxImage();
   pg = await startScratchPostgres();
   pg.sql(`
-    INSERT INTO sites (id, custom_code_enabled) VALUES ('${SITE_A}', true), ('${SITE_B}', true);
-    INSERT INTO site_domains (id, site_id, subdomain, custom_hostname, verification_status) VALUES
-      ('d1', '${SITE_A}', 'shop', NULL, 'active'),
-      ('d2', '${SITE_A}', NULL, 'www.example.com', 'active'),
-      ('d3', '${SITE_A}', NULL, 'preview-x.sites.lumitra.co', 'active');
+    INSERT INTO sites (id, workspace_id, tenant_group_id, name, project_created_at, project_updated_at, updated_at, custom_code_enabled) VALUES
+      ('${SITE_A}', 'w1', 't1', 'A', now(), now(), now(), true),
+      ('${SITE_B}', 'w1', 't1', 'B', now(), now(), now(), true);
+    INSERT INTO site_domains (id, site_id, workspace_id, tenant_group_id, subdomain, custom_hostname, verification_status, updated_at) VALUES
+      ('d1', '${SITE_A}', 'w1', 't1', 'shop', NULL, 'active', now()),
+      ('d2', '${SITE_A}', 'w1', 't1', NULL, 'www.example.com', 'active', now()),
+      ('d3', '${SITE_A}', 'w1', 't1', NULL, 'preview-x.sites.lumitra.co', 'active', now());
     INSERT INTO custom_code_blobs (site_id, sha256, document, declaration, title, created_by, blocked_at) VALUES
       ('${SITE_A}', '${HASH}', '<p>site a</p>', '{}', 'A', 'u1', NULL),
       ('${SITE_A}', '${BLOCKED}', '<p>blocked</p>', '{}', 'Blocked', 'u1', now());

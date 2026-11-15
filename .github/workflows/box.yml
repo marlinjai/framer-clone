@@ -9,7 +9,8 @@ name: box
 # the database role), and are added only with that step.
 #
 # Path-filtered: it runs when the box, the contract module it bundles, its
-# Dockerfile or this file changes, and never otherwise.
+# Dockerfile, this file, or the database it reads changes (the migrations and
+# the role files, which its integration suite applies), and never otherwise.
 
 on:
   push:
@@ -20,6 +21,8 @@ on:
       - Dockerfile.box
       - Dockerfile.box.dockerignore
       - .github/workflows/box.yml
+      - prisma/migrations/**
+      - prisma/sql/**
       # The three root files that leave services/ out of the application's checks: a change to
       # them is checked here too, so the box cannot lose its checks unseen.
       - tsconfig.json
@@ -33,6 +36,8 @@ on:
       - Dockerfile.box
       - Dockerfile.box.dockerignore
       - .github/workflows/box.yml
+      - prisma/migrations/**
+      - prisma/sql/**
       - tsconfig.json
       - eslint.config.mjs
       - .dockerignore
