@@ -128,7 +128,7 @@ CREATE TRIGGER "custom_code_blobs_immutable"
     EXECUTE FUNCTION "public"."custom_code_blobs_immutable"();
 
 -- The audit is append-only (D3): no row is ever changed. Deleting stays possible, because erasing a company's
--- personal data deletes its audit rows (src/server/erasure/public.ts does so for the other audit tables).
+-- personal data deletes its audit rows (src/server/erasure/public.ts, with the other audit tables).
 CREATE FUNCTION "public"."custom_code_audit_append_only"() RETURNS trigger AS $$
 BEGIN
     RAISE EXCEPTION 'custom_code_audit is append-only (row %)', OLD."id"
