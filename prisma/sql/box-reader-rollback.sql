@@ -78,9 +78,8 @@
 -- WHAT IT LEAVES AS IT IS.
 --   - TEMPORARY stays taken from PUBLIC: that was commerce-roles.sql's doing
 --     before box-reader.sql, not this file's to give back.
---   - EXECUTE on box_document for box_reader stays: the migration grants it
---     too, so taking it here would only last until the next start, and without
---     a login the role cannot use it.
+--   - EXECUTE on box_document for box_reader stays: without a login the role
+--     cannot use it, and re-applying box-reader.sql restores the shape whole.
 --   - The grants by name to commerce_app and commerce_ddl stay. They are
 --     harmless with PUBLIC holding the same right, and removing them would
 --     only matter if box-reader.sql were applied again.

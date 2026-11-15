@@ -544,31 +544,36 @@ changes:
 - `custom_code_proposals`: code an importer or an agent proposes; never served, never rendered; deleted with its site.
 - The function `box_document(site_id text, sha256 text)`, the only thing the box may call. `SECURITY DEFINER` with a
   fixed `search_path`, it returns at most one row (`document`, `live`, `subdomain_labels`, `custom_hostnames`) for a
-  pair the caller already knows, and `document` is NULL unless the site has custom code on and the blob is not blocked.
-  EXECUTE is taken from PUBLIC, as on the migration's two trigger functions.
+  pair the caller already knows, and `document` is NULL unless the site has custom code on, the blob is not blocked and
+  its hash is not on the takedown list. EXECUTE is taken from PUBLIC, as on the migration's two trigger functions.
+- `custom_code_blocked_hashes`: the takedown list. A hash in it is served on no site, whatever happens to blob rows; no
+  foreign key to any site, so neither deleting a site nor erasing a company removes an entry.
 
 The triggers, the `CHECK` constraints and the function exist in the database only (Prisma's schema cannot name them),
-so `prisma migrate diff` does not list them; it reports nothing for this migration. Nothing in the application reads
+so `prisma migrate diff` does not list them. Run from the migrations to the schema on 2026-11-15, it showed only the two
+`site_branches` differences documented under "Site branches" and nothing for this migration. Nothing in the application reads
 or writes any of it until the guarded routes of later slices exist. Like every migration it is applied by the boot of
 the first deployment that contains it. Marlin approved this migration by name on 2026-11-15. Reversing it:
-`rollback.sql` beside the migration (by hand, one transaction, safe to run twice, no `migrate resolve`; the rehearsal runs it twice and then lets `prisma migrate deploy` apply the migration again). It destroys every
-stored blob, proposal and audit row, so it needs its own explicit authorization; leaving the column, the tables and the
+`rollback.sql` beside the migration, **only after the application runs the previous image** (this image's Prisma client
+reads `sites.custom_code_enabled` on every site query); by hand, one transaction, safe to run twice, no `migrate
+resolve`; the rehearsal runs it twice and then lets `prisma migrate deploy` apply the migration again. It destroys every
+stored blob, proposal, audit row and takedown entry, so it needs its own explicit authorization; leaving the column, the tables and the
 function in place after a code rollback is the default.
 
 **The order rule between the migration and the box's role.** `prisma/sql/box-reader.sql` creates the role `box_reader`
 (and takes advisory locks, large objects, the write-ahead log and `CONNECT` from PUBLIC, decision D24 of the plan). It is
 applied separately, by the operator, once per database, after `commerce-roles.sql`, and **only with Marlin's yes by
 name**; the rollback is `prisma/sql/box-reader-rollback.sql`. `prisma migrate deploy`, by contrast, runs at every
-container start, and every fresh database (CI, local development, the integration tests, a restore) runs the migrations
-without the role file. So the EXECUTE grant on `box_document` is made from both sides, each only if the other side's
+container start, and every fresh database (CI, local development, the integration tests) runs the migrations without
+the role file. So the EXECUTE grant on `box_document` is made from both sides, each only if the other side's
 object exists: the migration grants it to `box_reader` if the role exists, the role file grants it if the function
 exists. Whichever runs first, the end state is the same (EXECUTE for the function's owner and `box_reader`, nobody
 else), and a database without the role migrates as before. The rehearsal
 (`src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts`) holds both orders; the box's own integration
 suite builds its database from these files in production's order. Re-apply `box-reader.sql` after any restore, as
-`commerce-roles.sql` is: a plain dump does not carry the database's `CONNECT` rights. Its rollback leaves the grant on
-`box_document` in place (the migration would grant it again at the next start, and without a login the role cannot use
-it).
+`commerce-roles.sql` is: a plain dump does not carry the database's `CONNECT` rights. A dump restore runs no migration: it carries `_prisma_migrations` and every object as it was, and with them the GRANT of EXECUTE on `box_document` to `box_reader`; restored into a cluster that has no `box_reader`, that one statement fails (role does not exist). Either create the role first (apply `commerce-roles.sql` and `box-reader.sql` to the empty target database before restoring), or let the restore go on past that one error and apply `box-reader.sql` afterwards if the box is to use the copy. The role file's
+rollback leaves the grant on `box_document` in place: without a login the role cannot use it, and re-applying
+`box-reader.sql` restores it.
 
 **The app's own roles get nothing on these tables.** The application writes them as the Prisma role (the bootstrap
 superuser, `DATABASE_URL`), like every site table; `commerce_app` and `commerce_ddl` hold no right on the Prisma tables

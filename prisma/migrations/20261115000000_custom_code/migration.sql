@@ -8,8 +8,8 @@
 --
 -- THE ORDER WITH prisma/sql/box-reader.sql. That file creates the role `box_reader` and is applied by the operator,
 -- separately and at a time of its own (it needs Marlin's yes). `prisma migrate deploy` runs at EVERY container start,
--- and every fresh database (CI, local development, the other integration tests, a restore) runs this migration
--- without that file. So this migration must not fail when the role does not exist: it always takes EXECUTE on
+-- and every fresh database (CI, local development, the other integration tests) runs this migration without that
+-- file. (A dump restore runs no migration: it carries the result, the grant included; see deploy/README.md.) So this migration must not fail when the role does not exist: it always takes EXECUTE on
 -- `box_document` from PUBLIC, and grants it to `box_reader` only if that role exists. box-reader.sql grants the same
 -- if the function exists. Whichever runs first, the end state is the same: EXECUTE for the owner and `box_reader`,
 -- nobody else (held by src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts, both orders).
