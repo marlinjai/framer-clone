@@ -338,11 +338,13 @@ connections to the suite. The four lines below are in that order.
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.
-- [ ] Re-evaluate the untracked `docs/specs/build-2026-06-arbosano/` in the main checkout: a draft
-  plan of 2026-06-26 to mature the builder UX with the ArboSano site as the forcing spec. ArboSano
-  has since been built on WordPress, so the forcing spec is gone; the builder-UX gaps it lists
-  (reusable components, navbar, theme) are still real. Marlin's call: re-scope, keep as
-  reference, or drop. The commerce tenant plan that sat next to it is committed. (2026-10-15)
+- [ ] Re-evaluate `docs/specs/build-2026-06-arbosano/` (a plan of 2026-06-26, now marked `status: archived` and kept as a reference, to mature the
+  builder UX with the ArboSano site as the forcing spec). Re-checked 2026-11-15: the directory still
+  exists in the main checkout, but it is no longer untracked (its file was committed in #108, so
+  the main checkout matches origin/main there). ArboSano has since been built on WordPress, so the
+  forcing spec is gone; the builder-UX gaps it lists (reusable components, navbar, theme) are still
+  real. Marlin's call: re-scope, keep as reference, or drop. This re-confirmation only verifies the
+  file exists; the decision itself is unassessed and has not been reviewed. (2026-11-15)
 
 ## Completed
 
