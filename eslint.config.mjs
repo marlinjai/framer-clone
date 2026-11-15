@@ -26,6 +26,8 @@ const eslintConfig = [
       "dist-boot/**",
       "dist-bench/**",
       "test/score/.out/**",
+      // The box (services/box) is its own package with its own lint and type check, run by box.yml.
+      "services/**",
       "next-env.d.ts",
     ],
   },

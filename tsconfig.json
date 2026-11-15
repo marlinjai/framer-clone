@@ -50,6 +50,7 @@
   ],
   "exclude": [
     "node_modules",
+    "services",
     "clearify.config.ts",
     "scripts/generate-web-names.ts",
     "scripts/generate-web-vocabulary.ts"
