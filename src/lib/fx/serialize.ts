@@ -40,6 +40,7 @@
  */
 
 import { getLayerSchema } from "./registry";
+import { settleTargets } from "./targets";
 import type {
   AnimateSpec,
   BlendMode,
@@ -63,6 +64,8 @@ export interface SerializedLayer {
   params: Record<string, SerializedParamValue>;
   animate?: Record<string, AnimateSpec>;
   interactivity?: InteractivitySpec;
+  /** See `Layer.target`; written only when set. */
+  target?: string;
 }
 
 export interface SerializedScene {
@@ -133,6 +136,7 @@ function serializeLayer(layer: Layer): SerializedLayer {
   };
   if (layer.animate) out.animate = layer.animate;
   if (layer.interactivity) out.interactivity = layer.interactivity;
+  if (layer.target) out.target = layer.target;
   return out;
 }
 
@@ -267,6 +271,7 @@ export function deserializeLayer(raw: SerializedLayer): Layer | null {
   if (animate) layer.animate = animate;
   const interactivity = sanitizeInteractivity(raw.interactivity);
   if (interactivity) layer.interactivity = interactivity;
+  if (typeof raw.target === "string") layer.target = raw.target;
   return layer;
 }
 
@@ -298,6 +303,9 @@ export function deserializeScene(data: unknown): SceneConfig {
     const layer = deserializeLayer(rawLayer as SerializedLayer);
     if (layer) layers.push(layer);
   }
+  if (typeof console !== "undefined") {
+    for (const note of settleTargets(layers)) console.warn(`[lumitra-fx] ${note}`);
+  } else settleTargets(layers);
   const dpr: [number, number] = isVec2(o.dpr) ? o.dpr : [1, 1.75];
   return {
     version: SCENE_SCHEMA_VERSION,

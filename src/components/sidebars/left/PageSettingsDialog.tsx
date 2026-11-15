@@ -49,6 +49,7 @@ import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { suggestSlug, tidySlugInput, validateSlug, SLUG_MAX_LENGTH } from '@/lib/pages/slug';
 import { IMAGE_REFERENCE_ERROR, isImageReference } from '@/lib/site/siteSettings';
 import { SiteImageField } from '@/components/site/SiteImageField';
+import { HeadItemsSection } from '@/components/site/HeadItemsDialog';
 import { HomeChangeSummary } from './SetHomePageDialog';
 
 /** Search engines show roughly this many characters of a description. */
@@ -468,6 +469,9 @@ const PageSettingsForm = observer(({
             <p className="text-[11px] text-destructive" aria-live="polite">{saveErrors.notFoundPage}</p>
           )}
         </div>
+
+        {/* Head items (src/lib/site/headItems.ts): written at once by their own action, not by Save. */}
+        <HeadItemsSection scope={{ kind: 'page', project, page }} />
       </DialogBody>
 
       <DialogFooter>

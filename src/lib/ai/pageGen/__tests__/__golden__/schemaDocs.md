@@ -148,6 +148,9 @@ props.fx:
 - A text layer draws its own words. Give it eyebrowText, headlineText, taglineText (leave one out to leave it empty), or set
   "visible": false; a text layer given no text is hidden. Text for people who cannot see the scene belongs in
   the children, not in the scene.
+- A "textBox" layer draws free-positioned words (its "text", where "position" puts its "anchor" point, "width" the
+  share of the scene it wraps in). It is decorative only: pixels no search engine or screen reader reads, never
+  the page's headline or any text a visitor needs. The page's real text goes in the children.
 
 Presets (each layer: id, kind, then its settings with the range and, in brackets, the preset's value):
 

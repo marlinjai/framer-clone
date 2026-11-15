@@ -148,4 +148,43 @@ describe('slide-to-select', () => {
     expect(editorUI.phoneContextMenu).toBeDefined();
     expect(screen.getByTestId('phone-context-menu')).toBeTruthy();
   });
+
+  it('with an FX scene layer picked the menu names the layer and offers only Duplicate layer and Delete layer, acting on the layer', () => {
+    const { editorUI, page, mobile } = setup();
+    act(() => editorUI.closePhoneContextMenu());
+    const fx = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    act(() => editorUI.pickFxLayer(fx, { kind: 'layer', layerId: 'bloom' }, mobile.breakpointId));
+    act(() => editorUI.openPhoneContextMenu({ x: 100, y: 200 }));
+    const items = Array.from(document.querySelectorAll('[data-menu-item]')).map((el) => el.getAttribute('data-menu-item'));
+    expect(items).toEqual(['duplicate', 'delete']);
+    expect(screen.getByRole('menu').getAttribute('aria-label')).toBe('Actions for Bloom');
+    expect(item('delete').textContent).toContain('Delete layer');
+    fireEvent.click(item('delete'));
+    const read = (fx.props as Record<string, unknown>).fx as { scene: { layers: { id: string }[] } };
+    expect(page.findComponent(fx.id)).toBeDefined();
+    expect(read.scene.layers.some((l) => l.id === 'bloom')).toBe(false);
+  });
+
+  it('with the Background picked there is no Delete or Duplicate item', () => {
+    const { editorUI, page, mobile } = setup();
+    act(() => editorUI.closePhoneContextMenu());
+    const fx = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    act(() => editorUI.pickFxLayer(fx, { kind: 'background' }, mobile.breakpointId));
+    act(() => editorUI.openPhoneContextMenu({ x: 100, y: 200 }));
+    expect(item('delete')).toBeNull();
+    expect(item('duplicate')).toBeNull();
+    expect(item('copyStyle')).not.toBeNull();
+  });
+
+  it('closes when the picked layer goes away under it, so a sliding finger can never reach the box\'s own Delete', () => {
+    const { editorUI, page, mobile } = setup();
+    act(() => editorUI.closePhoneContextMenu());
+    const fx = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    act(() => editorUI.pickFxLayer(fx, { kind: 'layer', layerId: 'bloom' }, mobile.breakpointId));
+    act(() => editorUI.openPhoneContextMenu({ x: 100, y: 200 }));
+    expect(item('delete')).not.toBeNull();
+    act(() => fx.setProps({ fx: { ...(fx.props as Record<string, unknown>).fx as object, scene: { ...((fx.props as Record<string, unknown>).fx as { scene: { layers: { id: string }[] } }).scene, layers: [] } } }));
+    expect(editorUI.phoneContextMenu).toBeUndefined();
+    expect(page.findComponent(fx.id)).toBeDefined();
+  });
 });

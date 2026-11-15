@@ -64,6 +64,7 @@ import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
 import { getSnapshot } from 'mobx-state-tree';
 import { GoogleMapsPrivacyHint } from './GoogleMapsPrivacyHint';
 import { SiteImageField } from './SiteImageField';
+import { HeadItemsSection } from './HeadItemsDialog';
 import { SiteImageLibrary } from './SiteImageLibrary';
 import { namedSiteImages } from '@/lib/site/siteImages';
 import { fxSiteImagePaths } from '@/lib/fxScene/fxScene';
@@ -412,6 +413,9 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
             </select>
           </div>
         </section>
+
+        {/* Head items (src/lib/site/headItems.ts): written at once by their own action, not by Save. */}
+        <HeadItemsSection scope={{ kind: 'site', project }} />
 
         {/* The page base (src/lib/site/pageBase.ts): what elements look like before
             anyone styles them, on the published page, the preview and the canvas. */}

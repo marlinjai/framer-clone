@@ -20,7 +20,8 @@ import React from 'react';
 import { unstable_rethrow } from 'next/navigation';
 import { DefaultNotFound } from '@/components/site/DefaultNotFound';
 import { resolveSiteForRequest } from '@/server/sites/requestSite';
-import { findNotFoundPage, renderSitePage } from '@/server/sites/renderSitePage';
+import { findNotFoundPage, publishedHead, renderSitePage } from '@/server/sites/renderSitePage';
+import { HeadItemTags } from '@/components/site/HeadItemTags';
 import { adaptedPage } from '@/lib/components/expandedPages';
 import { effectiveSiteName, DEFAULT_LANGUAGE } from '@/lib/site/siteSettings';
 import { DEFAULT_LOOK, siteLookFromPages } from '@/lib/site/notFoundDefault';
@@ -54,12 +55,16 @@ export default async function SiteNotFound() {
     }
   }
 
+  // The default 404 carries the site's head items (it has no page of its own).
   return (
-    <DefaultNotFound
-      siteName={effectiveSiteName(site.siteSettings, site.name)}
-      language={site.siteSettings.language}
-      look={siteLookFromPages(site)}
-      theme={site.siteSettings.theme}
-    />
+    <>
+      <HeadItemTags items={publishedHead(site, []).items} />
+      <DefaultNotFound
+        siteName={effectiveSiteName(site.siteSettings, site.name)}
+        language={site.siteSettings.language}
+        look={siteLookFromPages(site)}
+        theme={site.siteSettings.theme}
+      />
+    </>
   );
 }

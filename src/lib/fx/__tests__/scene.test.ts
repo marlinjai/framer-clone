@@ -31,18 +31,19 @@ const BUILT_IN_TYPES = [
   'rgbShift',
   'shape',
   'text',
+  'textBox',
   'vignette',
 ];
 
 describe('the built-in registry', () => {
-  it('registers exactly the 15 layer types of the plan', () => {
+  it('registers exactly the 16 layer types of the plan', () => {
     expect(listLayerDefinitions().map((d) => d.type).sort()).toEqual(BUILT_IN_TYPES);
   });
 
   it('lists content types before post passes in the add picker', () => {
     const kinds = listAddableTypes().map((t) => t.kind);
-    expect(kinds.slice(0, 5)).toEqual(Array(5).fill('content'));
-    expect(kinds.slice(5)).toEqual(Array(10).fill('post'));
+    expect(kinds.slice(0, 6)).toEqual(Array(6).fill('content'));
+    expect(kinds.slice(6)).toEqual(Array(10).fill('post'));
   });
 });
 

@@ -120,6 +120,7 @@ describe('the render-free entry (format.ts)', () => {
       'registry.ts',
       'schemas.ts',
       'serialize.ts',
+      'targets.ts',
       'types.ts',
     ]);
   });
@@ -135,5 +136,19 @@ describe('the render entry (index.ts), so the check above can fail', () => {
 
   it('holds none of the packages the plan keeps out of Sites', () => {
     expect(graph.packages.filter((p) => /^(?:leva|@react-three\/drei|gsap)(?:\/|$)/.test(p))).toEqual([]);
+  });
+});
+
+describe('the editor-only pick entry (pick.ts)', () => {
+  const graph = graphOf(path.join(FX_DIR, 'pick.ts'));
+
+  it('resolves every import it follows', () => {
+    expect(graph.unresolved).toEqual([]);
+  });
+
+  it('is reached by neither the render entry nor the render-free entry, so a published page never carries it', () => {
+    for (const entry of ['index.ts', 'format.ts', 'unified.ts', 'createScene.ts']) {
+      expect(graphOf(path.join(FX_DIR, entry)).files).not.toContain('pick.ts');
+    }
   });
 });

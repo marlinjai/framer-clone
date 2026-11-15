@@ -213,4 +213,35 @@ describe('tree navigation', () => {
     });
     expect(screen.getByTestId('quick-toolbar').getAttribute('data-shown')).toBe('false');
   });
+
+  it('Delete and Duplicate with a layer of an FX scene picked act on the layer, never on the box', () => {
+    const { editorUI, page, mobile } = setup();
+    const fx = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    act(() => editorUI.pickFxLayer(fx, { kind: 'layer', layerId: 'bloom' }, mobile.breakpointId));
+    renderBar();
+    const layers = () => ((fx.props as Record<string, unknown>).fx as { scene: { layers: { id: string; name: string }[] } }).scene.layers;
+    fireEvent.click(within(screen.getByTestId('quick-toolbar')).getByRole('button', { name: 'Duplicate layer' }));
+    expect(layers().filter((l) => l.name.startsWith('Bloom'))).toHaveLength(2);
+    expect(page.findComponent(fx.id)).toBeDefined();
+    const picked = editorUI.fxLayerPick as { layerId: string };
+    // The bar is about the layer alone: none of the box's own quick edits beside it.
+    expect(screen.queryByRole('button', { name: /Select parent/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Center in parent/ })).toBeNull();
+    expect(screen.getByRole('toolbar').getAttribute('aria-label')).toMatch(/^Quick edits for Bloom/);
+    fireEvent.click(within(screen.getByTestId('quick-toolbar')).getByRole('button', { name: 'Delete layer' }));
+    expect(page.findComponent(fx.id)).toBeDefined();
+    expect(layers().some((l) => l.id === picked.layerId)).toBe(false);
+  });
+
+  it('an open parents list is closed when a layer of an FX scene is picked', () => {
+    const { editorUI, page, mobile } = setup();
+    const fx = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    editorUI.selectComponent(fx, mobile.breakpointId);
+    renderBar();
+    fireEvent.click(screen.getByTestId('quick-breadcrumb'));
+    expect(screen.queryAllByRole('menuitem').length).toBeGreaterThan(0);
+    act(() => editorUI.pickFxLayer(fx, { kind: 'layer', layerId: 'bloom' }, mobile.breakpointId));
+    expect(screen.queryByTestId('quick-breadcrumb')).toBeNull();
+    expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+  });
 });
