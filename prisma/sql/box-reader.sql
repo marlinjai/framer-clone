@@ -41,11 +41,20 @@
 -- string into the box's own Infisical project (plan, D12). Re-running this
 -- file never takes the LOGIN attribute away again.
 --
+-- THE ONE THING THE BOX MAY CALL. The function box_document(text, text)
+-- belongs to the application's migration 20261115000000_custom_code (plan,
+-- slice C1b), which `prisma migrate deploy` applies at every container start,
+-- at a time that has nothing to do with this file. So the grant is made from
+-- both sides, each only if the other side's object already exists: the
+-- migration grants EXECUTE to box_reader if the role exists, and this file
+-- grants it if the function exists (the last block below). Whichever runs
+-- first, the end state is the same: EXECUTE on box_document for its owner and
+-- box_reader, nobody else (the migration always takes it from PUBLIC). The
+-- rehearsal holds both orders.
+--
 -- WHAT IT DOES NOT DO.
---   - It grants nothing on any table, view or function of the application. The
---     one thing the box may call, the function box_document(text, text),
---     belongs to the application's migration (plan, slice C1b), which is not
---     approved; that migration grants EXECUTE on it to box_reader.
+--   - It grants nothing on any table or view of the application, and on no
+--     function but box_document (above).
 --   - It takes nothing from PUBLIC in the other databases of the cluster (see
 --     "What is left"). Only the role's own defaults, which belong to the
 --     cluster, are reset there too.
@@ -118,7 +127,10 @@
 --   - It may execute any function outside pg_catalog that the application
 --     leaves executable by PUBLIC. Today that is four trigger functions of the
 --     site branches migrations, which cannot be called directly; the rehearsal
---     pins the list.
+--     pins the list. (The migration of slice C1b takes EXECUTE from PUBLIC on
+--     each function it creates.)
+--   - It may call box_document for a pair of site id and hash it knows, as the
+--     box does, and gets the code only when that pair is live.
 --   In the other databases of the cluster (postgres, template1), as long as
 --   PUBLIC may connect to them:
 --   - Everything PUBLIC may do there, which this file does not touch: large
@@ -302,6 +314,21 @@ BEGIN
     EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', f.signature);
     EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM box_reader', f.signature);
   END LOOP;
+END
+$$;
+
+-- =====================================================================
+-- The one function the box calls, if the application's migration made it
+-- =====================================================================
+--
+-- If the migration has not run yet in this database, it grants this itself
+-- when it runs, because by then the role exists.
+
+DO $$
+BEGIN
+  IF to_regprocedure('public.box_document(text, text)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.box_document(text, text) TO box_reader;
+  END IF;
 END
 $$;
 

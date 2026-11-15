@@ -32,6 +32,12 @@
 //      out and ends its sessions before PUBLIC gets anything back, and,
 //      stopped in that last step, leaves PUBLIC with nothing.
 //   6. What a dump and restore does to the rights.
+//   7. The application's migration of slice C1b (20261115000000_custom_code,
+//      the custom code tables and the function box_document) and this file
+//      meet in either order with the same end state: a fresh database without
+//      the role migrates, the file then grants EXECUTE on box_document; a
+//      database that has the file first gets the grant from the migration.
+//      box_reader may call that function and still reads no table.
 //
 // No password literal exists anywhere: the container uses TRUST auth, as
 // roles.itest.ts does, and the one password this test sets is random bytes.
@@ -39,7 +45,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import postgres from 'postgres';
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -48,6 +54,8 @@ import { provisionCommerceTenant } from '../provision';
 import { runCommerceDeployMigrations } from '../deploy';
 
 const DB_NAME = 'framer_clone_box_reader_test';
+/** A second database of the same cluster, for the other order: the file first, the migration after it. */
+const ORDER_DB = 'framer_clone_box_order_test';
 const SQL_DIR = path.resolve(__dirname, '../../../../../prisma/sql');
 const FILES = ['commerce-roles.sql', 'box-reader.sql', 'box-reader-rollback.sql', 'box-reader-preflight.sql'] as const;
 type SqlFile = (typeof FILES)[number];
@@ -77,6 +85,32 @@ async function codeOf(run: () => PromiseLike<unknown>): Promise<string> {
   } catch (error) {
     return (error as { code?: string }).code ?? 'no code';
   }
+}
+
+/**
+ * `prisma migrate deploy` on a database, as the superuser, the way every container start runs it. Returns its exit
+ * status and what it printed, so a failure is an expectation that fails rather than a throw.
+ */
+function migrate(database = DB_NAME): { status: number | null; output: string } {
+  const run = spawnSync('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
+    encoding: 'utf8',
+    env: { ...process.env, DATABASE_URL: urlOf('postgres', database) },
+  });
+  return { status: run.status, output: `${run.stdout ?? ''}${run.stderr ?? ''}` };
+}
+
+/** Who may execute box_document in a database, as the catalog reports it, and its stored access list. */
+async function boxDocumentRights(sql: postgres.Sql) {
+  const [row] = await sql`
+    SELECT p.prosecdef AS definer, p.proconfig AS config,
+           has_function_privilege('box_reader', p.oid, 'EXECUTE') AS box_reader,
+           has_function_privilege('anyone_else', p.oid, 'EXECUTE') AS anyone_else,
+           has_function_privilege('commerce_app', p.oid, 'EXECUTE') AS commerce_app,
+           has_function_privilege('commerce_ddl', p.oid, 'EXECUTE') AS commerce_ddl,
+           ARRAY(SELECT a::text FROM unnest(p.proacl) a ORDER BY 1) AS acl
+      FROM pg_proc p WHERE p.oid = to_regprocedure('public.box_document(text, text)')
+  `;
+  return row ? { ...row } : null;
 }
 
 /** Applies a file the way the operator would: psql, stop at the first error. Returns what it printed. */
@@ -258,7 +292,17 @@ describe('the database, built the way a deploy builds it', () => {
     await apply('commerce-roles.sql');
     await su!`ALTER ROLE commerce_app LOGIN`;
     await su!`ALTER ROLE commerce_ddl LOGIN`;
-    execSync('pnpm exec prisma migrate deploy', { stdio: 'ignore', env: { ...process.env, DATABASE_URL: urlOf('postgres') } });
+    // A fresh database without the box's role, as CI, local development, the other integration tests and a restore
+    // run the migrations: the migration of slice C1b must apply there, and grant nothing to a role that is not there.
+    expect(await su!`SELECT 1 FROM pg_roles WHERE rolname = 'box_reader'`).toHaveLength(0);
+    const migrated = migrate();
+    expect(migrated.status, migrated.output).toBe(0);
+    // Only its owner may execute it (the role the rights are asked about below does not exist yet).
+    const [fresh] = await su!`
+      SELECT p.prosecdef AS definer, ARRAY(SELECT a::text FROM unnest(p.proacl) a ORDER BY 1) AS acl
+        FROM pg_proc p WHERE p.oid = to_regprocedure('public.box_document(text, text)')
+    `;
+    expect({ ...fresh }).toEqual({ definer: true, acl: ['postgres=X/postgres'] });
     const start = await runCommerceDeployMigrations({ ownerUrl: urlOf('commerce_ddl'), appUrl: urlOf('commerce_app'), log: () => {} });
     expect(start.role).toBe('commerce_ddl');
     tenantGroupId = randomUUID();
@@ -503,8 +547,8 @@ describe('box_reader, by allow-list', () => {
     // shows up here. Today these are four, all trigger functions, which nobody can call directly
     // (the next test tries). The list is pinned: a new function here, above all one that is NOT a
     // trigger function, is something box_reader could call, and has to be looked at before it ships.
-    // (The function the box is meant to call, box_document, belongs to the application's migration,
-    // which is not part of this.)
+    // The one function that is not a trigger function is box_document, the box's own: a SECURITY DEFINER
+    // function that answers one row for a pair the caller already knows (migration 20261115000000_custom_code).
     const functions = await su!`
       SELECT p.oid::regprocedure::text AS function, p.prorettype::regtype::text AS returns, p.prosecdef AS definer
         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -514,10 +558,27 @@ describe('box_reader, by allow-list', () => {
        ORDER BY 1
     `;
     expect(functions.map((row) => ({ ...row }))).toEqual([
+      { function: 'box_document(text,text)', returns: 'record', definer: true },
       { function: 'site_branches_close_without_content()', returns: 'trigger', definer: false },
       { function: 'site_branches_site_is_main()', returns: 'trigger', definer: false },
       { function: 'site_domains_not_on_branch()', returns: 'trigger', definer: false },
       { function: 'sites_branch_parent_guard()', returns: 'trigger', definer: false },
+    ]);
+    // PUBLIC, held apart: still only the four trigger functions. Every function the migration of slice C1b creates
+    // (box_document and its two trigger functions) has EXECUTE taken from PUBLIC.
+    const forPublic = await su!`
+      SELECT p.oid::regprocedure::text AS function
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'
+         AND has_schema_privilege('anyone_else', n.oid, 'USAGE')
+         AND has_function_privilege('anyone_else', p.oid, 'EXECUTE')
+       ORDER BY 1
+    `;
+    expect(forPublic.map((row) => row.function)).toEqual([
+      'site_branches_close_without_content()',
+      'site_branches_site_is_main()',
+      'site_domains_not_on_branch()',
+      'sites_branch_parent_guard()',
     ]);
 
     // No schema it may create in, none but public it may use.
@@ -548,6 +609,9 @@ describe('box_reader, by allow-list', () => {
       'create a table': () => box`CREATE TABLE public.box_owned (id int)`,
       'create a schema': () => box`CREATE SCHEMA box_owned`,
       'read a site': () => box`SELECT * FROM public.sites LIMIT 1`,
+      'read the custom code blobs': () => box`SELECT * FROM public.custom_code_blobs LIMIT 1`,
+      'read the custom code audit': () => box`SELECT * FROM public.custom_code_audit LIMIT 1`,
+      'read the custom code proposals': () => box`SELECT * FROM public.custom_code_proposals LIMIT 1`,
       'read the company registry': () => box`SELECT * FROM public.tenant_groups LIMIT 1`,
       'read a company schema': () => box`SELECT * FROM ${box(schema)}."books_asset" LIMIT 1`,
       'read password hashes': () => box`SELECT rolpassword FROM pg_authid`,
@@ -563,7 +627,7 @@ describe('box_reader, by allow-list', () => {
     // And the application's session is still there.
     expect(await codeOf(() => app`SELECT 1`)).toBe('ok');
     expect(refused).toEqual(Object.fromEntries(Object.keys(refused).map((name) => [name, '42501'])));
-    expect(Object.keys(refused)).toHaveLength(21);
+    expect(Object.keys(refused)).toHaveLength(24);
 
     // The four trigger functions PUBLIC may execute cannot be called: 0A000, "trigger functions can
     // only be called as triggers".
@@ -595,6 +659,108 @@ describe('box_reader, by allow-list', () => {
     // 53300: too many connections for the role.
     expect(await codeOf(() => fifth`SELECT 1`)).toBe('53300');
     await Promise.all(four.map((sql) => sql.end({ timeout: 2 })));
+  });
+});
+
+describe('the migration of slice C1b and this file, in either order', () => {
+  const SITE = randomUUID();
+  const OFF = randomUUID();
+  const WORKSPACE = randomUUID();
+  const LIVE = 'a'.repeat(64);
+  const BLOCKED = 'b'.repeat(64);
+  const BIG = 'c'.repeat(64);
+  const ONLY_BOX_READER = {
+    definer: true,
+    config: ['search_path=pg_catalog, pg_temp'],
+    box_reader: true,
+    anyone_else: false,
+    commerce_app: false,
+    commerce_ddl: false,
+    acl: ['box_reader=X/postgres', 'postgres=X/postgres'],
+  };
+
+  it('the migration first (above, before the role existed), then the file: box_reader may execute box_document, nobody else may', async () => {
+    expect(await boxDocumentRights(su!)).toEqual(ONLY_BOX_READER);
+  });
+
+  it('the file first, then the migration, in a second database: the same rights, and re-applying the file changes nothing', async () => {
+    await su!`CREATE DATABASE framer_clone_box_order_test`;
+    await apply('commerce-roles.sql', ORDER_DB);
+    await apply('box-reader.sql', ORDER_DB);
+    const other = postgres(urlOf('postgres', ORDER_DB), { max: 1, prepare: false, onnotice: () => {} });
+    opened.push(other);
+    // The file found no function to grant on, and failed nothing.
+    expect(await boxDocumentRights(other)).toBeNull();
+    const migrated = migrate(ORDER_DB);
+    expect(migrated.status, migrated.output).toBe(0);
+    expect(await boxDocumentRights(other)).toEqual(ONLY_BOX_READER);
+    await apply('box-reader.sql', ORDER_DB);
+    expect(await boxDocumentRights(other)).toEqual(ONLY_BOX_READER);
+    // And it is the same end state as the other order, in the first database.
+    expect(await boxDocumentRights(other)).toEqual(await boxDocumentRights(su!));
+  }, 240_000);
+
+  it('box_reader calls box_document: the code of a live pair, never the code of one that is not live, nothing for another pair', async () => {
+    const site = (id: string, enabled: boolean) => su!`
+      INSERT INTO public.sites (id, workspace_id, tenant_group_id, name, project_created_at, project_updated_at, updated_at, custom_code_enabled)
+      VALUES (${id}, ${WORKSPACE}, ${tenantGroupId}, 'box', now(), now(), now(), ${enabled})
+    `;
+    await site(SITE, true);
+    await site(OFF, false);
+    await su!`
+      INSERT INTO public.site_domains (id, site_id, workspace_id, tenant_group_id, subdomain, custom_hostname, verification_status, updated_at) VALUES
+        (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, 'shop', NULL, 'active', now()),
+        (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, NULL, 'www.example.com', 'verified', now()),
+        (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, NULL, 'pending.example.com', 'pending', now())
+    `;
+    await su!`
+      INSERT INTO public.custom_code_blobs (site_id, sha256, document, declaration, title, created_by, blocked_at) VALUES
+        (${SITE}, ${LIVE}, '<p>live</p>', '{}', 'Live', 'u1', NULL),
+        (${SITE}, ${BLOCKED}, '<p>blocked</p>', '{}', 'Blocked', 'u1', now()),
+        (${SITE}, ${BIG}, repeat('x', 262145), '{}', 'Big', 'u1', NULL),
+        (${OFF}, ${LIVE}, '<p>off</p>', '{}', 'Off', 'u1', NULL)
+    `;
+    // With the type catalogue read at connect, as the box's driver does, so the two arrays arrive as arrays.
+    const box = postgres(urlOf('box_reader'), { max: 1, prepare: false, onnotice: () => {} });
+    opened.push(box);
+    const ask = async (siteId: string, sha256: string) =>
+      (await box`SELECT document, live, subdomain_labels, custom_hostnames FROM public.box_document(${siteId}, ${sha256})`).map((row) => ({ ...row }));
+    expect(await ask(SITE, LIVE)).toEqual([{ document: '<p>live</p>', live: true, subdomain_labels: ['shop'], custom_hostnames: ['www.example.com'] }]);
+    expect(await ask(SITE, BLOCKED)).toEqual([{ document: null, live: false, subdomain_labels: ['shop'], custom_hostnames: ['www.example.com'] }]);
+    expect(await ask(OFF, LIVE)).toEqual([{ document: null, live: false, subdomain_labels: [], custom_hostnames: [] }]);
+    // Larger than a block may be: live, but no document.
+    expect(await ask(SITE, BIG)).toEqual([{ document: null, live: true, subdomain_labels: ['shop'], custom_hostnames: ['www.example.com'] }]);
+    expect(await ask(OFF, BLOCKED)).toEqual([]);
+    expect(await ask(SITE, 'd'.repeat(64))).toEqual([]);
+    // And still no table: the rows it was just answered from are not readable to it.
+    expect(await codeOf(() => box`SELECT document FROM public.custom_code_blobs`)).toBe('42501');
+    expect(await codeOf(() => box`SELECT custom_code_enabled FROM public.sites`)).toBe('42501');
+    expect(await codeOf(() => box`SELECT subdomain FROM public.site_domains`)).toBe('42501');
+  });
+
+  it('the custom code tables hold their own rules: a blob changes only its takedown, the audit is never changed and outlives the site', async () => {
+    // A blob is immutable but for blocked_at (23514, the trigger's check_violation).
+    expect(await codeOf(() => su!`UPDATE public.custom_code_blobs SET document = '<p>changed</p>' WHERE site_id = ${SITE} AND sha256 = ${LIVE}`)).toBe('23514');
+    expect(await codeOf(() => su!`UPDATE public.custom_code_blobs SET declaration = '{"widened": true}' WHERE site_id = ${SITE} AND sha256 = ${LIVE}`)).toBe('23514');
+    expect(await codeOf(() => su!`UPDATE public.custom_code_blobs SET blocked_at = now() WHERE site_id = ${SITE} AND sha256 = ${LIVE}`)).toBe('ok');
+    expect(await codeOf(() => su!`UPDATE public.custom_code_blobs SET blocked_at = NULL WHERE site_id = ${SITE} AND sha256 = ${LIVE}`)).toBe('ok');
+    // Only a lower case hex hash, only an object as declaration.
+    expect(await codeOf(() => su!`INSERT INTO public.custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES (${SITE}, ${'A'.repeat(64)}, 'x', '{}', 't', 'u')`)).toBe('23514');
+    expect(await codeOf(() => su!`INSERT INTO public.custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES (${SITE}, ${'e'.repeat(64)}, 'x', '[]', 't', 'u')`)).toBe('23514');
+    // The audit: the actions of D3 only, never updated, deletable (erasing a company deletes its rows).
+    const audit = randomUUID();
+    expect(await codeOf(() => su!`INSERT INTO public.custom_code_audit (id, site_id, workspace_id, tenant_group_id, actor, action, sha256) VALUES (${audit}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, 'u1', 'blob-write', ${LIVE})`)).toBe('ok');
+    expect(await codeOf(() => su!`INSERT INTO public.custom_code_audit (id, site_id, workspace_id, tenant_group_id, actor, action) VALUES (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, 'u1', 'blob-rewrite')`)).toBe('23514');
+    expect(await codeOf(() => su!`UPDATE public.custom_code_audit SET actor = 'someone else' WHERE id = ${audit}`)).toBe('23514');
+    // A proposal: from an importer or an agent only.
+    expect(await codeOf(() => su!`INSERT INTO public.custom_code_proposals (id, site_id, workspace_id, tenant_group_id, source, document, declaration, title, created_by) VALUES (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, 'agent', 'x', '{}', 't', 'u')`)).toBe('ok');
+    expect(await codeOf(() => su!`INSERT INTO public.custom_code_proposals (id, site_id, workspace_id, tenant_group_id, source, document, declaration, title, created_by) VALUES (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, 'generator', 'x', '{}', 't', 'u')`)).toBe('23514');
+    // Deleting the sites deletes their blobs and proposals; the audit row stays.
+    await su!`DELETE FROM public.sites WHERE id IN (${SITE}, ${OFF})`;
+    expect(await su!`SELECT 1 FROM public.custom_code_blobs WHERE site_id IN (${SITE}, ${OFF})`).toHaveLength(0);
+    expect(await su!`SELECT 1 FROM public.custom_code_proposals WHERE site_id = ${SITE}`).toHaveLength(0);
+    expect(await su!`SELECT 1 FROM public.custom_code_audit WHERE id = ${audit}`).toHaveLength(1);
+    expect(await codeOf(() => su!`DELETE FROM public.custom_code_audit WHERE id = ${audit}`)).toBe('ok');
   });
 });
 
