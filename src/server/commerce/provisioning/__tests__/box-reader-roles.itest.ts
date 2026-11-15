@@ -104,6 +104,35 @@ async function applyStopped(file: SqlFile): Promise<string> {
   return output;
 }
 
+/** The part of the preflight's output from one section's marker to the next one's, both asserted present. */
+function section(output: string, from: string, to?: string): string {
+  const start = output.indexOf(from);
+  expect(start, `marker ${from}`).toBeGreaterThanOrEqual(0);
+  if (to === undefined) return output.slice(start);
+  const end = output.indexOf(to, start);
+  expect(end, `marker ${to}`).toBeGreaterThan(start);
+  return output.slice(start, end);
+}
+
+/** Tables, views and sequences outside the system schemas on which box_reader holds any right, columns included. */
+async function boxRelations(): Promise<string[]> {
+  const relations = await su!`
+    SELECT n.nspname || '.' || c.relname AS relation
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relkind IN ('r', 'v', 'm', 'p', 'f', 'S')
+       AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'
+       AND (has_table_privilege('box_reader', c.oid, 'SELECT') OR has_table_privilege('box_reader', c.oid, 'INSERT')
+            OR has_table_privilege('box_reader', c.oid, 'UPDATE') OR has_table_privilege('box_reader', c.oid, 'DELETE')
+            OR has_table_privilege('box_reader', c.oid, 'TRUNCATE') OR has_table_privilege('box_reader', c.oid, 'REFERENCES')
+            OR has_table_privilege('box_reader', c.oid, 'TRIGGER')
+            OR (c.relkind <> 'S' AND (has_any_column_privilege('box_reader', c.oid, 'SELECT')
+                OR has_any_column_privilege('box_reader', c.oid, 'INSERT') OR has_any_column_privilege('box_reader', c.oid, 'UPDATE')
+                OR has_any_column_privilege('box_reader', c.oid, 'REFERENCES'))))
+     ORDER BY 1
+  `;
+  return relations.map((row) => row.relation as string);
+}
+
 type MayOf = { may: number; of: number };
 
 /**
@@ -236,24 +265,32 @@ describe('the database, built the way a deploy builds it', () => {
   it('the preflight, run before the file as it is meant to be, names the role that would lose its connection right', async () => {
     const output = await apply('box-reader-preflight.sql');
     // Section 1: anyone_else connects only through PUBLIC, so it is listed there.
-    const section1 = output.slice(output.indexOf('== 1.'), output.indexOf('== 2.'));
+    const section1 = section(output, '== 1.', '== 2.');
     expect(section1).toMatch(/\n\s*anyone_else\s*\n/);
     expect(section1).not.toMatch(/commerce_app|commerce_ddl/);
     // Section 8: nothing is hardened yet.
-    const section8 = output.slice(output.indexOf('== 8.'));
+    const section8 = section(output, '== 8.', '== 9.');
     expect(section8).toMatch(/advisory_lock_functions_open_to_public\s*\n-+\s*\n\s*[1-9]/);
     // Section 5: the functions PUBLIC may execute, each with what it returns.
-    const section5 = output.slice(output.indexOf('== 5.'), output.indexOf('== 6.'));
+    const section5 = section(output, '== 5.', '== 6.');
     expect(section5.match(/\|\s*trigger/g)).toHaveLength(4);
     // Section 9: no right of PUBLIC on any table, view or sequence. Section 10: on schemas, only USAGE
     // on public (commerce-roles.sql took CREATE there).
-    const section9 = output.slice(output.indexOf('== 9.'), output.indexOf('== 10.'));
+    const section9 = section(output, '== 9.', '== 10.');
     expect(section9).toContain('(0 rows)');
-    const section10 = output.slice(output.indexOf('== 10.'), output.indexOf('== 11.'));
+    const section10 = section(output, '== 10.', '== 11.');
     expect(section10).toMatch(/\n\s*public\s*\|\s*USAGE\s*\n\(1 row\)/);
-    // Sections 11 and 12: no grant to PUBLIC on a single column, and no default privilege for PUBLIC.
-    expect(output.slice(output.indexOf('== 11.'), output.indexOf('== 12.'))).toContain('(0 rows)');
-    expect(output.slice(output.indexOf('== 12.'))).toContain('(0 rows)');
+    // Sections 11 and 12a: no grant to PUBLIC on a single column, and no stored default privilege for
+    // PUBLIC. (A later test adds each and sees it listed, so these are not a query that never speaks.)
+    expect(section(output, '== 11.', '== 12a.')).toContain('(0 rows)');
+    expect(section(output, '== 12a.', '== 12b.')).toContain('(0 rows)');
+    // Section 12b: with no entry, Postgres' built-in default holds: PUBLIC may execute every function
+    // the owners of the application's objects create later (the superuser that runs the Prisma
+    // migrations, commerce_ddl for the companies' schemas).
+    const section12b = section(output, '== 12b.');
+    expect(section12b).toMatch(/\n\s*commerce_ddl\s*\|\s*t\s*\n/);
+    expect(section12b).toMatch(/\n\s*postgres\s*\|\s*t\s*\n/);
+    expect(section12b).not.toMatch(/\|\s*f\s*\n/);
   });
 
   it('before the file: PUBLIC may take advisory locks, use large objects and connect; nobody but the superuser has TEMPORARY', async () => {
@@ -449,21 +486,9 @@ describe('box_reader, by allow-list', () => {
       wal: { may: 0, of: rights.wal.of },
     });
 
-    // No right of any kind on any table, view or sequence outside the system schemas.
-    const relations = await su!`
-      SELECT n.nspname || '.' || c.relname AS relation
-        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE c.relkind IN ('r', 'v', 'm', 'p', 'f', 'S')
-         AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'
-         AND (has_table_privilege('box_reader', c.oid, 'SELECT') OR has_table_privilege('box_reader', c.oid, 'INSERT')
-              OR has_table_privilege('box_reader', c.oid, 'UPDATE') OR has_table_privilege('box_reader', c.oid, 'DELETE')
-              OR has_table_privilege('box_reader', c.oid, 'TRUNCATE') OR has_table_privilege('box_reader', c.oid, 'REFERENCES')
-              OR has_table_privilege('box_reader', c.oid, 'TRIGGER')
-              OR (c.relkind <> 'S' AND (has_any_column_privilege('box_reader', c.oid, 'SELECT')
-                  OR has_any_column_privilege('box_reader', c.oid, 'INSERT') OR has_any_column_privilege('box_reader', c.oid, 'UPDATE')
-                  OR has_any_column_privilege('box_reader', c.oid, 'REFERENCES'))))
-    `;
-    expect(relations.map((row) => row.relation)).toEqual([]);
+    // No right of any kind on any table, view or sequence outside the system schemas (a later test
+    // grants one column to PUBLIC and sees this list speak).
+    expect(await boxRelations()).toEqual([]);
 
     // Functions outside the system schemas that it could reach and execute. Postgres lets PUBLIC
     // execute every new function, so each function the application's migrations create in `public`
@@ -719,6 +744,47 @@ describe('afterwards', () => {
     expect(output).toMatch(/large_objects\s*\n-+\s*\n\s*0\b/);
     // Section 2 names the roles this test added, so the operator would see a role the file does not know.
     expect(output).toContain('anyone_else');
+  });
+
+  it('the preflight and the allow-list check speak: a column granted to PUBLIC, and default privileges for it', async () => {
+    // The default privileges as they are (provisioning keeps some for each company's schema).
+    const defaultsOf = async () =>
+      (
+        await su!`
+          SELECT defaclrole::regrole::text AS role, defaclnamespace, defaclobjtype, defaclacl::text AS acl
+            FROM pg_default_acl ORDER BY 1, 2, 3
+        `
+      ).map((row) => ({ ...row }));
+    const defaultsBefore = await defaultsOf();
+    // A grant to PUBLIC on one column, and one on a column that is then dropped (Postgres keeps the
+    // dropped column's access list; it is not a column any more and must not be listed).
+    await su!`CREATE TABLE public.box_reader_test_columns (kept int, gone int)`;
+    try {
+      await su!`GRANT SELECT (kept) ON public.box_reader_test_columns TO PUBLIC`;
+      await su!`GRANT UPDATE (gone) ON public.box_reader_test_columns TO PUBLIC`;
+      await su!`ALTER TABLE public.box_reader_test_columns DROP COLUMN gone`;
+      // A default privilege for PUBLIC in one schema, and one for every schema that leaves PUBLIC out
+      // of commerce_ddl's new functions.
+      await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC`;
+      await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`;
+
+      expect(await boxRelations()).toEqual(['public.box_reader_test_columns']);
+      const output = await apply('box-reader-preflight.sql');
+      const section11 = section(output, '== 11.', '== 12a.');
+      expect(section11).toMatch(/\n\s*public\.box_reader_test_columns\.kept\s*\|\s*SELECT\s*\n\(1 row\)/);
+      expect(section11).not.toContain('dropped');
+      expect(section(output, '== 12a.', '== 12b.')).toMatch(/\n\s*commerce_ddl\s*\|\s*public\s*\|\s*r\s*\|\s*SELECT\s*\n\(1 row\)/);
+      const section12b = section(output, '== 12b.');
+      expect(section12b).toMatch(/\n\s*commerce_ddl\s*\|\s*f\s*\n/);
+      expect(section12b).toMatch(/\n\s*postgres\s*\|\s*t\s*\n/);
+    } finally {
+      await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl GRANT EXECUTE ON FUNCTIONS TO PUBLIC`;
+      await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl IN SCHEMA public REVOKE SELECT ON TABLES FROM PUBLIC`;
+      await su!`DROP TABLE IF EXISTS public.box_reader_test_columns`;
+    }
+    // Undone: the default privileges are as they were, and the box holds nothing again.
+    expect(await defaultsOf()).toEqual(defaultsBefore);
+    expect(await boxRelations()).toEqual([]);
   });
 
   it('the rollback, stopped before PUBLIC has its rights back, leaves the box shut out and PUBLIC with nothing', async () => {
