@@ -18,14 +18,16 @@
 -- for more than it is.
 --
 -- WHO RUNS IT. Once per database, by a superuser (on Coolify the database's
--- own bootstrap user), with `psql -v ON_ERROR_STOP=1`, AFTER
+-- own bootstrap user), with psql, AFTER
 -- prisma/sql/commerce-roles.sql (it grants to the two commerce roles and stops
 -- if they do not exist). It is idempotent: running it again changes nothing
 -- and fails nothing, and re-applying it is how an upgrade of this file, or a
 -- restore of a dump, gets the same shape again. It names no database: every
 -- database-level statement uses current_database(). The role and its defaults
 -- belong to the whole cluster, so it also resets the role's defaults for every
--- database of the cluster (see "Defaults" below).
+-- database of the cluster (see "Defaults" below). The file sets ON_ERROR_STOP
+-- itself (the `\set` line below), so psql stops at the first error even when
+-- run without `-v ON_ERROR_STOP=1`.
 --
 -- NO PASSWORD, NO LOGIN. The role is created NOLOGIN. The operator's script
 -- gives it a login and a freshly generated password and writes the connection
@@ -115,8 +117,8 @@
 --   - Everything PUBLIC may do there, which this file does not touch: large
 --     objects and temporary tables there are written to the same disk, so the
 --     disk can still be filled from there, and pg_logical_emit_message there
---     writes to the same write-ahead log, which the whole cluster shares. Advisory locks there are not locks
---     in this database. Closing this is a cluster-wide change, or a rule in
+--     writes to the same write-ahead log, which the whole cluster shares.
+--     Advisory locks there are not locks in this database. Closing this is a cluster-wide change, or a rule in
 --     pg_hba.conf limiting box_reader to this database, and belongs to the
 --     operator step O1. UNTIL THEN THE DISK CAN BE FILLED FROM THERE.
 --   Even after O1 this file only narrows how the role can use the disk (the
@@ -127,6 +129,8 @@
 -- took.
 --
 -- REQUIRES POSTGRES 16 OR LATER, like commerce-roles.sql.
+
+\set ON_ERROR_STOP on
 
 -- Everything in one transaction: it is applied whole or not at all. A session
 -- that starts meanwhile sees the database as it was before the file, never

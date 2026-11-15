@@ -86,6 +86,17 @@ async function apply(file: SqlFile, database = DB_NAME): Promise<string> {
   return output;
 }
 
+/**
+ * Runs a file with plain psql: no `-v ON_ERROR_STOP=1`, and with startup options for the session
+ * (PGOPTIONS), the way an operator might run it. Returns the exit status and what psql printed.
+ */
+async function runPlain(file: SqlFile, options: string): Promise<{ exitCode: number; output: string }> {
+  const { exitCode, output } = await container!.exec(['psql', '-q', '-U', 'postgres', '-d', DB_NAME, '-f', `/tmp/${file}`], {
+    env: { PGOPTIONS: options },
+  });
+  return { exitCode, output };
+}
+
 /** Applies a file that the test makes stop partway, the same way, and returns what psql printed. */
 async function applyStopped(file: SqlFile): Promise<string> {
   const { exitCode, output } = await container!.exec(['psql', '-v', 'ON_ERROR_STOP=1', '-q', '-U', 'postgres', '-d', DB_NAME, '-f', `/tmp/${file}`]);
@@ -738,8 +749,11 @@ describe('afterwards', () => {
     // before step 1 committed shows up only at the end of its startup. That window is a few
     // milliseconds and cannot be hit on purpose here, so only the rule's presence is held.
     const step2Text = rollback.slice(step2, step3);
-    expect(step2Text).toContain('PERFORM pg_sleep(1);');
-    expect(step2Text.indexOf('PERFORM pg_sleep(1);')).toBeLessThan(step2Text.indexOf('EXIT WHEN still_open = 0;'));
+    const sleep = step2Text.indexOf('PERFORM pg_sleep(1);');
+    const count = step2Text.indexOf('SELECT count(*) INTO still_open');
+    expect(sleep).toBeGreaterThan(step2Text.indexOf('pg_terminate_backend'));
+    expect(count).toBeGreaterThan(sleep);
+    expect(step2Text.indexOf('EXIT WHEN still_open = 0;')).toBeGreaterThan(count);
     await su!`CREATE FUNCTION public.box_reader_test_stop() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'box_reader_test_stop: stopped at %', tg_tag; END $$`;
     try {
       await su!`REVOKE EXECUTE ON FUNCTION public.box_reader_test_stop() FROM PUBLIC`;
@@ -753,6 +767,35 @@ describe('afterwards', () => {
     } finally {
       await su!`DROP EVENT TRIGGER IF EXISTS box_reader_test_stop`;
       await su!`DROP FUNCTION IF EXISTS public.box_reader_test_stop()`;
+      await apply('box-reader.sql');
+      await su!`ALTER ROLE box_reader LOGIN`;
+    }
+  }, 120_000);
+
+  it('the rollback, run without -v ON_ERROR_STOP=1 while a session of the box cannot be ended, stops by itself and gives PUBLIC nothing', async () => {
+    const before = await wholeShape();
+    expect(before.anyone.locks.may).toBe(0);
+    expect(before.role.rolcanlogin).toBe(true);
+    // A session of the box that step 2 will not manage to end: a pg_terminate_backend that ends
+    // nothing is put ahead of Postgres' own on the rollback's search path (only its session sees it).
+    const held = as('box_reader');
+    await held`SELECT 1`;
+    await su!`CREATE SCHEMA box_reader_test_shadow`;
+    try {
+      await su!`
+        CREATE FUNCTION box_reader_test_shadow.pg_terminate_backend(pid integer, timeout bigint DEFAULT 0)
+          RETURNS boolean LANGUAGE sql AS 'SELECT false'
+      `;
+      const { exitCode, output } = await runPlain('box-reader-rollback.sql', '-c search_path=box_reader_test_shadow,pg_catalog');
+      // The guard of step 2 raised, and psql stopped there by itself, with a non-zero status.
+      expect(output).toContain('session(s) of box_reader did not end');
+      expect(exitCode).not.toBe(0);
+      // Step 1 stays done, nothing of step 3 ran: PUBLIC has neither CONNECT nor a function back.
+      expect(await wholeShape()).toEqual({ ...before, role: { ...before.role, rolcanlogin: false }, box: { ...before.box, connect: false } });
+      expect(await codeOf(() => held`SELECT 1`)).toBe('ok');
+    } finally {
+      await su!`DROP SCHEMA IF EXISTS box_reader_test_shadow CASCADE`;
+      await held.end({ timeout: 2 }).catch(() => {});
       await apply('box-reader.sql');
       await su!`ALTER ROLE box_reader LOGIN`;
     }
@@ -820,7 +863,10 @@ describe('afterwards', () => {
     // It was ended: it does not go on with PUBLIC's rights back.
     expect(await codeOf(() => connected`SELECT pg_advisory_lock(6)`)).not.toBe('ok');
     expect(await su!`SELECT 1 FROM pg_stat_activity WHERE usename = 'box_reader'`).toHaveLength(0);
-    await apply('box-reader-rollback.sql');
+    // Run again, by plain psql and under a statement timeout shorter than step 2's wait: it finishes,
+    // because step 2 lifts the timeout for its session.
+    const again = await runPlain('box-reader-rollback.sql', '-c statement_timeout=500');
+    expect(again).toEqual({ exitCode: 0, output: '' });
     const anyone = await rightsOf('anyone_else');
     expect(anyone.connect).toBe(true);
     expect(anyone.locks.may).toBe(anyone.locks.of);

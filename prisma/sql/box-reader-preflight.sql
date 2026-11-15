@@ -7,6 +7,11 @@
 -- shows them.
 --
 --   psql -v ON_ERROR_STOP=1 -U <bootstrap superuser> -d <database> -f prisma/sql/box-reader-preflight.sql
+--
+-- It sets ON_ERROR_STOP itself too, so a query that fails is never mistaken
+-- for a section that printed nothing.
+
+\set ON_ERROR_STOP on
 
 \echo '== 1. Login roles that would LOSE CONNECT on this database (no grant of it by their own name; a role'
 \echo '==    that has it through a role it is a member of is listed too and keeps it).'
