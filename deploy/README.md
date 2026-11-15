@@ -551,7 +551,7 @@ The triggers, the `CHECK` constraints and the function exist in the database onl
 so `prisma migrate diff` does not list them; it reports nothing for this migration. Nothing in the application reads
 or writes any of it until the guarded routes of later slices exist. Like every migration it is applied by the boot of
 the first deployment that contains it. Marlin approved this migration by name on 2026-11-15. Reversing it:
-`rollback.sql` beside the migration (by hand, one transaction, safe to run twice, no `migrate resolve`). It destroys every
+`rollback.sql` beside the migration (by hand, one transaction, safe to run twice, no `migrate resolve`; the rehearsal runs it twice and then lets `prisma migrate deploy` apply the migration again). It destroys every
 stored blob, proposal and audit row, so it needs its own explicit authorization; leaving the column, the tables and the
 function in place after a code rollback is the default.
 

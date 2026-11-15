@@ -5,7 +5,8 @@
 // keeps a stolen password for it from reaching beyond the box) and of its
 // rollback, on a throwaway Postgres 16 in the production role topology. It is
 // offline preparation only: nothing here touches a real database, and the
-// file is applied nowhere else (plan docs/plans/2026-11-02-sandboxed-custom-code.md,
+// file is applied to no real database (only to throwaway containers, here and
+// in the box's integration suite; plan docs/plans/2026-11-02-sandboxed-custom-code.md,
 // decisions D20 and D24).
 //
 // The database is built the way a deploy builds it: commerce-roles.sql as the
@@ -59,6 +60,8 @@ const ORDER_DB = 'framer_clone_box_order_test';
 const SQL_DIR = path.resolve(__dirname, '../../../../../prisma/sql');
 const FILES = ['commerce-roles.sql', 'box-reader.sql', 'box-reader-rollback.sql', 'box-reader-preflight.sql'] as const;
 type SqlFile = (typeof FILES)[number];
+/** The migration's own way back (run by hand, never by Prisma), copied into the container next to the role files. */
+const MIGRATION_ROLLBACK = path.resolve(__dirname, '../../../../../prisma/migrations/20261115000000_custom_code/rollback.sql');
 
 let container: StartedTestContainer | undefined;
 let host: string;
@@ -264,7 +267,10 @@ beforeAll(async () => {
   container = await new GenericContainer('postgres:16-alpine')
     .withEnvironment({ POSTGRES_USER: 'postgres', POSTGRES_DB: DB_NAME, POSTGRES_HOST_AUTH_METHOD: 'trust' })
     .withExposedPorts(5432)
-    .withCopyFilesToContainer(FILES.map((file) => ({ source: path.join(SQL_DIR, file), target: `/tmp/${file}` })))
+    .withCopyFilesToContainer([
+      ...FILES.map((file) => ({ source: path.join(SQL_DIR, file), target: `/tmp/${file}` })),
+      { source: MIGRATION_ROLLBACK, target: '/tmp/custom-code-rollback.sql' },
+    ])
     .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
     .start();
   host = container.getHost();
@@ -763,6 +769,30 @@ describe('the migration of slice C1b and this file, in either order', () => {
     expect(await su!`SELECT 1 FROM public.custom_code_audit WHERE id = ${audit}`).toHaveLength(1);
     expect(await codeOf(() => su!`DELETE FROM public.custom_code_audit WHERE id = ${audit}`)).toBe('ok');
   });
+
+  it('the migration\'s rollback.sql, in the second database: removes what it made and forgets it, twice; the next start applies it again, grant included', async () => {
+    const other = postgres(urlOf('postgres', ORDER_DB), { max: 1, prepare: false, onnotice: () => {} });
+    opened.push(other);
+    for (let run = 0; run < 2; run += 1) {
+      const { exitCode, output } = await container!.exec(['psql', '-v', 'ON_ERROR_STOP=1', '-q', '-1', '-U', 'postgres', '-d', ORDER_DB, '-f', '/tmp/custom-code-rollback.sql']);
+      expect(exitCode, output).toBe(0);
+    }
+    const [left] = await other`
+      SELECT to_regprocedure('public.box_document(text, text)') IS NOT NULL AS function,
+             (SELECT count(*)::int FROM pg_proc WHERE proname IN ('custom_code_blobs_immutable', 'custom_code_audit_append_only')) AS trigger_functions,
+             (SELECT count(*)::int FROM pg_class WHERE relname IN ('custom_code_blobs', 'custom_code_audit', 'custom_code_proposals')) AS tables,
+             (SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'sites' AND column_name = 'custom_code_enabled') AS column,
+             (SELECT count(*)::int FROM public._prisma_migrations WHERE migration_name = '20261115000000_custom_code') AS history,
+             (SELECT count(*)::int FROM public._prisma_migrations) AS other_history
+    `;
+    expect({ ...left, other_history: (left!.other_history as number) > 0 }).toEqual({
+      function: false, trigger_functions: 0, tables: 0, column: 0, history: 0, other_history: true,
+    });
+    // The role exists in this cluster now, so the migration grants EXECUTE itself when it is applied again.
+    const migrated = migrate(ORDER_DB);
+    expect(migrated.status, migrated.output).toBe(0);
+    expect(await boxDocumentRights(other)).toEqual(ONLY_BOX_READER);
+  }, 240_000);
 });
 
 describe('what is left, stated in the file and held here as it is', () => {

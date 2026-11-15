@@ -3,8 +3,11 @@
 -- STATE: PREPARED AND REHEARSED OFFLINE ONLY. Not applied to any real
 -- database. Applying it to production is a privilege change that needs
 -- Marlin's yes by name (docs/plans/2026-11-02-sandboxed-custom-code.md,
--- decisions D20 and D24). Nothing in this repository applies it: no start
--- script, no workflow, no migration.
+-- decisions D20 and D24). Nothing in this repository applies it to a real
+-- database: no start script, no migration, no deploy step. Only tests apply
+-- it, each to a throwaway container of its own: the rehearsal
+-- (box-reader-roles.itest.ts) and the box's integration suite
+-- (services/box, run by .github/workflows/box.yml).
 --
 -- WHAT IT IS. The database role of the box, the small service that will serve
 -- sandboxed custom code (services/box), and a hardening of the database it is
