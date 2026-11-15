@@ -288,6 +288,9 @@ describe('the database, built the way a deploy builds it', () => {
     // the owners of the application's objects create later (the superuser that runs the Prisma
     // migrations, commerce_ddl for the companies' schemas).
     const section12b = section(output, '== 12b.');
+    // The headings print as written (a quote in them is doubled for psql).
+    expect(output).toContain("Postgres' built-in default included");
+    expect(section12b).toContain("repository's migrations. box-reader.sql");
     expect(section12b).toMatch(/\n\s*commerce_ddl\s*\|\s*t\s*\n/);
     expect(section12b).toMatch(/\n\s*postgres\s*\|\s*t\s*\n/);
     expect(section12b).not.toMatch(/\|\s*f\s*\n/);

@@ -7,8 +7,7 @@
 -- applied to. Idempotent. The file sets ON_ERROR_STOP itself (the `\set` line
 -- below), so psql stops at the first error and exits with a non-zero status
 -- even when it is run without `-v ON_ERROR_STOP=1`. Run it with psql only:
--- another client would ignore that line and could go on to step 3 after step 2
--- failed.
+-- that line is a psql command, which another client does not understand.
 --
 -- WHAT IT DOES, in three steps, in this order:
 --   1. One transaction: it takes the login away from box_reader, and its

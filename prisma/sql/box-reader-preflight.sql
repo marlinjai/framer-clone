@@ -127,7 +127,7 @@ SELECT n.nspname || '.' || c.relname || '.' || a.attname AS column_name, x.privi
 
 \echo '== 12a. Default privileges, as stored, that list PUBLIC: rights on objects created LATER. An entry for one'
 \echo '==      schema lists only what was added there. An entry for every schema stores the whole list for its'
-\echo '==      object type, Postgres'"'"' built-in default included, so for functions (f) and types (T) it lists PUBLIC'
+\echo '==      object type, Postgres'' built-in default included, so for functions (f) and types (T) it lists PUBLIC'
 \echo '==      even when nobody named PUBLIC. This listing does not show the built-in defaults where no entry'
 \echo '==      exists (12b does, for functions). Expected: none. A row for one schema, or for tables (r),'
 \echo '==      sequences (S) or schemas (n), gives PUBLIC, and so box_reader, a right on objects made later.'
@@ -144,7 +144,7 @@ SELECT pg_get_userbyid(d.defaclrole) AS for_objects_created_by, COALESCE(n.nspna
 \echo '==      an entry for every schema that leaves PUBLIC out says no (an entry for one schema can only add).'
 \echo '==      Expected on production: t for every owner. Then every function a migration creates is open to'
 \echo '==      box_reader until the migration takes EXECUTE from PUBLIC; the rehearsal pins the functions of this'
-\echo '==      repository'"'"'s migrations. box-reader.sql does not depend on it: it grants by name.'
+\echo '==      repository''s migrations. box-reader.sql does not depend on it: it grants by name.'
 SELECT r.rolname AS owner,
        CASE WHEN EXISTS (
               SELECT 1 FROM pg_default_acl d
