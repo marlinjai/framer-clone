@@ -297,18 +297,19 @@ describe('the database, built the way a deploy builds it', () => {
     expect(await su!`SELECT 1 FROM pg_roles WHERE rolname = 'box_reader'`).toHaveLength(0);
     const migrated = migrate();
     expect(migrated.status, migrated.output).toBe(0);
-    // Only its owner may execute it (the role the rights are asked about below does not exist yet).
-    const [fresh] = await su!`
-      SELECT p.prosecdef AS definer, ARRAY(SELECT a::text FROM unnest(p.proacl) a ORDER BY 1) AS acl
-        FROM pg_proc p WHERE p.oid = to_regprocedure('public.box_document(text, text)')
-    `;
-    expect({ ...fresh }).toEqual({ definer: true, acl: ['postgres=X/postgres'] });
     const start = await runCommerceDeployMigrations({ ownerUrl: urlOf('commerce_ddl'), appUrl: urlOf('commerce_app'), log: () => {} });
     expect(start.role).toBe('commerce_ddl');
     tenantGroupId = randomUUID();
     const provisioned = await provisionCommerceTenant({ tenantGroupId, slug: 'box-reader-itest', connectionString: urlOf('commerce_ddl') });
     schema = provisioned.schema;
     expect(provisioned.applied.length).toBeGreaterThan(0);
+    // Checked last, so the database is complete for the tests below even when this fails: only the owner of
+    // box_document may execute it (the role the rights are asked about further down does not exist yet).
+    const [fresh] = await su!`
+      SELECT p.prosecdef AS definer, ARRAY(SELECT a::text FROM unnest(p.proacl) a ORDER BY 1) AS acl
+        FROM pg_proc p WHERE p.oid = to_regprocedure('public.box_document(text, text)')
+    `;
+    expect({ ...fresh }).toEqual({ definer: true, acl: ['postgres=X/postgres'] });
   }, 240_000);
 
   it('the preflight, run before the file as it is meant to be, names the role that would lose its connection right', async () => {
