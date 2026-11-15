@@ -526,6 +526,55 @@ repeat the same search and erase on each affected site once the code is forward 
 A record whose branch older code deleted as a site is closed as discarded by the database (a trigger), so it keeps no
 copy and frees its name.
 
+## Sandboxed custom code: the schema and the box's role
+
+Plan `docs/plans/2026-11-02-sandboxed-custom-code.md`, slice C1b. The box (`services/box`) is the small service that will
+serve a site's own HTML and JavaScript into an isolated frame from its own domain. It is deployed nowhere yet (operator
+step O1); this section is about what the application's database holds for it.
+
+**What migration `20261115000000_custom_code` adds.** Additive only; no existing row, column, constraint or privilege
+changes:
+
+- `sites.custom_code_enabled`, boolean, default false: every existing site stays off.
+- `custom_code_blobs`: one piece of code of one site, keyed by `(site_id, sha256)`, the hash of the code and its
+  declaration. Immutable (a trigger refuses any update but of `blocked_at`, the per-blob takedown); deleted with its site.
+- `custom_code_audit`: who did what to a site's code (enable, disable, blob-write, blob-erase, blob-block, blob-unblock,
+  proposal-accept), never the code. Append-only (a trigger refuses any update), and without a foreign key to the site,
+  so it outlives it.
+- `custom_code_proposals`: code an importer or an agent proposes; never served, never rendered; deleted with its site.
+- The function `box_document(site_id text, sha256 text)`, the only thing the box may call. `SECURITY DEFINER` with a
+  fixed `search_path`, it returns at most one row (`document`, `live`, `subdomain_labels`, `custom_hostnames`) for a
+  pair the caller already knows, and `document` is NULL unless the site has custom code on and the blob is not blocked.
+  EXECUTE is taken from PUBLIC, as on the migration's two trigger functions.
+
+The triggers, the `CHECK` constraints and the function exist in the database only (Prisma's schema cannot name them),
+so `prisma migrate diff` does not list them; it reports nothing for this migration. Nothing in the application reads
+or writes any of it until the guarded routes of later slices exist. Like every migration it is applied by the boot of
+the first deployment that contains it. Marlin approved this migration by name on 2026-11-15. Reversing it:
+`rollback.sql` beside the migration (by hand, one transaction, safe to run twice, no `migrate resolve`). It destroys every
+stored blob, proposal and audit row, so it needs its own explicit authorization; leaving the column, the tables and the
+function in place after a code rollback is the default.
+
+**The order rule between the migration and the box's role.** `prisma/sql/box-reader.sql` creates the role `box_reader`
+(and takes advisory locks, large objects, the write-ahead log and `CONNECT` from PUBLIC, decision D24 of the plan). It is
+applied separately, by the operator, once per database, after `commerce-roles.sql`, and **only with Marlin's yes by
+name**; the rollback is `prisma/sql/box-reader-rollback.sql`. `prisma migrate deploy`, by contrast, runs at every
+container start, and every fresh database (CI, local development, the integration tests, a restore) runs the migrations
+without the role file. So the EXECUTE grant on `box_document` is made from both sides, each only if the other side's
+object exists: the migration grants it to `box_reader` if the role exists, the role file grants it if the function
+exists. Whichever runs first, the end state is the same (EXECUTE for the function's owner and `box_reader`, nobody
+else), and a database without the role migrates as before. The rehearsal
+(`src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts`) holds both orders; the box's own integration
+suite builds its database from these files in production's order. Re-apply `box-reader.sql` after any restore, as
+`commerce-roles.sql` is: a plain dump does not carry the database's `CONNECT` rights. Its rollback leaves the grant on
+`box_document` in place (the migration would grant it again at the next start, and without a login the role cannot use
+it).
+
+**The app's own roles get nothing on these tables.** The application writes them as the Prisma role (the bootstrap
+superuser, `DATABASE_URL`), like every site table; `commerce_app` and `commerce_ddl` hold no right on the Prisma tables
+and are given none. Because no grant restrains a superuser, the immutability of a blob and the append-only audit are
+held by triggers, not by grants.
+
 ## Migration rollbacks
 
 `20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan
