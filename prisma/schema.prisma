@@ -995,3 +995,18 @@ model CustomCodeProposal {
   @@map("custom_code_proposals")
   @@schema("public")
 }
+
+/// The takedown list of sandboxed custom code (docs/plans/2026-11-02-sandboxed-custom-code.md, D32): a hash in it is never
+/// served on any site, whatever happens to blob rows. No foreign key to any site on purpose, so deleting a site or
+/// erasing a company leaves the entry in place; `CustomCodeBlob.blockedAt` stays as the per-row takedown beside it.
+model CustomCodeBlockedHash {
+  sha256    String   @id
+  blockedAt DateTime @default(now()) @map("blocked_at")
+  // The operator or auth-brain user who blocked it.
+  blockedBy String   @map("blocked_by")
+  // Why, for the abuse record; never the code.
+  reason    String
+
+  @@map("custom_code_blocked_hashes")
+  @@schema("public")
+}

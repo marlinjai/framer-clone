@@ -770,6 +770,56 @@ describe('the migration of slice C1b and this file, in either order', () => {
     expect(await codeOf(() => su!`DELETE FROM public.custom_code_audit WHERE id = ${audit}`)).toBe('ok');
   });
 
+  it('a hash on the takedown list is served on no site, and stays blocked after its blob row and its site are gone', async () => {
+    const blocked = 'f'.repeat(64);
+    const one = randomUUID();
+    const two = randomUUID();
+    const site = (id: string) => su!`
+      INSERT INTO public.sites (id, workspace_id, tenant_group_id, name, project_created_at, project_updated_at, updated_at, custom_code_enabled)
+      VALUES (${id}, ${WORKSPACE}, ${tenantGroupId}, 'box', now(), now(), now(), true)
+    `;
+    const blob = (id: string) => su!`
+      INSERT INTO public.custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES (${id}, ${blocked}, '<p>taken down</p>', '{}', 'T', 'u1')
+    `;
+    await site(one);
+    await site(two);
+    await blob(one);
+    await blob(two);
+    const box = postgres(urlOf('box_reader'), { max: 1, prepare: false, onnotice: () => {} });
+    opened.push(box);
+    const ask = async (siteId: string) => (await box`SELECT document, live FROM public.box_document(${siteId}, ${blocked})`).map((row) => ({ ...row }));
+    // Served while it is not on the list, so what follows is the list's doing.
+    expect(await ask(one)).toEqual([{ document: '<p>taken down</p>', live: true }]);
+    await su!`INSERT INTO public.custom_code_blocked_hashes (sha256, blocked_by, reason) VALUES (${blocked}, 'operator', 'phishing')`;
+    expect(await ask(one)).toEqual([{ document: null, live: false }]);
+    expect(await ask(two)).toEqual([{ document: null, live: false }]);
+    // Its blob rows and both sites go (a prune, a site delete); the list keeps the hash. The same code written again on
+    // a new site under the same hash is still not served.
+    await su!`DELETE FROM public.custom_code_blobs WHERE sha256 = ${blocked}`;
+    await su!`DELETE FROM public.sites WHERE id IN (${one}, ${two})`;
+    expect(await su!`SELECT 1 FROM public.custom_code_blocked_hashes WHERE sha256 = ${blocked}`).toHaveLength(1);
+    const again = randomUUID();
+    await site(again);
+    await blob(again);
+    expect(await ask(again)).toEqual([{ document: null, live: false }]);
+    // Only the list's own form of hash.
+    expect(await codeOf(() => su!`INSERT INTO public.custom_code_blocked_hashes (sha256, blocked_by, reason) VALUES ('nothex', 'operator', 'x')`)).toBe('23514');
+    await su!`DELETE FROM public.sites WHERE id = ${again}`;
+  });
+
+  it('the application\'s own roles hold no right on any of the new tables', async () => {
+    const rights = await su!`
+      SELECT r.role, t.name,
+             has_table_privilege(r.role, ('public.' || t.name)::regclass, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') AS any_right,
+             has_any_column_privilege(r.role, ('public.' || t.name)::regclass, 'SELECT, INSERT, UPDATE, REFERENCES') AS any_column
+        FROM (VALUES ('commerce_app'), ('commerce_ddl')) AS r(role),
+             (VALUES ('custom_code_blobs'), ('custom_code_audit'), ('custom_code_proposals'), ('custom_code_blocked_hashes')) AS t(name)
+       ORDER BY 1, 2
+    `;
+    expect(rights).toHaveLength(8);
+    expect(rights.filter((row) => row.any_right || row.any_column).map((row) => `${row.role} on ${row.name}`)).toEqual([]);
+  });
+
   it('the migration\'s rollback.sql, in the second database: removes what it made and forgets it, twice; the next start applies it again, grant included', async () => {
     const other = postgres(urlOf('postgres', ORDER_DB), { max: 1, prepare: false, onnotice: () => {} });
     opened.push(other);
@@ -780,7 +830,7 @@ describe('the migration of slice C1b and this file, in either order', () => {
     const [left] = await other`
       SELECT to_regprocedure('public.box_document(text, text)') IS NOT NULL AS function,
              (SELECT count(*)::int FROM pg_proc WHERE proname IN ('custom_code_blobs_immutable', 'custom_code_audit_append_only')) AS trigger_functions,
-             (SELECT count(*)::int FROM pg_class WHERE relname IN ('custom_code_blobs', 'custom_code_audit', 'custom_code_proposals')) AS tables,
+             (SELECT count(*)::int FROM pg_class WHERE relname IN ('custom_code_blobs', 'custom_code_audit', 'custom_code_proposals', 'custom_code_blocked_hashes')) AS tables,
              (SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'sites' AND column_name = 'custom_code_enabled') AS column,
              (SELECT count(*)::int FROM public._prisma_migrations WHERE migration_name = '20261115000000_custom_code') AS history,
              (SELECT count(*)::int FROM public._prisma_migrations) AS other_history

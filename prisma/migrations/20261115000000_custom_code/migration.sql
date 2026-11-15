@@ -1,7 +1,7 @@
 -- Sandboxed custom code, slice C1b (docs/plans/2026-11-02-sandboxed-custom-code.md, decisions D3, D4, D7, D18 and
 -- "Decided in slice C1b"). Approved by Marlin by name on 2026-11-15.
 --
--- ADDITIVE: one column on `sites` (default false, so every existing site stays off), three new empty tables, two
+-- ADDITIVE: one column on `sites` (default false, so every existing site stays off), four new empty tables, two
 -- trigger functions with their triggers on those new tables, and the function `box_document`. No existing row, column,
 -- constraint or privilege is changed. Nothing in the application reads or writes any of it until the guarded routes of
 -- later slices exist; the box (services/box) is deployed nowhere yet. Rollback: rollback.sql beside this file.
@@ -71,6 +71,19 @@ CREATE TABLE "public"."custom_code_proposals" (
     CONSTRAINT "custom_code_proposals_declaration_check" CHECK (jsonb_typeof("declaration") = 'object')
 );
 
+-- CreateTable: the takedown list (decision D32). A hash in it is never served, on any site, whatever happens to the
+-- blob rows: no foreign key to any site, so neither deleting a site nor erasing a company removes an entry. Written by
+-- the operator or the guarded route of a later slice, as the Prisma role; no grant to anyone.
+CREATE TABLE "public"."custom_code_blocked_hashes" (
+    "sha256" TEXT NOT NULL,
+    "blocked_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "blocked_by" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+
+    CONSTRAINT "custom_code_blocked_hashes_pkey" PRIMARY KEY ("sha256"),
+    CONSTRAINT "custom_code_blocked_hashes_sha256_check" CHECK ("sha256" ~ '^[0-9a-f]{64}$')
+);
+
 -- CreateIndex
 CREATE INDEX "custom_code_audit_site_id_created_at_idx" ON "public"."custom_code_audit"("site_id", "created_at");
 
@@ -133,8 +146,8 @@ CREATE TRIGGER "custom_code_audit_append_only"
 -- id, hash, draft document and host name to whoever holds the role's password.
 --   - SECURITY DEFINER with a fixed search_path that names pg_temp last (left out, the temporary schema is searched
 --     first), every table schema-qualified, so the caller needs no right on any table.
---   - `live` is `custom_code_enabled AND blocked_at IS NULL`. It does not require the site to be published: the
---     standalone preview runs drafts, and the hash is not guessable (D3).
+--   - `live` is `custom_code_enabled AND blocked_at IS NULL` and the hash not in custom_code_blocked_hashes (D32). It
+--     does not require the site to be published: the standalone preview runs drafts, and the hash is not guessable (D3).
 --   - `document` is NULL unless `live`, so the role never gets the code of a blocked blob or of a site that switched
 --     custom code off, and NULL when it is larger than a block may be (262144 bytes), so the box is not handed a row
 --     it would refuse anyway.
@@ -148,8 +161,8 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT
-    CASE WHEN s.custom_code_enabled AND b.blocked_at IS NULL AND octet_length(b.document) <= 262144 THEN b.document END,
-    (s.custom_code_enabled AND b.blocked_at IS NULL),
+    CASE WHEN s.custom_code_enabled AND b.blocked_at IS NULL AND h.sha256 IS NULL AND octet_length(b.document) <= 262144 THEN b.document END,
+    (s.custom_code_enabled AND b.blocked_at IS NULL AND h.sha256 IS NULL),
     COALESCE(
       (SELECT array_agg(d.subdomain ORDER BY d.subdomain)
          FROM public.site_domains d
@@ -162,6 +175,7 @@ AS $$
       ARRAY[]::text[])
   FROM public.custom_code_blobs b
   JOIN public.sites s ON s.id = b.site_id
+  LEFT JOIN public.custom_code_blocked_hashes h ON h.sha256 = b.sha256
   WHERE b.site_id = p_site_id AND b.sha256 = p_sha256
 $$;
 
