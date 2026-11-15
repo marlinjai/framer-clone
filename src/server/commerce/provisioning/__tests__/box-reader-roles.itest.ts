@@ -763,11 +763,14 @@ describe('afterwards', () => {
     const connected = as('box_reader');
     await connected`SELECT 1`;
     // Step 3 is held for five seconds at its first GRANT on a function, to look at the box meanwhile.
+    // Step 2 sleeps too (a second per round), so the trigger names the session before it sleeps, and
+    // the look below waits for that name: only step 3 can show it.
     await su!`
       CREATE FUNCTION public.box_reader_test_pause() RETURNS event_trigger LANGUAGE plpgsql AS $$
       BEGIN
         IF current_setting('box_reader_test.paused', true) IS DISTINCT FROM 'yes' THEN
           PERFORM set_config('box_reader_test.paused', 'yes', false);
+          PERFORM set_config('application_name', 'box_reader_test_paused_in_step_3', false);
           PERFORM pg_sleep(5);
         END IF;
       END $$
@@ -783,20 +786,28 @@ describe('afterwards', () => {
         () => (settled = true),
         () => (settled = true),
       );
-      // Seen from the server, not guessed from a delay: the rollback's session sleeps in the trigger.
-      // The wait ends as soon as the rollback ends, so one that stops early fails here at once.
+      // Seen from the server, not guessed from a delay: the rollback's session sleeps in the trigger of
+      // step 3, under the name the trigger gave it. A sleep of step 2 does not match. The wait ends as
+      // soon as the rollback ends, so one that stops early fails here at once.
       let paused = false;
-      for (let tries = 0; tries < 100 && !paused && !settled; tries += 1) {
-        paused = (await su!`SELECT 1 FROM pg_stat_activity WHERE wait_event = 'PgSleep'`).length > 0;
+      for (let tries = 0; tries < 150 && !paused && !settled; tries += 1) {
+        paused = (await su!`
+          SELECT 1 FROM pg_stat_activity
+           WHERE application_name = 'box_reader_test_paused_in_step_3' AND wait_event = 'PgSleep'
+        `).length > 0;
         if (!paused) await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      // Reached its last step and paused there, while still running.
+      // Reached step 3 and paused there, while still running.
       expect({ paused, settled }).toEqual({ paused: true, settled: false });
       const sessions = await su!`SELECT 1 FROM pg_stat_activity WHERE usename = 'box_reader'`;
       const late = as('box_reader');
       const login = await codeOf(() => late`SELECT 1`);
-      // Both looks were taken while step 3 was still held.
-      duringStep3 = { sessions: sessions.length, login, stillRunning: !settled };
+      // Both looks were taken in step 3, while it was still held: steps 1 and 2 were done.
+      const [stillPaused] = await su!`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+         WHERE application_name = 'box_reader_test_paused_in_step_3' AND wait_event = 'PgSleep'
+      `;
+      duringStep3 = { sessions: sessions.length, login, stillRunning: !settled && stillPaused!.n === 1 };
       await running;
     } finally {
       await running?.catch(() => {});
