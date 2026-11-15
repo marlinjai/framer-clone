@@ -114,7 +114,8 @@
 --   PUBLIC may connect to them:
 --   - Everything PUBLIC may do there, which this file does not touch: large
 --     objects and temporary tables there are written to the same disk, so the
---     disk can still be filled from there. Advisory locks there are not locks
+--     disk can still be filled from there, and pg_logical_emit_message there
+--     writes to the same write-ahead log, which the whole cluster shares. Advisory locks there are not locks
 --     in this database. Closing this is a cluster-wide change, or a rule in
 --     pg_hba.conf limiting box_reader to this database, and belongs to the
 --     operator step O1. UNTIL THEN THE DISK CAN BE FILLED FROM THERE.

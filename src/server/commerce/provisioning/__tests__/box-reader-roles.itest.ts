@@ -238,8 +238,11 @@ describe('the database, built the way a deploy builds it', () => {
     // on public (commerce-roles.sql took CREATE there).
     const section9 = output.slice(output.indexOf('== 9.'), output.indexOf('== 10.'));
     expect(section9).toContain('(0 rows)');
-    const section10 = output.slice(output.indexOf('== 10.'));
+    const section10 = output.slice(output.indexOf('== 10.'), output.indexOf('== 11.'));
     expect(section10).toMatch(/\n\s*public\s*\|\s*USAGE\s*\n\(1 row\)/);
+    // Sections 11 and 12: no grant to PUBLIC on a single column, and no default privilege for PUBLIC.
+    expect(output.slice(output.indexOf('== 11.'), output.indexOf('== 12.'))).toContain('(0 rows)');
+    expect(output.slice(output.indexOf('== 12.'))).toContain('(0 rows)');
   });
 
   it('before the file: PUBLIC may take advisory locks, use large objects and connect; nobody but the superuser has TEMPORARY', async () => {
@@ -444,7 +447,10 @@ describe('box_reader, by allow-list', () => {
          AND (has_table_privilege('box_reader', c.oid, 'SELECT') OR has_table_privilege('box_reader', c.oid, 'INSERT')
               OR has_table_privilege('box_reader', c.oid, 'UPDATE') OR has_table_privilege('box_reader', c.oid, 'DELETE')
               OR has_table_privilege('box_reader', c.oid, 'TRUNCATE') OR has_table_privilege('box_reader', c.oid, 'REFERENCES')
-              OR has_table_privilege('box_reader', c.oid, 'TRIGGER'))
+              OR has_table_privilege('box_reader', c.oid, 'TRIGGER')
+              OR (c.relkind <> 'S' AND (has_any_column_privilege('box_reader', c.oid, 'SELECT')
+                  OR has_any_column_privilege('box_reader', c.oid, 'INSERT') OR has_any_column_privilege('box_reader', c.oid, 'UPDATE')
+                  OR has_any_column_privilege('box_reader', c.oid, 'REFERENCES'))))
     `;
     expect(relations.map((row) => row.relation)).toEqual([]);
 
@@ -639,7 +645,7 @@ describe('what is left, stated in the file and held here as it is', () => {
     const tables = await box`SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE relname IN ('sites', 'tenant_groups') ORDER BY 1`;
     expect(tables.map((row) => row.relname)).toEqual(['sites', 'tenant_groups']);
     // The live row count of each table, never a row.
-    expect(tables.every((row) => Number.isInteger(Number(row.n_live_tup)))).toBe(true);
+    expect(tables.every((row) => row.n_live_tup !== null && Number.isInteger(Number(row.n_live_tup)))).toBe(true);
     const app = as('commerce_app');
     await app`SELECT 1`;
     const seen = await box`SELECT DISTINCT usename FROM pg_stat_activity WHERE usename IN ('commerce_app', 'postgres') ORDER BY 1`;
@@ -711,12 +717,23 @@ describe('afterwards', () => {
     expect(before.box.connect).toBe(true);
     // Step 3 gives PUBLIC CONNECT first and the functions after it, so a stop at its first GRANT on a
     // function comes after something of it was done (a GRANT on a database fires no event trigger).
+    // And the order the whole file depends on: the login is taken and committed (step 1) before the
+    // sessions are ended (step 2), and both before anything goes to PUBLIC (step 3).
     const rollback = readFileSync(path.join(SQL_DIR, 'box-reader-rollback.sql'), 'utf8');
-    const step3 = rollback.indexOf('-- Step 3.');
-    const connectToPublic = rollback.indexOf('GRANT CONNECT ON DATABASE %I TO PUBLIC');
-    expect(step3).toBeGreaterThan(rollback.indexOf('-- Step 2.'));
-    expect(connectToPublic).toBeGreaterThan(step3);
-    expect(rollback.indexOf('GRANT EXECUTE ON FUNCTION %s TO PUBLIC')).toBeGreaterThan(connectToPublic);
+    const at = (text: string, from = 0) => rollback.indexOf(text, from);
+    const step1 = at('-- Step 1.');
+    const noLogin = at('ALTER ROLE box_reader NOLOGIN', step1);
+    const step1Commit = at('COMMIT;', noLogin);
+    const step2 = at('-- Step 2.');
+    const terminate = at('pg_terminate_backend', step2);
+    const step3 = at('-- Step 3.');
+    const connectToPublic = at('GRANT CONNECT ON DATABASE %I TO PUBLIC');
+    const functionsToPublic = at('GRANT EXECUTE ON FUNCTION %s TO PUBLIC');
+    const order = [step1, noLogin, step1Commit, step2, terminate, step3, connectToPublic, functionsToPublic];
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(at('pg_terminate_backend')).toBe(terminate);
+    expect(at('BEGIN;', step1Commit)).toBeGreaterThan(terminate);
     await su!`CREATE FUNCTION public.box_reader_test_stop() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'box_reader_test_stop: stopped at %', tg_tag; END $$`;
     try {
       await su!`REVOKE EXECUTE ON FUNCTION public.box_reader_test_stop() FROM PUBLIC`;
@@ -739,18 +756,18 @@ describe('afterwards', () => {
     // A session of the box that is already connected when the rollback runs.
     const connected = as('box_reader');
     await connected`SELECT 1`;
-    // Step 3 is held for three seconds at its first GRANT on a function, to look at the box meanwhile.
+    // Step 3 is held for five seconds at its first GRANT on a function, to look at the box meanwhile.
     await su!`
       CREATE FUNCTION public.box_reader_test_pause() RETURNS event_trigger LANGUAGE plpgsql AS $$
       BEGIN
         IF current_setting('box_reader_test.paused', true) IS DISTINCT FROM 'yes' THEN
           PERFORM set_config('box_reader_test.paused', 'yes', false);
-          PERFORM pg_sleep(3);
+          PERFORM pg_sleep(5);
         END IF;
       END $$
     `;
     let running: Promise<string> | undefined;
-    let duringStep3: { sessions: number; login: string } | undefined;
+    let duringStep3: { sessions: number; login: string; stillRunning: boolean } | undefined;
     try {
       await su!`REVOKE EXECUTE ON FUNCTION public.box_reader_test_pause() FROM PUBLIC`;
       await su!`CREATE EVENT TRIGGER box_reader_test_pause ON ddl_command_start WHEN TAG IN ('GRANT') EXECUTE FUNCTION public.box_reader_test_pause()`;
@@ -771,7 +788,9 @@ describe('afterwards', () => {
       expect({ paused, settled }).toEqual({ paused: true, settled: false });
       const sessions = await su!`SELECT 1 FROM pg_stat_activity WHERE usename = 'box_reader'`;
       const late = as('box_reader');
-      duringStep3 = { sessions: sessions.length, login: await codeOf(() => late`SELECT 1`) };
+      const login = await codeOf(() => late`SELECT 1`);
+      // Both looks were taken while step 3 was still held.
+      duringStep3 = { sessions: sessions.length, login, stillRunning: !settled };
       await running;
     } finally {
       await running?.catch(() => {});
@@ -780,7 +799,7 @@ describe('afterwards', () => {
     }
     // While PUBLIC was being given its rights back, the box had no session left and could open none
     // (28000: the role may not log in).
-    expect(duringStep3).toEqual({ sessions: 0, login: '28000' });
+    expect(duringStep3).toEqual({ sessions: 0, login: '28000', stillRunning: true });
     // It was ended: it does not go on with PUBLIC's rights back.
     expect(await codeOf(() => connected`SELECT pg_advisory_lock(6)`)).not.toBe('ok');
     expect(await su!`SELECT 1 FROM pg_stat_activity WHERE usename = 'box_reader'`).toHaveLength(0);
@@ -833,7 +852,7 @@ describe('afterwards', () => {
     }
   }, 120_000);
 
-  it('applying the file again after a rollback closes everything again', async () => {
+  it('after a rollback the file closes everything again (it was applied once more just above), and stays closed when applied again', async () => {
     await apply('box-reader.sql');
     await su!`ALTER ROLE box_reader LOGIN`;
     const anyone = await rightsOf('anyone_else');

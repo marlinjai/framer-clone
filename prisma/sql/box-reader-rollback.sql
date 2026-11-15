@@ -12,8 +12,12 @@
 --      box can start. (NOLOGIN is what stops it; the CONNECT grant by name is
 --      taken so nothing box-reader.sql gave the role stays behind.)
 --   2. It ends every session box_reader still has open and waits for each to
---      be gone, up to 5 seconds. If one is still there it stops with an error,
---      before PUBLIC gets anything back.
+--      be gone, up to 5 seconds. A login that had passed its checks just before
+--      step 1 committed appears in the list of sessions only at the end of its
+--      startup, a few milliseconds later, so the step waits a second and looks
+--      again, and ends whatever it finds, until a look after that second finds
+--      nothing. If sessions are still there after five rounds it stops with an
+--      error, before PUBLIC gets anything back.
 --   3. One transaction: it gives PUBLIC back, in this database, what
 --      box-reader.sql took: CONNECT on the database, then EXECUTE on the
 --      advisory lock functions, on the large object functions and on
@@ -62,17 +66,24 @@ DO $$
 DECLARE
   a record;
   still_open int;
+  round int := 0;
 BEGIN
-  FOR a IN SELECT pid FROM pg_stat_activity WHERE usename = 'box_reader' AND pid <> pg_backend_pid() LOOP
-    -- Waits until the session is gone, up to 5 seconds.
-    PERFORM pg_terminate_backend(a.pid, 5000);
+  LOOP
+    round := round + 1;
+    FOR a IN SELECT pid FROM pg_stat_activity WHERE usename = 'box_reader' AND pid <> pg_backend_pid() LOOP
+      -- Waits until the session is gone, up to 5 seconds.
+      PERFORM pg_terminate_backend(a.pid, 5000);
+    END LOOP;
+    -- A login that passed its checks before step 1 committed shows up only at the end of its startup.
+    PERFORM pg_sleep(1);
+    -- Read the sessions afresh: within one transaction Postgres would show the list read above again.
+    PERFORM pg_stat_clear_snapshot();
+    SELECT count(*) INTO still_open FROM pg_stat_activity WHERE usename = 'box_reader';
+    EXIT WHEN still_open = 0;
+    IF round >= 5 THEN
+      RAISE EXCEPTION 'box-reader-rollback.sql: % session(s) of box_reader did not end; PUBLIC has been given nothing back yet. Run this file again.', still_open;
+    END IF;
   END LOOP;
-  -- Read the sessions afresh: within one statement Postgres would show the list read above again.
-  PERFORM pg_stat_clear_snapshot();
-  SELECT count(*) INTO still_open FROM pg_stat_activity WHERE usename = 'box_reader';
-  IF still_open > 0 THEN
-    RAISE EXCEPTION 'box-reader-rollback.sql: % session(s) of box_reader did not end; PUBLIC has been given nothing back yet. Run this file again.', still_open;
-  END IF;
 END
 $$;
 

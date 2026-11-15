@@ -105,3 +105,25 @@ SELECT n.nspname AS schema, a.privilege_type
    AND n.nspname NOT IN ('pg_catalog', 'information_schema')
    AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
  ORDER BY 1, 2;
+
+\echo '== 11. Columns outside the system schemas on which PUBLIC holds a right (a grant on single columns,'
+\echo '==     which section 9 does not see). Expected: none.'
+SELECT n.nspname || '.' || c.relname || '.' || a.attname AS column_name, x.privilege_type
+  FROM pg_attribute a
+  JOIN pg_class c ON c.oid = a.attrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(a.attacl) x
+ WHERE a.attacl IS NOT NULL
+   AND x.grantee = 0
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
+ ORDER BY 1, 2;
+
+\echo '== 12. Default privileges that give PUBLIC a right on objects created later. Expected: none.'
+SELECT pg_get_userbyid(d.defaclrole) AS for_objects_created_by, COALESCE(n.nspname, 'every schema') AS schema,
+       d.defaclobjtype AS object_type, x.privilege_type
+  FROM pg_default_acl d
+  LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+  CROSS JOIN LATERAL aclexplode(d.defaclacl) x
+ WHERE x.grantee = 0
+ ORDER BY 1, 2, 3, 4;
