@@ -734,6 +734,12 @@ describe('afterwards', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(at('pg_terminate_backend')).toBe(terminate);
     expect(at('BEGIN;', step1Commit)).toBeGreaterThan(terminate);
+    // Step 2 waits and looks again until a look finds no session: a login that passed its checks just
+    // before step 1 committed shows up only at the end of its startup. That window is a few
+    // milliseconds and cannot be hit on purpose here, so only the rule's presence is held.
+    const step2Text = rollback.slice(step2, step3);
+    expect(step2Text).toContain('PERFORM pg_sleep(1);');
+    expect(step2Text.indexOf('PERFORM pg_sleep(1);')).toBeLessThan(step2Text.indexOf('EXIT WHEN still_open = 0;'));
     await su!`CREATE FUNCTION public.box_reader_test_stop() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'box_reader_test_stop: stopped at %', tg_tag; END $$`;
     try {
       await su!`REVOKE EXECUTE ON FUNCTION public.box_reader_test_stop() FROM PUBLIC`;
