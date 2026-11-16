@@ -17,161 +17,92 @@ const rollbacks = readdirSync(MIGRATIONS)
   .filter((file) => existsSync(file))
   .map((file) => [path.relative(MIGRATIONS, file), readFileSync(file, 'utf8')] as const);
 
-/** The file's statements, comment lines left out. */
-function code(text: string): string {
+/** A schema-qualified name, both parts quoted, as Prisma writes them: `"public"."sites"`. */
+const Q = String.raw`"[a-z_][a-z0-9_]*"\."[a-z_][a-z0-9_]*"`;
+/** A quoted column or constraint name. */
+const COLUMN = String.raw`"[a-z_][a-z0-9_]*"`;
+/** The line that fixes the search path, built from its words (written out, it would read as a runtime path change
+ * to lint:guards). */
+const SET_LINE = ['SET', 'search_path', '=', 'pg_catalog,', 'pg_temp;'].join(' ');
+
+/**
+ * Every shape a statement line of a hand-run rollback may have, and nothing else. The test fails closed: a line that
+ * matches none of them fails, whatever it does, so a new kind of statement (dynamic SQL, `\gexec`, an inline comment,
+ * an unusual quote) is refused until a shape for it is added here on purpose. Each shape names every object with its
+ * schema. `folder` is the migration the file belongs to, the only history row it may delete.
+ */
+function shapes(folder: string): RegExp[] {
+  const escapedSet = SET_LINE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return [
+    new RegExp(`^${escapedSet}$`),
+    new RegExp(String.raw`^DROP (?:TABLE|INDEX|FUNCTION) IF EXISTS ${Q}(?:\((?:pg_catalog\.[a-z_]+(?:, pg_catalog\.[a-z_]+)*)?\))?(?: CASCADE)?;$`),
+    new RegExp(
+      String.raw`^ALTER TABLE ${Q} DROP (?:COLUMN|CONSTRAINT) IF EXISTS ${COLUMN}(?:, DROP (?:COLUMN|CONSTRAINT) IF EXISTS ${COLUMN})*;$`,
+    ),
+    /^DO \$\$$/,
+    /^BEGIN$/,
+    /^END IF;$/,
+    /^END \$\$;$/,
+    /^IF pg_catalog\.to_regclass\('public\._prisma_migrations'\) IS NOT NULL THEN$/,
+    new RegExp(String.raw`^DELETE FROM "public"\."_prisma_migrations" WHERE "migration_name" = '${folder}';$`),
+    /^IF EXISTS \(SELECT 1 FROM information_schema\.columns WHERE table_schema = 'public' AND table_name = '[a-z_]+' AND column_name = '[a-z_]+'\) THEN$/,
+    new RegExp(String.raw`^DELETE FROM ${Q} WHERE ${COLUMN} = '[a-z_]+';$`),
+  ];
+}
+
+/** The statement lines of a file (blank lines and whole-line comments left out) that match no allowed shape. */
+function unknownLines(text: string, folder: string): string[] {
+  const allowed = shapes(folder);
   return text
     .split('\n')
-    .filter((line) => !line.trimStart().startsWith('--'))
-    .join('\n');
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('--'))
+    .filter((line) => !allowed.some((shape) => shape.test(line)));
 }
 
-/** A name with its schema: `schema.name`, either part quoted or not. */
-const QUALIFIED = /^(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)$/;
+const FOLDER = '20261115000000_custom_code';
 
-/** Splits a list of names on the commas that are not inside parentheses (a function's argument types). */
-function splitNames(list: string): string[] {
-  const names: string[] = [];
-  let depth = 0;
-  let current = '';
-  for (const char of list) {
-    if (char === '(') depth += 1;
-    if (char === ')') depth -= 1;
-    if (char === ',' && depth === 0) {
-      names.push(current);
-      current = '';
-    } else current += char;
-  }
-  names.push(current);
-  // The name only: a function's argument list is not part of it.
-  return names.map((name) => name.trim().replace(/^ONLY\s+/i, '').replace(/\s*\([\s\S]*$/, ''));
-}
-
-/** A name as written: quoted (spaces allowed inside the quotes) or bare, either part. */
-const NAME = String.raw`(?:"[^"]+"|[^\s(;,)."]+)(?:\.(?:"[^"]+"|[^\s(;,)."]+))?`;
-
-/**
- * The text with comments and string literals blanked, in one left-to-right pass so a quote inside a comment and a
- * comment marker inside a string are each read as what they are: `--` to the end of the line, `/* ... *\/`, an escape
- * string `E'...'` (backslash escapes) and a plain string (doubled quotes). Dollar-quoted bodies stay: they are code.
- */
-function blanked(text: string): string {
-  return text.replace(/--[^\n]*|\/\*[\s\S]*?\*\/|[Ee]'(?:[^'\\]|\\[\s\S]|'')*'|'(?:[^']|'')*'/g, (token) =>
-    token.startsWith('--') || token.startsWith('/*') ? ' ' : "''",
-  );
-}
-
-/** A table reference in a FROM or USING list: the name, then an optional alias. */
-const REFERENCE = String.raw`${NAME}(?:\s+(?:AS\s+)?(?!(?:WHERE|JOIN|ON|LEFT|RIGHT|INNER|FULL|CROSS|GROUP|ORDER|LIMIT|USING|RETURNING)\b)\w+)?`;
-
-/** The names of a FROM or USING list, aliases left out. */
-function referencesOf(list: string): string[] {
-  return splitNames(list).map((reference) => reference.match(new RegExp(`^${NAME}`))![0]);
-}
-
-/**
- * Every object a statement drops, alters, empties, deletes from, writes to or reads from, as written, in any letter
- * case and with every name of a list. Comments and string literals are blanked first, so words in a message are not
- * read as SQL; dynamic SQL (`EXECUTE` of a string) cannot be read at all, so it is reported as a name of its own.
- * `FROM` inside the calls that take it as a keyword (extract, substring, trim, overlay, position) and in `REVOKE`
- * is not a relation. A schema a statement drops is listed apart: it is never looked up through the search path, so it
- * is a bare name.
- */
-function objectsOf(text: string): { relations: string[]; schemas: string[] } {
-  const sql = blanked(text);
-  const single = [
-    ...sql.matchAll(
-      new RegExp(String.raw`\b(?:ALTER TABLE|INSERT INTO|UPDATE)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?(${NAME})`, 'gi'),
-    ),
-    ...sql.matchAll(
-      new RegExp(String.raw`\bDROP (?:TRIGGER|POLICY|RULE)\s+(?:IF EXISTS\s+)?${NAME}\s+ON\s+(?:ONLY\s+)?(${NAME})`, 'gi'),
-    ),
-    ...sql.matchAll(new RegExp(String.raw`\bFROM\s*\(\s*TABLE\s+(${NAME})`, 'gi')),
-  ].map((match) => match[1]!);
-  // FROM, JOIN and USING lists: every table of the list.
-  const referenced = [
-    ...sql.matchAll(
-      new RegExp(
-        String.raw`(?<!\b(?:extract|substring|trim|overlay|position)\s*\([^()]*)(?<!\bREVOKE\b[^;]*)\b(?:FROM|JOIN|(?<=\bDELETE\s+FROM\b[^;]*)USING)\s+(?:ONLY\s+)?(${REFERENCE}(?:\s*,\s*${REFERENCE})*)`,
-        'gi',
-      ),
-    ),
-  ].flatMap((match) => referencesOf(match[1]!));
-  // Statements that take a list of names: every name of the list, not only the first.
-  const listed = [
-    ...sql.matchAll(
-      /\b(?:DROP (?:TABLE|INDEX(?: CONCURRENTLY)?|VIEW|MATERIALIZED VIEW|TYPE|SEQUENCE|FUNCTION)|TRUNCATE(?: TABLE)?)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT|RESTART IDENTITY|CONTINUE IDENTITY))*\s*(?:;|$)/gi,
-    ),
-  ].flatMap((match) => splitNames(match[1]!));
-  const dynamic = [...sql.matchAll(/\bEXECUTE\s+(?!ON\b)/gi)].map(() => 'EXECUTE (dynamic SQL)');
-  const relations = [...single, ...referenced, ...listed, ...dynamic]
-    // `... FROM PUBLIC` names the role every role belongs to, not a relation.
-    .filter((name) => name.toUpperCase() !== 'PUBLIC');
-  const schemas = [...sql.matchAll(/\bDROP SCHEMA\s+(?:IF EXISTS\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT))?\s*(?:;|$)/gi)].flatMap(
-    (match) => splitNames(match[1]!),
-  );
-  return { relations, schemas };
-}
-
-/** What `objectsOf` finds that is not named the way these files must name it. */
-function misnamed(sql: string): string[] {
-  const { relations, schemas } = objectsOf(sql);
-  return [...relations.filter((name) => !QUALIFIED.test(name)), ...schemas.filter((name) => !/^"?[a-z_]+"?$/.test(name))];
-}
-
-describe('the detector of objects a rollback names', () => {
+describe('the allowed shapes of a rollback line', () => {
   it.each([
-    ['DROP TABLE IF EXISTS "site_models";', ['"site_models"']],
-    ['DROP TABLE IF EXISTS "public"."site_models";', []],
-    ['ALTER TABLE ONLY site_models DROP COLUMN x;', ['site_models']],
-    ['DELETE FROM "_prisma_migrations" WHERE a = 1;', ['"_prisma_migrations"']],
-    ['DROP TRIGGER IF EXISTS t ON "site_models";', ['"site_models"']],
-    ['DROP TRIGGER t ON "public"."site_models";', []],
-    ['TRUNCATE site_models;', ['site_models']],
-    ['TRUNCATE TABLE ONLY "public"."site_models";', []],
-    ['SELECT 1 FROM site_models s JOIN sites t ON true;', ['site_models', 'sites']],
-    ['SELECT 1 FROM information_schema.columns WHERE true;', []],
-    ['DROP SCHEMA IF EXISTS "postgres" CASCADE;', []],
-    ['DROP SCHEMA a.b;', ['a.b']],
-    ['REVOKE ALL ON FUNCTION "public"."f"() FROM PUBLIC;', []],
-    ['DROP TABLE IF EXISTS "public"."a", b CASCADE;', ['b']],
-    ['drop table if exists site_models;', ['site_models']],
-    ['delete from "_prisma_migrations" where a = 1;', ['"_prisma_migrations"']],
-    ['DROP POLICY IF EXISTS p ON site_models;', ['site_models']],
-    ['DROP RULE r ON "public"."site_models";', []],
-    ['DELETE FROM "public"."a" USING b WHERE true;', ['b']],
-    ['TRUNCATE "public"."a", b RESTART IDENTITY CASCADE;', ['b']],
-    ['DROP SCHEMA IF EXISTS x, a.b CASCADE;', ['a.b']],
-    ['revoke all on function "public"."f"() from public;', []],
-    ['DROP FUNCTION "public"."f"(text, text), g(int);', ['g']],
-    ['DROP FUNCTION IF EXISTS "public"."box_document"(pg_catalog.text, pg_catalog.text);', []],
-    ['DROP POLICY "a b" ON x;', ['x']],
-    ['DROP INDEX CONCURRENTLY IF EXISTS i;', ['i']],
-    ['ALTER TABLE "public"."a" ALTER COLUMN c TYPE text USING c::text;', []],
-    ['SELECT extract(epoch from now()) FROM "public"."a";', []],
-    ["DO $$ BEGIN RAISE NOTICE 'nothing to update from here'; END $$;", []],
-    ['DO $$ BEGIN IF EXISTS (SELECT FROM site_models) THEN NULL; END IF; END $$;', ['site_models']],
-    ['SELECT 1 WHERE EXISTS (SELECT FROM c);', ['c']],
-    ["DROP TABLE public.a; -- don't\nDROP TABLE b;\nSELECT 'x';", ['b']],
-    ["/* it's */ DROP TABLE b;", ['b']],
-    ["SELECT E'it\\'s'; DROP TABLE b;", ['b']],
-    ["DO $$ BEGIN EXECUTE 'DELETE FROM sites'; END $$;", ['EXECUTE (dynamic SQL)']],
-    ['SELECT 1 FROM "public"."a" x, b y WHERE true;', ['b']],
-    ['DELETE FROM "public"."a" USING "public"."b", c WHERE true;', ['c']],
-    ['SELECT 1 FROM (TABLE x) t;', ['x']],
-    ['REVOKE ALL ON FUNCTION "public"."f"() FROM box_reader;', []],
-    ['DROP TABLE IF EXISTS "public"."t2";', []],
-    ["SELECT '-- not a comment' FROM t;", ['t']],
-    ['GRANT EXECUTE ON FUNCTION "public"."f"() TO box_reader;', []],
-  ])('%s', (sql, expected) => {
-    expect(misnamed(sql)).toEqual(expected);
+    'DROP TABLE IF EXISTS "public"."custom_code_audit";',
+    'DROP FUNCTION IF EXISTS "public"."box_document"(pg_catalog.text, pg_catalog.text);',
+    'DROP FUNCTION IF EXISTS "public"."custom_code_blobs_immutable"();',
+    'DROP INDEX IF EXISTS "public"."site_models_pending_until_idx";',
+    'ALTER TABLE "public"."site_models" DROP COLUMN IF EXISTS "attempt", DROP COLUMN IF EXISTS "state";',
+    'DELETE FROM "public"."site_models" WHERE "state" = \'pending\';',
+    `DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = '${FOLDER}';`,
+    '    END IF;',
+  ])('accepts %s', (line) => {
+    expect(unknownLines(line, FOLDER)).toEqual([]);
   });
 
-  it('finds each kind of statement at all', () => {
-    const { relations, schemas } = objectsOf(
-      'DROP TRIGGER t ON public.a; TRUNCATE public.b; SELECT 1 FROM public.c JOIN public.d ON true; DROP SCHEMA e;',
-    );
-    expect([...relations].sort()).toEqual(['public.a', 'public.b', 'public.c', 'public.d']);
-    expect(schemas).toEqual(['e']);
+  it.each([
+    // Names without their schema, in any letter case or position of a list.
+    'DROP TABLE IF EXISTS "site_models";',
+    'drop table if exists "public"."site_models";',
+    'DROP TABLE IF EXISTS "public"."a", b;',
+    'DROP FUNCTION IF EXISTS "public"."f"(text), g(int);',
+    'DELETE FROM "_prisma_migrations" WHERE "migration_name" = \'x\';',
+    'ALTER TABLE ONLY site_models DROP COLUMN x;',
+    'IF to_regclass(\'_prisma_migrations\') IS NOT NULL THEN',
+    // Another migration's history row.
+    'DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = \'20261112200000_site_models\';',
+    // Anything that reads or writes elsewhere, or that this test cannot read.
+    'DO $$ BEGIN IF EXISTS (SELECT FROM site_models) THEN NULL; END IF; END $$;',
+    'EXECUTE \'DELETE FROM sites\';',
+    'EXECUTE(\'DELETE FROM sites\');',
+    "SELECT 'DROP TABLE ' || 'sites' \\gexec",
+    'SELECT dblink_exec(\'DROP TABLE sites\');',
+    'RAISE NOTICE $m$ -- done $m$; DELETE FROM b;',
+    'DROP TABLE IF EXISTS "public"."a"; -- don\'t',
+    '/* it\'s */ DROP TABLE b;',
+    'TRUNCATE "public"."a";',
+    'DROP SCHEMA IF EXISTS "postgres" CASCADE;',
+    'UPDATE "public"."sites" SET "custom_code_enabled" = false;',
+    // Another search path (built from its words, like SET_LINE).
+    ['SET', 'search_path', '=', 'public;'].join(' '),
+  ])('refuses %s', (line) => {
+    expect(unknownLines(line, FOLDER)).toEqual([line.trim()]);
   });
 });
 
@@ -187,22 +118,16 @@ describe('the migrations\' rollback.sql files', () => {
   });
 
   it.each(rollbacks)('%s sets its own search path before any other statement', (_name, text) => {
-    const first = code(text).split('\n').find((line) => line.trim() !== '');
-    // Compared word by word (the line itself, written out here, would read as a runtime path change to lint:guards).
-    expect(first?.trim().split(/\s+/)).toEqual(['SET', 'search_path', '=', 'pg_catalog,', 'pg_temp;']);
+    const first = text
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line !== '' && !line.startsWith('--'));
+    expect(first).toBe(SET_LINE);
   });
 
-  it.each(rollbacks)('%s names Prisma\'s history table and every object it touches with its schema', (_name, text) => {
-    const body = code(text);
-    // Every mention of the history table carries the public schema.
-    const history = [...body.matchAll(/(?:"?public"?\.)?"?_prisma_migrations"?/g)].map((match) => match[0]);
-    expect(history.length).toBeGreaterThan(0);
-    expect(history.filter((name) => !/^"?public"?\./.test(name))).toEqual([]);
-    // Every catalog lookup is pg_catalog's own.
-    const lookups = [...body.matchAll(/([A-Za-z_."]*)\bto_regclass\(/g)].map((match) => match[1]);
-    expect(lookups.filter((prefix) => prefix !== 'pg_catalog.')).toEqual([]);
-    // Every object a statement drops, alters, empties, deletes from, writes to or reads from is named with its schema.
-    expect(objectsOf(body).relations.length).toBeGreaterThan(0);
-    expect(misnamed(body)).toEqual([]);
+  it.each(rollbacks)('%s has only lines of the allowed shapes, every object named with its schema', (name, text) => {
+    expect(unknownLines(text, path.dirname(name))).toEqual([]);
+    // And it forgets its own migration.
+    expect(text).toContain(`WHERE "migration_name" = '${path.dirname(name)}';`);
   });
 });
