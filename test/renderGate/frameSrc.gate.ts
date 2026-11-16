@@ -15,6 +15,7 @@ import { middleware } from '@/middleware';
 import { MAPS_CONSENT_COOKIE } from '@/lib/site/cspReportOnly';
 import { parseMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { MAP_FRAME_SANDBOX } from '@/lib/renderer/mapEmbed/mapEmbedElement';
+import { CONSENT_BANNER_ID, consentRuntimeScript } from '@/lib/consent/consent';
 
 const EDITOR = 'app.editor.test';
 const SITE = 'acme.sites.test';
@@ -155,4 +156,70 @@ describe('the enforced frame policy', () => {
       await browser.close();
     }
   }, 60_000);
+});
+
+// A page with the consent runtime and a map as MapEmbedIsland behaves: the frame is
+// drawn when the stored answer is yes as the page starts, or when the banner's yes is
+// announced. Served each time with the headers the middleware gives that request.
+const CONSENT_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
+<div id="${CONSENT_BANNER_ID}" data-fc-consent="">
+  <button type="button" data-fc-consent-decline="">No</button>
+  <button type="button" id="yes" data-fc-consent-accept="">Yes</button>
+</div>
+<script>${consentRuntimeScript({ tracker: null, categories: ['maps'] })}</script>
+<script>
+  window.__map = 'none';
+  addEventListener('message', (event) => { if (event.data && event.data.frame === 'map') window.__map = 'loaded'; });
+  document.addEventListener('securitypolicyviolation', (event) => {
+    if (event.disposition === 'enforce' && ${JSON.stringify(MAP_FRAME)}.startsWith(event.blockedURI)) window.__map = 'refused';
+  });
+  function draw() {
+    if (document.querySelector('iframe')) return;
+    window.__map = 'pending';
+    const element = document.createElement('iframe');
+    element.setAttribute('sandbox', ${JSON.stringify(MAP_FRAME_SANDBOX)});
+    element.title = 'map';
+    element.src = ${JSON.stringify(MAP_FRAME)};
+    document.body.appendChild(element);
+  }
+  if (window.__lumitraConsent.get('maps') === 'granted') draw();
+  addEventListener('lumitra:consent', (event) => { if (event.detail && event.detail.maps === true) draw(); });
+</script></body></html>`;
+
+describe('maps consent given on a page already loaded', () => {
+  it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])(
+    'in %s: the yes loads a new document whose policy allows the map, and the map loads',
+    async (_name, type) => {
+      const url = `https://${SITE}/contact`;
+      const browser = await type.launch();
+      try {
+        const page = await browser.newPage();
+        const served: string[] = [];
+        await page.route('**/*', async (route) => {
+          const request = route.request();
+          if (request.url() === url) {
+            // The browser's cookie jar, not the request's header: Playwright's WebKit leaves page-set
+            // cookies out of an intercepted request's headers, although the browser holds them.
+            const jar = await page.context().cookies(url);
+            const headers = await headersFor(url, jar.map((c) => `${c.name}=${c.value}`).join('; '));
+            served.push(headers['content-security-policy']);
+            return route.fulfill({ status: 200, contentType: 'text/html', headers, body: CONSENT_PAGE });
+          }
+          if (request.url() === MAP_FRAME) return route.fulfill({ status: 200, contentType: 'text/html', body: FRAME_DOCUMENT('map') });
+          return route.fulfill({ status: 204 });
+        });
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        expect(await page.evaluate(() => (window as unknown as { __map: string }).__map)).toBe('none');
+        await Promise.all([page.waitForEvent('load'), page.click('#yes')]);
+        await page
+          .waitForFunction(() => (window as unknown as { __map: string }).__map !== 'pending', undefined, { timeout: 10_000 })
+          .catch(() => {});
+        expect(await page.evaluate(() => (window as unknown as { __map: string }).__map)).toBe('loaded');
+        expect(served).toEqual([`frame-src ${BOX_ORIGIN}/box/`, `frame-src ${BOX_ORIGIN}/box/ https://www.google.com`]);
+      } finally {
+        await browser.close();
+      }
+    },
+    60_000,
+  );
 });

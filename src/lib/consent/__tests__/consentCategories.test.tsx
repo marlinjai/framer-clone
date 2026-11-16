@@ -85,6 +85,12 @@ const row = (c: string) => banner().querySelector(`[data-fc-consent-row="${c}"]`
 const stored = () => JSON.parse(window.localStorage.getItem(CONSENT_STORAGE_KEY) ?? 'null');
 const mapsCookie = () => document.cookie.split('; ').find((c) => c.startsWith(`${CONSENT_MAPS_COOKIE}=`)) ?? null;
 const store = (value: Record<string, unknown>) => window.localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: CONSENT_VERSION, at: 'x', ...value }));
+/** jsdom has no navigation: the runtime's reload, observed instead. */
+const mockReload = () => {
+  const reload = vi.fn();
+  vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload, hash: '' } as Location);
+  return reload;
+};
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole('button', { name }));
 const cookieSettings = () => fireEvent.click(screen.getByRole('link', { name: 'Cookie settings' }));
 
@@ -100,22 +106,48 @@ describe('a site with one purpose', () => {
     expect(events).toEqual([]);
   });
 
-  it('accepting answers maps, sets the cookie the middleware reads and announces it', () => {
+  it('accepting answers maps, sets the cookie the middleware reads and reloads into a document that allows the map', () => {
+    const reload = mockReload();
     const api = load(['maps']);
+    expect(reload).not.toHaveBeenCalled();
     click('Accept');
-    expect(banner().hidden).toBe(true);
     expect(stored()).toMatchObject({ v: CONSENT_VERSION, maps: true });
     expect(stored()).not.toHaveProperty('analytics');
     expect(api.get('maps')).toBe('granted');
     expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
-    expect(events).toEqual([{ maps: true }]);
+    // This document's frame-src has no Google: a map drawn now would be refused.
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([]);
     expect(importTracker).not.toHaveBeenCalled();
   });
 
-  it('declining answers no, clears the cookie and announces it, without a reload', () => {
-    const reload = vi.fn();
-    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload, hash: '' } as Location);
+  it('accepting in a document already served with the maps cookie announces it, without a reload', () => {
+    const reload = mockReload();
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
+    const api = load(['maps']);
+    click('Accept');
+    expect(banner().hidden).toBe(true);
+    expect(api.get('maps')).toBe('granted');
+    expect(events).toEqual([{ maps: true }]);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('a stored yes whose cookie is gone sets the cookie again and reloads once', () => {
+    const reload = mockReload();
     store({ maps: true });
+    load(['maps']);
+    expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
+    expect(reload).toHaveBeenCalledTimes(1);
+    // The new document is served with the cookie: no second reload.
+    cleanup();
+    load(['maps']);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('declining answers no, clears the cookie and announces it, without a reload', () => {
+    const reload = mockReload();
+    store({ maps: true });
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
     const api = load(['maps']);
     cookieSettings();
     click('Decline');
@@ -272,10 +304,13 @@ describe('a map asks through the banner', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('denied');
     });
+    const reload = mockReload();
     const api = load(['maps']);
     click('Accept');
     expect(api.get('maps')).toBe('granted');
+    // A reload would forget it: announced in this page view instead.
     expect(events).toEqual([{ maps: true }]);
+    expect(reload).not.toHaveBeenCalled();
   });
 });
 
