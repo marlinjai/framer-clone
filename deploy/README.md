@@ -579,11 +579,12 @@ waits, and its check then sees the other side's object. The rehearsal holds both
 **Applying `box-reader.sql` (operator step O1).** Only with `psql -X -v ON_ERROR_STOP=1 -f prisma/sql/box-reader.sql`
 (and its rollback the same way), never with `\i` from an interactive session and never pasted. The file's first statement
 in its transaction takes the lock every container start's migration of slice C1b also takes, so a session left open on
-it (after an error under `\i`, or an interrupted paste) holds that lock and stops every container start until it ends.
+it (after an error under `\i`, or an interrupted paste) holds that lock and stops a container start that applies the
+migration `20261115000000_custom_code` (the first deploy with it, or one after its rollback) until it ends.
 If that happens, end the session at once: `ROLLBACK`, or quit psql.
 
-The rehearsal
-(`src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts`) holds both orders; the box's own integration
+The rehearsal is
+`src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts`; the box's own integration
 suite builds its database from these files in production's order. Re-apply `box-reader.sql` after any restore, as
 `commerce-roles.sql` is: a plain dump does not carry the database's `CONNECT` rights. A dump restore runs no migration: it carries `_prisma_migrations` and every object as it was, and with them the grants, which name `commerce_app`, `commerce_ddl` and `box_reader`; restored into a fresh cluster, the restore stops at the first of them that does not exist (role does not exist). Before restoring into a fresh cluster, create the three roles bare, as superuser (`CREATE ROLE commerce_app NOLOGIN; CREATE ROLE commerce_ddl NOLOGIN; CREATE ROLE box_reader NOLOGIN`), restore, then apply `commerce-roles.sql` and `box-reader.sql`, which give them their shape. Do not apply `commerce-roles.sql` before the restore: its `CREATE SCHEMA IF NOT EXISTS ext` makes the dump's own `CREATE SCHEMA ext` fail, and a restore with `ON_ERROR_STOP` stops there. The role file's
 rollback leaves the grant on `box_document` in place: without a login the role cannot use it, and re-applying

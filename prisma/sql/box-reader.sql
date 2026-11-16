@@ -42,8 +42,9 @@
 -- takes the lock every container start's migration of slice C1b also takes
 -- (see "The one thing the box may call"): a session left open on this file,
 -- for example after an error under `\i` or an interrupted paste, holds that
--- lock and stops every container start until it ends. End such a session at
--- once (ROLLBACK, or quit psql).
+-- lock and stops a container start that applies that migration (the first
+-- deploy with it, or one after its rollback) until it ends. End such a session
+-- at once (ROLLBACK, or quit psql).
 --
 -- NO PASSWORD, NO LOGIN. The role is created NOLOGIN. The operator's script
 -- gives it a login and a freshly generated password and writes the connection

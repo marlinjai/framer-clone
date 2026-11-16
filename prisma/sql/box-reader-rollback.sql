@@ -1,7 +1,7 @@
 -- prisma/sql/box-reader-rollback.sql
 --
--- The way back from prisma/sql/box-reader.sql. PREPARED AND REHEARSED OFFLINE
--- ONLY, like that file.
+-- The way back from prisma/sql/box-reader.sql. Prepared and rehearsed offline,
+-- like that file.
 --
 -- WHO RUNS IT. A superuser, with `psql -X -v ON_ERROR_STOP=1 -f` and never with
 -- `\i` from an interactive session, on the database box-reader.sql was applied
