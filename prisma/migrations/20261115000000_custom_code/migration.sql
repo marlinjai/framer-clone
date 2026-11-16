@@ -12,7 +12,18 @@
 -- file. (A dump restore runs no migration: it carries the result, the grant included; see deploy/README.md.) So this migration must not fail when the role does not exist: it always takes EXECUTE on
 -- `box_document` from PUBLIC, and grants it to `box_reader` only if that role exists. box-reader.sql grants the same
 -- if the function exists. Whichever runs first, the end state is the same: EXECUTE for the owner and `box_reader`,
--- nobody else (held by src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts, both orders).
+-- nobody else (held by src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts, both orders). That holds
+-- also when the two run AT THE SAME TIME: each side's check sees only what is committed, so both sides take the same
+-- transaction-level advisory lock, key 7461001200 (box-reader.sql names the same key), as a statement of its own
+-- before its check (here the first statement), and hold it until they commit. The later one waits for the earlier one's commit, and under READ
+-- COMMITTED its check, a new statement, then sees the other side's object (the rehearsal holds both orders of that
+-- too). The key is above 2^32, so it is none of the repository's other lock keys (74610010 and 74610011, the int4
+-- range of pg_catalog.hashtext) nor Prisma's own migration lock (72707369).
+
+-- The lock box-reader.sql takes too (key 7461001200, see "THE ORDER"), as a statement of its own and first, so this
+-- migration waits for a box-reader.sql that holds it before it touches anything (no lock on `sites` held meanwhile),
+-- and its check at the end runs after that file has committed.
+SELECT pg_catalog.pg_advisory_xact_lock(7461001200);
 
 -- AlterTable: off by default; switched only through the guarded route of a later slice.
 ALTER TABLE "public"."sites" ADD COLUMN "custom_code_enabled" BOOLEAN NOT NULL DEFAULT false;
@@ -81,7 +92,11 @@ CREATE TABLE "public"."custom_code_blocked_hashes" (
     "reason" TEXT NOT NULL,
 
     CONSTRAINT "custom_code_blocked_hashes_pkey" PRIMARY KEY ("sha256"),
-    CONSTRAINT "custom_code_blocked_hashes_sha256_check" CHECK ("sha256" ~ '^[0-9a-f]{64}$')
+    CONSTRAINT "custom_code_blocked_hashes_sha256_check" CHECK ("sha256" ~ '^[0-9a-f]{64}$'),
+    -- An operator label, never a person's id: a company erasure keeps this list, so it must name no person. The label
+    -- is `operator`, optionally with lower case words for the channel (`operator:abuse-report`); any value with a
+    -- digit or of another shape is refused, so an id fits neither alone nor behind the label.
+    CONSTRAINT "custom_code_blocked_hashes_blocked_by_check" CHECK ("blocked_by" ~ '^operator(:[a-z]+(-[a-z]+)*)?$' AND length("blocked_by") <= 64)
 );
 
 -- CreateIndex
@@ -186,7 +201,7 @@ REVOKE ALL ON FUNCTION "public"."custom_code_blobs_immutable"() FROM PUBLIC;
 REVOKE ALL ON FUNCTION "public"."custom_code_audit_append_only"() FROM PUBLIC;
 
 -- The grant to the box's role, only where the role exists (see "THE ORDER" above). Where it does not, box-reader.sql
--- gives it when it creates the role.
+-- gives it when it creates the role. The lock taken first thing (see "THE ORDER") is held until this migration commits.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'box_reader') THEN

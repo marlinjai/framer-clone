@@ -53,7 +53,15 @@
 -- grants it if the function exists (the last block below). Whichever runs
 -- first, the end state is the same: EXECUTE on box_document for its owner and
 -- box_reader, nobody else (the migration always takes it from PUBLIC). The
--- rehearsal holds both orders.
+-- rehearsal holds both orders. It holds also when the two run at the same
+-- time: each side's check sees only what is committed, so both take the same
+-- transaction-level advisory lock, key 7461001200 (the migration names the
+-- same key), as a statement of its own before their check, and hold it until
+-- they commit. This file takes it first thing in its transaction. The later
+-- side waits for the earlier one's commit, and under READ COMMITTED its check,
+-- a new statement, then sees the other side's object (rehearsed in both
+-- orders). The key is above 2^32: none of the application's other lock keys,
+-- nor Prisma's own migration lock (72707369).
 --
 -- WHAT IT DOES NOT DO.
 --   - It grants nothing on any table or view of the application, and on no
@@ -97,10 +105,13 @@
 --   - statement_timeout 2s, idle_in_transaction_session_timeout 5s,
 --     idle_session_timeout 60s. These are defaults a session can change, so
 --     they bound the box, not a thief.
---   - search_path pg_catalog, role-wide: commerce_ddl may create functions in
---     public and schemas in this database (a schema named box_reader would be
---     searched first as "$user"), so the box's sessions search no schema that
---     role can write; the box also schema-qualifies every name it uses.
+--   - search_path pg_catalog, role-wide: commerce_ddl keeps CREATE on this
+--     database, so it may create schemas here (a schema named box_reader would
+--     be searched first as "$user"), and commerce-roles.sql leaves it CREATE on
+--     public until the application's first start has run the public
+--     migrations and the file is applied again. So the box's sessions search
+--     no schema that role can write; the box also schema-qualifies every name
+--     it uses.
 --
 -- WHAT IS LEFT to someone who holds the role's password. None of it reads or
 -- writes a row of the application. The rehearsal test holds the first six as
@@ -170,6 +181,11 @@ SET search_path = pg_catalog, pg_temp;
 -- that starts meanwhile sees the database as it was before the file, never
 -- half of it.
 BEGIN;
+
+-- The lock the migration 20261115000000_custom_code takes too (key 7461001200,
+-- see "The one thing the box may call" above), held until COMMIT, so the grant
+-- at the end and the migration's own grant cannot both miss.
+SELECT pg_catalog.pg_advisory_xact_lock(7461001200);
 
 DO $$
 BEGIN

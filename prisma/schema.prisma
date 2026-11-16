@@ -1002,9 +1002,10 @@ model CustomCodeProposal {
 model CustomCodeBlockedHash {
   sha256    String   @id
   blockedAt DateTime @default(now()) @map("blocked_at")
-  // The operator or auth-brain user who blocked it.
+  // An operator label (`operator`, or `operator:<channel>` in lower case words), NEVER a person's id: a company
+  // erasure keeps this list, so it must name no person (plan D34; a CHECK in the migration holds the format).
   blockedBy String   @map("blocked_by")
-  // Why, for the abuse record; never the code.
+  // Why, for the abuse record; never the code, and no person's name or id.
   reason    String
 
   @@map("custom_code_blocked_hashes")
