@@ -3,16 +3,26 @@ name: box
 # The box: the small service that serves sandboxed custom code documents
 # (services/box, docs/plans/2026-11-02-sandboxed-custom-code.md).
 #
-# BUILD AND TEST ONLY. This workflow pushes no image, calls no deploy webhook
-# and reads no secret. Pushing the image and deploying it belong to the
-# operator step O1 of the plan (the domain's records, the Coolify application,
-# the database role), and are added only with that step.
+# Every run, pull requests included: type check, lint, unit tests, the image
+# built and tested against a scratch Postgres and a stand-in for Infisical.
+#
+# Only on main (a push that touches the paths below, or a manual run on
+# main), and only once the operator step O1 has set the repository secrets
+# COOLIFY_BOX_WEBHOOK and COOLIFY_TOKEN: the image the tests just ran is pushed
+# to ghcr.io/<owner>/framer-clone-box (tags: the commit and latest), the
+# box's Coolify deploy webhook is called, and the deploy is polled until the
+# box answers /health/db on its public host (plan, decisions D48 and D49).
+# Until both secrets exist the publish job says so in a notice and pushes and
+# deploys nothing, so main stays green before the box's infrastructure exists.
+# A pull request never pushes and never deploys.
 #
 # Path-filtered: it runs when the box, the contract module it bundles, its
 # Dockerfile, this file, or the database it reads changes (the migrations and
 # the role files, which its integration suite applies), and never otherwise.
 
 on:
+  # A manual run on main publishes and deploys the current main, for the first deploy after O1.
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -47,7 +57,9 @@ permissions:
 
 concurrency:
   group: box-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push cancels an older run of the same pull request. On main a run is never cancelled midway,
+  # so a deploy that has started is finished and verified; the next run waits for it.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   box:
@@ -101,3 +113,92 @@ jobs:
         env:
           BOX_IMAGE: framer-clone-box:ci
         run: pnpm test:integration
+
+      # The image the suite just tested is the one that is pushed, byte for byte, never a rebuild. It goes to
+      # the publish job as an artifact because only that job may write packages.
+      - name: Keep the tested image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        working-directory: .
+        run: docker save framer-clone-box:ci | gzip -1 > "$RUNNER_TEMP/box-image.tar.gz"
+
+      - name: Upload the tested image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: box-image
+          path: ${{ runner.temp }}/box-image.tar.gz
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: box
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
+    steps:
+      # A secret cannot be read in a job condition, so this step turns "both are set" into an output.
+      - name: Are the deploy secrets set
+        id: gate
+        env:
+          HAS_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK != '' }}
+          HAS_TOKEN: ${{ secrets.COOLIFY_TOKEN != '' }}
+        run: |
+          if [ "$HAS_WEBHOOK" = "true" ] && [ "$HAS_TOKEN" = "true" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=box not published::COOLIFY_BOX_WEBHOOK or COOLIFY_TOKEN is not set, so no image is pushed and nothing is deployed. They are set in the operator step O1 (deploy/README.md)."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the tested image
+        if: steps.gate.outputs.deploy == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: box-image
+          path: ${{ runner.temp }}
+
+      - name: Log in to GHCR
+        if: steps.gate.outputs.deploy == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the tested image
+        if: steps.gate.outputs.deploy == 'true'
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/framer-clone-box"
+          gunzip -c "$RUNNER_TEMP/box-image.tar.gz" | docker load
+          docker tag framer-clone-box:ci "$image:$SHA"
+          docker tag framer-clone-box:ci "$image:latest"
+          docker push "$image:$SHA"
+          docker push "$image:latest"
+
+  deploy:
+    name: deploy
+    needs: publish
+    if: needs.publish.outputs.deploy == 'true'
+    permissions:
+      contents: read
+      deployments: write
+    uses: marlinjai/actions-shared/.github/workflows/coolify-deploy-verify.yml@v1
+    with:
+      # Readiness, not liveness: /health/db calls the box's one database function as box_reader, so a box
+      # that cannot read (no role, no function, no network to the database) fails the deploy loudly.
+      health_url: https://run.lumitrausercontent.com/health/db
+      environment: box-production
+    secrets:
+      coolify_webhook: ${{ secrets.COOLIFY_BOX_WEBHOOK }}
+      coolify_token: ${{ secrets.COOLIFY_TOKEN }}
