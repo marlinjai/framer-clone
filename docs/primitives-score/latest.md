@@ -140,7 +140,7 @@ A BusBasis page brings its own base: the storefront's Tailwind reset is in its s
 |---|---|---|---|---|---|---|---|---|---|---|
 | home | https://basiscampberlin.de/de, captured 2026-11-02, answered 200 | fail | 0/4 | 0/4 | 0/4 | 0/1 | 3.7 percent | 14 of 532 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; contact form sends; map embed; hero video |
 | product list | https://basiscampberlin.de/de/store, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 754 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; faceted search; nested categories; live product list |
-| search | https://basiscampberlin.de/de/store?q=bremse, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.1 percent | 0 of 761 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; faceted search; live product list |
+| search | https://basiscampberlin.de/de/store?q=bremse, captured 2026-11-02, answered 200 | fail | 3/4 | 4/4 | 4/4 | 1/1 | 0.1 percent | 0 of 761 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; faceted search; live product list |
 | category | https://basiscampberlin.de/de/categories/mercedes-benz-baumuster-309-310-313-duedos-motor, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 279 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; nested categories; live product list |
 | collection | https://basiscampberlin.de/de/collections/favoriten, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 481 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; live product list |
 | product detail | https://basiscampberlin.de/de/products/11d3-32, captured 2026-11-02, answered 200 | fail | 4/4 | 4/4 | 4/4 | 1/1 | 0.0 percent | 0 of 485 | 0/3 | mobile menu opens; cart count and dropdown; legal modals open from the footer; add to cart; image gallery |
@@ -163,6 +163,7 @@ Gaps on these pages, most pages first. "Needs" counts pages a missing feature st
 | `mixed-text` | 1 | 0 | 0 | Text mixed with elements: text beside an element is lost or lands out of order. |
 | `blocked-embedded-content` | 1 | 1 | 0 | What the render gate refuses (blockedNodes.ts and renderVocabulary.ts): embedded content (iframe, object, embed, ...), although these are ordinary content elements, and attributes that act by themselves (ping, the shadow root ones). |
 | `harness-limit` | 1 | 1 | 0 | Not a product gap: the harness cannot yet decide this cell, so it is not counted as a pass. |
+| `published-base` | 1 | 0 | 0 | The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base. |
 
 Not captured, and still counted against the stop condition:
 
@@ -227,6 +228,7 @@ Cost is matrix cells, failed corpus checks and failed round-trip cases added up,
 | `renderer-drops-value` | 2 | 2 | 0 | 0 | 0 | none | A stored value a renderer refuses, overwrites or loses. |
 | `ai-motion-refused` | 1 | 1 | 0 | 0 | 0 | none | Motion a generation may not start: an `every` trigger is refused to the generator, so nothing it makes rotates or ticks by itself unasked. A safety decision, see "AI output" in the behaviour model plan. |
 | `ai-value-refused` | 1 | 1 | 0 | 0 | 0 | none | The AI generator validator keeps the property but refuses this value. |
+| `published-base` | 1 | 0 | 1 | 0 | 1 | none | The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base. |
 
 ## What this does not measure yet
 
