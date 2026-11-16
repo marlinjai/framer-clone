@@ -6,11 +6,13 @@
 -- WHO RUNS IT. A superuser, with `psql -f`, on the database box-reader.sql was
 -- applied to. Idempotent. Never paste it into an interactive session: there
 -- an error returns psql to its prompt instead of ending the run, and the rest
--- of the pasted text would go on. The file sets ON_ERROR_STOP itself (the
--- `\set` line below), so `psql -f` stops at the first error and exits with a
--- non-zero status even without `-v ON_ERROR_STOP=1`. That line is a psql
--- command, which another client does not understand. The safety does not rest
--- on any of this: step 3 checks again, itself, that the box is shut out.
+-- of the pasted text would go on. The file sets ON_ERROR_STOP on and
+-- ON_ERROR_ROLLBACK off itself (the `\set` lines below), so `psql -f` stops at
+-- the first error and exits with a non-zero status whatever was given with
+-- `-v`, and no error is quietly undone while the run goes on. Those lines are
+-- psql commands, which another client does not understand. Step 3's safety
+-- does not rest on any of this: its check and its grants are one statement,
+-- so a check that fails undoes every grant with it, however it was run.
 --
 -- WHAT IT DOES, in three steps, in this order:
 --   1. One transaction: it takes the login away from box_reader, and its
@@ -27,12 +29,13 @@
 --      until a look after that second finds nothing. If sessions are still
 --      there after five rounds it stops with an error, before PUBLIC gets
 --      anything back. On Postgres 17 and later a short transaction_timeout on
---      the operator's role, which cannot be lifted this way, would end the
---      session in this step; that stops the file on the safe side.
---   3. One transaction. First it checks again that box_reader cannot log in
---      and has no session, and stops with an error otherwise, so this step
---      gives nothing back however the file was run or cut short. Then it
---      gives PUBLIC back, in this database, what box-reader.sql took: CONNECT
+--      the operator's role would end the session in this step (the file does
+--      not lift it); that stops the file on the safe side.
+--   3. One statement, in one transaction. First it checks again that
+--      box_reader cannot log in and has no session, and stops with an error
+--      otherwise; the error undoes the whole statement, so this step gives
+--      nothing back however the file was run or cut short. Then it gives
+--      PUBLIC back, in this database, what box-reader.sql took: CONNECT
 --      on the database, then EXECUTE on the advisory lock functions, on the
 --      large object functions and on pg_logical_emit_message. So every role
 --      can do again what it could do before. It never touches lo_import and
@@ -50,8 +53,10 @@
 --
 -- CATALOG NAMES (pg_stat_activity, pg_terminate_backend, format and the
 -- others) are not qualified: they resolve through the session's search path.
--- The default path puts pg_catalog first, so only a superuser who set a path
--- of their own could change what they mean.
+-- The default path puts pg_catalog first. A path set for the session, or for
+-- the database or the role (by a superuser, the database's owner or whoever
+-- administers the role), could change what they mean; check `SHOW
+-- search_path` first if any such setting exists.
 --
 -- IT ASSUMES that before box-reader.sql PUBLIC held what Postgres gives it by
 -- default. If the real database had already taken one of these rights from
@@ -73,6 +78,7 @@
 --     it stored none before); the rehearsal test compares the rights.
 
 \set ON_ERROR_STOP on
+\set ON_ERROR_ROLLBACK off
 
 -- Step 1. The box is shut out.
 BEGIN;
@@ -88,8 +94,10 @@ $$;
 
 COMMIT;
 
--- Step 2. Its open sessions are ended, and gone, before PUBLIC gets anything back.
--- For this session only: the step waits at least a second, whatever timeout the role has.
+-- Step 2. Its open sessions are ended, and gone, before PUBLIC gets anything
+-- back.
+-- For this session only: the step waits at least a second, whatever timeout
+-- the role has.
 SET statement_timeout = 0;
 
 DO $$
@@ -104,11 +112,11 @@ BEGIN
       -- Waits until the session is gone, up to 5 seconds.
       PERFORM pg_terminate_backend(a.pid, 5000);
     END LOOP;
-    -- A login that passed its checks before step 1 committed shows up only at the end of its
-    -- startup, so the step waits and looks again.
+    -- A login that passed its checks before step 1 committed shows up only at
+    -- the end of its startup, so the step waits and looks again.
     PERFORM pg_sleep(1);
-    -- Read the sessions afresh: within one transaction Postgres would show the list read above
-    -- again.
+    -- Read the sessions afresh: within one transaction Postgres would show the
+    -- list read above again.
     PERFORM pg_stat_clear_snapshot();
     SELECT count(*) INTO still_open FROM pg_stat_activity
      WHERE usename = 'box_reader' AND pid <> pg_backend_pid();
@@ -120,40 +128,37 @@ BEGIN
 END
 $$;
 
--- Step 3. PUBLIC gets back what box-reader.sql took, whole or not at all.
+-- Step 3. PUBLIC gets back what box-reader.sql took, whole or not at all: the
+-- check and every grant are one statement, so an error anywhere in it, the
+-- check's included, undoes all of it.
 BEGIN;
 
--- Checked again here, whatever happened before: the box cannot log in and has no session.
 DO $$
 DECLARE
   open_sessions int;
+  f record;
 BEGIN
+  -- Checked again here, whatever happened before: the box cannot log in and has
+  -- no session.
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'box_reader' AND rolcanlogin) THEN
-    RAISE EXCEPTION 'box-reader-rollback.sql: box_reader can still log in; PUBLIC has been given nothing back. Run the whole file again.';
+    RAISE EXCEPTION 'box-reader-rollback.sql: box_reader can still log in; '
+      'PUBLIC has been given nothing back. Run the whole file again.';
   END IF;
   SELECT count(*) INTO open_sessions FROM pg_stat_activity
    WHERE usename = 'box_reader' AND pid <> pg_backend_pid();
   IF open_sessions > 0 THEN
-    RAISE EXCEPTION 'box-reader-rollback.sql: % session(s) of box_reader are open; PUBLIC has been given nothing back. Run the whole file again.', open_sessions;
+    RAISE EXCEPTION 'box-reader-rollback.sql: % session(s) of box_reader are open; '
+      'PUBLIC has been given nothing back. Run the whole file again.', open_sessions;
   END IF;
-END
-$$;
 
-DO $$
-BEGIN
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO PUBLIC', current_database());
-END
-$$;
 
-DO $$
-DECLARE
-  f record;
-BEGIN
   FOR f IN
     SELECT p.oid::regprocedure AS signature
       FROM pg_proc p
      WHERE p.pronamespace = 'pg_catalog'::regnamespace
-       AND (p.proname LIKE 'pg!_advisory!_%' ESCAPE '!' OR p.proname LIKE 'pg!_try!_advisory!_%' ESCAPE '!'
+       AND (p.proname LIKE 'pg!_advisory!_%' ESCAPE '!'
+            OR p.proname LIKE 'pg!_try!_advisory!_%' ESCAPE '!'
             OR p.proname LIKE 'lo!_%' ESCAPE '!' OR p.proname IN ('loread', 'lowrite')
             OR p.proname = 'pg_logical_emit_message')
        -- Never PUBLIC's: they read and write files of the server.

@@ -18,16 +18,23 @@
 -- for more than it is.
 --
 -- WHO RUNS IT. Once per database, by a superuser (on Coolify the database's
--- own bootstrap user), with psql, AFTER
+-- own bootstrap user), with `psql -f`, AFTER
 -- prisma/sql/commerce-roles.sql (it grants to the two commerce roles and stops
 -- if they do not exist). It is idempotent: running it again changes nothing
 -- and fails nothing, and re-applying it is how an upgrade of this file, or a
 -- restore of a dump, gets the same shape again. It names no database: every
 -- database-level statement uses current_database(). The role and its defaults
 -- belong to the whole cluster, so it also resets the role's defaults for every
--- database of the cluster (see "Defaults" below). The file sets ON_ERROR_STOP
--- itself (the `\set` line below), so psql stops at the first error even when
--- run without `-v ON_ERROR_STOP=1`.
+-- database of the cluster (see "Defaults" below). Never paste it into an
+-- interactive session: there an error returns psql to its prompt instead of
+-- ending the run, and the rest of the pasted text would go on. The file sets
+-- ON_ERROR_STOP on and ON_ERROR_ROLLBACK off itself (the `\set` lines below),
+-- so `psql -f` stops at the first error and exits with a non-zero status
+-- whatever was given with `-v`, and no error is quietly undone while the rest
+-- of the transaction goes on and commits. Its checks (Postgres version, the
+-- commerce roles) are separate statements from what they guard, inside the one
+-- transaction; with those settings a failed check ends the run and the
+-- transaction is never committed.
 --
 -- NO PASSWORD, NO LOGIN. The role is created NOLOGIN. The operator's script
 -- gives it a login and a freshly generated password and writes the connection
@@ -120,7 +127,8 @@
 --     writes to the same write-ahead log, which the whole cluster shares.
 --     Advisory locks there are not locks in this database. Closing this is a
 --     cluster-wide change, or a rule in pg_hba.conf limiting box_reader to
---     this database, and belongs to the operator step O1. UNTIL THEN THE DISK CAN BE FILLED FROM THERE.
+--     this database, and belongs to the operator step O1. UNTIL THEN THE
+--     DISK CAN BE FILLED FROM THERE.
 --   Even after O1 this file only narrows how the role can use the disk (the
 --   NOTIFY queue above stays). IT DOES NOT PROTECT THE DISK.
 --
@@ -131,6 +139,7 @@
 -- REQUIRES POSTGRES 16 OR LATER, like commerce-roles.sql.
 
 \set ON_ERROR_STOP on
+\set ON_ERROR_ROLLBACK off
 
 -- Everything in one transaction: it is applied whole or not at all. A session
 -- that starts meanwhile sees the database as it was before the file, never
@@ -166,9 +175,9 @@ $$;
 -- LOGIN is not named: the operator's script grants it, and a re-run keeps it.
 ALTER ROLE box_reader NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT CONNECTION LIMIT 4;
 
--- It is a member of no role and no role is a member of it. CASCADE: if it held a
--- membership with the admin option and handed it on, the memberships it handed
--- on go too, so no role keeps one that came through box_reader.
+-- It is a member of no role and no role is a member of it. CASCADE: if it held
+-- a membership with the admin option and handed it on, the memberships it
+-- handed on go too, so no role keeps one that came through box_reader.
 DO $$
 DECLARE
   m record;
@@ -183,9 +192,9 @@ BEGIN
 END
 $$;
 
--- Defaults. Set again on every run, so a default the role changed for itself is put back: its
--- defaults for single databases first (a role may set those for itself too, and they win over the
--- role-wide ones), then the role-wide ones.
+-- Defaults. Set again on every run, so a default the role changed for itself is
+-- put back: its defaults for single databases first (a role may set those for
+-- itself too, and they win over the role-wide ones), then the role-wide ones.
 DO $$
 DECLARE
   d record;
@@ -204,7 +213,8 @@ ALTER ROLE box_reader RESET ALL;
 ALTER ROLE box_reader SET statement_timeout = '2s';
 ALTER ROLE box_reader SET idle_in_transaction_session_timeout = '5s';
 ALTER ROLE box_reader SET idle_session_timeout = '60s';
--- Only a superuser can change temp_file_limit, so the role cannot lift this one.
+-- Only a superuser can change temp_file_limit, so the role cannot lift this
+-- one.
 ALTER ROLE box_reader SET temp_file_limit = 0;
 
 -- =====================================================================
@@ -215,8 +225,8 @@ DO $$
 BEGIN
   EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database());
   EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
-  -- The two commerce roles already hold CONNECT by name (commerce-roles.sql); granted again so this
-  -- file is safe whatever state that grant is in.
+  -- The two commerce roles already hold CONNECT by name (commerce-roles.sql);
+  -- granted again so this file is safe whatever state that grant is in.
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO commerce_app, commerce_ddl, box_reader', current_database());
   -- Taken from box_reader by name too, in case it was ever granted by name.
   EXECUTE format('REVOKE TEMPORARY, CREATE ON DATABASE %I FROM box_reader', current_database());

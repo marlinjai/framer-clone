@@ -88,10 +88,15 @@ async function apply(file: SqlFile, database = DB_NAME): Promise<string> {
 
 /**
  * Runs a file with plain psql: no `-v ON_ERROR_STOP=1`, and with startup options for the session
- * (PGOPTIONS), the way an operator might run it. Returns the exit status and what psql printed.
+ * (PGOPTIONS) and any further psql arguments, the way an operator might run it. Returns the exit
+ * status and what psql printed.
  */
-async function runPlain(file: SqlFile | `step3-${string}.sql`, options: string): Promise<{ exitCode: number; output: string }> {
-  const { exitCode, output } = await container!.exec(['psql', '-q', '-U', 'postgres', '-d', DB_NAME, '-f', `/tmp/${file}`], {
+async function runPlain(
+  file: SqlFile | `step3-${string}.sql` | `cut-${string}.sql`,
+  options: string,
+  psqlArgs: string[] = [],
+): Promise<{ exitCode: number; output: string }> {
+  const { exitCode, output } = await container!.exec(['psql', '-q', ...psqlArgs, '-U', 'postgres', '-d', DB_NAME, '-f', `/tmp/${file}`], {
     env: { PGOPTIONS: options },
   });
   return { exitCode, output };
@@ -874,6 +879,11 @@ describe('afterwards', () => {
       const canLogIn = await runPlain('step3-alone.sql', '');
       expect(canLogIn.output).toContain('box_reader can still log in; PUBLIC has been given nothing back');
       expect(await wholeShape()).toEqual(before);
+      // The same with ON_ERROR_ROLLBACK on, which puts a savepoint before every statement and undoes
+      // only the one that failed: the check and the grants are one statement, so all of it is undone.
+      const savepoints = await runPlain('step3-alone.sql', '', ['-X', '-v', 'ON_ERROR_ROLLBACK=on']);
+      expect(savepoints.output).toContain('box_reader can still log in; PUBLIC has been given nothing back');
+      expect(await wholeShape()).toEqual(before);
       // It cannot log in any more, but a session of it is still open.
       await held`SELECT 1`;
       await su!`ALTER ROLE box_reader NOLOGIN`;
@@ -882,6 +892,8 @@ describe('afterwards', () => {
       expect(await wholeShape()).toEqual({ ...before, role: { ...before.role, rolcanlogin: false } });
     } finally {
       await held.end({ timeout: 2 }).catch(() => {});
+      // Back to the shape the file gives, whatever happened above.
+      await apply('box-reader.sql');
       await su!`ALTER ROLE box_reader LOGIN`;
     }
   }, 120_000);
@@ -1026,6 +1038,16 @@ describe('afterwards', () => {
       const plain = await runPlain('box-reader.sql', '');
       expect(plain.output).toContain('box_reader_test_stop: stopped at REVOKE');
       expect(plain.exitCode).not.toBe(0);
+      expect(await wholeShape()).toEqual(before);
+      // Where an error does not end the run (pasted into an interactive session, where psql returns to
+      // its prompt; here: the file without its ON_ERROR_STOP line) and ON_ERROR_ROLLBACK is on, the
+      // file's own ON_ERROR_ROLLBACK off keeps the failed statement from being quietly undone while
+      // the rest commits: the transaction stays failed and nothing of it stays.
+      const roleFile = readFileSync(path.join(SQL_DIR, 'box-reader.sql'), 'utf8');
+      expect(roleFile).toContain('\\set ON_ERROR_STOP on\n');
+      await container!.copyContentToContainer([{ content: roleFile.replace('\\set ON_ERROR_STOP on\n', ''), target: '/tmp/cut-role-file.sql' }]);
+      const pasted = await runPlain('cut-role-file.sql', '', ['-X', '-v', 'ON_ERROR_ROLLBACK=on']);
+      expect(pasted.output).toContain('box_reader_test_stop: stopped at REVOKE');
       expect(await wholeShape()).toEqual(before);
     } finally {
       await su!`DROP EVENT TRIGGER IF EXISTS box_reader_test_stop`;
