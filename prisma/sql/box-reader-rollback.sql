@@ -4,15 +4,21 @@
 -- ONLY, like that file.
 --
 -- WHO RUNS IT. A superuser, with `psql -f`, on the database box-reader.sql was
--- applied to. Idempotent. Never paste it into an interactive session: there
--- an error returns psql to its prompt instead of ending the run, and the rest
--- of the pasted text would go on. The file sets ON_ERROR_STOP on and
--- ON_ERROR_ROLLBACK off itself (the `\set` lines below), so `psql -f` stops at
--- the first error and exits with a non-zero status whatever was given with
+-- applied to. Idempotent. Never paste it, or part of it, into an interactive
+-- session: there an error returns psql to its prompt instead of ending the run,
+-- and the rest of the pasted text would go on. The file sets ON_ERROR_STOP on
+-- and ON_ERROR_ROLLBACK off itself (the `\set` lines below), so `psql -f` stops
+-- at the first error and exits with a non-zero status whatever was given with
 -- `-v`, and no error is quietly undone while the run goes on. Those lines are
--- psql commands, which another client does not understand. Step 3's safety
--- does not rest on any of this: its check and its grants are one statement,
--- so a check that fails undoes every grant with it, however it was run.
+-- psql commands, which another client does not understand. Step 3's safety does
+-- not rest on any of this: its check and its grants are one statement, so a
+-- check that fails undoes every grant with it, with or without those settings
+-- and whether or not autocommit is on (with autocommit off, steps 2 and 3 share
+-- one transaction, which changes nothing of this).
+--
+-- NEVER AT THE SAME TIME AS THE OPERATOR'S ROLE SCRIPT (O1). Step 3's check
+-- takes no lock on the role: an `ALTER ROLE box_reader LOGIN` committed while
+-- step 3 runs would leave the box able to log in with PUBLIC's rights back.
 --
 -- WHAT IT DOES, in three steps, in this order:
 --   1. One transaction: it takes the login away from box_reader, and its
@@ -31,10 +37,12 @@
 --      anything back. On Postgres 17 and later a short transaction_timeout on
 --      the operator's role would end the session in this step (the file does
 --      not lift it); that stops the file on the safe side.
---   3. One statement, in one transaction. First it checks again that
---      box_reader cannot log in and has no session, and stops with an error
+--   3. One statement (in a transaction of its own unless autocommit is off).
+--      First it checks again that box_reader cannot log in and has no
+--      session, reading the list of sessions afresh, and stops with an error
 --      otherwise; the error undoes the whole statement, so this step gives
---      nothing back however the file was run or cut short. Then it gives
+--      nothing back whichever psql settings it ran under or where the file
+--      was cut short. Then it gives
 --      PUBLIC back, in this database, what box-reader.sql took: CONNECT
 --      on the database, then EXECUTE on the advisory lock functions, on the
 --      large object functions and on pg_logical_emit_message. So every role
@@ -52,11 +60,12 @@
 -- given it one).
 --
 -- CATALOG NAMES (pg_stat_activity, pg_terminate_backend, format and the
--- others) are not qualified: they resolve through the session's search path.
--- The default path puts pg_catalog first. A path set for the session, or for
--- the database or the role (by a superuser, the database's owner or whoever
--- administers the role), could change what they mean; check `SHOW
--- search_path` first if any such setting exists.
+-- others) are not qualified, so the file sets its own search path (pg_catalog,
+-- then pg_temp) right after the `\set` lines, whatever path the session, the
+-- database or the role had. The default path ("$user", public) is NOT safe
+-- for a superuser: pg_catalog comes first only between functions with the
+-- same argument types, and a function in public with a closer match, which
+-- commerce_ddl may create there, would run with the superuser's rights.
 --
 -- IT ASSUMES that before box-reader.sql PUBLIC held what Postgres gives it by
 -- default. If the real database had already taken one of these rights from
@@ -79,6 +88,12 @@
 
 \set ON_ERROR_STOP on
 \set ON_ERROR_ROLLBACK off
+
+-- Every name below resolves in pg_catalog and nowhere else: under the default
+-- path ("$user", public) a function someone created in public with a closer
+-- argument type (pg_sleep(integer), format(text, name)) would win over the
+-- built-in and run with the superuser's rights.
+SET search_path = pg_catalog, pg_temp;
 
 -- Step 1. The box is shut out.
 BEGIN;
@@ -144,6 +159,9 @@ BEGIN
     RAISE EXCEPTION 'box-reader-rollback.sql: box_reader can still log in; '
       'PUBLIC has been given nothing back. Run the whole file again.';
   END IF;
+  -- Read afresh: with autocommit off this shares a transaction with step 2,
+  -- whose last look Postgres would otherwise show again.
+  PERFORM pg_stat_clear_snapshot();
   SELECT count(*) INTO open_sessions FROM pg_stat_activity
    WHERE usename = 'box_reader' AND pid <> pg_backend_pid();
   IF open_sessions > 0 THEN

@@ -742,6 +742,96 @@ describe('afterwards', () => {
     expect(await applicationPaths()).toEqual(ALL_WORK);
   }, 120_000);
 
+  it('functions commerce_ddl plants in public do not run when the superuser applies the four files', async () => {
+    // commerce_ddl may create functions in public. Each one below matches a call in the files more
+    // closely than the built-in does, so under the default search path ("$user", public) it would
+    // win and run with the superuser's rights. Each records that it ran and tries to make
+    // commerce_ddl a superuser. The files set their own search path, so none of them may run.
+    const roleOf = async () =>
+      (
+        await su!`
+          SELECT r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolreplication, r.rolbypassrls, r.rolinherit,
+                 ARRAY(SELECT m.roleid::regrole::text FROM pg_auth_members m WHERE m.member = r.oid ORDER BY 1) AS member_of
+            FROM pg_roles r WHERE r.rolname = 'commerce_ddl'
+        `
+      ).map((row) => ({ ...row }));
+    const roleBefore = await roleOf();
+    expect(roleBefore[0]!.rolsuper).toBe(false);
+    const ddl = as('commerce_ddl');
+    await ddl`CREATE TABLE public.box_reader_test_planted_ran (fn text)`;
+    try {
+      // Each body: note that it ran, try to make commerce_ddl a superuser (it works only when a
+      // superuser is the caller), then answer as the built-in would.
+      await ddl`
+        CREATE FUNCTION public.pg_sleep(integer) RETURNS void LANGUAGE plpgsql AS $f$
+        BEGIN
+          INSERT INTO public.box_reader_test_planted_ran VALUES ('pg_sleep');
+          BEGIN ALTER ROLE commerce_ddl SUPERUSER; EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+        END $f$
+      `;
+      await ddl`
+        CREATE FUNCTION public.format(text, name) RETURNS text LANGUAGE plpgsql AS $f$
+        BEGIN
+          INSERT INTO public.box_reader_test_planted_ran VALUES ('format');
+          BEGIN ALTER ROLE commerce_ddl SUPERUSER; EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+          RETURN pg_catalog.format($1, $2);
+        END $f$
+      `;
+      await ddl`
+        CREATE FUNCTION public.pg_terminate_backend(integer, integer) RETURNS boolean LANGUAGE plpgsql AS $f$
+        BEGIN
+          INSERT INTO public.box_reader_test_planted_ran VALUES ('pg_terminate_backend');
+          BEGIN ALTER ROLE commerce_ddl SUPERUSER; EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+          RETURN pg_catalog.pg_terminate_backend($1, $2);
+        END $f$
+      `;
+      await ddl`
+        CREATE FUNCTION public.has_schema_privilege(text, oid, text) RETURNS boolean LANGUAGE plpgsql AS $f$
+        BEGIN
+          INSERT INTO public.box_reader_test_planted_ran VALUES ('has_schema_privilege');
+          BEGIN ALTER ROLE commerce_ddl SUPERUSER; EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+          RETURN pg_catalog.has_schema_privilege($1, $2, $3);
+        END $f$
+      `;
+      await ddl`
+        CREATE FUNCTION public.acldefault(text, oid) RETURNS aclitem[] LANGUAGE plpgsql AS $f$
+        BEGIN
+          INSERT INTO public.box_reader_test_planted_ran VALUES ('acldefault');
+          BEGIN ALTER ROLE commerce_ddl SUPERUSER; EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+          RETURN pg_catalog.acldefault($1::"char", $2);
+        END $f$
+      `;
+      // The control: under the default path a planted function does win, called as the superuser.
+      const [control] = await su!`SELECT format('%I', current_database()::name) AS v`;
+      expect(control!.v).toBe(DB_NAME);
+      expect((await su!`SELECT fn FROM public.box_reader_test_planted_ran`).map((row) => row.fn)).toEqual(['format']);
+      expect((await roleOf())[0]!.rolsuper).toBe(true);
+      await su!`ALTER ROLE commerce_ddl NOSUPERUSER`;
+      await su!`TRUNCATE public.box_reader_test_planted_ran`;
+      expect(await roleOf()).toEqual(roleBefore);
+
+      // The four files, applied as the operator applies them, with the plants in place.
+      await apply('commerce-roles.sql');
+      await apply('box-reader-preflight.sql');
+      await apply('box-reader.sql');
+      await apply('box-reader-rollback.sql');
+      await apply('box-reader.sql');
+      await su!`ALTER ROLE box_reader LOGIN`;
+
+      // None of the planted functions ran, and commerce_ddl holds exactly what it held.
+      expect((await su!`SELECT fn FROM public.box_reader_test_planted_ran`).map((row) => row.fn)).toEqual([]);
+      expect(await roleOf()).toEqual(roleBefore);
+    } finally {
+      await su!`ALTER ROLE commerce_ddl NOSUPERUSER`;
+      await su!`
+        DROP FUNCTION IF EXISTS public.pg_sleep(integer), public.format(text, name),
+          public.pg_terminate_backend(integer, integer), public.has_schema_privilege(text, oid, text),
+          public.acldefault(text, oid)
+      `;
+      await su!`DROP TABLE IF EXISTS public.box_reader_test_planted_ran`;
+    }
+  }, 180_000);
+
   it('the preflight file runs, changes nothing, and reports this database as hardened and clean', async () => {
     const before = await rightsOf('box_reader');
     const output = await apply('box-reader-preflight.sql');
@@ -904,6 +994,14 @@ describe('afterwards', () => {
     expect(before.role.rolcanlogin).toBe(true);
     // A session of the box that step 2 will not manage to end: a pg_terminate_backend that ends
     // nothing is put ahead of Postgres' own on the rollback's search path (only its session sees it).
+    // The file sets its own path, which defeats exactly that, so this runs a copy of the file with
+    // only that SET line cut: what it shows is that the file's own ON_ERROR_STOP ends the run at step
+    // 2's error, not that a session cannot outlast step 2 in the real file.
+    const rollbackText = readFileSync(path.join(SQL_DIR, 'box-reader-rollback.sql'), 'utf8');
+    expect(rollbackText).toContain('\nSET search_path = pg_catalog, pg_temp;\n');
+    await container!.copyContentToContainer([
+      { content: rollbackText.replace('\nSET search_path = pg_catalog, pg_temp;\n', '\n'), target: '/tmp/cut-rollback.sql' },
+    ]);
     const held = as('box_reader');
     await held`SELECT 1`;
     await su!`CREATE SCHEMA box_reader_test_shadow`;
@@ -912,7 +1010,7 @@ describe('afterwards', () => {
         CREATE FUNCTION box_reader_test_shadow.pg_terminate_backend(pid integer, timeout bigint DEFAULT 0)
           RETURNS boolean LANGUAGE sql AS 'SELECT false'
       `;
-      const { exitCode, output } = await runPlain('box-reader-rollback.sql', '-c search_path=box_reader_test_shadow,pg_catalog');
+      const { exitCode, output } = await runPlain('cut-rollback.sql', '-c search_path=box_reader_test_shadow,pg_catalog');
       // The guard of step 2 raised, and psql stopped there by itself, with a non-zero status.
       expect(output).toContain('session(s) of box_reader did not end');
       expect(exitCode).not.toBe(0);

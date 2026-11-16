@@ -17,15 +17,15 @@
 -- harmless. What is left is listed below, in full, so nobody takes this file
 -- for more than it is.
 --
--- WHO RUNS IT. Once per database, by a superuser (on Coolify the database's
--- own bootstrap user), with `psql -f`, AFTER
--- prisma/sql/commerce-roles.sql (it grants to the two commerce roles and stops
--- if they do not exist). It is idempotent: running it again changes nothing
--- and fails nothing, and re-applying it is how an upgrade of this file, or a
--- restore of a dump, gets the same shape again. It names no database: every
--- database-level statement uses current_database(). The role and its defaults
--- belong to the whole cluster, so it also resets the role's defaults for every
--- database of the cluster (see "Defaults" below). Never paste it into an
+-- WHO RUNS IT. Once per database, by a superuser (on Coolify the database's own
+-- bootstrap user), with `psql -f`, AFTER prisma/sql/commerce-roles.sql (it
+-- grants to the two commerce roles and stops if they do not exist). It is
+-- idempotent: running it again changes nothing and fails nothing, and
+-- re-applying it is how an upgrade of this file, or a restore of a dump, gets
+-- the same shape again. It names no database: every database-level statement
+-- uses current_database(). The role and its defaults belong to the whole
+-- cluster, so it also resets the role's defaults for every database of the
+-- cluster (see "Defaults" below). Never paste it, or part of it, into an
 -- interactive session: there an error returns psql to its prompt instead of
 -- ending the run, and the rest of the pasted text would go on. The file sets
 -- ON_ERROR_STOP on and ON_ERROR_ROLLBACK off itself (the `\set` lines below),
@@ -140,6 +140,12 @@
 
 \set ON_ERROR_STOP on
 \set ON_ERROR_ROLLBACK off
+
+-- Every name below resolves in pg_catalog and nowhere else: under the default
+-- path ("$user", public) a function someone created in public with a closer
+-- argument type (pg_sleep(integer), format(text, name)) would win over the
+-- built-in and run with the superuser's rights.
+SET search_path = pg_catalog, pg_temp;
 
 -- Everything in one transaction: it is applied whole or not at all. A session
 -- that starts meanwhile sees the database as it was before the file, never

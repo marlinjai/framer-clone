@@ -13,6 +13,12 @@
 
 \set ON_ERROR_STOP on
 
+-- Every name below resolves in pg_catalog and nowhere else: under the default
+-- path ("$user", public) a function someone created in public with a closer
+-- argument type (has_schema_privilege(text, oid, text), acldefault(text, oid))
+-- would win over the built-in and run with the superuser's rights.
+SET search_path = pg_catalog, pg_temp;
+
 \echo '== 1. Login roles that would LOSE CONNECT on this database (no grant of it by their own name; a role'
 \echo '==    that has it through a role it is a member of is listed too and keeps it).'
 \echo '==    Expected: none. For each role listed that should keep it: GRANT CONNECT ON DATABASE <db> TO <role>;'
