@@ -10,13 +10,13 @@
 'use client';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
 import EditorCommerceProvider from '@/components/EditorCommerceProvider';
+import { leavePreview } from './leavePreview';
 import { ProductPreviewPicker } from '@/components/ProductPreviewBar';
 import { pageForSitePath } from '@/lib/site/sitePath';
 import PreviewFrame from './PreviewFrame';
@@ -237,9 +237,12 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
     return (
       <div className="w-screen h-screen flex flex-col items-center justify-center bg-gray-900 text-gray-300 gap-3">
         <div className="text-sm">No project is loaded.</div>
-        <Link href="/projects" className="text-xs text-brand hover:underline">
+        {/* A full load: this may be the project preview, whose frame policy must not follow
+            into the projects list (leavePreview). */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full document load on purpose */}
+        <a href="/projects" className="text-xs text-brand hover:underline">
           Open your projects →
-        </Link>
+        </a>
       </div>
     );
   }
@@ -249,7 +252,9 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
   // the project's editor, or the browser-only demo editor at `/`.
   const editorBase = rootStore.editorUI.isUnsavedDemo ? '/' : `/projects/${project.id}`;
   const editorHref = `${editorBase}?page=${encodeURIComponent(page.id)}`;
-  const onBack = onClose ?? (() => router.push(editorHref));
+  // Leaving the project's preview route is a full load (leavePreview: its frame policy
+  // stays with the document); the demo's lives in this tab's memory, so it stays client-side.
+  const onBack = onClose ?? (() => (rootStore.editorUI.isUnsavedDemo ? router.push(editorHref) : leavePreview(editorHref)));
   // Title plus address, so two pages with the same title can be told apart.
   const pages = project.pagesArray.map((p) => ({
     id: p.id,
