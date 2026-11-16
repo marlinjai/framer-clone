@@ -25,6 +25,61 @@ function code(text: string): string {
     .join('\n');
 }
 
+/** A name with its schema: `schema.name`, either part quoted or not. */
+const QUALIFIED = /^"?[a-z_]+"?\."?[A-Za-z_]+"?$/;
+
+/**
+ * Every object a statement drops, alters, empties, deletes from, writes to or reads from, as written. A schema a
+ * statement drops is listed apart: it is never looked up through the search path, so it is a bare name.
+ */
+function objectsOf(sql: string): { relations: string[]; schemas: string[] } {
+  const relations = [
+    ...sql.matchAll(
+      /\b(?:DROP (?:TABLE|FUNCTION|INDEX|VIEW|MATERIALIZED VIEW|TYPE|SEQUENCE)|ALTER TABLE|TRUNCATE(?: TABLE)?|DELETE FROM|INSERT INTO|UPDATE|FROM|JOIN)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^\s(;,)]+)/g,
+    ),
+    ...sql.matchAll(/\bDROP TRIGGER\s+(?:IF EXISTS\s+)?\S+\s+ON\s+(?:ONLY\s+)?([^\s(;,)]+)/g),
+  ]
+    .map((match) => match[1]!)
+    // `REVOKE ... FROM PUBLIC` names the role every role belongs to, not a relation.
+    .filter((name) => name !== 'PUBLIC');
+  const schemas = [...sql.matchAll(/\bDROP SCHEMA\s+(?:IF EXISTS\s+)?([^\s(;,)]+)/g)].map((match) => match[1]!);
+  return { relations, schemas };
+}
+
+/** What `objectsOf` finds that is not named the way these files must name it. */
+function misnamed(sql: string): string[] {
+  const { relations, schemas } = objectsOf(sql);
+  return [...relations.filter((name) => !QUALIFIED.test(name)), ...schemas.filter((name) => !/^"?[a-z_]+"?$/.test(name))];
+}
+
+describe('the detector of objects a rollback names', () => {
+  it.each([
+    ['DROP TABLE IF EXISTS "site_models";', ['"site_models"']],
+    ['DROP TABLE IF EXISTS "public"."site_models";', []],
+    ['ALTER TABLE ONLY site_models DROP COLUMN x;', ['site_models']],
+    ['DELETE FROM "_prisma_migrations" WHERE a = 1;', ['"_prisma_migrations"']],
+    ['DROP TRIGGER IF EXISTS t ON "site_models";', ['"site_models"']],
+    ['DROP TRIGGER t ON "public"."site_models";', []],
+    ['TRUNCATE site_models;', ['site_models']],
+    ['TRUNCATE TABLE ONLY "public"."site_models";', []],
+    ['SELECT 1 FROM site_models s JOIN sites t ON true;', ['site_models', 'sites']],
+    ['SELECT 1 FROM information_schema.columns WHERE true;', []],
+    ['DROP SCHEMA IF EXISTS "postgres" CASCADE;', []],
+    ['DROP SCHEMA a.b;', ['a.b']],
+    ['REVOKE ALL ON FUNCTION "public"."f"() FROM PUBLIC;', []],
+  ])('%s', (sql, expected) => {
+    expect(misnamed(sql)).toEqual(expected);
+  });
+
+  it('finds each kind of statement at all', () => {
+    const { relations, schemas } = objectsOf(
+      'DROP TRIGGER t ON public.a; TRUNCATE public.b; SELECT 1 FROM public.c JOIN public.d ON true; DROP SCHEMA e;',
+    );
+    expect(relations).toEqual(['public.b', 'public.c', 'public.d', 'public.a']);
+    expect(schemas).toEqual(['e']);
+  });
+});
+
 describe('the migrations\' rollback.sql files', () => {
   it('are found (the walk works)', () => {
     expect(rollbacks.map(([name]) => name)).toEqual(
@@ -42,7 +97,7 @@ describe('the migrations\' rollback.sql files', () => {
     expect(first?.trim().split(/\s+/)).toEqual(['SET', 'search_path', '=', 'pg_catalog,', 'pg_temp;']);
   });
 
-  it.each(rollbacks)('%s names Prisma\'s history table and every changed object with its schema', (_name, text) => {
+  it.each(rollbacks)('%s names Prisma\'s history table and every object it touches with its schema', (_name, text) => {
     const body = code(text);
     // Every mention of the history table carries the public schema.
     const history = [...body.matchAll(/(?:"?public"?\.)?"?_prisma_migrations"?/g)].map((match) => match[0]);
@@ -51,11 +106,8 @@ describe('the migrations\' rollback.sql files', () => {
     // Every catalog lookup is pg_catalog's own.
     const lookups = [...body.matchAll(/([A-Za-z_."]*)\bto_regclass\(/g)].map((match) => match[1]);
     expect(lookups.filter((prefix) => prefix !== 'pg_catalog.')).toEqual([]);
-    // Every object a statement drops, alters, deletes from or writes to is named with its schema.
-    const targets = [
-      ...body.matchAll(/\b(?:DROP (?:TABLE|FUNCTION|INDEX|VIEW|TYPE|SEQUENCE)|ALTER TABLE|DELETE FROM|INSERT INTO|UPDATE)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^\s(;]+)/g),
-    ].map((match) => match[1]!);
-    expect(targets.length).toBeGreaterThan(0);
-    expect(targets.filter((target) => !/^"?[a-z_]+"?\."?[A-Za-z_]+"?$/.test(target))).toEqual([]);
+    // Every object a statement drops, alters, empties, deletes from, writes to or reads from is named with its schema.
+    expect(objectsOf(body).relations.length).toBeGreaterThan(0);
+    expect(misnamed(body)).toEqual([]);
   });
 });

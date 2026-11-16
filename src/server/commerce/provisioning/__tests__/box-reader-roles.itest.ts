@@ -4,9 +4,9 @@
 // the service that will serve sandboxed custom code, and the hardening that
 // keeps a stolen password for it from reaching beyond the box) and of its
 // rollback, on a throwaway Postgres 16 in the production role topology. It is
-// offline preparation only: nothing here touches a real database, and the
-// file is applied to no real database (only to throwaway containers, here and
-// in the box's integration suite; plan docs/plans/2026-11-02-sandboxed-custom-code.md,
+// offline preparation only: nothing here touches a real database, and
+// nothing in this repository applies the file to one (only tests apply it,
+// to throwaway containers, here and in the box's integration suite; plan docs/plans/2026-11-02-sandboxed-custom-code.md,
 // decisions D20 and D24).
 //
 // The database is built the way a deploy builds it: commerce-roles.sql as the
@@ -47,7 +47,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import postgres from 'postgres';
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 
@@ -457,17 +458,10 @@ describe('the migration of slice C1b and box-reader.sql at the same time', () =>
   const GRANT_LOCK = BigInt(7461001200);
   const PAUSE_LOCK = BigInt(7461001299);
   const migrationText = readFileSync(MIGRATION, 'utf8');
-  /** The migration's own lock statement, as it is (empty if it had none), and its last part: the grant to box_reader if the role exists. */
-  const lockStatement = /^SELECT pg_catalog\.pg_advisory_xact_lock\(\d+\);$/m.exec(migrationText)?.[0] ?? '';
-  const GRANT_PART = "-- The grant to the box's role, only where the role exists";
-  const grantPart = migrationText.slice(migrationText.indexOf(GRANT_PART));
-  /** A stand-in for the rest of the migration: the function, with the same signature, EXECUTE taken from PUBLIC. */
-  const STAND_IN = `
-    CREATE FUNCTION public.box_document(p_site_id text, p_sha256 text)
-      RETURNS TABLE (document text, live boolean, subdomain_labels text[], custom_hostnames text[])
-      LANGUAGE sql AS $$ SELECT NULL::text, false, ARRAY[]::text[], ARRAY[]::text[] $$;
-    REVOKE ALL ON FUNCTION public.box_document(text, text) FROM PUBLIC;
-  `;
+  /** The lock statement both files carry: PERFORM inside a DO block, so psql prints nothing for it. */
+  const LOCK = `DO $$ BEGIN PERFORM pg_catalog.pg_advisory_xact_lock(${GRANT_LOCK}); END $$;`;
+  /** A statement that waits, with its transaction open, until the test lets go of PAUSE_LOCK. */
+  const PAUSE = `DO $$ BEGIN PERFORM pg_catalog.pg_advisory_lock(${PAUSE_LOCK}); END $$;`;
 
   /** Sessions in a database that wait, not granted, on the advisory lock with this key (and wait for a Lock, per pg_stat_activity). */
   const waitersOn = async (database: string, key: bigint): Promise<number> => {
@@ -483,9 +477,9 @@ describe('the migration of slice C1b and box-reader.sql at the same time', () =>
     return row!.waiting as number;
   };
 
-  /** Polls until a session waits on the key; false as soon as `finished` says the run it is watching ended, or after 30 seconds. */
+  /** Polls until a session waits on the key; false as soon as `finished` says the run it is watching ended, or after 60 seconds. */
   const seenWaiting = async (database: string, key: bigint, finished: () => boolean): Promise<boolean> => {
-    for (let tries = 0; tries < 300; tries += 1) {
+    for (let tries = 0; tries < 600; tries += 1) {
       if ((await waitersOn(database, key)) > 0) return true;
       if (finished()) return false;
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -503,10 +497,11 @@ describe('the migration of slice C1b and box-reader.sql at the same time', () =>
     return state;
   };
 
-  /** `prisma migrate deploy` without blocking the test, so the test can watch it wait. */
-  const migrateInBackground = (database: string) =>
+  /** `prisma migrate deploy` without blocking the test, so the test can watch it wait; with another schema file (and its migrations folder) if given. */
+  const migrateInBackground = (database: string, schemaFile?: string) =>
     new Promise<{ status: number | null; output: string }>((resolve) => {
-      const child = spawn('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], { env: { ...process.env, DATABASE_URL: urlOf('postgres', database) } });
+      const args = ['exec', 'prisma', 'migrate', 'deploy', ...(schemaFile ? ['--schema', schemaFile] : [])];
+      const child = spawn('pnpm', args, { env: { ...process.env, DATABASE_URL: urlOf('postgres', database) } });
       let output = '';
       child.stdout.on('data', (chunk) => (output += chunk));
       child.stderr.on('data', (chunk) => (output += chunk));
@@ -533,43 +528,49 @@ describe('the migration of slice C1b and box-reader.sql at the same time', () =>
 
   it('both files take the same lock, as a statement of its own before their check', () => {
     const fileText = readFileSync(path.join(SQL_DIR, 'box-reader.sql'), 'utf8');
-    const lock = `SELECT pg_catalog.pg_advisory_xact_lock(${GRANT_LOCK});`;
     // The migration: its first statement, so before it locks `sites` and before its check at the end.
-    expect(lockStatement).toBe(lock);
-    expect(grantPart).toContain('DO $$');
-    expect(migrationText.indexOf(lock)).toBeGreaterThan(-1);
-    expect(migrationText.indexOf(lock)).toBeLessThan(migrationText.indexOf('ALTER TABLE "public"."sites"'));
-    expect(fileText.indexOf(lock)).toBeGreaterThan(fileText.indexOf('\nBEGIN;\n'));
-    expect(fileText.indexOf(lock)).toBeLessThan(fileText.indexOf("to_regprocedure('public.box_document(text, text)')"));
+    const firstStatement = migrationText.split('\n').find((line) => line.trim() !== '' && !line.startsWith('--'));
+    expect(firstStatement).toBe(LOCK);
+    expect(migrationText.indexOf(LOCK)).toBeLessThan(migrationText.indexOf("WHERE rolname = 'box_reader'"));
+    // The file: first thing in its transaction, before its check for the function.
+    const afterBegin = fileText.slice(fileText.indexOf('\nBEGIN;\n') + '\nBEGIN;\n'.length);
+    expect(afterBegin.split('\n').find((line) => line.trim() !== '' && !line.startsWith('--'))).toBe(LOCK);
+    expect(fileText.indexOf(LOCK)).toBeLessThan(fileText.indexOf("to_regprocedure('public.box_document(text, text)')"));
   });
 
-  it('the migration holds the lock (its own lock statement and grant part, around a stand-in for the function): box-reader.sql waits for its commit, then grants', async () => {
+  it('the real migration holds the lock: box-reader.sql waits for its commit, then grants', async () => {
     await inRaceDatabase('framer_clone_box_race_migration_first', async (race) => {
       const database = 'framer_clone_box_race_migration_first';
-      await container!.copyContentToContainer([
-        { content: `BEGIN;\n${lockStatement}\n${STAND_IN}\n${grantPart}\nSELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK});\nCOMMIT;\n`, target: '/tmp/race-migration.sql' },
-      ]);
-      await race`SELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK.toString()}::bigint)`;
-      const migration = watched(psqlFile('race-migration.sql', database));
-      let file: Watched<{ exitCode: number; output: string }> | undefined;
+      // A copy of the schema and its migrations folder, the C1b migration as it is plus one last statement that waits for
+      // the test: after its lock and its own check (no role yet), with its transaction open.
+      const scratch = mkdtempSync(path.join(tmpdir(), 'box-race-'));
       try {
-        // The migration's part has taken its lock, made the function, checked for the role (none yet), and waits, open, for the test.
-        expect(await seenWaiting(database, PAUSE_LOCK, () => migration.done)).toBe(true);
-        file = watched(psqlFile('box-reader.sql', database));
-        // box-reader.sql, meanwhile, waits on the lock the migration holds: its check has not run yet.
-        expect(await seenWaiting(database, GRANT_LOCK, () => file!.done), 'box-reader.sql waits for the migration').toBe(true);
+        cpSync(path.resolve(__dirname, '../../../../../prisma/migrations'), path.join(scratch, 'migrations'), { recursive: true });
+        copyFileSync(path.resolve(__dirname, '../../../../../prisma/schema.prisma'), path.join(scratch, 'schema.prisma'));
+        appendFileSync(path.join(scratch, 'migrations/20261115000000_custom_code/migration.sql'), `\n${PAUSE}\n`);
+        await race`SELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK.toString()}::bigint)`;
+        const migration = watched(migrateInBackground(database, path.join(scratch, 'schema.prisma')));
+        let file: Watched<{ exitCode: number; output: string }> | undefined;
+        try {
+          expect(await seenWaiting(database, PAUSE_LOCK, () => migration.done), 'the migration reaches its last statement').toBe(true);
+          file = watched(psqlFile('box-reader.sql', database));
+          // box-reader.sql, meanwhile, waits on the lock the migration holds: its check has not run yet.
+          expect(await seenWaiting(database, GRANT_LOCK, () => file!.done), 'box-reader.sql waits for the migration').toBe(true);
+        } finally {
+          await race`SELECT pg_catalog.pg_advisory_unlock(${PAUSE_LOCK.toString()}::bigint)`;
+        }
+        const migrated = await migration.run;
+        expect(migrated.status, migrated.output).toBe(0);
+        const applied = await file!.run;
+        expect(applied.exitCode, applied.output).toBe(0);
+        // Its check, a new statement after the wait, saw the committed function: box_reader may execute it.
+        const [row] = await race`SELECT pg_catalog.has_function_privilege('box_reader', 'public.box_document(text, text)', 'EXECUTE') AS may`;
+        expect(row!.may).toBe(true);
       } finally {
-        await race`SELECT pg_catalog.pg_advisory_unlock(${PAUSE_LOCK.toString()}::bigint)`;
+        rmSync(scratch, { recursive: true, force: true });
       }
-      const migrated = await migration.run;
-      expect(migrated.exitCode, migrated.output).toBe(0);
-      const applied = await file!.run;
-      expect(applied.exitCode, applied.output).toBe(0);
-      // Its check, a new statement after the wait, saw the committed function: box_reader may execute it.
-      const [row] = await race`SELECT pg_catalog.has_function_privilege('box_reader', 'public.box_document(text, text)', 'EXECUTE') AS may`;
-      expect(row!.may).toBe(true);
     });
-  }, 180_000);
+  }, 300_000);
 
   it('box-reader.sql holds the lock: the real migration waits for its commit, then grants', async () => {
     await inRaceDatabase('framer_clone_box_race_file_first', async (race) => {
@@ -579,7 +580,7 @@ describe('the migration of slice C1b and box-reader.sql at the same time', () =>
       const commit = fileText.lastIndexOf('\nCOMMIT;');
       expect(commit).toBeGreaterThan(-1);
       await container!.copyContentToContainer([
-        { content: `${fileText.slice(0, commit)}\nSELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK});${fileText.slice(commit)}`, target: '/tmp/race-box-reader.sql' },
+        { content: `${fileText.slice(0, commit)}\n${PAUSE}${fileText.slice(commit)}`, target: '/tmp/race-box-reader.sql' },
       ]);
       await race`SELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK.toString()}::bigint)`;
       const file = watched(psqlFile('race-box-reader.sql', database));
@@ -606,7 +607,8 @@ describe('the migration of slice C1b and box-reader.sql at the same time', () =>
 
 describe('box-reader.sql applied', () => {
   it('applies cleanly, twice, and again after the role was given a login, which it keeps', async () => {
-    await apply('box-reader.sql');
+    // Its lock prints nothing (no result table for the operator to read past).
+    expect(await apply('box-reader.sql')).not.toMatch(/pg_advisory_xact_lock|\(1 row\)/);
     await apply('box-reader.sql');
     await su!`ALTER ROLE box_reader LOGIN`;
     await apply('box-reader.sql');
