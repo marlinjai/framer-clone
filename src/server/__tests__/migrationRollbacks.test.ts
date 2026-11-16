@@ -26,7 +26,7 @@ function code(text: string): string {
 }
 
 /** A name with its schema: `schema.name`, either part quoted or not. */
-const QUALIFIED = /^"?[a-z_]+"?\."?[A-Za-z_]+"?$/;
+const QUALIFIED = /^(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\.(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)$/;
 
 /** Splits a list of names on the commas that are not inside parentheses (a function's argument types). */
 function splitNames(list: string): string[] {
@@ -50,32 +50,61 @@ function splitNames(list: string): string[] {
 const NAME = String.raw`(?:"[^"]+"|[^\s(;,)."]+)(?:\.(?:"[^"]+"|[^\s(;,)."]+))?`;
 
 /**
+ * The text with comments and string literals blanked, in one left-to-right pass so a quote inside a comment and a
+ * comment marker inside a string are each read as what they are: `--` to the end of the line, `/* ... *\/`, an escape
+ * string `E'...'` (backslash escapes) and a plain string (doubled quotes). Dollar-quoted bodies stay: they are code.
+ */
+function blanked(text: string): string {
+  return text.replace(/--[^\n]*|\/\*[\s\S]*?\*\/|[Ee]'(?:[^'\\]|\\[\s\S]|'')*'|'(?:[^']|'')*'/g, (token) =>
+    token.startsWith('--') || token.startsWith('/*') ? ' ' : "''",
+  );
+}
+
+/** A table reference in a FROM or USING list: the name, then an optional alias. */
+const REFERENCE = String.raw`${NAME}(?:\s+(?:AS\s+)?(?!(?:WHERE|JOIN|ON|LEFT|RIGHT|INNER|FULL|CROSS|GROUP|ORDER|LIMIT|USING|RETURNING)\b)\w+)?`;
+
+/** The names of a FROM or USING list, aliases left out. */
+function referencesOf(list: string): string[] {
+  return splitNames(list).map((reference) => reference.match(new RegExp(`^${NAME}`))![0]);
+}
+
+/**
  * Every object a statement drops, alters, empties, deletes from, writes to or reads from, as written, in any letter
- * case and with every name of a list. String literals are left out first, so words in a message are not read as SQL.
- * A schema a statement drops is listed apart: it is never looked up through the search path, so it is a bare name.
+ * case and with every name of a list. Comments and string literals are blanked first, so words in a message are not
+ * read as SQL; dynamic SQL (`EXECUTE` of a string) cannot be read at all, so it is reported as a name of its own.
+ * `FROM` inside the calls that take it as a keyword (extract, substring, trim, overlay, position) and in `REVOKE`
+ * is not a relation. A schema a statement drops is listed apart: it is never looked up through the search path, so it
+ * is a bare name.
  */
 function objectsOf(text: string): { relations: string[]; schemas: string[] } {
-  const sql = text.replace(/'(?:[^']|'')*'/g, "''");
+  const sql = blanked(text);
   const single = [
     ...sql.matchAll(
-      new RegExp(
-        String.raw`\b(?:ALTER TABLE|DELETE FROM|INSERT INTO|UPDATE|(?<!\(\s*\w+\s+)FROM|JOIN)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?(${NAME})`,
-        'gi',
-      ),
+      new RegExp(String.raw`\b(?:ALTER TABLE|INSERT INTO|UPDATE)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?(${NAME})`, 'gi'),
     ),
-    ...sql.matchAll(new RegExp(String.raw`\bDELETE FROM\s+${NAME}(?:\s+(?:AS\s+)?\w+)?\s+USING\s+(${NAME})`, 'gi')),
     ...sql.matchAll(
       new RegExp(String.raw`\bDROP (?:TRIGGER|POLICY|RULE)\s+(?:IF EXISTS\s+)?${NAME}\s+ON\s+(?:ONLY\s+)?(${NAME})`, 'gi'),
     ),
+    ...sql.matchAll(new RegExp(String.raw`\bFROM\s*\(\s*TABLE\s+(${NAME})`, 'gi')),
   ].map((match) => match[1]!);
+  // FROM, JOIN and USING lists: every table of the list.
+  const referenced = [
+    ...sql.matchAll(
+      new RegExp(
+        String.raw`(?<!\b(?:extract|substring|trim|overlay|position)\s*\([^()]*)(?<!\bREVOKE\b[^;]*)\b(?:FROM|JOIN|(?<=\bDELETE\s+FROM\b[^;]*)USING)\s+(?:ONLY\s+)?(${REFERENCE}(?:\s*,\s*${REFERENCE})*)`,
+        'gi',
+      ),
+    ),
+  ].flatMap((match) => referencesOf(match[1]!));
   // Statements that take a list of names: every name of the list, not only the first.
   const listed = [
     ...sql.matchAll(
       /\b(?:DROP (?:TABLE|INDEX(?: CONCURRENTLY)?|VIEW|MATERIALIZED VIEW|TYPE|SEQUENCE|FUNCTION)|TRUNCATE(?: TABLE)?)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT|RESTART IDENTITY|CONTINUE IDENTITY))*\s*(?:;|$)/gi,
     ),
   ].flatMap((match) => splitNames(match[1]!));
-  const relations = [...single, ...listed]
-    // `REVOKE ... FROM PUBLIC` names the role every role belongs to, not a relation.
+  const dynamic = [...sql.matchAll(/\bEXECUTE\s+(?!ON\b)/gi)].map(() => 'EXECUTE (dynamic SQL)');
+  const relations = [...single, ...referenced, ...listed, ...dynamic]
+    // `... FROM PUBLIC` names the role every role belongs to, not a relation.
     .filter((name) => name.toUpperCase() !== 'PUBLIC');
   const schemas = [...sql.matchAll(/\bDROP SCHEMA\s+(?:IF EXISTS\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT))?\s*(?:;|$)/gi)].flatMap(
     (match) => splitNames(match[1]!),
@@ -120,6 +149,19 @@ describe('the detector of objects a rollback names', () => {
     ['ALTER TABLE "public"."a" ALTER COLUMN c TYPE text USING c::text;', []],
     ['SELECT extract(epoch from now()) FROM "public"."a";', []],
     ["DO $$ BEGIN RAISE NOTICE 'nothing to update from here'; END $$;", []],
+    ['DO $$ BEGIN IF EXISTS (SELECT FROM site_models) THEN NULL; END IF; END $$;', ['site_models']],
+    ['SELECT 1 WHERE EXISTS (SELECT FROM c);', ['c']],
+    ["DROP TABLE public.a; -- don't\nDROP TABLE b;\nSELECT 'x';", ['b']],
+    ["/* it's */ DROP TABLE b;", ['b']],
+    ["SELECT E'it\\'s'; DROP TABLE b;", ['b']],
+    ["DO $$ BEGIN EXECUTE 'DELETE FROM sites'; END $$;", ['EXECUTE (dynamic SQL)']],
+    ['SELECT 1 FROM "public"."a" x, b y WHERE true;', ['b']],
+    ['DELETE FROM "public"."a" USING "public"."b", c WHERE true;', ['c']],
+    ['SELECT 1 FROM (TABLE x) t;', ['x']],
+    ['REVOKE ALL ON FUNCTION "public"."f"() FROM box_reader;', []],
+    ['DROP TABLE IF EXISTS "public"."t2";', []],
+    ["SELECT '-- not a comment' FROM t;", ['t']],
+    ['GRANT EXECUTE ON FUNCTION "public"."f"() TO box_reader;', []],
   ])('%s', (sql, expected) => {
     expect(misnamed(sql)).toEqual(expected);
   });
