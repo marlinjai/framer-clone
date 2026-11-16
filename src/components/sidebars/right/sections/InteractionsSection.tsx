@@ -20,7 +20,9 @@ import { MousePointerClick, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { useStore } from '@/hooks/useStore';
 import { isSafeHref } from '@/lib/links/safeHref';
+import { getSnapshot } from 'mobx-state-tree';
 import { leavesSite, type StateValue } from '@/lib/behaviour/format';
+import { editPresetItems, presetItemsOf, type PresetEdit } from '@/lib/behaviour/presetItems';
 import {
   ALL_EVENTS,
   CUSTOM_EVENT_CHOICE,
@@ -121,6 +123,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
 
   return (
     <Shell>
+      <PresetItemControls component={component} />
       {holdsNonList(stored, 'on') && (
         <p className={REASON}>Its interactions are not used: {refused.find((r) => r.entry === 'on')?.reason ?? 'on is a list'}.</p>
       )}
@@ -216,6 +219,44 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
 });
 
 InteractionsSection.displayName = 'InteractionsSection';
+
+/** Adds or takes out a preset's items, through the preset's own functions, as one undo step. */
+const PresetItemControls = observer(({ component }: { component: ComponentInstance }) => {
+  const snapshot = getSnapshot(component) as unknown as StoredRecord;
+  const items = presetItemsOf(snapshot);
+  if (!items) return null;
+  const apply = (edit: PresetEdit) => {
+    const next = editPresetItems(getSnapshot(component) as unknown as StoredRecord, edit);
+    if (next) component.replaceSubtree(next);
+  };
+  const noun = items.kind === 'tabs' ? 'tab' : 'slide';
+  return (
+    <div className="flex flex-col gap-1.5" role="group" aria-label={items.kind === 'tabs' ? 'Tabs' : 'Slides'}>
+      <span className={FIELD_LABEL}>{`${items.items.length} ${noun}s, made from a preset`}</span>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" className={SMALL_BUTTON} onClick={() => apply(items.kind === 'tabs' ? { kind: 'addTab' } : { kind: 'addSlide' })}>
+          <Plus size={12} aria-hidden className="mr-1" /> {`Add ${noun}`}
+        </button>
+        {items.canRemove && (
+          <select
+            aria-label="Remove a tab"
+            value=""
+            onChange={(event) => {
+              const index = Number(event.target.value);
+              if (event.target.value !== '' && Number.isInteger(index)) apply({ kind: 'removeTab', index });
+            }}
+            className={cn(FIELD_CONTROL, 'w-auto flex-1 cursor-pointer')}
+          >
+            <option value="">Remove a tab</option>
+            {items.items.map((title, index) => <option key={index} value={index}>{title}</option>)}
+          </select>
+        )}
+      </div>
+    </div>
+  );
+});
+
+PresetItemControls.displayName = 'PresetItemControls';
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (

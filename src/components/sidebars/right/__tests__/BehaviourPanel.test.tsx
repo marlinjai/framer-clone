@@ -304,6 +304,35 @@ describe('backtrack and revise', () => {
   });
 });
 
+describe('a preset\'s items', () => {
+  it('a tab is added and taken out through the preset, one undo step each', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+    const before = history().undoIdx;
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect(group().getByText('4 tabs, made from a preset')).toBeTruthy();
+    expect(history().undoIdx).toBe(before + 1);
+    fireEvent.change(group().getByLabelText('Remove a tab'), { target: { value: '0' } });
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+    expect(Array.from((group().getByLabelText('Remove a tab') as HTMLSelectElement).options).map((o) => o.text)).toEqual(['Remove a tab', 'Second', 'Third', 'Tab 4']);
+    act(() => history().undo());
+    act(() => history().undo());
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+    expect(Array.from((group().getByLabelText('Remove a tab') as HTMLSelectElement).options).map((o) => o.text)).toEqual(['Remove a tab', 'First', 'Second', 'Third']);
+  });
+
+  it('a carousel gains a slide', () => {
+    mount();
+    const slides = store.editorUI.currentPage!.insertRegistryComponent('carousel', { kind: 'appTree' })!;
+    select(slides);
+    fireEvent.click(within(interactions().getByRole('group', { name: 'Slides' })).getByRole('button', { name: 'Add slide' }));
+    expect(interactions().getByText('4 slides, made from a preset')).toBeTruthy();
+  });
+});
+
 describe('resume', () => {
   it('a saved page reads back with every row, and a refused entry with its reason; previews and drafts do not come back', () => {
     mount();

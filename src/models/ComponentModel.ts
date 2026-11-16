@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { replaceTokenReferences } from '@/lib/site/theme';
 import { isPlacementType } from '@/lib/components/placement';
-import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
+import { types, Instance, SnapshotIn, SnapshotOut, applySnapshot, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { contentOf, tagRefusal } from '@/lib/styles/customEditor';
@@ -759,6 +759,15 @@ const ComponentModel: any = ComponentBase
       if (compact) next.behaviour = compact;
       else delete next.behaviour;
       self.props = next;
+      return { ok: true };
+    },
+
+    // A preset's items changed in the panel (src/lib/behaviour/presetItems.ts): its
+    // whole subtree is written as one action, so one undo step. The root keeps its id,
+    // so it stays where it stands; any other id is refused.
+    replaceSubtree(snapshot: Record<string, unknown>): RuleWrite {
+      if (snapshot.id !== self.id) return { ok: false, reason: 'A subtree keeps the id of the node it replaces.' };
+      applySnapshot(self, snapshot as never);
       return { ok: true };
     },
 
