@@ -73,10 +73,10 @@ export class PrismaSiteModels implements SiteModelRepository, ModelCoordinator {
   async beginUpload({ record: rec, limits, attempt, now, pendingTtlMs }: Parameters<ModelCoordinator['beginUpload']>[0]): Promise<BeginUploadOutcome> {
     const keys = [`served/${rec.sha256}`, `original/${rec.originalSha256}`].sort();
     return this.client.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('lock_timeout', ${LOCK_TIMEOUT}, true)`;
+      await tx.$executeRaw`SELECT pg_catalog.set_config('lock_timeout', ${LOCK_TIMEOUT}, true)`;
       // One upload or delete of a site at a time (released when the transaction ends), then the blobs, in one global order.
-      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_models:${rec.siteId}`}))`;
-      for (const key of keys) await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${blobLock(key)}))`;
+      await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_models:${rec.siteId}`}))`;
+      for (const key of keys) await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${blobLock(key)}))`;
       const site = await tx.site.findUnique({ where: { id: rec.siteId }, select: { workspaceId: true, tenantGroupId: true, branchOfSiteId: true } });
       if (!site || (this.scope.workspaceId && site.workspaceId !== this.scope.workspaceId)) throw new Error('site_models: no such site');
       if (site.branchOfSiteId) throw new Error('site_models: a branch has no models of its own; use its main site');
@@ -99,9 +99,9 @@ export class PrismaSiteModels implements SiteModelRepository, ModelCoordinator {
 
       // An original is shared by the rows that came from the same file: it counts once.
       const held = await tx.$queryRaw<{ total: bigint | null; same: bigint }[]>`
-        SELECT COALESCE(SUM(o.original_bytes), 0) AS total,
-               COUNT(*) FILTER (WHERE o.original_sha256 = ${rec.originalSha256}) AS same
-          FROM (SELECT original_sha256, MAX(original_bytes) AS original_bytes
+        SELECT COALESCE(pg_catalog.sum(o.original_bytes), 0) AS total,
+               pg_catalog.count(*) FILTER (WHERE o.original_sha256 = ${rec.originalSha256}) AS same
+          FROM (SELECT original_sha256, pg_catalog.max(original_bytes) AS original_bytes
                   FROM public.site_models WHERE site_id = ${rec.siteId} GROUP BY original_sha256) o`;
       const total = Number(held[0]?.total ?? 0);
       if (Number(held[0]?.same ?? 0) === 0 && total + rec.originalBytes > limits.originalBytes) return { ok: false, reason: 'originals-quota' } as const;
@@ -148,8 +148,8 @@ export class PrismaSiteModels implements SiteModelRepository, ModelCoordinator {
     const m = KEY.exec(key);
     if (!m) throw new Error('model blob key outside the store namespaces');
     return this.client.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('lock_timeout', ${LOCK_TIMEOUT}, true)`;
-      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${blobLock(key)}))`;
+      await tx.$executeRaw`SELECT pg_catalog.set_config('lock_timeout', ${LOCK_TIMEOUT}, true)`;
+      await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${blobLock(key)}))`;
       // ANY row of ANY site, pending or ready, references the blob.
       const refs = m[1] === 'served'
         ? await tx.siteModel.count({ where: { sha256: m[2] } })
@@ -213,7 +213,7 @@ export class PrismaSiteModels implements SiteModelRepository, ModelCoordinator {
   async delete(siteId: string, sha256: string): Promise<void> {
     // Under the site's lock, so a delete cannot interleave with an insert's quota read.
     await this.client.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_models:${siteId}`}))`;
+      await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_models:${siteId}`}))`;
       await tx.siteModel.deleteMany({ where: { ...this.where(siteId), sha256 } });
     }, TX);
   }

@@ -669,7 +669,7 @@ export class SiteRepository {
    */
   private async lockSiteForSave(tx: Prisma.TransactionClient, scope: TenantScope, persisted: PersistedSite): Promise<void> {
     const siteId = persisted.siteId;
-    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_save:${siteId}`}))`;
+    await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_save:${siteId}`}))`;
     if (carriesSiteImagePath(persisted)) {
       const own = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`SELECT branch_of_site_id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId}`;
       const mainId = own[0]?.branch_of_site_id;
@@ -1541,7 +1541,7 @@ export class SiteRepository {
       SELECT b.id, b.name, b.status::text AS status, b.review_note AS "reviewNote", b.branch_site_id AS "branchSiteId",
              (b.base_document IS NOT NULL) AS "hasBase",
              -- The column is a timestamp without zone holding UTC, so it is compared with UTC now, whatever the session's zone.
-             (b.main_before_document IS NOT NULL AND (b.main_before_expires_at IS NULL OR b.main_before_expires_at > (now() AT TIME ZONE 'UTC'))) AS "hasKept"
+             (b.main_before_document IS NOT NULL AND (b.main_before_expires_at IS NULL OR b.main_before_expires_at > (pg_catalog.now() AT TIME ZONE 'UTC'))) AS "hasKept"
       FROM public.site_branches b
       WHERE b.site_id = ${siteId} AND b.workspace_id = ${scope.workspaceId}
       ORDER BY b.id ASC`;
