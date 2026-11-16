@@ -147,7 +147,7 @@ const PROJECT_IMAGE_TRANSACTION = { timeout: 30_000, maxWait: 5_000 } as const;
 
 /** Serialize the uploads and deletes of one site (released when the transaction ends). */
 async function lockSiteImages(tx: Prisma.TransactionClient, siteId: string): Promise<void> {
-  await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_images:${siteId}`}))`;
+  await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_images:${siteId}`}))`;
 }
 
 /**
@@ -169,29 +169,29 @@ async function referencedHashes(tx: Prisma.TransactionClient, siteId: string): P
   const pattern = 'site-images/([0-9a-f]{64})';
   const rows = await tx.$queryRaw<{ sha256: string }[]>`
     SELECT DISTINCT m[1] AS sha256 FROM (
-      SELECT regexp_matches(s.site_settings::text || ' ' || s.components::text, ${pattern}, 'g') AS m
+      SELECT pg_catalog.regexp_matches(s.site_settings::text || ' ' || s.components::text, ${pattern}, 'g') AS m
         FROM public.sites s WHERE s.id = ${siteId}
       UNION ALL
-      SELECT regexp_matches(p.snapshot::text, ${pattern}, 'g') FROM public.site_pages p WHERE p.site_id = ${siteId}
+      SELECT pg_catalog.regexp_matches(p.snapshot::text, ${pattern}, 'g') FROM public.site_pages p WHERE p.site_id = ${siteId}
       UNION ALL
-      SELECT regexp_matches(r.document::text, ${pattern}, 'g') FROM public.site_revisions r WHERE r.site_id = ${siteId}
+      SELECT pg_catalog.regexp_matches(r.document::text, ${pattern}, 'g') FROM public.site_revisions r WHERE r.site_id = ${siteId}
       UNION ALL
-      SELECT regexp_matches(e.config::text, ${pattern}, 'g')
+      SELECT pg_catalog.regexp_matches(e.config::text, ${pattern}, 'g')
         FROM public.site_experiments e WHERE e.site_id = ${siteId} AND e.config IS NOT NULL
       UNION ALL
-      SELECT regexp_matches(b.site_settings::text || ' ' || b.components::text, ${pattern}, 'g')
+      SELECT pg_catalog.regexp_matches(b.site_settings::text || ' ' || b.components::text, ${pattern}, 'g')
         FROM public.sites b WHERE b.branch_of_site_id = ${siteId}
       UNION ALL
-      SELECT regexp_matches(bp.snapshot::text, ${pattern}, 'g')
+      SELECT pg_catalog.regexp_matches(bp.snapshot::text, ${pattern}, 'g')
         FROM public.site_pages bp JOIN public.sites b ON b.id = bp.site_id WHERE b.branch_of_site_id = ${siteId}
       UNION ALL
-      SELECT regexp_matches(
+      SELECT pg_catalog.regexp_matches(
           coalesce(r.base_document::text, '') || ' ' ||
-          CASE WHEN r.main_before_expires_at > (now() AT TIME ZONE 'UTC') THEN coalesce(r.main_before_document::text, '') ELSE '' END,
+          CASE WHEN r.main_before_expires_at > (pg_catalog.now() AT TIME ZONE 'UTC') THEN coalesce(r.main_before_document::text, '') ELSE '' END,
           ${pattern}, 'g')
         FROM public.site_branches r WHERE r.site_id = ${siteId}
       UNION ALL
-      SELECT regexp_matches(c.inverse_payload::text, ${pattern}, 'g')
+      SELECT pg_catalog.regexp_matches(c.inverse_payload::text, ${pattern}, 'g')
         FROM public.agent_changes c
         JOIN public.agent_runs ar ON ar.id = c.run_id
         JOIN public.sites s ON s.workspace_id = ar.workspace_id

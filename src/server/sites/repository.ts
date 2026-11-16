@@ -1484,7 +1484,7 @@ export class SiteRepository {
       SELECT b.id, b.name, b.status::text AS status, b.review_note AS "reviewNote", b.branch_site_id AS "branchSiteId",
              (b.base_document IS NOT NULL) AS "hasBase",
              -- The column is a timestamp without zone holding UTC, so it is compared with UTC now, whatever the session's zone.
-             (b.main_before_document IS NOT NULL AND (b.main_before_expires_at IS NULL OR b.main_before_expires_at > (now() AT TIME ZONE 'UTC'))) AS "hasKept"
+             (b.main_before_document IS NOT NULL AND (b.main_before_expires_at IS NULL OR b.main_before_expires_at > (pg_catalog.now() AT TIME ZONE 'UTC'))) AS "hasKept"
       FROM public.site_branches b
       WHERE b.site_id = ${siteId} AND b.workspace_id = ${scope.workspaceId}
       ORDER BY b.id ASC`;

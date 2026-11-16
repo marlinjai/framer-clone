@@ -55,7 +55,7 @@ export class PrismaSiteModels implements SiteModelRepository {
   async insertWithinQuota(rec: SiteModelRecord, limits: { servedBytes: number; originalBytes: number }): Promise<InsertOutcome> {
     return this.client.$transaction(async (tx) => {
       // One upload or delete of a site at a time (released when the transaction ends).
-      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_models:${rec.siteId}`}))`;
+      await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_models:${rec.siteId}`}))`;
       const site = await tx.site.findUnique({ where: { id: rec.siteId }, select: { workspaceId: true, tenantGroupId: true, branchOfSiteId: true } });
       if (!site || (this.scope.workspaceId && site.workspaceId !== this.scope.workspaceId)) throw new Error('site_models: no such site');
       if (site.branchOfSiteId) throw new Error('site_models: a branch has no models of its own; use its main site');
@@ -68,9 +68,9 @@ export class PrismaSiteModels implements SiteModelRepository {
 
       // An original is shared by the rows that came from the same file: it counts once.
       const held = await tx.$queryRaw<{ total: bigint | null; same: bigint }[]>`
-        SELECT COALESCE(SUM(o.original_bytes), 0) AS total,
-               COUNT(*) FILTER (WHERE o.original_sha256 = ${rec.originalSha256}) AS same
-          FROM (SELECT original_sha256, MAX(original_bytes) AS original_bytes
+        SELECT COALESCE(pg_catalog.sum(o.original_bytes), 0) AS total,
+               pg_catalog.count(*) FILTER (WHERE o.original_sha256 = ${rec.originalSha256}) AS same
+          FROM (SELECT original_sha256, pg_catalog.max(original_bytes) AS original_bytes
                   FROM public.site_models WHERE site_id = ${rec.siteId} GROUP BY original_sha256) o`;
       const total = Number(held[0]?.total ?? 0);
       if (Number(held[0]?.same ?? 0) === 0 && total + rec.originalBytes > limits.originalBytes) return { ok: false, reason: 'originals-quota' } as const;
@@ -108,7 +108,7 @@ export class PrismaSiteModels implements SiteModelRepository {
   async delete(siteId: string, sha256: string): Promise<void> {
     // Under the site's lock, so a delete cannot interleave with an insert's quota read.
     await this.client.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${`site_models:${siteId}`}))`;
+      await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_models:${siteId}`}))`;
       await tx.siteModel.deleteMany({ where: { ...this.where(siteId), sha256 } });
     }, TX);
   }
