@@ -1,11 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BOX_COMMON_HEADERS, BOX_DOCUMENT_POLICY, BOX_DOCUMENT_PREFIX, BOX_REFUSAL_POLICY } from '../../../../src/lib/customCode/contract';
+import { randomBytes } from 'node:crypto';
 import { boxImage, docker, dockerResult, FRAME_HEADERS, freePort, httpGet, randomName, startScratchPostgres, until, type RawResponse, type ScratchPostgres } from './docker';
+import { FAKE_INFISICAL_PORT, FAKE_INFISICAL_SCRIPT, type FakeInfisicalConfig } from './fakeInfisical';
 
 // The built image, run the way it is meant to run (read-only root file
 // system, every capability dropped, no new privileges, memory and process
 // limits, published on 127.0.0.1 only), against a scratch Postgres on a
-// private docker network. Nothing here reaches beyond this machine.
+// private docker network. Every box starts the way it starts in production:
+// tini, the start program, a login to Infisical with the box's machine
+// identity, and the box inside `infisical run`. Infisical is a stand-in
+// (fakeInfisical.ts) on the same private network, which hands out the
+// database address. Nothing here reaches beyond this machine.
 
 const SITE_A = '0b0e7c1a-5d2f-4c3b-9a8e-1f2d3c4b5a69';
 const SITE_B = '7a1f3c55-0e2d-4b6a-8c9d-2e3f4a5b6c7d';
@@ -16,23 +22,41 @@ const HARDENING = ['--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new
 
 let pg: ScratchPostgres;
 let image: string;
+let fake: FakeInfisicalConfig;
+let fakeName: string;
 const containers: string[] = [];
+
+/** The projects the stand-in for Infisical knows: what each hands the box as its secrets. */
+const PROJECT = {
+  good: 'box-good',
+  none: 'box-none',
+  malformed: 'box-malformed',
+  encrypted: 'box-encrypted',
+} as const;
 
 interface Box {
   name: string;
   port: number;
 }
 
-async function runBox(env: Record<string, string | undefined>, extraArgs: string[] = []): Promise<Box> {
-  const name = randomName('box-itest');
-  const port = await freePort();
-  const full: Record<string, string | undefined> = {
-    BOX_DATABASE_URL: pg.readerUrlInNetwork,
+/** Every variable a box is started with in production: the identity, the project, and the box's settings. */
+function productionEnv(): Record<string, string | undefined> {
+  return {
+    INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: fake.clientId,
+    INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: fake.clientSecret,
+    INFISICAL_PROJECT_ID: PROJECT.good,
+    INFISICAL_ENVIRONMENT: 'prod',
+    INFISICAL_DOMAIN: `http://fake-infisical:${FAKE_INFISICAL_PORT}`,
     BOX_EDITOR_HOST: 'app.lumitra.co',
     BOX_SITES_BASE_HOST: 'sites.lumitra.co',
     CUSTOM_CODE_DISABLED: '0',
-    ...env,
   };
+}
+
+async function runBox(env: Record<string, string | undefined>, extraArgs: string[] = []): Promise<Box> {
+  const name = randomName('box-itest');
+  const port = await freePort();
+  const full: Record<string, string | undefined> = { ...productionEnv(), ...env };
   const passed: Record<string, string> = {};
   const flags: string[] = [];
   for (const [key, value] of Object.entries(full)) {
@@ -61,9 +85,40 @@ function expectRefusal(response: RawResponse, status: number) {
   expectNoCookie(response);
 }
 
+/** What the stand-in for Infisical was asked, in order. */
+function fakeRequests(): { method: string; path: string; authorized: boolean; projectId: string | null; environment: string | null; secretPath: string | null }[] {
+  return JSON.parse(docker(['exec', fakeName, 'node', '-e', `fetch('http://127.0.0.1:${FAKE_INFISICAL_PORT}/__requests').then((r) => r.text()).then((t) => process.stdout.write(t))`]));
+}
+
+async function exited(box: Box): Promise<{ code: string; logs: string }> {
+  await until(() => docker(['inspect', '--format', '{{.State.Status}}', box.name]).trim() === 'exited', 'the box to stop');
+  return { code: docker(['inspect', '--format', '{{.State.ExitCode}}', box.name]).trim(), logs: (await dockerResult(['logs', box.name])).output };
+}
+
 beforeAll(async () => {
   image = boxImage();
   pg = await startScratchPostgres();
+  // Made when the test runs: a fake identity, a fake token, and the scratch database's reader address.
+  const hex = () => randomBytes(16).toString('hex');
+  fake = {
+    clientId: `test-client-${hex()}`,
+    clientSecret: `test-client-secret-${hex()}`,
+    token: `test-token-${hex()}`,
+    projects: {
+      [PROJECT.good]: { BOX_DATABASE_URL: pg.readerUrlInNetwork },
+      [PROJECT.none]: {},
+      [PROJECT.malformed]: { BOX_DATABASE_URL: 'postgres://box_reader:a%zzb@pg:5432/postgres' },
+      [PROJECT.encrypted]: { BOX_DATABASE_URL: 'postgres://box_reader:x@pg:5432/postgres?sslmode=verify-full' },
+    },
+  };
+  fakeName = randomName('box-itest-infisical');
+  // The stand-in runs on node in the box image; its configuration goes through the environment, by name.
+  docker(
+    ['run', '-d', '--name', fakeName, '--network', pg.network, '--network-alias', 'fake-infisical', '--read-only', '-e', 'FAKE_INFISICAL_CONFIG', '--entrypoint', 'node', image, '-e', FAKE_INFISICAL_SCRIPT],
+    { env: { FAKE_INFISICAL_CONFIG: JSON.stringify(fake) } },
+  );
+  containers.push(fakeName);
+  await until(() => Array.isArray(fakeRequests()), 'the stand-in for Infisical');
   pg.sql(`
     INSERT INTO sites (id, workspace_id, tenant_group_id, name, project_created_at, project_updated_at, updated_at, custom_code_enabled) VALUES
       ('${SITE_A}', 'w1', 't1', 'A', now(), now(), now(), true),
@@ -113,6 +168,13 @@ describe('the image', () => {
     expect(inBox(`console.log(['/bin/sh','/usr/bin/sh','/bin/bash','/usr/bin/dash','/usr/local/bin/npm','/usr/bin/apt','/usr/bin/dpkg','/usr/local/lib/node_modules'].filter((p) => require('fs').existsSync(p)).join(','))`)).toBe('');
     // The service is one file, owned by root, not writable, and the only thing in its directory.
     expect(inBox(`const fs = require('fs'); const s = fs.statSync('/app/box.cjs'); console.log(fs.readdirSync('/app').join(','), s.uid, (s.mode & 0o777).toString(8))`)).toBe('box.cjs 0 444');
+    // The start program, the Infisical client and tini: root's, not writable. The certificate authorities the client needs.
+    const modes = (file: string) => inBox(`const s = require('fs').statSync(${JSON.stringify(file)}); console.log(s.uid, (s.mode & 0o777).toString(8))`);
+    expect(modes('/opt/box/launch.cjs')).toBe('0 444');
+    expect(modes('/usr/local/bin/infisical')).toBe('0 555');
+    expect(modes('/usr/bin/tini')).toBe('0 555');
+    expect(modes('/etc/ssl/certs/ca-certificates.crt')).toBe('0 444');
+    expect(inBox(`console.log(require('fs').readdirSync('/opt/box').join(','))`)).toBe('launch.cjs');
     // The published port is bound to this machine only.
     expect(docker(['port', box.name, '8080']).trim()).toBe(`127.0.0.1:${box.port}`);
     // Capabilities: none effective, none permitted.
@@ -261,30 +323,105 @@ describe('the image, started without a decision to serve', () => {
   });
 
   it.each([
-    ['no database address', { BOX_DATABASE_URL: undefined }, 'BOX_DATABASE_URL'],
+    ['no database address in Infisical', { INFISICAL_PROJECT_ID: PROJECT.none }, 'BOX_DATABASE_URL'],
     ['no editor host', { BOX_EDITOR_HOST: undefined }, 'BOX_EDITOR_HOST'],
     ['a wildcard editor host', { BOX_EDITOR_HOST: '*.lumitra.co' }, 'BOX_EDITOR_HOST'],
     ['no sites base host', { BOX_SITES_BASE_HOST: undefined }, 'BOX_SITES_BASE_HOST'],
     ['a proxy network that is everyone', { BOX_TRUSTED_PROXIES: '0.0.0.0/0' }, 'BOX_TRUSTED_PROXIES'],
     ['a listen host that is a name', { BOX_LISTEN_HOST: 'localhost' }, 'BOX_LISTEN_HOST'],
-    ['a database address with a malformed escape', { BOX_DATABASE_URL: 'postgres://box_reader:a%zzb@pg:5432/postgres' }, 'BOX_DATABASE_URL'],
-    ['a database address that asks for encryption this version does not have', { BOX_DATABASE_URL: 'postgres://box_reader:x@pg:5432/postgres?sslmode=verify-full' }, 'BOX_DATABASE_URL'],
+    ['a database address with a malformed escape', { INFISICAL_PROJECT_ID: PROJECT.malformed }, 'BOX_DATABASE_URL'],
+    ['a database address that asks for encryption this version does not have', { INFISICAL_PROJECT_ID: PROJECT.encrypted }, 'BOX_DATABASE_URL'],
   ])('refuses to start with %s, naming the variable and nothing it holds', async (_name, env, variable) => {
-    const box = await runBox(env);
-    await until(() => docker(['inspect', '--format', '{{.State.Status}}', box.name]).trim() === 'exited', 'the box to stop');
-    expect(docker(['inspect', '--format', '{{.State.ExitCode}}', box.name]).trim()).toBe('78');
-    const logs = (await dockerResult(['logs', box.name])).output;
+    const { code, logs } = await exited(await runBox(env));
+    // The box ends with 78; `infisical run` reports a child that failed as its own status 1 (decision D46).
+    expect(code).toBe('1');
     expect(logs).toContain(`box: ${variable} `);
+    expect(logs).toContain('exit status 78');
     expect(logs).not.toContain('box_reader');
     expect(logs).not.toContain('postgres://');
+    expect(logs).not.toContain(fake.clientSecret);
+    expect(logs).not.toContain(fake.token);
     // No stack trace of the service or the driver.
     expect(logs).not.toMatch(/\n\s+at /);
   });
 
-  it('refuses to start as root', async () => {
-    const box = await runBox({}, ['--user', '0']);
-    await until(() => docker(['inspect', '--format', '{{.State.Status}}', box.name]).trim() === 'exited', 'the box to stop');
-    expect(docker(['inspect', '--format', '{{.State.ExitCode}}', box.name]).trim()).toBe('78');
-    expect((await dockerResult(['logs', box.name])).output).toContain('box: refusing to run as root');
+  it('refuses to start as root, before it asks Infisical for anything', async () => {
+    const before = fakeRequests().length;
+    const { code, logs } = await exited(await runBox({}, ['--user', '0']));
+    expect(code).toBe('78');
+    expect(logs).toContain('box-launch: refusing to run as root');
+    expect(fakeRequests()).toHaveLength(before);
+  });
+});
+
+describe('the start through Infisical', () => {
+  it.each([
+    ['without a client id', { INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: undefined }, 'INFISICAL_UNIVERSAL_AUTH_CLIENT_ID is not set'],
+    ['without a client secret', { INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: undefined }, 'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET is not set'],
+    ['without a project', { INFISICAL_PROJECT_ID: undefined }, 'INFISICAL_PROJECT_ID is not set'],
+    ['without an environment', { INFISICAL_ENVIRONMENT: undefined }, 'INFISICAL_ENVIRONMENT is not set'],
+    ['with the database address on the container', { BOX_DATABASE_URL: 'postgres://box_reader:x@pg:5432/postgres' }, 'BOX_DATABASE_URL must not be set on the container: it comes from Infisical'],
+  ])('stops %s with status 78 and a line saying so, and asks Infisical nothing', async (_name, env, line) => {
+    const before = fakeRequests().length;
+    const { code, logs } = await exited(await runBox(env));
+    expect(code).toBe('78');
+    expect(logs.trim()).toBe(`box-launch: ${line}`);
+    expect(fakeRequests()).toHaveLength(before);
+  });
+
+  it('stops with status 69 when Infisical refuses the login, and writes no credential', async () => {
+    const wrongSecret = `test-wrong-secret-${randomBytes(16).toString('hex')}`;
+    const before = fakeRequests().length;
+    const { code, logs } = await exited(await runBox({ INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: wrongSecret }));
+    expect(code).toBe('69');
+    expect(logs).toMatch(/^box-launch: the Infisical login failed \(status 1\)/);
+    expect(logs).not.toContain(wrongSecret);
+    expect(logs).not.toContain(fake.clientId);
+    // One refused login, and no request for secrets after it.
+    expect(fakeRequests().slice(before).map((request) => request.path)).toEqual(['/api/v1/auth/universal-auth/login']);
+  });
+
+  it('runs the box under tini with the secret from Infisical, and no credential on any command line or in the box', async () => {
+    const before = fakeRequests().length;
+    const box = await runBox({});
+    await ready(box);
+    const inBox = (script: string) => docker(['exec', box.name, 'node', '-e', script]).trim();
+
+    // Infisical was asked for one login and then the secrets of the box's project, with the token it gave.
+    expect(fakeRequests().slice(before)).toEqual([
+      { method: 'POST', path: '/api/v1/auth/universal-auth/login', authorized: false, projectId: null, environment: null, secretPath: null },
+      { method: 'GET', path: '/api/v4/secrets', authorized: true, projectId: PROJECT.good, environment: 'prod', secretPath: '/' },
+    ]);
+
+    // Every process: its command line, and for the box its environment.
+    const processes = JSON.parse(
+      inBox(
+        `const fs = require('fs'); const out = []; for (const pid of fs.readdirSync('/proc').filter((p) => /^\\d+$/.test(p))) { try { const cmd = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\\0').filter(Boolean); let env = null; if (cmd[0] === '/usr/local/bin/node' && cmd.includes('/app/box.cjs')) env = fs.readFileSync('/proc/' + pid + '/environ', 'utf8').split('\\0').filter(Boolean); out.push({ pid: Number(pid), cmd, env }); } catch {} } process.stdout.write(JSON.stringify(out));`,
+      ),
+    ) as { pid: number; cmd: string[]; env: string[] | null }[];
+    expect(processes.find((p) => p.pid === 1)?.cmd).toEqual(['/usr/bin/tini', '--', 'node', '--disallow-code-generation-from-strings', '/opt/box/launch.cjs']);
+    const service = processes.find((p) => p.env !== null);
+    expect(service?.cmd).toEqual(['/usr/local/bin/node', '--disallow-code-generation-from-strings', '/app/box.cjs']);
+    expect(service?.env).toContain(`BOX_DATABASE_URL=${pg.readerUrlInNetwork}`);
+    expect(service?.env?.filter((entry) => entry.startsWith('INFISICAL_'))).toEqual([]);
+    for (const value of [fake.clientId, fake.clientSecret, fake.token]) {
+      expect(service?.env?.join('\n').includes(value), "the box's environment").toBe(false);
+      for (const p of processes) expect(p.cmd.join(' ').includes(value), `the command line of ${p.cmd[0]}`).toBe(false);
+      expect(docker(['logs', box.name]).includes(value), 'the log').toBe(false);
+    }
+    // The client needed no writable home: the root file system is read-only and nothing is mounted on it.
+    expect(docker(['inspect', '--format', '{{.HostConfig.ReadonlyRootfs}} {{len .Mounts}}', box.name]).trim()).toBe('true 0');
+
+    // Its share of the limits: every thread counts against the process limit. Written down for the plan.
+    const usage = inBox(`const fs = require('fs'); process.stdout.write(['pids.current', 'memory.current', 'memory.peak'].map((f) => { try { return fs.readFileSync('/sys/fs/cgroup/' + f, 'utf8').trim(); } catch { return '-1'; } }).join(' '));`);
+    process.stdout.write(`box itest: pids.current memory.current memory.peak = ${usage}\n`);
+    const [pids] = usage.split(' ').map(Number);
+    if (pids !== undefined && pids >= 0) expect(pids).toBeLessThan(48);
+
+    // docker stop: tini passes SIGTERM down the chain, the box closes and every link ends with status 0.
+    const started = Date.now();
+    docker(['stop', '-t', '10', box.name]);
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(docker(['inspect', '--format', '{{.State.ExitCode}}', box.name]).trim()).toBe('0');
   });
 });
