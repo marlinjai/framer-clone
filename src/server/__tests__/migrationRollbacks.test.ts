@@ -28,29 +28,57 @@ function code(text: string): string {
 /** A name with its schema: `schema.name`, either part quoted or not. */
 const QUALIFIED = /^"?[a-z_]+"?\."?[A-Za-z_]+"?$/;
 
+/** Splits a list of names on the commas that are not inside parentheses (a function's argument types). */
+function splitNames(list: string): string[] {
+  const names: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const char of list) {
+    if (char === '(') depth += 1;
+    if (char === ')') depth -= 1;
+    if (char === ',' && depth === 0) {
+      names.push(current);
+      current = '';
+    } else current += char;
+  }
+  names.push(current);
+  // The name only: a function's argument list is not part of it.
+  return names.map((name) => name.trim().replace(/^ONLY\s+/i, '').replace(/\s*\([\s\S]*$/, ''));
+}
+
+/** A name as written: quoted (spaces allowed inside the quotes) or bare, either part. */
+const NAME = String.raw`(?:"[^"]+"|[^\s(;,)."]+)(?:\.(?:"[^"]+"|[^\s(;,)."]+))?`;
+
 /**
  * Every object a statement drops, alters, empties, deletes from, writes to or reads from, as written, in any letter
- * case and with every name of a comma list. A schema a statement drops is listed apart: it is never looked up through
- * the search path, so it is a bare name.
+ * case and with every name of a list. String literals are left out first, so words in a message are not read as SQL.
+ * A schema a statement drops is listed apart: it is never looked up through the search path, so it is a bare name.
  */
-function objectsOf(sql: string): { relations: string[]; schemas: string[] } {
+function objectsOf(text: string): { relations: string[]; schemas: string[] } {
+  const sql = text.replace(/'(?:[^']|'')*'/g, "''");
   const single = [
     ...sql.matchAll(
-      /\b(?:DROP FUNCTION|ALTER TABLE|DELETE FROM|INSERT INTO|UPDATE|FROM|JOIN|USING)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^\s(;,)]+)/gi,
+      new RegExp(
+        String.raw`\b(?:ALTER TABLE|DELETE FROM|INSERT INTO|UPDATE|(?<!\(\s*\w+\s+)FROM|JOIN)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?(${NAME})`,
+        'gi',
+      ),
     ),
-    ...sql.matchAll(/\bDROP (?:TRIGGER|POLICY|RULE)\s+(?:IF EXISTS\s+)?\S+\s+ON\s+(?:ONLY\s+)?([^\s(;,)]+)/gi),
+    ...sql.matchAll(new RegExp(String.raw`\bDELETE FROM\s+${NAME}(?:\s+(?:AS\s+)?\w+)?\s+USING\s+(${NAME})`, 'gi')),
+    ...sql.matchAll(
+      new RegExp(String.raw`\bDROP (?:TRIGGER|POLICY|RULE)\s+(?:IF EXISTS\s+)?${NAME}\s+ON\s+(?:ONLY\s+)?(${NAME})`, 'gi'),
+    ),
   ].map((match) => match[1]!);
   // Statements that take a list of names: every name of the list, not only the first.
   const listed = [
     ...sql.matchAll(
-      /\b(?:DROP (?:TABLE|INDEX|VIEW|MATERIALIZED VIEW|TYPE|SEQUENCE)|TRUNCATE(?: TABLE)?)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT|RESTART IDENTITY|CONTINUE IDENTITY))*\s*(?:;|$)/gi,
+      /\b(?:DROP (?:TABLE|INDEX(?: CONCURRENTLY)?|VIEW|MATERIALIZED VIEW|TYPE|SEQUENCE|FUNCTION)|TRUNCATE(?: TABLE)?)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT|RESTART IDENTITY|CONTINUE IDENTITY))*\s*(?:;|$)/gi,
     ),
-  ].flatMap((match) => match[1]!.split(',').map((name) => name.trim().replace(/^ONLY\s+/i, '')));
+  ].flatMap((match) => splitNames(match[1]!));
   const relations = [...single, ...listed]
     // `REVOKE ... FROM PUBLIC` names the role every role belongs to, not a relation.
     .filter((name) => name.toUpperCase() !== 'PUBLIC');
   const schemas = [...sql.matchAll(/\bDROP SCHEMA\s+(?:IF EXISTS\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT))?\s*(?:;|$)/gi)].flatMap(
-    (match) => match[1]!.split(',').map((name) => name.trim()),
+    (match) => splitNames(match[1]!),
   );
   return { relations, schemas };
 }
@@ -85,6 +113,13 @@ describe('the detector of objects a rollback names', () => {
     ['TRUNCATE "public"."a", b RESTART IDENTITY CASCADE;', ['b']],
     ['DROP SCHEMA IF EXISTS x, a.b CASCADE;', ['a.b']],
     ['revoke all on function "public"."f"() from public;', []],
+    ['DROP FUNCTION "public"."f"(text, text), g(int);', ['g']],
+    ['DROP FUNCTION IF EXISTS "public"."box_document"(pg_catalog.text, pg_catalog.text);', []],
+    ['DROP POLICY "a b" ON x;', ['x']],
+    ['DROP INDEX CONCURRENTLY IF EXISTS i;', ['i']],
+    ['ALTER TABLE "public"."a" ALTER COLUMN c TYPE text USING c::text;', []],
+    ['SELECT extract(epoch from now()) FROM "public"."a";', []],
+    ["DO $$ BEGIN RAISE NOTICE 'nothing to update from here'; END $$;", []],
   ])('%s', (sql, expected) => {
     expect(misnamed(sql)).toEqual(expected);
   });
