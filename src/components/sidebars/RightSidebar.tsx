@@ -12,6 +12,8 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { InputsSection } from './right/sections/InputsSection';
 import { RepeatSection } from './right/sections/RepeatSection';
 import { ShopPartNote, ShopStyleNote, isLockedShopText } from './right/sections/ShopPartNote';
+import { InteractionsSection } from './right/sections/InteractionsSection';
+import { PageStatePanel } from './right/sections/PageStatePanel';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -46,6 +48,10 @@ export interface RightSidebarProps {
    */
   variant?: 'docked' | 'sheet';
 }
+
+/** True for a node that can hold behaviour: an element of its own, not a frame, a text run or a placement. */
+const holdsBehaviour = (target: ComponentInstance, category: string | null): boolean =>
+  !target.isViewportNode && target.type !== '#text' && category !== 'placement';
 
 const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
   const { editorUI } = useStore();
@@ -125,9 +131,17 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
                 {/* Data section: renders only when the node has bindable slots
                     (text / button / image / data components); null otherwise. */}
                 {category !== 'placement' && <DataSourceSection component={target} breakpointId={breakpointId} />}
+                {/* What the element does, then the values it reads (docs/plans/2026-11-02-behaviour-model.md,
+                    "The panel"). A frame, a text run and a placement hold no behaviour of their own: a
+                    placement's is its definition's. Keyed by node, so a draft never moves to another. */}
+                {holdsBehaviour(target, category) && <InteractionsSection key={target.id} component={target} />}
+                <PageStatePanel component={target} />
               </>
             ) : (
-              <p className="p-3 text-[12px] text-muted-foreground">Select an element to edit its properties.</p>
+              <>
+                <p className="p-3 text-[12px] text-muted-foreground">Select an element to edit its properties.</p>
+                <PageStatePanel />
+              </>
             )}
           </div>
         </div>
