@@ -1,14 +1,14 @@
 ---
 type: readme
 title: "The box: the service that serves sandboxed custom code"
-summary: "What the box is, what it refuses, how it is configured and how to test it. Built and tested only: it is deployed nowhere and connected to nothing."
+summary: "What the box is, what it refuses, how it is configured and how to test it. Built and tested only: nothing in the application imports it or its contract."
 ---
 
 # The box
 
 The box is the small service that serves a *custom code block* of a site built in Lumitra Sites: the author's own HTML and JavaScript, as one document, to be run in an isolated frame. It is slice C1a of the [sandboxed custom code plan](../../docs/plans/2026-11-02-sandboxed-custom-code.md), which holds the design and every decision.
 
-**State: built and tested only.** The box is deployed nowhere, its image is pushed nowhere, and nothing in the application imports it or its contract. The database objects it needs exist in this repository (slice C1b): the function `box_document` in the migration `prisma/migrations/20261115000000_custom_code`, and the role `box_reader` in `prisma/sql/box-reader.sql`, which the operator applies to production separately, with Marlin's yes (see `deploy/README.md`, "Sandboxed custom code").
+**State: built and tested only.** Nothing in the application imports it or its contract, and no deploy step of the application starts it. The database objects it needs exist in this repository (slice C1b): the function `box_document` in the migration `prisma/migrations/20261115000000_custom_code`, and the role `box_reader` in `prisma/sql/box-reader.sql`, which the operator applies separately, with Marlin's yes (see `deploy/README.md`, "Sandboxed custom code").
 
 ## What it is made of
 
