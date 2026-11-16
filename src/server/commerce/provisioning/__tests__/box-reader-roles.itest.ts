@@ -990,13 +990,23 @@ describe('the migration of slice C1b and this file, in either order', () => {
     await site(two);
     await blob(one);
     await blob(two);
+    // Site one has a label and a verified host, so the list's effect on the host names shows too.
+    await su!`
+      INSERT INTO public.site_domains (id, site_id, workspace_id, tenant_group_id, subdomain, custom_hostname, verification_status, updated_at) VALUES
+        (${randomUUID()}, ${one}, ${WORKSPACE}, ${tenantGroupId}, 'takedown', NULL, 'active', now()),
+        (${randomUUID()}, ${one}, ${WORKSPACE}, ${tenantGroupId}, NULL, 'takedown.example.com', 'verified', now())
+    `;
     const box = postgres(urlOf('box_reader'), { max: 1, prepare: false, onnotice: () => {} });
     opened.push(box);
     const ask = async (siteId: string) => (await box`SELECT document, live FROM public.box_document(${siteId}, ${blocked})`).map((row) => ({ ...row }));
+    const hostsOf = async (siteId: string) =>
+      (await box`SELECT subdomain_labels, custom_hostnames FROM public.box_document(${siteId}, ${blocked})`).map((row) => ({ ...row }));
     // Served while it is not on the list, so what follows is the list's doing.
     expect(await ask(one)).toEqual([{ document: '<p>taken down</p>', live: true }]);
+    expect(await hostsOf(one)).toEqual([{ subdomain_labels: ['takedown'], custom_hostnames: ['takedown.example.com'] }]);
     await su!`INSERT INTO public.custom_code_blocked_hashes (sha256, blocked_by, reason) VALUES (${blocked}, 'operator', 'phishing')`;
     expect(await ask(one)).toEqual([{ document: null, live: false }]);
+    expect(await hostsOf(one)).toEqual([{ subdomain_labels: [], custom_hostnames: [] }]);
     expect(await ask(two)).toEqual([{ document: null, live: false }]);
     // Its blob rows and both sites go (a prune, a site delete); the list keeps the hash. The same code written again on
     // a new site under the same hash is still not served.

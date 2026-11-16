@@ -227,6 +227,11 @@ describe('the migrations\' rollback.sql files', () => {
     );
   });
 
+  it.each(rollbacks)('%s documents the one command to run it, with -X', (name, text) => {
+    // -X: the operator's ~/.psqlrc cannot switch ON_ERROR_STOP off or ON_ERROR_ROLLBACK on (D35).
+    expect(linesOf(text)).toContain(`--   psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -1 -f prisma/migrations/${name}`);
+  });
+
   it.each(rollbacks)('%s sets its own search path before any other statement', (_name, text) => {
     expect(statementLines(text)[0]).toBe(SET_LINE);
   });

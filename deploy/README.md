@@ -605,7 +605,10 @@ redo. Do not drop anything to "tidy up" after a rollback.
 
 **Dropping the columns is destructive and needs its own explicit authorization** (the attempt keys of every site are lost,
 and the autosave of the previous image has no use for them either way). If it is authorized, do both steps in ONE
-transaction, after the application runs the previous image:
+transaction, after the application runs the previous image. Save the block below to a file and run it with
+`psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f <file>`, never pasted: with `-X` no `~/.psqlrc` can set
+`ON_ERROR_ROLLBACK`, which would undo only a failing `ALTER` and still commit the `DELETE`, and with `ON_ERROR_STOP` an
+error ends the run inside the transaction, so nothing commits:
 
 ```sql
 BEGIN;

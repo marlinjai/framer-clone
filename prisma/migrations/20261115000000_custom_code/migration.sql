@@ -172,7 +172,7 @@ CREATE TRIGGER "custom_code_audit_append_only"
 --   - `subdomain_labels` leaves out every label kept for branch preview links (D13); the box drops them a second time.
 --   - `custom_hostnames` holds live claims only (verified or active).
 --   - Both lists are empty unless `live`: the box answers a pair that is not live without them, so it is not told a
---     site's host names for a pair it will refuse anyway.
+--     site's host names for such a pair. A live pair whose document is too large keeps them (the box refuses it too).
 CREATE FUNCTION "public"."box_document"(p_site_id text, p_sha256 text)
 RETURNS TABLE (document text, live boolean, subdomain_labels text[], custom_hostnames text[])
 LANGUAGE sql
