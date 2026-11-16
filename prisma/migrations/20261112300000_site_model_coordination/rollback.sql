@@ -9,6 +9,11 @@
 -- deploy of the same commit applies it again. It drops only this migration's table and the columns it added to
 -- site_models, and deletes only this migration's row of Prisma's history. PENDING rows are discarded with their column:
 -- run it only when no upload or cleanup is in flight (the routes are disabled until their own gate).
+--
+-- It sets its own search path and names every object with its schema, like every file the operator applies as a
+-- superuser: what it drops and deletes must not depend on the session's search path, which differs between databases,
+-- rebuilds and sessions.
+SET search_path = pg_catalog, pg_temp;
 DROP TABLE IF EXISTS "public"."model_blob_tombstones";
 DO $$
 BEGIN
@@ -21,7 +26,7 @@ DROP INDEX IF EXISTS "public"."site_models_pending_until_idx";
 ALTER TABLE "public"."site_models" DROP COLUMN IF EXISTS "attempt", DROP COLUMN IF EXISTS "pending_until", DROP COLUMN IF EXISTS "state";
 DO $$
 BEGIN
-    IF to_regclass('_prisma_migrations') IS NOT NULL THEN
-        DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261112300000_site_model_coordination';
+    IF pg_catalog.to_regclass('public._prisma_migrations') IS NOT NULL THEN
+        DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = '20261112300000_site_model_coordination';
     END IF;
 END $$;

@@ -11,7 +11,12 @@
 -- resolve --rolled-back` for it (refused for an applied migration, P3012). This script forgets the migration itself, so
 -- a later deploy of the same commit applies it again. It drops only what this migration created (the grant to
 -- box_reader goes with the function) and deletes only this migration's row of Prisma's history. Safe to run twice.
-DROP FUNCTION IF EXISTS "public"."box_document"(text, text);
+--
+-- It sets its own search path and names every object with its schema, like every file the operator applies as a
+-- superuser: what it drops and deletes must not depend on the session's search path, which differs between databases,
+-- rebuilds and sessions.
+SET search_path = pg_catalog, pg_temp;
+DROP FUNCTION IF EXISTS "public"."box_document"(pg_catalog.text, pg_catalog.text);
 DROP TABLE IF EXISTS "public"."custom_code_proposals";
 DROP TABLE IF EXISTS "public"."custom_code_audit";
 DROP TABLE IF EXISTS "public"."custom_code_blobs";
@@ -21,7 +26,7 @@ DROP FUNCTION IF EXISTS "public"."custom_code_blobs_immutable"();
 ALTER TABLE "public"."sites" DROP COLUMN IF EXISTS "custom_code_enabled";
 DO $$
 BEGIN
-    IF to_regclass('_prisma_migrations') IS NOT NULL THEN
-        DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261115000000_custom_code';
+    IF pg_catalog.to_regclass('public._prisma_migrations') IS NOT NULL THEN
+        DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = '20261115000000_custom_code';
     END IF;
 END $$;
