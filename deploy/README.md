@@ -173,10 +173,12 @@ not only of the start step. That is acceptable because the owner role is bounded
   server files, bypass row security, or act as a superuser. The start step refuses
   any owner URL that is not exactly this role (see the start sequence above).
 
-A leaked owner URL therefore exposes the shop data of every company and the shop
-schema, not the rest of the database or the server. Moving provisioning off the
-request path (a job seam) would let the owner URL leave the server process; that
-is the deferral noted in the route.
+A leaked owner URL exposes the shop data of every company and the shop schema.
+Until the database role hardening on `ROADMAP.md` is complete, it may also reach
+objects outside those schemas through the database's default search path, so do
+not treat the bounds above as a guarantee. Moving provisioning off the request
+path (a job seam) would let the owner URL leave the server process; that is the
+deferral noted in the route.
 
 **No superuser fallback.** The infra RUNBOOK allowed `COMMERCE_OWNER_DATABASE_URL`
 to fall back to the database's bootstrap user if the non-superuser owner did not
