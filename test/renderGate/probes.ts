@@ -325,6 +325,7 @@ function rendererAttributeProbes(): Probe[] {
   const names = [
     'data-fc-consent-accept', 'data-fc-consent-decline', 'data-fc-site-base', 'data-fc-sticky-cta-link',
     'data-fc-map-load', 'data-fc-map-frame', 'data-fc-map-placeholder', 'data-fc-map',
+    'data-fc-custom-code', 'data-fc-custom-code-tile', 'data-fc-custom-code-preview',
   ];
   const spelled = names.flatMap((name) => [name, upper(name), mixed(name)]);
   return spelled.flatMap((name) => ['div', 'a', 'x-y'].map((type) => hostile(`renderer attribute ${name} on <${type}>`, type, [], () => ({ [name]: '' }))));
@@ -359,6 +360,28 @@ function mapProbes(): Probe[] {
     probe('a map box with the embed code of another host', 'div', [], (id) => ({ props: { ...marker, mapUrl: `<iframe src="${FOREIGN}/${id}"></iframe>` } }), true),
     probe('a map box with a Google address on a look-alike host', 'div', [], (id) => ({ props: { ...marker, mapUrl: `https://www.google.com.probe.invalid/maps/embed?pb=${id}` } }), true),
   );
+  return list;
+}
+
+/**
+ * A sandboxed custom code block (src/lib/customCode): its frame belongs to the published
+ * island and is built from the site's id and a hash, never from stored text, so nothing a
+ * node stores beside or inside `customCode` becomes a frame, an address or a script.
+ */
+function customCodeProbes(): Probe[] {
+  const hash = '0123456789abcdef'.repeat(4);
+  const list: Probe[] = [
+    hostile('a block with a src beside its hash', 'div', [], (id) => ({ customCode: { sha256: hash, title: 'x', src: `${FOREIGN}/${id}` } })),
+    hostile('a block with a srcdoc beside its hash', 'div', [], (id) => ({ customCode: { sha256: hash, title: 'x', srcdoc: `<script>parent.${run(id)}</script>` } })),
+    hostile('a block whose value is a src', 'div', [], (id) => ({ customCode: { src: `${FOREIGN}/${id}`, title: 'x' } })),
+    hostile('a block whose value is a srcdoc', 'div', [], (id) => ({ customCode: { srcdoc: `<script>parent.${run(id)}</script>`, title: 'x' } })),
+    hostile('a block whose value is iframe markup', 'div', [], (id) => ({ customCode: `<iframe src="${FOREIGN}/${id}"></iframe>` })),
+    hostile('a block whose title is a script', 'div', [], (id) => ({ customCode: { sha256: hash, title: `<script>${run(id)}</script>` } })),
+    hostile('a block with an iframe in its fallback', 'div', [], () => ({ customCode: { sha256: hash, title: 'x' } }), (id) => [
+      { id: `${id}c`, type: 'iframe', props: { src: `${FOREIGN}/${id}`, srcdoc: `<script>parent.${run(id)}</script>` } },
+    ]),
+    hostile('an iframe carrying a block', 'iframe', [], (id) => ({ customCode: { sha256: hash, title: 'x' }, src: `${FOREIGN}/${id}` })),
+  ];
   return list;
 }
 
@@ -573,6 +596,7 @@ export function buildProbes(full: boolean): Probe[] {
     ...shapeProbes(),
     ...rendererAttributeProbes(),
     ...mapProbes(),
+    ...customCodeProbes(),
     ...nameProbes(full),
     ...formMemberProbes(full),
     ...spellingProbes(),
