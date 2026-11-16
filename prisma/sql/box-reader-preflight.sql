@@ -129,8 +129,9 @@ SELECT n.nspname || '.' || c.relname || '.' || a.attname AS column_name, x.privi
 \echo '==      schema lists only what was added there. An entry for every schema stores the whole list for its'
 \echo '==      object type, Postgres'' built-in default included, so for functions (f) and types (T) it lists PUBLIC'
 \echo '==      even when nobody named PUBLIC. This listing does not show the built-in defaults where no entry'
-\echo '==      exists (12b does, for functions). Expected: none. A row for one schema, or for tables (r),'
-\echo '==      sequences (S) or schemas (n), gives PUBLIC, and so box_reader, a right on objects made later.'
+\echo '==      exists (12b does, for functions in every schema). Expected: none. A row for one schema, or for'
+\echo '==      tables (r), sequences (S) or schemas (n), gives PUBLIC, and so box_reader, a right on objects made'
+\echo '==      later.'
 SELECT pg_get_userbyid(d.defaclrole) AS for_objects_created_by, COALESCE(n.nspname, 'every schema') AS schema,
        d.defaclobjtype AS object_type, x.privilege_type
   FROM pg_default_acl d
@@ -139,9 +140,10 @@ SELECT pg_get_userbyid(d.defaclrole) AS for_objects_created_by, COALESCE(n.nspna
  WHERE x.grantee = 0
  ORDER BY 1, 2, 3, 4;
 
-\echo '== 12b. Per role that owns tables, views, sequences or functions outside the system schemas: may PUBLIC,'
-\echo '==      and so box_reader, execute a function that role creates LATER? Postgres says yes by default; only'
-\echo '==      an entry for every schema that leaves PUBLIC out says no (an entry for one schema can only add).'
+\echo '== 12b. Per role that owns a table, view, sequence, function, type or schema outside the system schemas:'
+\echo '==      may PUBLIC, and so box_reader, execute a function that role creates LATER, IN EVERY SCHEMA? Postgres'
+\echo '==      says yes by default; only an entry for every schema that leaves PUBLIC out says no. A 12a row for one'
+\echo '==      schema overrides an f here for that schema: functions the role creates there are open to PUBLIC.'
 \echo '==      Expected on production: t for every owner. Then every function a migration creates is open to'
 \echo '==      box_reader until the migration takes EXECUTE from PUBLIC; the rehearsal pins the functions of this'
 \echo '==      repository''s migrations. box-reader.sql does not depend on it: it grants by name.'
@@ -154,9 +156,10 @@ SELECT r.rolname AS owner,
                WHERE d.defaclrole = r.oid AND d.defaclnamespace = 0 AND d.defaclobjtype = 'f'
                  AND x.grantee = 0 AND x.privilege_type = 'EXECUTE')
             ELSE true
-       END AS public_may_execute_its_new_functions
+       END AS public_may_execute_its_new_functions_in_every_schema
   FROM pg_roles r
- WHERE EXISTS (
+ WHERE r.rolname NOT LIKE 'pg!_%' ESCAPE '!'
+   AND (EXISTS (
          SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relowner = r.oid
             AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!')
@@ -164,4 +167,12 @@ SELECT r.rolname AS owner,
          SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
           WHERE p.proowner = r.oid
             AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!')
+    OR EXISTS (
+         SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE t.typowner = r.oid
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!')
+    OR EXISTS (
+         SELECT 1 FROM pg_namespace n
+          WHERE n.nspowner = r.oid
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'))
  ORDER BY 1;

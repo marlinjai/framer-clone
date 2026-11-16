@@ -90,7 +90,7 @@ async function apply(file: SqlFile, database = DB_NAME): Promise<string> {
  * Runs a file with plain psql: no `-v ON_ERROR_STOP=1`, and with startup options for the session
  * (PGOPTIONS), the way an operator might run it. Returns the exit status and what psql printed.
  */
-async function runPlain(file: SqlFile, options: string): Promise<{ exitCode: number; output: string }> {
+async function runPlain(file: SqlFile | `step3-${string}.sql`, options: string): Promise<{ exitCode: number; output: string }> {
   const { exitCode, output } = await container!.exec(['psql', '-q', '-U', 'postgres', '-d', DB_NAME, '-f', `/tmp/${file}`], {
     env: { PGOPTIONS: options },
   });
@@ -767,20 +767,37 @@ describe('afterwards', () => {
       await su!`GRANT UPDATE (gone) ON public.box_reader_test_columns TO PUBLIC`;
       await su!`ALTER TABLE public.box_reader_test_columns DROP COLUMN gone`;
       // A default privilege for PUBLIC in one schema, and one for every schema that leaves PUBLIC out
-      // of commerce_ddl's new functions.
+      // of commerce_ddl's new functions, while one schema gives them back to PUBLIC: 12b says f for
+      // every schema, and 12a must show the schema where new functions are open all the same.
       await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC`;
       await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`;
+      await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO PUBLIC`;
+      // A role that owns nothing but an empty schema: it could create functions later, so 12b lists it.
+      await su!`CREATE ROLE box_reader_test_owner NOLOGIN`;
+      await su!`CREATE SCHEMA box_reader_test_owned AUTHORIZATION box_reader_test_owner`;
 
       expect(await boxRelations()).toEqual(['public.box_reader_test_columns']);
       const output = await apply('box-reader-preflight.sql');
       const section11 = section(output, '== 11.', '== 12a.');
       expect(section11).toMatch(/\n\s*public\.box_reader_test_columns\.kept\s*\|\s*SELECT\s*\n\(1 row\)/);
       expect(section11).not.toContain('dropped');
-      expect(section(output, '== 12a.', '== 12b.')).toMatch(/\n\s*commerce_ddl\s*\|\s*public\s*\|\s*r\s*\|\s*SELECT\s*\n\(1 row\)/);
+      expect(section(output, '== 12a.', '== 12b.')).toMatch(
+        /\n\s*commerce_ddl\s*\|\s*public\s*\|\s*f\s*\|\s*EXECUTE\s*\n\s*commerce_ddl\s*\|\s*public\s*\|\s*r\s*\|\s*SELECT\s*\n\(2 rows\)/,
+      );
       const section12b = section(output, '== 12b.');
       expect(section12b).toMatch(/\n\s*commerce_ddl\s*\|\s*f\s*\n/);
       expect(section12b).toMatch(/\n\s*postgres\s*\|\s*t\s*\n/);
+      expect(section12b).toMatch(/\n\s*box_reader_test_owner\s*\|\s*t\s*\n/);
+      // What 12a's row means, tried: a new function of commerce_ddl in public is open to PUBLIC.
+      const ddl = as('commerce_ddl');
+      await ddl`CREATE FUNCTION public.box_reader_test_new() RETURNS int LANGUAGE sql AS 'SELECT 1'`;
+      const [opened] = await su!`SELECT has_function_privilege('anyone_else', 'public.box_reader_test_new()', 'EXECUTE') AS may`;
+      expect(opened!.may).toBe(true);
     } finally {
+      await su!`DROP FUNCTION IF EXISTS public.box_reader_test_new()`;
+      await su!`DROP SCHEMA IF EXISTS box_reader_test_owned`;
+      await su!`DROP ROLE IF EXISTS box_reader_test_owner`;
+      await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`;
       await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl GRANT EXECUTE ON FUNCTIONS TO PUBLIC`;
       await su!`ALTER DEFAULT PRIVILEGES FOR ROLE commerce_ddl IN SCHEMA public REVOKE SELECT ON TABLES FROM PUBLIC`;
       await su!`DROP TABLE IF EXISTS public.box_reader_test_columns`;
@@ -805,14 +822,17 @@ describe('afterwards', () => {
     const noLogin = at('ALTER ROLE box_reader NOLOGIN', step1);
     const step1Commit = at('COMMIT;', noLogin);
     const step2 = at('-- Step 2.');
-    const terminate = at('pg_terminate_backend', step2);
+    const terminate = at('pg_terminate_backend(', step2);
     const step3 = at('-- Step 3.');
     const connectToPublic = at('GRANT CONNECT ON DATABASE %I TO PUBLIC');
     const functionsToPublic = at('GRANT EXECUTE ON FUNCTION %s TO PUBLIC');
-    const order = [step1, noLogin, step1Commit, step2, terminate, step3, connectToPublic, functionsToPublic];
+    const step3Begin = at('BEGIN;', step3);
+    const recheck = at('box_reader can still log in', step3);
+    const order = [step1, noLogin, step1Commit, step2, terminate, step3, step3Begin, recheck, connectToPublic, functionsToPublic];
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(at('pg_terminate_backend')).toBe(terminate);
+    // The only call of it (the header names it without a call).
+    expect(at('pg_terminate_backend(')).toBe(terminate);
     expect(at('BEGIN;', step1Commit)).toBeGreaterThan(terminate);
     // Step 2 waits and looks again until a look finds no session: a login that passed its checks just
     // before step 1 committed shows up only at the end of its startup. That window is a few
@@ -837,6 +857,31 @@ describe('afterwards', () => {
       await su!`DROP EVENT TRIGGER IF EXISTS box_reader_test_stop`;
       await su!`DROP FUNCTION IF EXISTS public.box_reader_test_stop()`;
       await apply('box-reader.sql');
+      await su!`ALTER ROLE box_reader LOGIN`;
+    }
+  }, 120_000);
+
+  it('step 3 of the rollback, run alone by plain psql, gives PUBLIC nothing while the box can log in or has a session', async () => {
+    // As if steps 1 and 2 had been skipped or cut short: only step 3's own text, no ON_ERROR_STOP.
+    const rollback = readFileSync(path.join(SQL_DIR, 'box-reader-rollback.sql'), 'utf8');
+    await container!.copyContentToContainer([{ content: rollback.slice(rollback.indexOf('-- Step 3.')), target: '/tmp/step3-alone.sql' }]);
+    const before = await wholeShape();
+    expect(before.anyone.locks.may).toBe(0);
+    expect(before.role.rolcanlogin).toBe(true);
+    const held = as('box_reader');
+    try {
+      // The box can still log in.
+      const canLogIn = await runPlain('step3-alone.sql', '');
+      expect(canLogIn.output).toContain('box_reader can still log in; PUBLIC has been given nothing back');
+      expect(await wholeShape()).toEqual(before);
+      // It cannot log in any more, but a session of it is still open.
+      await held`SELECT 1`;
+      await su!`ALTER ROLE box_reader NOLOGIN`;
+      const hasSession = await runPlain('step3-alone.sql', '');
+      expect(hasSession.output).toContain('1 session(s) of box_reader are open; PUBLIC has been given nothing back');
+      expect(await wholeShape()).toEqual({ ...before, role: { ...before.role, rolcanlogin: false } });
+    } finally {
+      await held.end({ timeout: 2 }).catch(() => {});
       await su!`ALTER ROLE box_reader LOGIN`;
     }
   }, 120_000);
@@ -975,6 +1020,12 @@ describe('afterwards', () => {
       const output = await applyStopped('box-reader.sql');
       expect(output).toContain('box_reader_test_stop: stopped at REVOKE');
       expect(output).toContain('REVOKE EXECUTE ON FUNCTION');
+      expect(await wholeShape()).toEqual(before);
+      // Run by plain psql, without -v ON_ERROR_STOP=1, it stops the same way and says so in its exit
+      // status, so a script that checks the status never records it as applied.
+      const plain = await runPlain('box-reader.sql', '');
+      expect(plain.output).toContain('box_reader_test_stop: stopped at REVOKE');
+      expect(plain.exitCode).not.toBe(0);
       expect(await wholeShape()).toEqual(before);
     } finally {
       await su!`DROP EVENT TRIGGER IF EXISTS box_reader_test_stop`;

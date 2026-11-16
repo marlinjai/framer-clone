@@ -3,11 +3,14 @@
 -- The way back from prisma/sql/box-reader.sql. PREPARED AND REHEARSED OFFLINE
 -- ONLY, like that file.
 --
--- WHO RUNS IT. A superuser, with psql, on the database box-reader.sql was
--- applied to. Idempotent. The file sets ON_ERROR_STOP itself (the `\set` line
--- below), so psql stops at the first error and exits with a non-zero status
--- even when it is run without `-v ON_ERROR_STOP=1`. Run it with psql only:
--- that line is a psql command, which another client does not understand.
+-- WHO RUNS IT. A superuser, with `psql -f`, on the database box-reader.sql was
+-- applied to. Idempotent. Never paste it into an interactive session: there
+-- an error returns psql to its prompt instead of ending the run, and the rest
+-- of the pasted text would go on. The file sets ON_ERROR_STOP itself (the
+-- `\set` line below), so `psql -f` stops at the first error and exits with a
+-- non-zero status even without `-v ON_ERROR_STOP=1`. That line is a psql
+-- command, which another client does not understand. The safety does not rest
+-- on any of this: step 3 checks again, itself, that the box is shut out.
 --
 -- WHAT IT DOES, in three steps, in this order:
 --   1. One transaction: it takes the login away from box_reader, and its
@@ -17,26 +20,38 @@
 --   2. It lifts the statement timeout for its own session (the step waits at
 --      least a second, and a short timeout on the operator's role would stop
 --      it every time), then ends every session box_reader still has open and
---      waits for each to be gone, up to 5 seconds. A login that had passed its checks just before
---      step 1 committed appears in the list of sessions only at the end of its
---      startup, a few milliseconds later, so the step waits a second and looks
---      again, and ends whatever it finds, until a look after that second finds
---      nothing. If sessions are still there after five rounds it stops with an
---      error, before PUBLIC gets anything back.
---   3. One transaction: it gives PUBLIC back, in this database, what
---      box-reader.sql took: CONNECT on the database, then EXECUTE on the
---      advisory lock functions, on the large object functions and on
---      pg_logical_emit_message. So every role can do again what it could do
---      before. It never touches lo_import and lo_export, which Postgres keeps
---      from PUBLIC (they read and write files of the server) and which
---      box-reader.sql therefore never had to take.
+--      waits for each to be gone, up to 5 seconds. A login that had passed
+--      its checks just before step 1 committed appears in the list of
+--      sessions only at the end of its startup, a few milliseconds later, so
+--      the step waits a second and looks again, and ends whatever it finds,
+--      until a look after that second finds nothing. If sessions are still
+--      there after five rounds it stops with an error, before PUBLIC gets
+--      anything back. On Postgres 17 and later a short transaction_timeout on
+--      the operator's role, which cannot be lifted this way, would end the
+--      session in this step; that stops the file on the safe side.
+--   3. One transaction. First it checks again that box_reader cannot log in
+--      and has no session, and stops with an error otherwise, so this step
+--      gives nothing back however the file was run or cut short. Then it
+--      gives PUBLIC back, in this database, what box-reader.sql took: CONNECT
+--      on the database, then EXECUTE on the advisory lock functions, on the
+--      large object functions and on pg_logical_emit_message. So every role
+--      can do again what it could do before. It never touches lo_import and
+--      lo_export, which Postgres keeps from PUBLIC (they read and write files
+--      of the server) and which box-reader.sql therefore never had to take.
 -- So no session of the box runs with PUBLIC's rights back, short of a startup
--- slower than a second: a login that passed its checks before step 1 committed
--- and appears in the list of sessions more than a second later is not seen by
--- step 2. If the file stops after step 1 or 2, the box is shut out and PUBLIC still lacks those
--- rights, which is the safe side; run it again and it finishes. It does not
--- drop the role (a role that holds a grant cannot be dropped without also
--- dropping the grant, and the application's migration may have given it one).
+-- slower than a second: a login that passed its checks before step 1
+-- committed and appears in the list of sessions more than a second later is
+-- not seen by step 2 (nor by step 3's check, if it appears later still). If
+-- the file stops after step 1 or 2, the box is shut out and PUBLIC still
+-- lacks those rights, which is the safe side; run it again and it finishes.
+-- It does not drop the role (a role that holds a grant cannot be dropped
+-- without also dropping the grant, and the application's migration may have
+-- given it one).
+--
+-- CATALOG NAMES (pg_stat_activity, pg_terminate_backend, format and the
+-- others) are not qualified: they resolve through the session's search path.
+-- The default path puts pg_catalog first, so only a superuser who set a path
+-- of their own could change what they mean.
 --
 -- IT ASSUMES that before box-reader.sql PUBLIC held what Postgres gives it by
 -- default. If the real database had already taken one of these rights from
@@ -107,6 +122,22 @@ $$;
 
 -- Step 3. PUBLIC gets back what box-reader.sql took, whole or not at all.
 BEGIN;
+
+-- Checked again here, whatever happened before: the box cannot log in and has no session.
+DO $$
+DECLARE
+  open_sessions int;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'box_reader' AND rolcanlogin) THEN
+    RAISE EXCEPTION 'box-reader-rollback.sql: box_reader can still log in; PUBLIC has been given nothing back. Run the whole file again.';
+  END IF;
+  SELECT count(*) INTO open_sessions FROM pg_stat_activity
+   WHERE usename = 'box_reader' AND pid <> pg_backend_pid();
+  IF open_sessions > 0 THEN
+    RAISE EXCEPTION 'box-reader-rollback.sql: % session(s) of box_reader are open; PUBLIC has been given nothing back. Run the whole file again.', open_sessions;
+  END IF;
+END
+$$;
 
 DO $$
 BEGIN

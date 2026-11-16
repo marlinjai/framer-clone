@@ -118,9 +118,9 @@
 --     objects and temporary tables there are written to the same disk, so the
 --     disk can still be filled from there, and pg_logical_emit_message there
 --     writes to the same write-ahead log, which the whole cluster shares.
---     Advisory locks there are not locks in this database. Closing this is a cluster-wide change, or a rule in
---     pg_hba.conf limiting box_reader to this database, and belongs to the
---     operator step O1. UNTIL THEN THE DISK CAN BE FILLED FROM THERE.
+--     Advisory locks there are not locks in this database. Closing this is a
+--     cluster-wide change, or a rule in pg_hba.conf limiting box_reader to
+--     this database, and belongs to the operator step O1. UNTIL THEN THE DISK CAN BE FILLED FROM THERE.
 --   Even after O1 this file only narrows how the role can use the disk (the
 --   NOTIFY queue above stays). IT DOES NOT PROTECT THE DISK.
 --
