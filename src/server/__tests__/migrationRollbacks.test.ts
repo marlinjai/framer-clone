@@ -17,8 +17,11 @@ const rollbacks = readdirSync(MIGRATIONS)
   .filter((file) => existsSync(file))
   .map((file) => [path.relative(MIGRATIONS, file), readFileSync(file, 'utf8')] as const);
 
-/** A schema-qualified name, both parts quoted, as Prisma writes them: `"public"."sites"`. */
-const Q = String.raw`"[a-z_][a-z0-9_]*"\."[a-z_][a-z0-9_]*"`;
+/**
+ * A schema-qualified name, both parts quoted, as Prisma writes them: `"public"."sites"`. Never Prisma's history table:
+ * a rollback may only delete its own row there, through the one shape written for that.
+ */
+const Q = String.raw`(?!"public"\."_prisma_migrations")"[a-z_][a-z0-9_]*"\."[a-z_][a-z0-9_]*"`;
 /** A quoted column or constraint name. */
 const COLUMN = String.raw`"[a-z_][a-z0-9_]*"`;
 /** The line that fixes the search path, built from its words (written out, it would read as a runtime path change
@@ -31,11 +34,17 @@ const SET_LINE = ['SET', 'search_path', '=', 'pg_catalog,', 'pg_temp;'].join(' '
  * an unusual quote) is refused until a shape for it is added here on purpose. Each shape names every object with its
  * schema. `folder` is the migration the file belongs to, the only history row it may delete.
  */
+/** Text made literal inside a regular expression. */
+function literal(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function shapes(folder: string): RegExp[] {
-  const escapedSet = SET_LINE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedSet = literal(SET_LINE);
   return [
     new RegExp(`^${escapedSet}$`),
-    new RegExp(String.raw`^DROP (?:TABLE|INDEX|FUNCTION) IF EXISTS ${Q}(?:\((?:pg_catalog\.[a-z_]+(?:, pg_catalog\.[a-z_]+)*)?\))?(?: CASCADE)?;$`),
+    new RegExp(String.raw`^DROP (?:TABLE|INDEX) IF EXISTS ${Q}(?: CASCADE)?;$`),
+    new RegExp(String.raw`^DROP FUNCTION IF EXISTS ${Q}\((?:pg_catalog\.[a-z_]+(?:, pg_catalog\.[a-z_]+)*)?\)(?: CASCADE)?;$`),
     new RegExp(
       String.raw`^ALTER TABLE ${Q} DROP (?:COLUMN|CONSTRAINT) IF EXISTS ${COLUMN}(?:, DROP (?:COLUMN|CONSTRAINT) IF EXISTS ${COLUMN})*;$`,
     ),
@@ -44,20 +53,33 @@ function shapes(folder: string): RegExp[] {
     /^END IF;$/,
     /^END \$\$;$/,
     /^IF pg_catalog\.to_regclass\('public\._prisma_migrations'\) IS NOT NULL THEN$/,
-    new RegExp(String.raw`^DELETE FROM "public"\."_prisma_migrations" WHERE "migration_name" = '${folder}';$`),
+    new RegExp(String.raw`^DELETE FROM "public"\."_prisma_migrations" WHERE "migration_name" = '${literal(folder)}';$`),
     /^IF EXISTS \(SELECT 1 FROM information_schema\.columns WHERE table_schema = 'public' AND table_name = '[a-z_]+' AND column_name = '[a-z_]+'\) THEN$/,
     new RegExp(String.raw`^DELETE FROM ${Q} WHERE ${COLUMN} = '[a-z_]+';$`),
   ];
 }
 
-/** The statement lines of a file (blank lines and whole-line comments left out) that match no allowed shape. */
-function unknownLines(text: string, folder: string): string[] {
-  const allowed = shapes(folder);
+/**
+ * The statement lines of a file: blank lines and whole-line comments left out, and only spaces, tabs and carriage
+ * returns trimmed at the ends (Postgres reads other Unicode spaces, a no-break space or a byte order mark, as part of
+ * a name, so they are never trimmed away here).
+ */
+function statementLines(text: string): string[] {
   return text
     .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '' && !line.startsWith('--'))
-    .filter((line) => !allowed.some((shape) => shape.test(line)));
+    .map((line) => line.replace(/^[ \t\r]+|[ \t\r]+$/g, ''))
+    .filter((line) => line !== '' && !line.startsWith('--'));
+}
+
+/**
+ * The statement lines that match no allowed shape, and every line holding a character outside printable ASCII, tab
+ * and carriage return (even in a comment: such a character is what could make a line read differently to psql).
+ */
+function unknownLines(text: string, folder: string): string[] {
+  const allowed = shapes(folder);
+  const odd = text.split('\n').filter((line) => /[^\x20-\x7e\t\r]/.test(line));
+  const unknown = statementLines(text).filter((line) => !allowed.some((shape) => shape.test(line)));
+  return [...new Set([...odd, ...unknown])];
 }
 
 const FOLDER = '20261115000000_custom_code';
@@ -93,6 +115,16 @@ describe('the allowed shapes of a rollback line', () => {
     'EXECUTE(\'DELETE FROM sites\');',
     "SELECT 'DROP TABLE ' || 'sites' \\gexec",
     'SELECT dblink_exec(\'DROP TABLE sites\');',
+    // Prisma's history table as a whole, or a row of it chosen any other way.
+    'DROP TABLE IF EXISTS "public"."_prisma_migrations";',
+    'DROP TABLE IF EXISTS "public"."_prisma_migrations" CASCADE;',
+    'ALTER TABLE "public"."_prisma_migrations" DROP COLUMN IF EXISTS "migration_name";',
+    'DELETE FROM "public"."_prisma_migrations" WHERE "logs" = \'x\';',
+    // An argument list only belongs to a function.
+    'DROP TABLE IF EXISTS "public"."a"();',
+    // Characters Postgres reads as part of a name, around an allowed line.
+    '\u00a0DROP TABLE IF EXISTS "public"."a";',
+    'DROP TABLE IF EXISTS "public"."a";\ufeff',
     'RAISE NOTICE $m$ -- done $m$; DELETE FROM b;',
     'DROP TABLE IF EXISTS "public"."a"; -- don\'t',
     '/* it\'s */ DROP TABLE b;',
@@ -102,7 +134,12 @@ describe('the allowed shapes of a rollback line', () => {
     // Another search path (built from its words, like SET_LINE).
     ['SET', 'search_path', '=', 'public;'].join(' '),
   ])('refuses %s', (line) => {
-    expect(unknownLines(line, FOLDER)).toEqual([line.trim()]);
+    expect(unknownLines(line, FOLDER)).toEqual([line]);
+  });
+
+  it('reads the migration folder as text, not as a pattern', () => {
+    const line = 'DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = \'2026x1\';';
+    expect(unknownLines(line, '2026.1')).toEqual([line]);
   });
 });
 
@@ -118,16 +155,14 @@ describe('the migrations\' rollback.sql files', () => {
   });
 
   it.each(rollbacks)('%s sets its own search path before any other statement', (_name, text) => {
-    const first = text
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => line !== '' && !line.startsWith('--'));
-    expect(first).toBe(SET_LINE);
+    expect(statementLines(text)[0]).toBe(SET_LINE);
   });
 
   it.each(rollbacks)('%s has only lines of the allowed shapes, every object named with its schema', (name, text) => {
     expect(unknownLines(text, path.dirname(name))).toEqual([]);
-    // And it forgets its own migration.
-    expect(text).toContain(`WHERE "migration_name" = '${path.dirname(name)}';`);
+    // And it forgets its own migration, in a statement line (a comment does not count).
+    expect(statementLines(text)).toContain(
+      `DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = '${path.dirname(name)}';`,
+    );
   });
 });
