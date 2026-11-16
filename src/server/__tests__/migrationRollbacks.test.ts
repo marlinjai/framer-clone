@@ -18,15 +18,21 @@ const rollbacks = readdirSync(MIGRATIONS)
   .map((file) => [path.relative(MIGRATIONS, file), readFileSync(file, 'utf8')] as const);
 
 /**
- * A schema-qualified name, both parts quoted, as Prisma writes them: `"public"."sites"`. Never Prisma's history table:
- * a rollback may only delete its own row there, through the one shape written for that.
+ * A name in the application's schema, both parts quoted, as Prisma writes them: `"public"."sites"`. Only `public`: a
+ * migration of this repository makes nothing elsewhere, so its rollback has nothing to drop elsewhere. Never Prisma's
+ * history table: a rollback may only delete its own row there, through the one shape written for that.
  */
-const Q = String.raw`(?!"public"\."_prisma_migrations")"[a-z_][a-z0-9_]*"\."[a-z_][a-z0-9_]*"`;
+const Q = String.raw`"public"\.(?!"_prisma_migrations")"[a-z_][a-z0-9_]*"`;
 /** A quoted column or constraint name. */
 const COLUMN = String.raw`"[a-z_][a-z0-9_]*"`;
 /** The line that fixes the search path, built from its words (written out, it would read as a runtime path change
  * to lint:guards). */
 const SET_LINE = ['SET', 'search_path', '=', 'pg_catalog,', 'pg_temp;'].join(' ');
+
+/** Text made literal inside a regular expression. */
+function literal(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * Every shape a statement line of a hand-run rollback may have, and nothing else. The test fails closed: a line that
@@ -34,11 +40,6 @@ const SET_LINE = ['SET', 'search_path', '=', 'pg_catalog,', 'pg_temp;'].join(' '
  * an unusual quote) is refused until a shape for it is added here on purpose. Each shape names every object with its
  * schema. `folder` is the migration the file belongs to, the only history row it may delete.
  */
-/** Text made literal inside a regular expression. */
-function literal(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function shapes(folder: string): RegExp[] {
   const escapedSet = literal(SET_LINE);
   return [
@@ -60,24 +61,32 @@ function shapes(folder: string): RegExp[] {
 }
 
 /**
- * The statement lines of a file: blank lines and whole-line comments left out, and only spaces, tabs and carriage
- * returns trimmed at the ends (Postgres reads other Unicode spaces, a no-break space or a byte order mark, as part of
- * a name, so they are never trimmed away here).
+ * The lines of a file, split at every line break psql knows: a carriage return also ends a `--` comment for psql, so
+ * it ends a line here too (and `unknownLines` refuses it outright).
+ */
+function linesOf(text: string): string[] {
+  return text.split(/\r\n|\r|\n/);
+}
+
+/**
+ * The statement lines of a file: blank lines and whole-line comments left out, and only spaces and tabs trimmed at
+ * the ends (Postgres reads other Unicode spaces, a no-break space or a byte order mark, as part of a name, so they
+ * are never trimmed away here).
  */
 function statementLines(text: string): string[] {
-  return text
-    .split('\n')
-    .map((line) => line.replace(/^[ \t\r]+|[ \t\r]+$/g, ''))
+  return linesOf(text)
+    .map((line) => line.replace(/^[ \t]+|[ \t]+$/g, ''))
     .filter((line) => line !== '' && !line.startsWith('--'));
 }
 
 /**
- * The statement lines that match no allowed shape, and every line holding a character outside printable ASCII, tab
- * and carriage return (even in a comment: such a character is what could make a line read differently to psql).
+ * The statement lines that match no allowed shape, and every line of the file holding a character outside printable
+ * ASCII and tab, a carriage return included (even in a comment: such a character is what could make a line read
+ * differently to psql than to this test).
  */
 function unknownLines(text: string, folder: string): string[] {
   const allowed = shapes(folder);
-  const odd = text.split('\n').filter((line) => /[^\x20-\x7e\t\r]/.test(line));
+  const odd = text.split('\n').filter((line) => /[^\x20-\x7e\t]/.test(line));
   const unknown = statementLines(text).filter((line) => !allowed.some((shape) => shape.test(line)));
   return [...new Set([...odd, ...unknown])];
 }
@@ -125,6 +134,11 @@ describe('the allowed shapes of a rollback line', () => {
     // Characters Postgres reads as part of a name, around an allowed line.
     '\u00a0DROP TABLE IF EXISTS "public"."a";',
     'DROP TABLE IF EXISTS "public"."a";\ufeff',
+    // A carriage return ends a comment for psql, so the code after it would run.
+    '-- note\rDELETE FROM sites;',
+    // Another schema than the application's.
+    'DROP TABLE IF EXISTS "pg_catalog"."pg_authid";',
+    'DELETE FROM "other"."t" WHERE "a" = \'b\';',
     'RAISE NOTICE $m$ -- done $m$; DELETE FROM b;',
     'DROP TABLE IF EXISTS "public"."a"; -- don\'t',
     '/* it\'s */ DROP TABLE b;',
@@ -134,7 +148,8 @@ describe('the allowed shapes of a rollback line', () => {
     // Another search path (built from its words, like SET_LINE).
     ['SET', 'search_path', '=', 'public;'].join(' '),
   ])('refuses %s', (line) => {
-    expect(unknownLines(line, FOLDER)).toEqual([line]);
+    // Reported as written (a line with an odd character may be reported once more, split where psql splits it).
+    expect(unknownLines(line, FOLDER)).toContain(line);
   });
 
   it('reads the migration folder as text, not as a pattern', () => {
