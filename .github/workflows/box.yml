@@ -67,6 +67,9 @@ jobs:
     # The shared server is aarch64, so the image is built and tested on the same architecture.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
+    env:
+      # Whether the operator step O1 has set both deploy secrets: a yes or no, never a value.
+      BOX_DEPLOY_CONFIGURED: ${{ secrets.COOLIFY_BOX_WEBHOOK != '' && secrets.COOLIFY_TOKEN != '' }}
     defaults:
       run:
         working-directory: services/box
@@ -115,14 +118,15 @@ jobs:
         run: pnpm test:integration
 
       # The image the suite just tested is the one that is pushed, byte for byte, never a rebuild. It goes to
-      # the publish job as an artifact because only that job may write packages.
+      # the publish job as an artifact because only that job may write packages. Kept only when it will be
+      # published: on main, with both deploy secrets set.
       - name: Keep the tested image
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && env.BOX_DEPLOY_CONFIGURED == 'true'
         working-directory: .
         run: docker save framer-clone-box:ci | gzip -1 > "$RUNNER_TEMP/box-image.tar.gz"
 
       - name: Upload the tested image
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && env.BOX_DEPLOY_CONFIGURED == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: box-image

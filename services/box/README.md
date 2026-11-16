@@ -67,7 +67,8 @@ The image's entrypoint is `tini`, then `node /opt/box/launch.cjs` (the bundled `
 1. refuses to run as root, and checks its own variables (below). A missing or malformed one stops it with status 78 and a line naming the variable, never its value, before anything is started;
 2. logs in with the box's machine identity: `infisical login --method=universal-auth --silent --plain`, with the client id and secret in the client's environment, never on its command line, and the token read from a pipe and never written. A refused or hanging login (30 seconds) stops it with status 69 and the client's own message, with every credential taken out;
 3. runs `infisical run` for the box's project and environment, with the token in its environment, never as an argument, and the box under it through `env -u INFISICAL_TOKEN`, so the box's environment holds `BOX_DATABASE_URL` and no credential;
-4. passes SIGTERM and SIGINT on and ends with the status `infisical run` ends with. `infisical run` reports a child that failed as status 1, so a box that refuses its configuration (78) ends the container with 1; the box's own line says which variable (decision D46).
+4. passes on everything `infisical run` and the box write to standard error, a line at a time with every credential taken out (the client holds the token while it runs), and the box's request log on standard output as it is;
+5. passes SIGTERM and SIGINT on and ends with the status `infisical run` ends with, saying so when it is not 0. `infisical run` reports a child that failed as status 1, so a box that refuses its configuration (78) ends the container with 1, and so does a fetch of the secrets that Infisical refuses; the box's own line or the client's reason says which (decision D46).
 
 | Variable | Required | Meaning |
 |---|---|---|
