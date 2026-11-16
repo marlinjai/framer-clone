@@ -29,20 +29,29 @@ function code(text: string): string {
 const QUALIFIED = /^"?[a-z_]+"?\."?[A-Za-z_]+"?$/;
 
 /**
- * Every object a statement drops, alters, empties, deletes from, writes to or reads from, as written. A schema a
- * statement drops is listed apart: it is never looked up through the search path, so it is a bare name.
+ * Every object a statement drops, alters, empties, deletes from, writes to or reads from, as written, in any letter
+ * case and with every name of a comma list. A schema a statement drops is listed apart: it is never looked up through
+ * the search path, so it is a bare name.
  */
 function objectsOf(sql: string): { relations: string[]; schemas: string[] } {
-  const relations = [
+  const single = [
     ...sql.matchAll(
-      /\b(?:DROP (?:TABLE|FUNCTION|INDEX|VIEW|MATERIALIZED VIEW|TYPE|SEQUENCE)|ALTER TABLE|TRUNCATE(?: TABLE)?|DELETE FROM|INSERT INTO|UPDATE|FROM|JOIN)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^\s(;,)]+)/g,
+      /\b(?:DROP FUNCTION|ALTER TABLE|DELETE FROM|INSERT INTO|UPDATE|FROM|JOIN|USING)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^\s(;,)]+)/gi,
     ),
-    ...sql.matchAll(/\bDROP TRIGGER\s+(?:IF EXISTS\s+)?\S+\s+ON\s+(?:ONLY\s+)?([^\s(;,)]+)/g),
-  ]
-    .map((match) => match[1]!)
+    ...sql.matchAll(/\bDROP (?:TRIGGER|POLICY|RULE)\s+(?:IF EXISTS\s+)?\S+\s+ON\s+(?:ONLY\s+)?([^\s(;,)]+)/gi),
+  ].map((match) => match[1]!);
+  // Statements that take a list of names: every name of the list, not only the first.
+  const listed = [
+    ...sql.matchAll(
+      /\b(?:DROP (?:TABLE|INDEX|VIEW|MATERIALIZED VIEW|TYPE|SEQUENCE)|TRUNCATE(?: TABLE)?)\s+(?:IF EXISTS\s+)?(?:ONLY\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT|RESTART IDENTITY|CONTINUE IDENTITY))*\s*(?:;|$)/gi,
+    ),
+  ].flatMap((match) => match[1]!.split(',').map((name) => name.trim().replace(/^ONLY\s+/i, '')));
+  const relations = [...single, ...listed]
     // `REVOKE ... FROM PUBLIC` names the role every role belongs to, not a relation.
-    .filter((name) => name !== 'PUBLIC');
-  const schemas = [...sql.matchAll(/\bDROP SCHEMA\s+(?:IF EXISTS\s+)?([^\s(;,)]+)/g)].map((match) => match[1]!);
+    .filter((name) => name.toUpperCase() !== 'PUBLIC');
+  const schemas = [...sql.matchAll(/\bDROP SCHEMA\s+(?:IF EXISTS\s+)?([^;]+?)(?:\s+(?:CASCADE|RESTRICT))?\s*(?:;|$)/gi)].flatMap(
+    (match) => match[1]!.split(',').map((name) => name.trim()),
+  );
   return { relations, schemas };
 }
 
@@ -67,6 +76,15 @@ describe('the detector of objects a rollback names', () => {
     ['DROP SCHEMA IF EXISTS "postgres" CASCADE;', []],
     ['DROP SCHEMA a.b;', ['a.b']],
     ['REVOKE ALL ON FUNCTION "public"."f"() FROM PUBLIC;', []],
+    ['DROP TABLE IF EXISTS "public"."a", b CASCADE;', ['b']],
+    ['drop table if exists site_models;', ['site_models']],
+    ['delete from "_prisma_migrations" where a = 1;', ['"_prisma_migrations"']],
+    ['DROP POLICY IF EXISTS p ON site_models;', ['site_models']],
+    ['DROP RULE r ON "public"."site_models";', []],
+    ['DELETE FROM "public"."a" USING b WHERE true;', ['b']],
+    ['TRUNCATE "public"."a", b RESTART IDENTITY CASCADE;', ['b']],
+    ['DROP SCHEMA IF EXISTS x, a.b CASCADE;', ['a.b']],
+    ['revoke all on function "public"."f"() from public;', []],
   ])('%s', (sql, expected) => {
     expect(misnamed(sql)).toEqual(expected);
   });
@@ -75,7 +93,7 @@ describe('the detector of objects a rollback names', () => {
     const { relations, schemas } = objectsOf(
       'DROP TRIGGER t ON public.a; TRUNCATE public.b; SELECT 1 FROM public.c JOIN public.d ON true; DROP SCHEMA e;',
     );
-    expect(relations).toEqual(['public.b', 'public.c', 'public.d', 'public.a']);
+    expect([...relations].sort()).toEqual(['public.a', 'public.b', 'public.c', 'public.d']);
     expect(schemas).toEqual(['e']);
   });
 });

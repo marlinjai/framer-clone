@@ -1187,8 +1187,16 @@ describe('what is left, stated in the file and held here as it is', () => {
     const victim = as('box_reader');
     const thief = as('box_reader');
     const [{ pid }] = (await victim`SELECT pg_backend_pid() AS pid`) as unknown as [{ pid: number }];
-    expect(await codeOf(() => thief`SELECT pg_terminate_backend(${pid}::int)`)).toBe('ok');
-    expect(await codeOf(() => victim`SELECT 1`)).not.toBe('ok');
+    // With a timeout, pg_terminate_backend returns only once the session has ended (without one it only sends the
+    // signal, and the victim's next statement could still run before it arrives).
+    const [{ ended }] = (await thief`SELECT pg_terminate_backend(${pid}::int, 5000) AS ended`) as unknown as [
+      { ended: boolean },
+    ];
+    expect(ended).toBe(true);
+    const [{ left }] = (await thief`SELECT count(*)::int AS left FROM pg_stat_activity WHERE pid = ${pid}::int`) as unknown as [
+      { left: number },
+    ];
+    expect(left).toBe(0);
   });
 
   it('RESIDUAL: box_reader connects to the other databases of the cluster while PUBLIC may', async () => {
