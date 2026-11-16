@@ -18,13 +18,17 @@
 //   - the matcher gates only the real authoring surfaces and the dead
 //     `/editor`, `/api/sites`, `/api/admin` patterns are gone;
 //   - a published page carries the report-only policy and nothing else does:
-//     a page path on the editor host is matched but never gated or marked.
+//     a page path on the editor host is matched but never gated or marked;
+//   - a published page and the editor host's standalone preview carry the
+//     enforced frame policy (decision D6 of the sandboxed custom code plan), and
+//     no other editor page does.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from '../middleware';
 import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import {
   ALLOWED_FRAME_ORIGIN,
+  CSP_ENFORCED_HEADER,
   CSP_REPORT_ONLY_HEADER,
   MAPS_CONSENT_COOKIE,
   PUBLISHED_REPORT_ONLY_POLICY,
@@ -299,15 +303,15 @@ describe('middleware: a write from another origin never reaches the editor host'
 describe('middleware: the report-only policy of published pages', () => {
   const policy = (res: Response) => res.headers.get(CSP_REPORT_ONLY_HEADER);
 
-  it('marks a published page and the published home, and never enforces', async () => {
+  it('marks a published page and the published home, and enforces nothing but the frame policy', async () => {
     process.env.EDITOR_HOST = EDITOR;
     const page = await middleware(req(`https://${PUBLISHED}/about`, { host: PUBLISHED }));
     const home = await middleware(req(`https://${PUBLISHED}/`, { host: PUBLISHED }));
     expect(policy(page)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
     expect(policy(home)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
     expect(rewriteTarget(home)).not.toBeNull();
-    expect(page.headers.get('content-security-policy')).toBeNull();
-    expect(home.headers.get('content-security-policy')).toBeNull();
+    expect(page.headers.get('content-security-policy')).toBe("frame-src 'none'");
+    expect(home.headers.get('content-security-policy')).toBe("frame-src 'none'");
   });
 
   it('measures images, fonts, media and frames, allows the site and Unsplash, and reports to the site itself', () => {
@@ -733,7 +737,8 @@ describe('framing: no editor page may be framed', () => {
     expect(api.headers.get('x-frame-options')).toBeNull();
     const published = await middleware(req('https://bakery.sites.lumitra.co/menu', { host: 'bakery.sites.lumitra.co' }));
     expect(published.headers.get('x-frame-options')).toBeNull();
-    expect(published.headers.get('content-security-policy')).toBeNull();
+    // Its own policy: the enforced frame policy, never frame-ancestors.
+    expect(published.headers.get('content-security-policy')).toBe("frame-src 'none'");
   });
 });
 
@@ -992,5 +997,127 @@ describe('middleware: a preview host (the public preview link of a site branch, 
     const res = await middleware(new NextRequest(`https://${PREVIEW}/projects`, { headers: { host: PREVIEW, cookie: 'lumitra_session=x' } }));
     expect(res.status).toBe(404);
     expect(res.headers.get('x-robots-tag')).toBeNull();
+  });
+});
+
+describe('middleware: the enforced frame policy (decision D6 of the sandboxed custom code plan)', () => {
+  const BOX = 'https://run.box.example';
+  const enforced = (res: Response) => res.headers.get(CSP_ENFORCED_HEADER);
+  const consent = `${MAPS_CONSENT_COOKIE}=1`;
+  const serve = () => {
+    process.env.EDITOR_HOST = EDITOR;
+    process.env.CUSTOM_CODE_DISABLED = '0';
+    process.env.SANDBOX_ORIGIN = BOX;
+  };
+  afterEach(() => {
+    delete process.env.CUSTOM_CODE_DISABLED;
+    delete process.env.SANDBOX_ORIGIN;
+  });
+
+  it('names the box and, after maps consent only, Google on every published document', async () => {
+    serve();
+    for (const path of ['/', '/about', '/shop/product-1']) {
+      const without = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED }));
+      const declined = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED, cookie: `${MAPS_CONSENT_COOKIE}=0` }));
+      const consented = await middleware(req(`https://${PUBLISHED}${path}`, { host: PUBLISHED, cookie: consent }));
+      expect(enforced(without)).toBe(`frame-src ${BOX}/box/`);
+      expect(enforced(declined)).toBe(`frame-src ${BOX}/box/`);
+      expect(enforced(consented)).toBe(`frame-src ${BOX}/box/ ${ALLOWED_FRAME_ORIGIN}`);
+      // The report-only policy stays exactly as it was.
+      expect(without.headers.get(CSP_REPORT_ONLY_HEADER)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
+      expect(consented.headers.get(CSP_REPORT_ONLY_HEADER)).toBe(PUBLISHED_REPORT_ONLY_POLICY_MAPS);
+    }
+    // A custom domain is a published host too.
+    const custom = await middleware(req('https://www.bakery.example/menu', { host: 'www.bakery.example' }));
+    expect(enforced(custom)).toBe(`frame-src ${BOX}/box/`);
+  });
+
+  it('carries no source but Google, or none at all, while the box may not be framed', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const states: [string | undefined, string | undefined][] = [
+      [undefined, undefined], // nothing configured, how production runs today
+      ['0', undefined], // switch off, no origin
+      [undefined, BOX], // origin, switch not decided
+      ['1', BOX], // the kill switch on
+      ['0', `${BOX}/`], // an origin that is not exactly https and a host name
+      ['0', 'http://run.box.example'],
+      ['0', `${BOX}; script-src *`],
+    ];
+    for (const [disabled, origin] of states) {
+      if (disabled === undefined) delete process.env.CUSTOM_CODE_DISABLED;
+      else process.env.CUSTOM_CODE_DISABLED = disabled;
+      if (origin === undefined) delete process.env.SANDBOX_ORIGIN;
+      else process.env.SANDBOX_ORIGIN = origin;
+      const without = await middleware(req(`https://${PUBLISHED}/about`, { host: PUBLISHED }));
+      const consented = await middleware(req(`https://${PUBLISHED}/about`, { host: PUBLISHED, cookie: consent }));
+      expect(enforced(without)).toBe("frame-src 'none'");
+      expect(enforced(consented)).toBe(`frame-src ${ALLOWED_FRAME_ORIGIN}`);
+      expect(enforced(consented)).toBe(`frame-src ${GOOGLE_MAPS_ORIGIN}`);
+    }
+  });
+
+  it('is sent on the standalone preview of a project, joined to frame-ancestors none, in both consent states', async () => {
+    serve();
+    const without = await middleware(req(`https://${EDITOR}/projects/site-1/preview?page=p1`, { host: EDITOR, cookie: 'lumitra_session=s1' }));
+    const consented = await middleware(req(`https://${EDITOR}/projects/site-1/preview`, { host: EDITOR, cookie: `lumitra_session=s1; ${consent}` }));
+    expect(isNext(without)).toBe(true);
+    expect(enforced(without)).toBe(`frame-ancestors 'none'; frame-src ${BOX}/box/`);
+    expect(enforced(consented)).toBe(`frame-ancestors 'none'; frame-src ${BOX}/box/ ${ALLOWED_FRAME_ORIGIN}`);
+    expect(without.headers.get('x-frame-options')).toBe('DENY');
+    // Never the report-only policy of a published page: the editor host takes no report posts for it.
+    expect(without.headers.get(CSP_REPORT_ONLY_HEADER)).toBeNull();
+    // Another spelling of the same path is the same page.
+    const spelled = await middleware(req(`https://${EDITOR}//Projects/site-1/%70review`, { host: EDITOR, cookie: 'lumitra_session=s1' }));
+    expect(enforced(spelled)).toBe(`frame-ancestors 'none'; frame-src ${BOX}/box/`);
+  });
+
+  it('is sent on the standalone preview without the box while the box may not be framed', async () => {
+    process.env.EDITOR_HOST = EDITOR;
+    const res = await middleware(req(`https://${EDITOR}/projects/site-1/preview`, { host: EDITOR, cookie: 'lumitra_session=s1' }));
+    expect(enforced(res)).toBe("frame-ancestors 'none'; frame-src 'none'");
+  });
+
+  it('is never sent on the editor\'s own pages, which must keep working', async () => {
+    serve();
+    for (const path of [
+      '/',
+      '/projects',
+      '/projects/site-1',
+      '/projects/site-1/confirm/abc',
+      '/projects/site-1/review',
+      '/projects/site-1/preview/extra',
+      '/projects/books',
+      '/projects/books/invoice',
+      '/projects/books/templates/t1',
+      '/projects/catalog',
+      '/preview',
+    ]) {
+      const res = await middleware(req(`https://${EDITOR}${path}`, { host: EDITOR, cookie: 'lumitra_session=s1' }));
+      expect(enforced(res), path).toBe("frame-ancestors 'none'");
+    }
+    // The preview over the editor is the editor page with a parameter.
+    const overlay = await middleware(req(`https://${EDITOR}/projects/site-1?preview=1`, { host: EDITOR, cookie: 'lumitra_session=s1' }));
+    expect(enforced(overlay)).toBe("frame-ancestors 'none'");
+    // API responses keep what their routes send.
+    const api = await middleware(req(`https://${EDITOR}/api/projects/site-1`, { host: EDITOR, cookie: 'lumitra_session=s1' }));
+    expect(enforced(api)).toBeNull();
+  });
+
+  it('is not sent on a signed-out bounce from the standalone preview (it is a redirect, never a document)', async () => {
+    serve();
+    const res = await middleware(req(`https://${EDITOR}/projects/site-1/preview`, { host: EDITOR }));
+    expect(res.status).toBe(307);
+    expect(enforced(res)).toBe("frame-ancestors 'none'");
+  });
+
+  it('leaves a branch preview host as it was: frame-ancestors none, blocks show their fallback (decision D13)', async () => {
+    serve();
+    process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
+    try {
+      const res = await middleware(req('https://preview-abc123.sites.lumitra.co/about', { host: 'preview-abc123.sites.lumitra.co', cookie: consent }));
+      expect(enforced(res)).toBe("frame-ancestors 'none'");
+    } finally {
+      delete process.env.PUBLIC_SITE_BASE_HOST;
+    }
   });
 });
