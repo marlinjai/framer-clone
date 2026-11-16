@@ -29,6 +29,13 @@ const COLUMN = String.raw`"[a-z_][a-z0-9_]*"`;
  * to lint:guards). */
 const SET_LINE = ['SET', 'search_path', '=', 'pg_catalog,', 'pg_temp;'].join(' ');
 
+/**
+ * A migration folder's name as Prisma writes it: fourteen digits, an underscore, then lower-case letters, digits and
+ * underscores. The own-row DELETE shape is built from the folder's name, so a name with any other character (a quote
+ * would end the SQL string and let the rest of the name run as SQL) gets no such shape, and its file cannot pass.
+ */
+const FOLDER_NAME = /^\d{14}_[a-z0-9_]+$/;
+
 /** Text made literal inside a regular expression. */
 function literal(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -38,7 +45,8 @@ function literal(text: string): string {
  * Every shape a statement line of a hand-run rollback may have, and nothing else. The test fails closed: a line that
  * matches none of them fails, whatever it does, so a new kind of statement (dynamic SQL, `\gexec`, an inline comment,
  * an unusual quote) is refused until a shape for it is added here on purpose. Each shape names every object with its
- * schema. `folder` is the migration the file belongs to, the only history row it may delete.
+ * schema. `folder` is the migration the file belongs to, the only history row it may delete, and only when its name
+ * has Prisma's form (`FOLDER_NAME`).
  */
 function shapes(folder: string): RegExp[] {
   const escapedSet = literal(SET_LINE);
@@ -54,7 +62,9 @@ function shapes(folder: string): RegExp[] {
     /^END IF;$/,
     /^END \$\$;$/,
     /^IF pg_catalog\.to_regclass\('public\._prisma_migrations'\) IS NOT NULL THEN$/,
-    new RegExp(String.raw`^DELETE FROM "public"\."_prisma_migrations" WHERE "migration_name" = '${literal(folder)}';$`),
+    ...(FOLDER_NAME.test(folder)
+      ? [new RegExp(String.raw`^DELETE FROM "public"\."_prisma_migrations" WHERE "migration_name" = '${literal(folder)}';$`)]
+      : []),
     /^IF EXISTS \(SELECT 1 FROM information_schema\.columns WHERE table_schema = 'public' AND table_name = '[a-z_]+' AND column_name = '[a-z_]+'\) THEN$/,
     new RegExp(String.raw`^DELETE FROM ${Q} WHERE ${COLUMN} = '[a-z_]+';$`),
   ];
@@ -165,6 +175,22 @@ describe('the allowed shapes of a rollback line', () => {
     expect(unknownLines(line, FOLDER)).toContain(line);
   });
 
+  it.each([
+    // A quote in the folder name would end the string and run the rest of the name as SQL.
+    [
+      '20261116000000_x\'; DROP TABLE "public"."victim"; --',
+      'DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = \'20261116000000_x\'; DROP TABLE "public"."victim"; --\';',
+    ],
+    // A doubled quote keeps the string open into the next line.
+    [
+      "20261116000001_it'",
+      'DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = \'20261116000001_it\'\';',
+    ],
+    ['20261116000002_Upper', 'DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = \'20261116000002_Upper\';'],
+  ])('refuses the own-row delete of a folder named %s, outside Prisma\'s naming', (folder, line) => {
+    expect(unknownLines(line, folder)).toContain(line);
+  });
+
   it('reads the migration folder as text, not as a pattern', () => {
     const line = 'DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = \'2026x1\';';
     expect(unknownLines(line, '2026.1')).toEqual([line]);
@@ -172,6 +198,22 @@ describe('the allowed shapes of a rollback line', () => {
 });
 
 describe('the migrations\' rollback.sql files', () => {
+  it('sit only in folders named the way Prisma names them, beside no other hand-run file', () => {
+    const odd: string[] = [];
+    for (const entry of readdirSync(MIGRATIONS, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        if (entry.name !== 'migration_lock.toml') odd.push(entry.name);
+        continue;
+      }
+      if (!FOLDER_NAME.test(entry.name)) odd.push(`${entry.name}/`);
+      for (const file of readdirSync(path.join(MIGRATIONS, entry.name))) {
+        // Exact names: on a case-insensitive disk `Rollback.sql` would still be read as rollback.sql, on CI's not.
+        if (file !== 'migration.sql' && file !== 'rollback.sql') odd.push(`${entry.name}/${file}`);
+      }
+    }
+    expect(odd).toEqual([]);
+  });
+
   it('are found (the walk works)', () => {
     expect(rollbacks.map(([name]) => name)).toEqual(
       expect.arrayContaining([
