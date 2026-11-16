@@ -779,6 +779,25 @@ weakened policy fails on an expectation, not a timeout. Firefox is not covered t
 only. The render gate fuzz has new probes for blocks carrying `src`, `srcdoc` and iframe markup, and for forged renderer
 attributes.
 
+**D48. A maps "yes" given on a page already loaded reloads the page.** The middleware reads the maps consent cookie into the
+document's enforced `frame-src`, and a policy cannot widen after the document loaded. Before C2 the map island drew the map in the
+same document on the banner's "yes"; under the enforced header that frame would be refused. The consent runtime
+(`src/lib/consent/consent.ts`) now remembers whether the document was served with the cookie: a "yes" in a document served
+without it, once stored, reloads the page instead of announcing it, and the new document allows the map. A stored "yes" whose
+cookie has expired (the cookie lasts a year, the record longer) sets the cookie again and reloads once. When storage throws, a
+reload would forget the answer, so it is announced as before and the map stays refused in that page view; the visitor still has
+"Open in Google Maps". A placeholder that says "reload to show the map" was the alternative; a reload is what the visitor asked
+for in one step. The render gate proves it in Chromium and WebKit: a page served without the cookie, the banner's yes, a second
+document with Google in `frame-src`, and the map loads.
+
+**D49. The project's standalone preview is left with a full document load.** A response header applies to the document it came
+with. A client-side step from `/projects/<id>/preview` back into the editor would keep the preview's `frame-src` there and refuse
+the editor's own frames (the Books PDF preview in `ImportRowEditor.tsx`). "Editor" and the "Open your projects" link of the
+preview now load a new document (`src/components/preview/leavePreview.ts`). The way in is already a full load: the tile's link
+opens a new tab, and no other client-side link leads to the route. The demo preview at `/preview` stays client-side, because its
+project lives only in the tab's memory, and it never carries the policy. The checkout draws no frame (no payment script runs on
+the page), so nothing else on the policed documents is affected.
+
 ## For Marlin
 
 **M2 done on 2026-11-02:** `lumitrausercontent.com` is registered at Cloudflare Registrar (through Lumitra Mail's buy-a-domain flow, in the Lumitra Mail workspace "Lumitra Infrastructure"), held by Marlin for Lumitra, expiring 2027-11-02 with auto-renew, privacy and transfer lock on. Its DNS zone is in Lumitra's Cloudflare account (zone id `2d1f61f852327bc23ef420fda0651121`, nameservers blair and lochlan at Cloudflare) with no records yet and no mail setup. Slice O1 can now bring the zone under Terraform and add the box's records. The Lumitra Mail order is deliberately left in "needs attention": never retry it, because a retry would try to make it a sending domain.
