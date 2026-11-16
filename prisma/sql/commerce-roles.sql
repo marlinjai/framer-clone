@@ -138,7 +138,26 @@ $$;
 -- upgraded) can still give CREATE on `public` to PUBLIC, i.e. to commerce_app;
 -- the REVOKE takes that away and is a no-op on a fresh Postgres 16.
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-GRANT USAGE, CREATE ON SCHEMA public TO commerce_ddl;
+GRANT USAGE ON SCHEMA public TO commerce_ddl;
+
+-- CREATE on `public` only until the public migrations have run. Every object
+-- in `public` resolves through the search path of the roles that keep `public`
+-- on it, the database's superuser included, so no other role may add objects
+-- there for good. A fresh database (no tracking table yet) gets the privilege
+-- for its first start, which creates the registry; re-applying this file after
+-- that start takes it away. From @marlinjai/tenant-db 0.3.1 on, a start with
+-- no new public migration needs no CREATE on `public`. A NEW public migration
+-- does: grant it for that one deploy, then re-apply this file (deploy/README.md,
+-- "Privileges on public").
+DO $$
+BEGIN
+  IF to_regclass('public.__public_db_migrations') IS NULL THEN
+    GRANT CREATE ON SCHEMA public TO commerce_ddl;
+  ELSE
+    REVOKE CREATE ON SCHEMA public FROM commerce_ddl;
+  END IF;
+END
+$$;
 
 -- `ext` holds pgcrypto, ext.gen_uuid_v7() and ext.touch_updated_at(), which the
 -- tenant tables use as column defaults and triggers. Creating it here, owned by

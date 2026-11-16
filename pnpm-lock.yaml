@@ -66,8 +66,8 @@ importers:
         specifier: 0.3.0
         version: 0.3.0
       '@marlinjai/tenant-db':
-        specifier: ^0.3.0
-        version: 0.3.0(postgres@3.4.9)
+        specifier: ^0.3.1
+        version: 0.3.1(postgres@3.4.9)
       '@pdf-lib/fontkit':
         specifier: 1.1.1
         version: 1.1.1
@@ -1528,8 +1528,8 @@ packages:
   '@marlinjai/studio-scene-core@0.3.0':
     resolution: {integrity: sha512-w1fEFJOPgpqL8mxLsCxzDczSQE4dBEWQE3qve7sspkaZHd6Jb0eiviUF/tyLuZmTVvN2DmcaDsky0EsYVW4/zg==}
 
-  '@marlinjai/tenant-db@0.3.0':
-    resolution: {integrity: sha512-1tac6A5h0/Yz/wbA0wu0BVGXGleqIXzRTsORflG1nbhXXPIIFIUVNq7OFJBHNPr80ZZQJe/cNBQ3maeTyiprfQ==}
+  '@marlinjai/tenant-db@0.3.1':
+    resolution: {integrity: sha512-BEJMhmNlF3NVpHkD+U0QgXkt1nc7ZkJuwrShn5dBaCpnS+PdlTE5EuaMSQKUFbQFwLeOJwgnV7upDb/YxSP6/g==}
     peerDependencies:
       postgres: '>=3.4.5'
 
@@ -7835,7 +7835,7 @@ snapshots:
     dependencies:
       zod: 4.6.7
 
-  '@marlinjai/tenant-db@0.3.0(postgres@3.4.9)':
+  '@marlinjai/tenant-db@0.3.1(postgres@3.4.9)':
     dependencies:
       kysely: 0.28.19
       kysely-postgres-js: 2.0.0(kysely@0.28.19)(postgres@3.4.9)
