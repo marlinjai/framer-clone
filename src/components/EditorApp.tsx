@@ -39,6 +39,7 @@ import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import ProductPreviewBar from '@/components/ProductPreviewBar';
 import ShopPreviewBar from '@/components/ShopPreviewBar';
 import PreviewOverlay, { previewRequestedInLocation } from '@/components/preview/PreviewOverlay';
+import EditorCustomCodeSurface from './CustomCodeSurface';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
 import { useStore } from "@/hooks/useStore";
@@ -329,6 +330,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
       <DragManagerBinding />
       <ComponentDialogs />
 
+    <EditorCustomCodeSurface>
     <div className="relative w-screen h-screen">
       <Canvas />
 
@@ -380,6 +382,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
       {/* Preview over the editor, from this store (PreviewOverlay). */}
       <PreviewOverlay />
     </div>
+    </EditorCustomCodeSurface>
     </TransformProvider>
     </EditorCommerceProvider>
     </DataSourceProviderContext.Provider>

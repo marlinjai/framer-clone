@@ -39,6 +39,8 @@ import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
 import { isFxSceneProp } from '@/lib/fxScene/marker';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
+import { hasCustomCode } from '@/lib/customCode/customCode';
+import { createCustomCodeElement } from '../customCode/customCodeElement';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { ShopPartElement } from '@/lib/commerce/shopRuntime';
@@ -62,10 +64,11 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // for its island, never an attribute. It is denied per node (isFxSceneProp), because
 // on an SVG `radialGradient` the same name is the gradient's focal point.
 // `scene` is the stored 3D scene of a 3D scene box (src/lib/scene, not an FX scene): data for
-// its island under any value, never an attribute.
+// its island under any value, never an attribute. `customCode` names a sandboxed custom code
+// block (src/lib/customCode): drawn from its parsed value, never an attribute.
 // `rules` is the same unless it is a string, which stays the legacy `<table>`
 // attribute it has always been: anything else would render as `[object Object]`.
-const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour', 'scene']);
+const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour', 'scene', 'customCode']);
 
 /**
  * Resolve a node's HTML tag. A stored `type` IS the tag: every write path stores
@@ -218,6 +221,21 @@ export function renderComponentNode(
     const source = (node.props ?? {}) as Record<string, unknown>;
     const config = Object.fromEntries(MAP_EMBED_PROP_KEYS.filter((name) => name in source).map((name) => [name, source[name]]));
     return <MapEmbedIsland key={key} domProps={stripMapEmbedProps(nodeDomProps(node))} config={config} />;
+  }
+
+  // A sandboxed custom code block (src/lib/customCode): the box and its children, which
+  // are the fallback, with the hash's first characters when it names a block. The frame
+  // is the island's (slice C3); a proposal or an invalid value is the fallback for good.
+  if (hasCustomCode(node.props)) {
+    const tag = resolveHtmlTag(node.type) ?? 'div';
+    const boxTag = isVoidTag(tag) ? 'div' : tag;
+    return createCustomCodeElement('published', {
+      tag: boxTag,
+      domProps: nodeDomProps(node),
+      config: (node.props as Record<string, unknown>).customCode,
+      children: renderNodeChildren(node, scope, contentBelow(boxTag, foreign), inLink || !runLinksAllowedIn(boxTag)),
+      key,
+    });
   }
 
   // A shop part (src/lib/commerce/parts.ts): drawn as its control's island says
