@@ -57,6 +57,8 @@ SELECT count(*) AS large_objects FROM pg_largeobject_metadata;
 \echo '== 5. Functions outside the system schemas that PUBLIC may execute (box_reader could call them).'
 \echo '==    Expected: only functions that return "trigger" (they cannot be called directly); today the four'
 \echo '==    of the site branches migrations. Anything else here is callable by box_reader: look at it first.'
+\echo '==    Names print with their schema (public.<name>), since the file sets its own search path; runs from'
+\echo '==    before that change printed them without it.'
 SELECT p.oid::regprocedure AS function, p.prorettype::regtype AS returns
   FROM pg_proc p
   JOIN pg_namespace n ON n.oid = p.pronamespace

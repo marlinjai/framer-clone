@@ -80,7 +80,7 @@ async function codeOf(run: () => PromiseLike<unknown>): Promise<string> {
 }
 
 /** Applies a file the way the operator would: psql, stop at the first error. Returns what it printed. */
-async function apply(file: SqlFile, database = DB_NAME): Promise<string> {
+async function apply(file: SqlFile | `cut-${string}`, database = DB_NAME): Promise<string> {
   const { exitCode, output } = await container!.exec(['psql', '-v', 'ON_ERROR_STOP=1', '-q', '-U', 'postgres', '-d', database, '-f', `/tmp/${file}`]);
   if (exitCode !== 0) throw new Error(`${file} failed (exit ${exitCode}): ${output}`);
   return output;
@@ -742,7 +742,7 @@ describe('afterwards', () => {
     expect(await applicationPaths()).toEqual(ALL_WORK);
   }, 120_000);
 
-  it('functions commerce_ddl plants in public do not run when the superuser applies the four files', async () => {
+  it('functions commerce_ddl plants in public run under a file without its search path, and never under the four files', async () => {
     // commerce_ddl may create functions in public. Each one below matches a call in the files more
     // closely than the built-in does, so under the default search path ("$user", public) it would
     // win and run with the superuser's rights. Each records that it ran and tries to make
@@ -810,17 +810,41 @@ describe('afterwards', () => {
       await su!`TRUNCATE public.box_reader_test_planted_ran`;
       expect(await roleOf()).toEqual(roleBefore);
 
-      // The four files, applied as the operator applies them, with the plants in place.
-      await apply('commerce-roles.sql');
-      await apply('box-reader-preflight.sql');
-      await apply('box-reader.sql');
-      await apply('box-reader-rollback.sql');
-      await apply('box-reader.sql');
-      await su!`ALTER ROLE box_reader LOGIN`;
-
-      // None of the planted functions ran, and commerce_ddl holds exactly what it held.
-      expect((await su!`SELECT fn FROM public.box_reader_test_planted_ran`).map((row) => row.fn)).toEqual([]);
-      expect(await roleOf()).toEqual(roleBefore);
+      // Each of the four files, applied as the operator applies them, with the plants in place. First
+      // a copy with only its SET search_path line cut, the control: its own plants must fire and make
+      // commerce_ddl a superuser (undone at once). Then the real file: no plant may fire. Before each
+      // rollback a session of the box is open, so its pg_terminate_backend call is reached.
+      const setLine = '\nSET search_path = pg_catalog, pg_temp;\n';
+      const ran = async () => (await su!`SELECT DISTINCT fn FROM public.box_reader_test_planted_ran ORDER BY 1`).map((row) => row.fn as string);
+      const files: [SqlFile, string[]][] = [
+        ['commerce-roles.sql', ['format']],
+        ['box-reader-preflight.sql', ['has_schema_privilege']],
+        ['box-reader.sql', ['format']],
+        ['box-reader-rollback.sql', ['format', 'pg_sleep', 'pg_terminate_backend']],
+      ];
+      for (const [file, itsPlants] of files) {
+        const text = readFileSync(path.join(SQL_DIR, file), 'utf8');
+        expect(text, file).toContain(setLine);
+        await container!.copyContentToContainer([{ content: text.replace(setLine, '\n'), target: `/tmp/cut-${file}` }]);
+        for (const cut of [true, false]) {
+          if (file === 'box-reader-rollback.sql') await as('box_reader')`SELECT 1`;
+          await apply(cut ? `cut-${file}` : file);
+          if (cut) {
+            expect(await ran(), `cut ${file}`).toEqual(expect.arrayContaining(itsPlants));
+            expect((await roleOf())[0]!.rolsuper, `cut ${file}`).toBe(true);
+            await su!`ALTER ROLE commerce_ddl NOSUPERUSER`;
+            await su!`TRUNCATE public.box_reader_test_planted_ran`;
+          } else {
+            // None of the planted functions ran, and commerce_ddl holds exactly what it held.
+            expect(await ran(), file).toEqual([]);
+          }
+          expect(await roleOf()).toEqual(roleBefore);
+          if (file === 'box-reader-rollback.sql') {
+            await apply('box-reader.sql');
+            await su!`ALTER ROLE box_reader LOGIN`;
+          }
+        }
+      }
     } finally {
       await su!`ALTER ROLE commerce_ddl NOSUPERUSER`;
       await su!`
@@ -983,6 +1007,50 @@ describe('afterwards', () => {
     } finally {
       await held.end({ timeout: 2 }).catch(() => {});
       // Back to the shape the file gives, whatever happened above.
+      await apply('box-reader.sql');
+      await su!`ALTER ROLE box_reader LOGIN`;
+    }
+  }, 120_000);
+
+  it('the rollback with autocommit off: a box session that appears after step 2 is seen by step 3, which gives PUBLIC nothing', async () => {
+    // With AUTOCOMMIT off, steps 2 and 3 share one transaction, and Postgres would show step 3 the list
+    // of sessions step 2 read last. A copy of the file waits between the two steps (a psql \\! line),
+    // and meanwhile a session of the box appears: let in for a moment, as a slow startup would be.
+    const rollback = readFileSync(path.join(SQL_DIR, 'box-reader-rollback.sql'), 'utf8');
+    expect(rollback).toContain('\n-- Step 3.');
+    await container!.copyContentToContainer([
+      { content: rollback.replace('\n-- Step 3.', '\n\\! sleep 5\n\n-- Step 3.'), target: '/tmp/cut-autocommit-rollback.sql' },
+    ]);
+    const before = await wholeShape();
+    expect(before.anyone.locks.may).toBe(0);
+    expect(before.role.rolcanlogin).toBe(true);
+    const late = as('box_reader');
+    let running: Promise<{ exitCode: number; output: string }> | undefined;
+    try {
+      running = runPlain('cut-autocommit-rollback.sql', '', ['-v', 'AUTOCOMMIT=off']);
+      // Step 2 is done when the rollback's session waits, idle, in its open transaction.
+      let between = false;
+      for (let tries = 0; tries < 80 && !between; tries += 1) {
+        between = (await su!`
+          SELECT 1 FROM pg_stat_activity
+           WHERE usename = 'postgres' AND state = 'idle in transaction' AND pid <> pg_backend_pid()
+        `).length > 0;
+        if (!between) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(between).toBe(true);
+      await su!`ALTER ROLE box_reader LOGIN`;
+      await su!`GRANT CONNECT ON DATABASE framer_clone_box_reader_test TO box_reader`;
+      await late`SELECT 1`;
+      await su!`REVOKE CONNECT ON DATABASE framer_clone_box_reader_test FROM box_reader`;
+      await su!`ALTER ROLE box_reader NOLOGIN`;
+      const { exitCode, output } = await running;
+      // Step 3 read the sessions afresh, saw the box's and stopped; nothing of it stays.
+      expect(output).toContain('1 session(s) of box_reader are open; PUBLIC has been given nothing back');
+      expect(exitCode).not.toBe(0);
+      expect(await wholeShape()).toEqual({ ...before, role: { ...before.role, rolcanlogin: false }, box: { ...before.box, connect: false } });
+    } finally {
+      await running?.catch(() => {});
+      await late.end({ timeout: 2 }).catch(() => {});
       await apply('box-reader.sql');
       await su!`ALTER ROLE box_reader LOGIN`;
     }
