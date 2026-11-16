@@ -80,7 +80,7 @@ beforeEach(() => {
         style: { width: '320px', height: '200px' },
       }),
     ]);
-    block = main.children.find((c) => c.id === 'cc-block') as ComponentInstance;
+    block = main.children.find((c: ComponentInstance) => c.id === 'cc-block') as ComponentInstance;
     // The fallback, and a stored frame and srcdoc a page could carry beside it.
     block.addChildren([
       createIntrinsicComponent('cc-fallback', 'p', { children: 'The fallback text' }),
