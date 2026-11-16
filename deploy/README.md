@@ -81,7 +81,7 @@ How the release of 2026-11-12 was done, and how the next one should be (site bra
 
 1. **Pin the commit.** Tag the reviewed commit and dispatch the build from the tag (`gh workflow run deploy --ref <tag>`), never from a moving `main`. Check that the run's commit equals the pin.
 2. **The image.** The build job pushes it as `latest` and under the commit hash. Before deploying, check in the registry that `latest` and the pin's hash are one image and that no other deploy run is in flight: `latest` is what Coolify pulls, and it is mutable.
-3. **The deployment.** The workflow's own deploy step calls the shared Coolify webhook, which **answers HTTP 405 since 2026-11-12** (the shared `coolify-deploy-verify` workflow sends a GET), so that step fails before it starts anything. Until the shared workflow is fixed, start the deployment through the Coolify API for the application.
+3. **The deployment.** The workflow's own deploy step calls the shared Coolify webhook. It answered HTTP 405 from 2026-11-12 and works again since (on 2026-11-16 it started the production deployment by itself right after the build), so **dispatching the workflow deploys**: do every check that must precede the deployment (a rehearsal, a role change) before `gh workflow run`, not after the build. When the step does fail, start the deployment through the Coolify API for the application.
 4. **Proof that the new image serves.** A green deployment can still be the old container answering. The running container's `COMMIT_SHA` must equal the pin, its image digest the registry's, and `_prisma_migrations` must hold every migration of the pin with none failed.
 5. **A changed variable needs a redeploy**, not only a restart, and each redeploy pulls `latest` again: repeat check 2 before it.
 
@@ -197,7 +197,8 @@ unknown startup parameters is not the failure mode.
 `prisma/sql/commerce-roles.sql` sets all of this up on Postgres 16 or later and is
 safe to run again. It also takes `CREATE` on `public` and `TEMPORARY` on the
 database away from every role (`PUBLIC`), which matters for databases restored from
-older dumps; nothing in the app needs either. It creates both roles without a login; the RUNBOOK's
+older dumps; nothing in the app needs either. `commerce_ddl` keeps `CREATE` on
+`public` only until the first start (see "Privileges on public" below). It creates both roles without a login; the RUNBOOK's
 `07-commerce-roles.sh` then gives each a login with a freshly generated password and
 writes both URLs into Infisical without printing them. The integration test
 `src/server/commerce/provisioning/__tests__/roles.itest.ts` proves the whole chain
@@ -230,6 +231,42 @@ It leaves both logins and passwords alone. Check the result with
 and `SELECT count(*) FROM pg_auth_members WHERE roleid = 'commerce_app'::regrole
 AND member = 'commerce_ddl'::regrole` (expect `0`). A deploy that runs first fails
 its start step with exactly that instruction.
+
+### Privileges on public
+
+`commerce_ddl` holds `USAGE` on `public` and, after the first start, no `CREATE`.
+Objects in `public` resolve through the search path of every role that keeps
+`public` on it, the database superuser included, so only the superuser adds
+objects there. The roles file grants `CREATE` on `public` only to a fresh database
+(no `public.__public_db_migrations` yet), whose first start creates the registry,
+and takes it away when it is re-applied after that start. `@marlinjai/tenant-db`
+0.3.1 or later is required: 0.3.0 and older recreate their tracking table with
+`CREATE TABLE IF NOT EXISTS` on every start, which needs `CREATE` even when the
+table exists, so the start fails with `permission denied for schema public`.
+
+**A new public migration** (a new entry in the tenant-db public set, or a
+commerce public migration that adds an object in `public`) needs the privilege for
+the one deploy that applies it. As the database superuser, right before that deploy:
+`GRANT CREATE ON SCHEMA public TO commerce_ddl;` and after the start has applied it,
+re-apply `prisma/sql/commerce-roles.sql` (or `REVOKE CREATE ON SCHEMA public FROM
+commerce_ddl;`). Without the grant that start fails with Postgres's permission error
+and records nothing.
+
+Check: `SELECT has_schema_privilege('commerce_ddl', 'public', 'CREATE')` (expect `f`).
+
+### The superuser's search path
+
+The database superuser (`framer_clone`, which `DATABASE_URL` logs in as) has
+`search_path = public` for this database, set once by
+`ALTER ROLE framer_clone IN DATABASE framer_clone SET search_path = public` (in
+place on production since 2026-11-16). Without it the default path starts with
+`"$user"`, a schema named after the role that any role with `CREATE` on the
+database could create. Do not pin it to `pg_catalog` alone: `prisma migrate deploy`
+then no longer finds `_prisma_migrations` and fails the start. Raw SQL calls
+built-in functions by their `pg_catalog.` name (`rawSqlCatalogQualified.test.ts`
+keeps it that way). Check:
+`SELECT setconfig FROM pg_db_role_setting WHERE setrole = 'framer_clone'::regrole`
+(expect `{search_path=public}`); a rebuilt database needs the `ALTER ROLE` again.
 
 ## Environment
 

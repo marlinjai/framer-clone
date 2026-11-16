@@ -743,7 +743,9 @@ describe('afterwards', () => {
   }, 120_000);
 
   it('functions commerce_ddl plants in public run under a file without its search path, and never under the four files', async () => {
-    // commerce_ddl may create functions in public. Each one below matches a call in the files more
+    // A role that may create functions in public (commerce_ddl before its first start; the roles
+    // file takes CREATE on public away when it is applied after that start, so it is granted back
+    // here for this test only). Each function below matches a call in the files more
     // closely than the built-in does, so under the default search path ("$user", public) it would
     // win and run with the superuser's rights. Each records that it ran and tries to make
     // commerce_ddl a superuser. The files set their own search path, so none of them may run.
@@ -757,6 +759,7 @@ describe('afterwards', () => {
       ).map((row) => ({ ...row }));
     const roleBefore = await roleOf();
     expect(roleBefore[0]!.rolsuper).toBe(false);
+    await su!`GRANT CREATE ON SCHEMA public TO commerce_ddl`;
     const ddl = as('commerce_ddl');
     await ddl`CREATE TABLE public.box_reader_test_planted_ran (fn text)`;
     try {
@@ -846,6 +849,7 @@ describe('afterwards', () => {
         }
       }
     } finally {
+      await su!`REVOKE CREATE ON SCHEMA public FROM commerce_ddl`;
       await su!`ALTER ROLE commerce_ddl NOSUPERUSER`;
       await su!`
         DROP FUNCTION IF EXISTS public.pg_sleep(integer), public.format(text, name),
@@ -908,11 +912,14 @@ describe('afterwards', () => {
       expect(section12b).toMatch(/\n\s*postgres\s*\|\s*t\s*\n/);
       expect(section12b).toMatch(/\n\s*box_reader_test_owner\s*\|\s*t\s*\n/);
       // What 12a's row means, tried: a new function of commerce_ddl in public is open to PUBLIC.
+      // As a role that may create in public (commerce_ddl before its first start, granted back here).
+      await su!`GRANT CREATE ON SCHEMA public TO commerce_ddl`;
       const ddl = as('commerce_ddl');
       await ddl`CREATE FUNCTION public.box_reader_test_new() RETURNS int LANGUAGE sql AS 'SELECT 1'`;
       const [opened] = await su!`SELECT has_function_privilege('anyone_else', 'public.box_reader_test_new()', 'EXECUTE') AS may`;
       expect(opened!.may).toBe(true);
     } finally {
+      await su!`REVOKE CREATE ON SCHEMA public FROM commerce_ddl`;
       await su!`DROP FUNCTION IF EXISTS public.box_reader_test_new()`;
       await su!`DROP SCHEMA IF EXISTS box_reader_test_owned`;
       await su!`DROP ROLE IF EXISTS box_reader_test_owner`;
