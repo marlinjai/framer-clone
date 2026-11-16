@@ -15,11 +15,17 @@
 //   - A map box loads a frame of Google's, which is told the page it sits on
 //     (the frame asks for it) and would learn the address. Replaced by a box of
 //     the same style that says so.
+//   - A custom code block (src/lib/customCode) never runs on a preview link
+//     (decision D13 of docs/plans/2026-11-02-sandboxed-custom-code.md: the box
+//     never names a preview host as a frame ancestor). Its `customCode` is taken
+//     off, so the node renders as what it holds, its fallback, with no mark a
+//     published island could act on.
 //
 // Platform forms and the checkout are made inert where they run
 // (FormUnavailableContext, CheckoutUnavailableContext): they need their props.
 
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { withoutCustomCodeProp } from '@/lib/customCode/customCode';
 
 interface SafeNode {
   type: string;
@@ -32,8 +38,9 @@ const DROPPED: ReadonlySet<string> = new Set(['referrerpolicy', 'action', 'forma
 /** What a map box says on a preview. */
 export const PREVIEW_MAP_NOTICE = 'A map is shown here on the live site. It is not loaded in a preview.';
 
-function safeProps(props: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!props) return props;
+function safeProps(stored: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!stored) return stored;
+  const props = withoutCustomCodeProp(stored);
   const names = Object.keys(props);
   if (!names.some((name) => DROPPED.has(name.toLowerCase()))) return props;
   return Object.fromEntries(names.filter((name) => !DROPPED.has(name.toLowerCase())).map((name) => [name, props[name]]));

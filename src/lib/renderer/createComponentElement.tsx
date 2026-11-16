@@ -50,6 +50,8 @@ import { formKindOf } from '@/lib/forms/definition';
 import { createStickyCtaElement } from '@/lib/renderer/stickyCta/stickyCtaElement';
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { createMapEmbedElement } from '@/lib/renderer/mapEmbed/mapEmbedElement';
+import { hasCustomCode } from '@/lib/customCode/customCode';
+import { CustomCodeOnEditorSurface } from '@/lib/renderer/customCode/customCodeElement';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { ShopPartElement } from '@/lib/commerce/shopRuntime';
 
@@ -232,6 +234,23 @@ export function createComponentElement(
     // both run on the editor's origin, and nothing there contacts Google.
     if (isMapEmbed(component.props)) {
       return createMapEmbedElement(propsWithIdentity, options?.mode === 'editor' ? 'editor' : 'preview', undefined, finalProps);
+    }
+
+    // A sandboxed custom code block (src/lib/customCode) never runs on the editor's
+    // origin: a tile on the canvas and in the preview over the editor, the box and its
+    // fallback in the standalone preview. The stored value, not the resolved props,
+    // which could read an object as a responsive map.
+    if (hasCustomCode(component.props)) {
+      return (
+        <CustomCodeOnEditorSurface
+          mode={options?.mode === 'editor' ? 'editor' : 'preview'}
+          tag={String(component.type)}
+          domProps={propsWithIdentity}
+          config={(component.props as Record<string, unknown>).customCode}
+        >
+          {content}
+        </CustomCodeOnEditorSurface>
+      );
     }
 
     // A shop part (src/lib/commerce/parts.ts): drawn as the control around it says,
