@@ -146,9 +146,10 @@ export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: numbe
   return {
     async find(siteId, sha256) {
       refuseWhilePaused();
-      // Every name the statement uses is schema-qualified: the application's owner role may create functions in
-      // `public` and schemas in the database, so an unqualified `to_json` or `box_document` could resolve to one of
-      // its own (a `public.to_json(text[])` matches exactly, a schema `box_reader` comes first as "$user").
+      // Every name the statement uses is schema-qualified: the application's owner role keeps CREATE on the database,
+      // so it may create schemas (a schema `box_reader` comes first as "$user"), and until commerce-roles.sql is
+      // applied again after the first start it may create functions in `public` (a `public.to_json(text[])` matches
+      // exactly). An unqualified `to_json` or `box_document` could resolve to one of its own.
       const rows = await sql<{ document: unknown; live: unknown; subdomain_labels: unknown; custom_hostnames: unknown }[]>`
         SELECT document, live, pg_catalog.to_json(subdomain_labels) AS subdomain_labels, pg_catalog.to_json(custom_hostnames) AS custom_hostnames
         FROM public.box_document(${siteId}, ${sha256})

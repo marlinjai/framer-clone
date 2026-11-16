@@ -70,7 +70,7 @@ pnpm test:integration   # needs Docker: a scratch Postgres and the built image, 
 
 The integration suite starts its own containers with random names and random passwords and removes them. It runs the image the way it is meant to run: read-only root file system, every capability dropped, no new privileges, memory and process limits.
 
-The database is the application's own, built from the committed files the way production builds it: `prisma/sql/commerce-roles.sql`, every migration in `prisma/migrations` in order, then `prisma/sql/box-reader.sql` (`applicationSchema` in `test/integration/docker.ts`). So a change to a migration or a role file that breaks the box fails here; `.github/workflows/box.yml` runs on changes to both folders.
+The database is the application's own, built from the committed files in production's order: `prisma/sql/commerce-roles.sql`, every migration in `prisma/migrations` in order, then `prisma/sql/box-reader.sql` (`applicationSchema` in `test/integration/docker.ts`). It is the state of a first build: `commerce-roles.sql` is not applied again after the first start, so `commerce_ddl` still holds CREATE on `public` there, which the test that plants a `public.to_json` relies on. So a change to a migration or a role file that breaks the box fails here; `.github/workflows/box.yml` runs on changes to both folders.
 
 The application's type check, lint and image leave `services/` out, so `pnpm typecheck` and `pnpm lint` here, run by `.github/workflows/box.yml`, are the box's only ones. The contract module lives in the application's source and is checked on both sides.
 

@@ -187,7 +187,8 @@ describe('the role box_reader', () => {
     }
   });
 
-  // The application's owner role, commerce_ddl, may create functions in `public` and schemas in the database. Neither
+  // The application's owner role, commerce_ddl, keeps CREATE on the database, so it may create schemas, and until
+  // commerce-roles.sql is applied again after the first start (not done here) it may create functions in `public`. Neither
   // a closer match for to_json nor a schema named after the box's role (searched first as "$user" by default) may change
   // what the box gets: the box qualifies every name, and box-reader.sql gives the role a search path of pg_catalog only.
   it('gets the same answer when the application\'s owner role plants a public.to_json(text[]) and a schema box_reader', async () => {

@@ -547,7 +547,9 @@ changes:
   pair the caller already knows, and `document` is NULL unless the site has custom code on, the blob is not blocked and
   its hash is not on the takedown list. EXECUTE is taken from PUBLIC, as on the migration's two trigger functions.
 - `custom_code_blocked_hashes`: the takedown list. A hash in it is served on no site, whatever happens to blob rows; no
-  foreign key to any site, so neither deleting a site nor erasing a company removes an entry.
+  foreign key to any site, so neither deleting a site nor erasing a company removes an entry. Because an erasure keeps
+  it, `blocked_by` holds an operator label only (`operator` or `operator:<channel>`, held by a `CHECK`), never a
+  person's id, and `reason` must name no person either.
 
 The triggers, the `CHECK` constraints and the function exist in the database only (Prisma's schema cannot name them),
 so `prisma migrate diff` does not list them. Run from the migrations to the schema on 2026-11-15, it showed only the two
@@ -568,10 +570,14 @@ container start, and every fresh database (CI, local development, the integratio
 the role file. So the EXECUTE grant on `box_document` is made from both sides, each only if the other side's
 object exists: the migration grants it to `box_reader` if the role exists, the role file grants it if the function
 exists. Whichever runs first, the end state is the same (EXECUTE for the function's owner and `box_reader`, nobody
-else), and a database without the role migrates as before. The rehearsal
+else), and a database without the role migrates as before. That holds also when the two run at the same time (the
+operator applies the role file while a container start is migrating): each side's check sees only what is committed,
+so both take the same transaction-level advisory lock (`pg_catalog.pg_advisory_xact_lock(7461001200)`, the
+migration's first statement, the role file's first in its transaction) and hold it until they commit; the later one
+waits, and its check then sees the other side's object. The rehearsal holds both orders of that race too. The rehearsal
 (`src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts`) holds both orders; the box's own integration
 suite builds its database from these files in production's order. Re-apply `box-reader.sql` after any restore, as
-`commerce-roles.sql` is: a plain dump does not carry the database's `CONNECT` rights. A dump restore runs no migration: it carries `_prisma_migrations` and every object as it was, and with them the GRANT of EXECUTE on `box_document` to `box_reader`; restored into a cluster that has no `box_reader`, that one statement fails (role does not exist). Before restoring into a cluster without the role, create only the role, as superuser (`CREATE ROLE box_reader NOLOGIN`), restore, then apply `commerce-roles.sql` and `box-reader.sql`; or let the restore pass that one GRANT error. Do not apply `commerce-roles.sql` before the restore: its `CREATE SCHEMA IF NOT EXISTS ext` makes the dump's own `CREATE SCHEMA ext` fail, and a restore with `ON_ERROR_STOP` stops there. The role file's
+`commerce-roles.sql` is: a plain dump does not carry the database's `CONNECT` rights. A dump restore runs no migration: it carries `_prisma_migrations` and every object as it was, and with them the grants, which name `commerce_app`, `commerce_ddl` and `box_reader`; restored into a fresh cluster, the restore stops at the first of them that does not exist (role does not exist). Before restoring into a fresh cluster, create the three roles bare, as superuser (`CREATE ROLE commerce_app NOLOGIN; CREATE ROLE commerce_ddl NOLOGIN; CREATE ROLE box_reader NOLOGIN`), restore, then apply `commerce-roles.sql` and `box-reader.sql`, which give them their shape. Do not apply `commerce-roles.sql` before the restore: its `CREATE SCHEMA IF NOT EXISTS ext` makes the dump's own `CREATE SCHEMA ext` fail, and a restore with `ON_ERROR_STOP` stops there. The role file's
 rollback leaves the grant on `box_document` in place: without a login the role cannot use it, and re-applying
 `box-reader.sql` restores it.
 
@@ -594,12 +600,16 @@ transaction, after the application runs the previous image:
 
 ```sql
 BEGIN;
-ALTER TABLE "sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
-DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261104000000_site_last_write_key';
+SET LOCAL search_path = pg_catalog, pg_temp;
+ALTER TABLE "public"."sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
+DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = '20261104000000_site_last_write_key';
 COMMIT;
 ```
 
-The second statement is what makes the next deploy apply the migration again. **Do not use `prisma migrate resolve
+Like every file the operator applies as a superuser, it sets its own search path and names each object with its schema,
+so what it drops and deletes does not depend on the session's search path.
+
+The `DELETE` is what makes the next deploy apply the migration again. **Do not use `prisma migrate resolve
 --rolled-back` for this:** it works only on a migration Prisma recorded as FAILED, and for one that applied it stops with
 `P3012: cannot be rolled back because it is not in a failed state`. And do not drop the columns alone: Prisma still has
 the migration recorded as applied, answers "No pending migrations to apply", and the columns stay gone while newer code

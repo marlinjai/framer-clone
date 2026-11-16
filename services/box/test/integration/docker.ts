@@ -19,7 +19,9 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
 export const DATABASE = 'framer_clone';
 
 /**
- * The application's database as production builds it, in production's order, from the committed files only:
+ * The application's database built from the committed files only, in production's order. It is the state of a first
+ * build: commerce-roles.sql is not applied again after the migrations, so commerce_ddl still holds CREATE on `public`
+ * here (commerce-roles.sql takes it away when it is applied again after the first start):
  *   1. prisma/sql/commerce-roles.sql (the application's two roles; box-reader.sql needs them),
  *   2. every migration in prisma/migrations, in the order of its folder name, each whole or not at all (what
  *      `prisma migrate deploy` does at every container start; the box's package has no Prisma, so psql runs them),
