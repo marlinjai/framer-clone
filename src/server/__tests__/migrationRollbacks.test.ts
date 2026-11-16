@@ -230,8 +230,9 @@ describe('the migrations\' rollback.sql files', () => {
   it.each(rollbacks)('%s documents the one command to run it, with -X', (name, text) => {
     // -X: the operator's ~/.psqlrc cannot switch ON_ERROR_STOP off or ON_ERROR_ROLLBACK on (D35).
     const command = `--   psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -1 -f prisma/migrations/${name}`;
-    // And no other psql line beside it that an operator could copy instead.
-    expect(linesOf(text).filter((line) => /^--\s*psql\b/.test(line))).toEqual([command]);
+    // And no other comment line naming psql, in any form (a prompt, a path, a variable before it), that an operator
+    // could copy instead: the one command is the only mention.
+    expect(linesOf(text).filter((line) => /^\s*--.*\bpsql\b/i.test(line))).toEqual([command]);
   });
 
   it.each(rollbacks)('%s sets its own search path before any other statement', (_name, text) => {
