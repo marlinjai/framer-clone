@@ -381,6 +381,18 @@ describe('the start through Infisical', () => {
     expect(fakeRequests().slice(before).map((request) => request.path)).toEqual(['/api/v1/auth/universal-auth/login']);
   });
 
+  it('stops when Infisical will not give the secrets, says so, and writes no credential', async () => {
+    const before = fakeRequests().length;
+    const { code, logs } = await exited(await runBox({ INFISICAL_PROJECT_ID: 'box-unknown' }));
+    expect(code).toBe('1');
+    expect(logs).toContain('box-launch: infisical run ended with status 1');
+    // The client's own reason, for the operator, and the box never started.
+    expect(logs).toMatch(/Could not fetch secrets/i);
+    expect(logs).not.toContain('"event":"listening"');
+    for (const value of [fake.clientId, fake.clientSecret, fake.token]) expect(logs.includes(value)).toBe(false);
+    expect(fakeRequests().slice(before).map((request) => `${request.path} ${request.authorized}`)).toEqual(['/api/v1/auth/universal-auth/login false', '/api/v4/secrets true']);
+  });
+
   it('runs the box under tini with the secret from Infisical, and no credential on any command line or in the box', async () => {
     const before = fakeRequests().length;
     const box = await runBox({});

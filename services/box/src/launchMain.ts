@@ -16,6 +16,7 @@ launch({
   env: process.env,
   paths: PATHS,
   log: (line) => process.stderr.write(`${line}\n`),
+  stderr: (text) => process.stderr.write(text),
   onSignal: (handler) => {
     process.on('SIGTERM', handler);
     process.on('SIGINT', handler);

@@ -40,6 +40,10 @@ if (args[0] === 'login') {
     process.exit(1);
   }
   if (cfg.runDies) process.kill(process.pid, cfg.runDies);
+  if (cfg.runFails) {
+    process.stderr.write('could not fetch the secrets with ' + process.env.INFISICAL_TOKEN + '\\n');
+    process.exit(1);
+  }
   const command = args.slice(args.indexOf('--') + 1);
   const child = spawn(command[0], command.slice(1), { stdio: 'inherit', env: { ...process.env, BOX_DATABASE_URL: cfg.databaseUrl } });
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
@@ -52,14 +56,16 @@ const fs = require('fs');
 const path = require('path');
 const dir = path.dirname(process.argv[1]);
 const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
-fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: 'box', pid: process.pid, argv: process.argv.slice(1), execArgv: process.execArgv, env: process.env }) + '\\n');
-if (typeof cfg.boxExit === 'number') process.exit(cfg.boxExit);
+// The handlers first, then the record the test waits for: a signal can never come before the handler.
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: 'box-signal', signal }) + '\\n');
     process.exit(0);
   });
 }
+process.stderr.write('box: started\\n');
+fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: 'box', pid: process.pid, argv: process.argv.slice(1), execArgv: process.execArgv, env: process.env }) + '\\n');
+if (typeof cfg.boxExit === 'number') process.exit(cfg.boxExit);
 setInterval(() => {}, 1000);
 `;
 
@@ -106,11 +112,13 @@ function baseEnv(extra: Record<string, string | undefined> = {}): Record<string,
 
 function start(env: Record<string, string | undefined>, options: { loginTimeoutMs?: number; isRoot?: boolean } = {}) {
   const lines: string[] = [];
+  const stderr: string[] = [];
   let signalHandler: ((signal: NodeJS.Signals) => void) | null = null;
   const done = launch({
     env,
     paths: { infisical: path.join(dir, 'infisical'), env: '/usr/bin/env', node: process.execPath, box: path.join(dir, 'box.cjs') },
     log: (line) => lines.push(line),
+    stderr: (text) => stderr.push(text),
     onSignal: (handler) => {
       signalHandler = handler;
     },
@@ -120,11 +128,25 @@ function start(env: Record<string, string | undefined>, options: { loginTimeoutM
   return {
     done,
     lines,
+    stderr,
     signal: (signal: NodeJS.Signals) => {
       if (!signalHandler) throw new Error('no signal handler was registered');
       signalHandler(signal);
     },
   };
+}
+
+/** The value a promise settles with, or 'still running' after a while: a test that waits on the start must fail on an expectation, never hang. */
+async function within<T>(promise: Promise<T>, ms = 8_000): Promise<T | 'still running'> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<'still running'>((resolve) => {
+    timer = setTimeout(() => resolve('still running'), ms);
+  });
+  try {
+    return await Promise.race([promise, late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function until(check: () => boolean, what: string, ms = 10_000) {
@@ -170,7 +192,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('the configuration it reads', () => {
+describe('the configuration it reads', { timeout: 20_000 }, () => {
   it.each([
     ['INFISICAL_UNIVERSAL_AUTH_CLIENT_ID', undefined],
     ['INFISICAL_UNIVERSAL_AUTH_CLIENT_ID', ''],
@@ -230,7 +252,7 @@ describe('the configuration it reads', () => {
   });
 });
 
-describe('the login', () => {
+describe('the login', { timeout: 20_000 }, () => {
   it('stops with status 69 when the login fails, and passes on what the client said without a credential', async () => {
     writeConfig({ login: 'fail' });
     const run = start(baseEnv());
@@ -269,13 +291,13 @@ describe('the login', () => {
     const run = start(baseEnv());
     await until(() => calls().length === 1, 'the login to start');
     run.signal('SIGTERM');
-    expect(await run.done).toBe(143);
+    expect(await within(run.done)).toBe(143);
     expect(run.lines).toEqual(['box-launch: stopped by SIGTERM during the login']);
     expect(calls().map((call) => call.name)).toEqual(['login']);
   });
 });
 
-describe('the box, run inside infisical run', () => {
+describe('the box, run inside infisical run', { timeout: 20_000 }, () => {
   async function startedBox() {
     const run = start(baseEnv());
     await until(() => calls().some((call) => call.name === 'box'), 'the box to start');
@@ -285,7 +307,7 @@ describe('the box, run inside infisical run', () => {
   it('hands the credentials only through environments, never on a command line, and the box none of them', async () => {
     const run = await startedBox();
     run.signal('SIGTERM');
-    expect(await run.done).toBe(0);
+    expect(await within(run.done)).toBe(0);
     const [login, runCall, box] = calls();
 
     // The login: the client credentials in its environment, nothing secret on its command line.
@@ -318,12 +340,24 @@ describe('the box, run inside infisical run', () => {
 
     for (const call of calls()) expectNoCredentialIn((call.argv ?? []).join(' '), `the command line of ${call.name}`);
     expectNoCredentialIn(run.lines.join('\n'), 'the log');
+    // What the box writes to standard error is passed on.
+    expect(run.stderr.join('')).toBe('box: started\n');
+  });
+
+  it('passes on what infisical run says when it cannot fetch the secrets, without the token, and ends with its status', async () => {
+    writeConfig({ runFails: true });
+    const run = start(baseEnv());
+    expect(await within(run.done)).toBe(1);
+    expect(run.stderr.join('')).toBe('could not fetch the secrets with [redacted]\n');
+    expect(run.lines).toEqual(['box-launch: infisical run ended with status 1']);
+    expectNoCredentialIn(run.stderr.join(''), 'standard error');
+    expect(calls().map((call) => call.name)).toEqual(['login', 'run']);
   });
 
   it.each(['SIGTERM', 'SIGINT'] as const)('passes %s to the box and ends with its status', async (signal) => {
     const run = await startedBox();
     run.signal(signal);
-    expect(await run.done).toBe(0);
+    expect(await within(run.done)).toBe(0);
     expect(calls().filter((call) => call.name === 'box-signal')).toEqual([{ name: 'box-signal', signal }]);
     expect(run.lines).toEqual([]);
   });
@@ -331,22 +365,22 @@ describe('the box, run inside infisical run', () => {
   it('ends with the status the run ended with, and says so', async () => {
     writeConfig({ boxExit: 3 });
     const run = start(baseEnv());
-    expect(await run.done).toBe(3);
-    expect(run.lines).toEqual(['box-launch: the box ended with status 3']);
+    expect(await within(run.done)).toBe(3);
+    expect(run.lines).toEqual(['box-launch: infisical run ended with status 3']);
   });
 
   it('ends with 128 plus the number of a signal that ended the run', async () => {
     writeConfig({ runDies: 'SIGKILL' });
     const run = start(baseEnv());
-    expect(await run.done).toBe(137);
-    expect(run.lines).toEqual(['box-launch: the box ended with status 137']);
+    expect(await within(run.done)).toBe(137);
+    expect(run.lines).toEqual(['box-launch: infisical run ended with status 137']);
   });
 
   it('does not take INFISICAL_ variables of the container on to the client or the box', async () => {
     const run = start(baseEnv({ INFISICAL_API_URL: 'https://elsewhere.example.test', INFISICAL_TOKEN: 'test-planted-token-value' }));
     await until(() => calls().some((call) => call.name === 'box'), 'the box to start');
     run.signal('SIGTERM');
-    expect(await run.done).toBe(0);
+    expect(await within(run.done)).toBe(0);
     const [login, runCall, box] = calls();
     expect(login?.env?.INFISICAL_API_URL).toBeUndefined();
     expect(runCall?.env?.INFISICAL_API_URL).toBeUndefined();

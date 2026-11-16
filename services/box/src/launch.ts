@@ -13,8 +13,9 @@
 //   token reaches `infisical run` only through its environment, and the box's
 //   own environment holds neither.
 // - Nothing it writes holds a credential: the token is read from a pipe and
-//   never written, and what `infisical login` says on failure is passed on
-//   with every credential taken out.
+//   never written, and what `infisical login` says on failure, and everything
+//   `infisical run` and the box write to standard error, is passed on with
+//   every credential taken out.
 // - A missing or malformed variable, or a failed login, stops it with a line
 //   naming what is wrong, and a non-zero status, before anything is started.
 // - SIGTERM and SIGINT are passed to the child, and it ends with the child's
@@ -52,6 +53,8 @@ export interface LaunchDeps {
   paths: LaunchPaths;
   /** Where its own lines go. Nothing written here may hold a credential. */
   log: (line: string) => void;
+  /** Where the standard error of `infisical run` (the client's and the box's) goes, line by line, with every credential taken out. */
+  stderr: (text: string) => void;
   /** Subscribes to SIGTERM and SIGINT sent to this process. */
   onSignal: (handler: (signal: NodeJS.Signals) => void) => void;
   /** Whether this process runs as root. */
@@ -263,18 +266,41 @@ export async function launch(deps: LaunchDeps): Promise<number> {
     '--disallow-code-generation-from-strings',
     deps.paths.box,
   ];
-  const run = spawn(deps.paths.infisical, runArgs, { env: runEnv, stdio: ['ignore', 'inherit', 'inherit'] });
+  // Standard output (the box's request log) goes straight on. Standard error is passed on a line at a time
+  // with every credential taken out: the client holds the token while it runs, and what it says when a fetch
+  // fails is not ours to trust. A line is cut at 16 kilobytes so nothing can be held back without end.
+  const run = spawn(deps.paths.infisical, runArgs, { env: runEnv, stdio: ['ignore', 'inherit', 'pipe'] });
   current = run;
+  const scrub = [...secrets, token];
+  let pending = '';
+  run.stderr?.setEncoding('utf8');
+  run.stderr?.on('data', (chunk: string) => {
+    pending += chunk;
+    let newline = pending.indexOf('\n');
+    while (newline !== -1 || pending.length > 16_384) {
+      const end = newline === -1 ? 16_384 : newline + 1;
+      deps.stderr(redact(pending.slice(0, end), scrub));
+      pending = pending.slice(end);
+      newline = pending.indexOf('\n');
+    }
+  });
+  const closed = new Promise<void>((resolve) => run.on('close', () => resolve()));
   const runResult = await new Promise<{ code: number | null; signal: NodeJS.Signals | null; error?: Error }>((resolve) => {
     run.on('error', (error) => resolve({ code: null, signal: null, error }));
     run.on('exit', (code, signal) => resolve({ code, signal }));
   });
+  // The rest of standard error, for a moment: a child left behind could hold the pipe open, and must not
+  // keep this process (and so the container) alive after `infisical run` has ended.
+  await Promise.race([closed, new Promise((resolve) => setTimeout(resolve, 1_000).unref())]);
+  if (pending !== '') deps.stderr(redact(pending, scrub));
   current = null;
   if (runResult.error) {
     log(`the Infisical client could not be started (${(runResult.error as NodeJS.ErrnoException).code ?? 'error'})`);
     return EXIT_LOGIN;
   }
   const status = statusOf(runResult.code, runResult.signal);
-  if (status !== 0) log(`the box ended with status ${status}`);
+  // `infisical run` ends with 1 both when it could not fetch the secrets and when the box failed; the lines
+  // above (the client's or the box's) say which.
+  if (status !== 0) log(`infisical run ended with status ${status}`);
   return status;
 }
