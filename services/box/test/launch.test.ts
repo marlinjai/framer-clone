@@ -20,7 +20,7 @@ const { spawn } = require('child_process');
 const dir = __dirname;
 const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
 const args = process.argv.slice(2);
-fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: args[0], argv: process.argv.slice(1), env: process.env }) + '\\n');
+fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: args[0], pid: process.pid, argv: process.argv.slice(1), env: process.env }) + '\\n');
 if (args[0] === 'login') {
   if (cfg.login === 'hang') setInterval(() => {}, 1000);
   else if (cfg.login === 'fail') {
@@ -52,7 +52,7 @@ const fs = require('fs');
 const path = require('path');
 const dir = path.dirname(process.argv[1]);
 const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
-fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: 'box', argv: process.argv.slice(1), execArgv: process.execArgv, env: process.env }) + '\\n');
+fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: 'box', pid: process.pid, argv: process.argv.slice(1), execArgv: process.execArgv, env: process.env }) + '\\n');
 if (typeof cfg.boxExit === 'number') process.exit(cfg.boxExit);
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
@@ -65,6 +65,7 @@ setInterval(() => {}, 1000);
 
 interface Call {
   name: string;
+  pid?: number;
   argv?: string[];
   execArgv?: string[];
   env?: Record<string, string>;
@@ -158,6 +159,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // A test that failed may leave a stand-in running; none outlives its test.
+  for (const call of calls()) {
+    try {
+      if (call.pid) process.kill(call.pid, 'SIGKILL');
+    } catch {
+      // Already ended.
+    }
+  }
   rmSync(dir, { recursive: true, force: true });
 });
 
