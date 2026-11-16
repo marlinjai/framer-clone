@@ -1028,12 +1028,15 @@ describe('afterwards', () => {
     let running: Promise<{ exitCode: number; output: string }> | undefined;
     try {
       running = runPlain('cut-autocommit-rollback.sql', '', ['-v', 'AUTOCOMMIT=off']);
-      // Step 2 is done when the rollback's session waits, idle, in its open transaction.
+      // Step 2 is done when the rollback's session waits, idle, in its open transaction, with step 2's
+      // own statement as its last one (only step 2 names still_open). Idle moments before step 2 (after
+      // the implicit BEGIN, step 1 or the SET) last well under a millisecond and must not count.
       let between = false;
       for (let tries = 0; tries < 80 && !between; tries += 1) {
         between = (await su!`
           SELECT 1 FROM pg_stat_activity
            WHERE usename = 'postgres' AND state = 'idle in transaction' AND pid <> pg_backend_pid()
+             AND query LIKE '%still_open%'
         `).length > 0;
         if (!between) await new Promise((resolve) => setTimeout(resolve, 100));
       }
