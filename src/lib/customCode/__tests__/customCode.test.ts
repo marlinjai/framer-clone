@@ -59,7 +59,7 @@ describe('parseCustomCode', () => {
     ['a title of spaces', { sha256: HASH, title: '   ' }],
     ['a title as a number', { sha256: HASH, title: 7 }],
     ['a title with a control character', { sha256: HASH, title: 'a\u0000b' }],
-    ['a title with a line separator', { sha256: HASH, title: 'a b' }],
+    ['a title with a line separator', { sha256: HASH, title: 'a\u2028b' }],
     ['a title too long', { sha256: HASH, title: 'x'.repeat(201) }],
     ['a proposal id with a slash', { proposal: 'a/b', title: 'x' }],
     ['a proposal id with markup', { proposal: '<b>', title: 'x' }],
