@@ -447,7 +447,11 @@ const triggersOf = (node: { props?: unknown }): Record<string, unknown>[] => {
   const behaviour = (node.props as { behaviour?: { on?: unknown } } | undefined)?.behaviour;
   return Array.isArray(behaviour?.on) ? (behaviour.on as Record<string, unknown>[]) : [];
 };
-const withoutId = ({ id: _id, ...rest }: Record<string, unknown>) => rest;
+const withoutId = (trigger: Record<string, unknown>): Record<string, unknown> => {
+  const rest = { ...trigger };
+  delete rest.id;
+  return rest;
+};
 
 /** What a person does in the Interactions section to write a proof's trigger; `verb` swaps the action for the negative control. */
 async function addThroughPanel(event: string, prevent: boolean, verb = 'set'): Promise<void> {
