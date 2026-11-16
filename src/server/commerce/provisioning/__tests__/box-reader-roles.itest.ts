@@ -46,7 +46,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import postgres from 'postgres';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -60,6 +60,8 @@ const ORDER_DB = 'framer_clone_box_order_test';
 const SQL_DIR = path.resolve(__dirname, '../../../../../prisma/sql');
 const FILES = ['commerce-roles.sql', 'box-reader.sql', 'box-reader-rollback.sql', 'box-reader-preflight.sql'] as const;
 type SqlFile = (typeof FILES)[number];
+/** The migration of slice C1b itself, read for its grant part. */
+const MIGRATION = path.resolve(__dirname, '../../../../../prisma/migrations/20261115000000_custom_code/migration.sql');
 /** The migration's own way back (run by hand, never by Prisma), copied into the container next to the role files. */
 const MIGRATION_ROLLBACK = path.resolve(__dirname, '../../../../../prisma/migrations/20261115000000_custom_code/rollback.sql');
 
@@ -440,6 +442,168 @@ describe('the control: what the application loses when the rights are only taken
   }, 180_000);
 });
 
+/**
+ * The migration of slice C1b and box-reader.sql AT THE SAME TIME. Each side grants EXECUTE on box_document only if the
+ * other side's object is there, and each side's check sees only what is committed; so both take the same
+ * transaction-level advisory lock (GRANT_LOCK) before their check and hold it until they commit. Each case pauses one
+ * side after it took that lock, by making it wait on a second lock the test holds (PAUSE_LOCK), starts the other side,
+ * and must see it wait on GRANT_LOCK; released, both commit and box_reader may execute box_document. Without the lock
+ * on either side, the second side does not wait, both checks miss, and box_reader holds nothing.
+ *
+ * These run before box_reader exists in the cluster (it is cluster-wide, and the migration's check must be able to
+ * find it missing), each in a database of its own; each drops its database and the role again afterwards.
+ */
+describe('the migration of slice C1b and box-reader.sql at the same time', () => {
+  const GRANT_LOCK = BigInt(7461001200);
+  const PAUSE_LOCK = BigInt(7461001299);
+  const migrationText = readFileSync(MIGRATION, 'utf8');
+  /** The migration's own lock statement, as it is (empty if it had none), and its last part: the grant to box_reader if the role exists. */
+  const lockStatement = /^SELECT pg_catalog\.pg_advisory_xact_lock\(\d+\);$/m.exec(migrationText)?.[0] ?? '';
+  const GRANT_PART = "-- The grant to the box's role, only where the role exists";
+  const grantPart = migrationText.slice(migrationText.indexOf(GRANT_PART));
+  /** A stand-in for the rest of the migration: the function, with the same signature, EXECUTE taken from PUBLIC. */
+  const STAND_IN = `
+    CREATE FUNCTION public.box_document(p_site_id text, p_sha256 text)
+      RETURNS TABLE (document text, live boolean, subdomain_labels text[], custom_hostnames text[])
+      LANGUAGE sql AS $$ SELECT NULL::text, false, ARRAY[]::text[], ARRAY[]::text[] $$;
+    REVOKE ALL ON FUNCTION public.box_document(text, text) FROM PUBLIC;
+  `;
+
+  /** Sessions in a database that wait, not granted, on the advisory lock with this key (and wait for a Lock, per pg_stat_activity). */
+  const waitersOn = async (database: string, key: bigint): Promise<number> => {
+    const [row] = await su!`
+      SELECT count(*)::int AS waiting
+        FROM pg_catalog.pg_locks l
+        JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid
+       WHERE l.locktype = 'advisory' AND NOT l.granted AND l.objsubid = 1
+         AND l.database = (SELECT oid FROM pg_catalog.pg_database WHERE datname = ${database})
+         AND l.classid::bigint * 4294967296 + l.objid::bigint = ${key.toString()}::bigint
+         AND a.wait_event_type = 'Lock' AND a.wait_event = 'advisory'
+    `;
+    return row!.waiting as number;
+  };
+
+  /** Polls until a session waits on the key; false as soon as `finished` says the run it is watching ended, or after 30 seconds. */
+  const seenWaiting = async (database: string, key: bigint, finished: () => boolean): Promise<boolean> => {
+    for (let tries = 0; tries < 300; tries += 1) {
+      if ((await waitersOn(database, key)) > 0) return true;
+      if (finished()) return false;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  };
+
+  /** Runs a promise and records when it has settled. */
+  type Watched<T> = { done: boolean; run: Promise<T> };
+  const watched = <T,>(run: Promise<T>): Watched<T> => {
+    const state: Watched<T> = { done: false, run };
+    state.run = run.finally(() => {
+      state.done = true;
+    });
+    return state;
+  };
+
+  /** `prisma migrate deploy` without blocking the test, so the test can watch it wait. */
+  const migrateInBackground = (database: string) =>
+    new Promise<{ status: number | null; output: string }>((resolve) => {
+      const child = spawn('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], { env: { ...process.env, DATABASE_URL: urlOf('postgres', database) } });
+      let output = '';
+      child.stdout.on('data', (chunk) => (output += chunk));
+      child.stderr.on('data', (chunk) => (output += chunk));
+      child.on('close', (status) => resolve({ status, output }));
+    });
+
+  /** psql as the operator runs a file, in a database, without throwing; the exit status and what it printed. */
+  const psqlFile = (file: string, database: string) =>
+    container!.exec(['psql', '-v', 'ON_ERROR_STOP=1', '-q', '-U', 'postgres', '-d', database, '-f', `/tmp/${file}`]);
+
+  /** A fresh database of its own, and afterwards: no database, no box_reader. */
+  const inRaceDatabase = async (database: string, run: (race: postgres.Sql) => Promise<void>) => {
+    expect(await su!`SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'box_reader'`).toHaveLength(0);
+    await su!`CREATE DATABASE ${su!(database)}`;
+    const race = postgres(urlOf('postgres', database), { max: 1, prepare: false, onnotice: () => {} });
+    try {
+      await run(race);
+    } finally {
+      await race.end({ timeout: 2 }).catch(() => {});
+      await su!`DROP DATABASE IF EXISTS ${su!(database)} WITH (FORCE)`;
+      await su!`DROP ROLE IF EXISTS box_reader`;
+    }
+  };
+
+  it('both files take the same lock, as a statement of its own before their check', () => {
+    const fileText = readFileSync(path.join(SQL_DIR, 'box-reader.sql'), 'utf8');
+    const lock = `SELECT pg_catalog.pg_advisory_xact_lock(${GRANT_LOCK});`;
+    // The migration: its first statement, so before it locks `sites` and before its check at the end.
+    expect(lockStatement).toBe(lock);
+    expect(grantPart).toContain('DO $$');
+    expect(migrationText.indexOf(lock)).toBeGreaterThan(-1);
+    expect(migrationText.indexOf(lock)).toBeLessThan(migrationText.indexOf('ALTER TABLE "public"."sites"'));
+    expect(fileText.indexOf(lock)).toBeGreaterThan(fileText.indexOf('\nBEGIN;\n'));
+    expect(fileText.indexOf(lock)).toBeLessThan(fileText.indexOf("to_regprocedure('public.box_document(text, text)')"));
+  });
+
+  it('the migration holds the lock (its own lock statement and grant part, around a stand-in for the function): box-reader.sql waits for its commit, then grants', async () => {
+    await inRaceDatabase('framer_clone_box_race_migration_first', async (race) => {
+      const database = 'framer_clone_box_race_migration_first';
+      await container!.copyContentToContainer([
+        { content: `BEGIN;\n${lockStatement}\n${STAND_IN}\n${grantPart}\nSELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK});\nCOMMIT;\n`, target: '/tmp/race-migration.sql' },
+      ]);
+      await race`SELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK.toString()}::bigint)`;
+      const migration = watched(psqlFile('race-migration.sql', database));
+      let file: Watched<{ exitCode: number; output: string }> | undefined;
+      try {
+        // The migration's part has taken its lock, made the function, checked for the role (none yet), and waits, open, for the test.
+        expect(await seenWaiting(database, PAUSE_LOCK, () => migration.done)).toBe(true);
+        file = watched(psqlFile('box-reader.sql', database));
+        // box-reader.sql, meanwhile, waits on the lock the migration holds: its check has not run yet.
+        expect(await seenWaiting(database, GRANT_LOCK, () => file!.done), 'box-reader.sql waits for the migration').toBe(true);
+      } finally {
+        await race`SELECT pg_catalog.pg_advisory_unlock(${PAUSE_LOCK.toString()}::bigint)`;
+      }
+      const migrated = await migration.run;
+      expect(migrated.exitCode, migrated.output).toBe(0);
+      const applied = await file!.run;
+      expect(applied.exitCode, applied.output).toBe(0);
+      // Its check, a new statement after the wait, saw the committed function: box_reader may execute it.
+      const [row] = await race`SELECT pg_catalog.has_function_privilege('box_reader', 'public.box_document(text, text)', 'EXECUTE') AS may`;
+      expect(row!.may).toBe(true);
+    });
+  }, 180_000);
+
+  it('box-reader.sql holds the lock: the real migration waits for its commit, then grants', async () => {
+    await inRaceDatabase('framer_clone_box_race_file_first', async (race) => {
+      const database = 'framer_clone_box_race_file_first';
+      await apply('commerce-roles.sql', database);
+      const fileText = readFileSync(path.join(SQL_DIR, 'box-reader.sql'), 'utf8');
+      const commit = fileText.lastIndexOf('\nCOMMIT;');
+      expect(commit).toBeGreaterThan(-1);
+      await container!.copyContentToContainer([
+        { content: `${fileText.slice(0, commit)}\nSELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK});${fileText.slice(commit)}`, target: '/tmp/race-box-reader.sql' },
+      ]);
+      await race`SELECT pg_catalog.pg_advisory_lock(${PAUSE_LOCK.toString()}::bigint)`;
+      const file = watched(psqlFile('race-box-reader.sql', database));
+      let migration: Watched<{ status: number | null; output: string }> | undefined;
+      try {
+        // The file has made the role, checked for the function (none yet), and waits, open, for the test.
+        expect(await seenWaiting(database, PAUSE_LOCK, () => file.done)).toBe(true);
+        migration = watched(migrateInBackground(database));
+        // `prisma migrate deploy`, meanwhile, reaches the migration of slice C1b and waits on the lock the file holds.
+        expect(await seenWaiting(database, GRANT_LOCK, () => migration!.done), 'the migration waits for box-reader.sql').toBe(true);
+      } finally {
+        await race`SELECT pg_catalog.pg_advisory_unlock(${PAUSE_LOCK.toString()}::bigint)`;
+      }
+      const applied = await file.run;
+      expect(applied.exitCode, applied.output).toBe(0);
+      const migrated = await migration!.run;
+      expect(migrated.status, migrated.output).toBe(0);
+      // Its check, a new statement after the wait, saw the committed role: box_reader may execute box_document.
+      const [row] = await race`SELECT pg_catalog.has_function_privilege('box_reader', 'public.box_document(text, text)', 'EXECUTE') AS may`;
+      expect(row!.may).toBe(true);
+    });
+  }, 300_000);
+});
+
 describe('box-reader.sql applied', () => {
   it('applies cleanly, twice, and again after the role was given a login, which it keeps', async () => {
     await apply('box-reader.sql');
@@ -739,6 +903,32 @@ describe('the migration of slice C1b and this file, in either order', () => {
     expect(await ask(SITE, BIG)).toEqual([{ document: null, live: true, subdomain_labels: ['shop'], custom_hostnames: ['www.example.com'] }]);
     expect(await ask(OFF, BLOCKED)).toEqual([]);
     expect(await ask(SITE, 'd'.repeat(64))).toEqual([]);
+    // The limit is in bytes and includes 262144 itself: exactly 262144 bytes is served, one more is not, and a document
+    // of fewer characters than that but more bytes (two bytes each) is not served either.
+    const AT_LIMIT = '1'.repeat(64);
+    const WIDE_AT_LIMIT = '2'.repeat(64);
+    const WIDE_OVER = '3'.repeat(64);
+    await su!`
+      INSERT INTO public.custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES
+        (${SITE}, ${AT_LIMIT}, repeat('x', 262144), '{}', 'At the limit', 'u1'),
+        (${SITE}, ${WIDE_AT_LIMIT}, repeat(chr(233), 131072), '{}', 'Wide, at the limit', 'u1'),
+        (${SITE}, ${WIDE_OVER}, repeat(chr(233), 131073), '{}', 'Wide, over', 'u1')
+    `;
+    const size = async (sha256: string) => {
+      const [row] = await box`SELECT octet_length(document) AS bytes, char_length(document) AS characters, live FROM public.box_document(${SITE}, ${sha256})`;
+      return { ...row };
+    };
+    expect({
+      ascii_at_limit: await size(AT_LIMIT),
+      ascii_over: await size(BIG),
+      wide_at_limit: await size(WIDE_AT_LIMIT),
+      wide_over: await size(WIDE_OVER),
+    }).toEqual({
+      ascii_at_limit: { bytes: 262144, characters: 262144, live: true },
+      ascii_over: { bytes: null, characters: null, live: true },
+      wide_at_limit: { bytes: 262144, characters: 131072, live: true },
+      wide_over: { bytes: null, characters: null, live: true },
+    });
     // And still no table: the rows it was just answered from are not readable to it.
     expect(await codeOf(() => box`SELECT document FROM public.custom_code_blobs`)).toBe('42501');
     expect(await codeOf(() => box`SELECT custom_code_enabled FROM public.sites`)).toBe('42501');
@@ -749,6 +939,16 @@ describe('the migration of slice C1b and this file, in either order', () => {
     // A blob is immutable but for blocked_at (23514, the trigger's check_violation).
     expect(await codeOf(() => su!`UPDATE public.custom_code_blobs SET document = '<p>changed</p>' WHERE site_id = ${SITE} AND sha256 = ${LIVE}`)).toBe('23514');
     expect(await codeOf(() => su!`UPDATE public.custom_code_blobs SET declaration = '{"widened": true}' WHERE site_id = ${SITE} AND sha256 = ${LIVE}`)).toBe('23514');
+    // Every other column too, each to a value its own constraints accept (a valid unused hash, an existing site that
+    // has no blob under that hash), so the refusal is the trigger's and nothing else's.
+    const unused = '4'.repeat(64);
+    expect({
+      title: await codeOf(() => su!`UPDATE public.custom_code_blobs SET title = 'Renamed' WHERE site_id = ${SITE} AND sha256 = ${LIVE}`),
+      created_by: await codeOf(() => su!`UPDATE public.custom_code_blobs SET created_by = 'u2' WHERE site_id = ${SITE} AND sha256 = ${LIVE}`),
+      created_at: await codeOf(() => su!`UPDATE public.custom_code_blobs SET created_at = created_at - interval '1 day' WHERE site_id = ${SITE} AND sha256 = ${LIVE}`),
+      sha256: await codeOf(() => su!`UPDATE public.custom_code_blobs SET sha256 = ${unused} WHERE site_id = ${SITE} AND sha256 = ${LIVE}`),
+      site_id: await codeOf(() => su!`UPDATE public.custom_code_blobs SET site_id = ${OFF} WHERE site_id = ${SITE} AND sha256 = ${BLOCKED}`),
+    }).toEqual({ title: '23514', created_by: '23514', created_at: '23514', sha256: '23514', site_id: '23514' });
     expect(await codeOf(() => su!`UPDATE public.custom_code_blobs SET blocked_at = now() WHERE site_id = ${SITE} AND sha256 = ${LIVE}`)).toBe('ok');
     expect(await codeOf(() => su!`UPDATE public.custom_code_blobs SET blocked_at = NULL WHERE site_id = ${SITE} AND sha256 = ${LIVE}`)).toBe('ok');
     // Only a lower case hex hash, only an object as declaration.
@@ -804,6 +1004,17 @@ describe('the migration of slice C1b and this file, in either order', () => {
     expect(await ask(again)).toEqual([{ document: null, live: false }]);
     // Only the list's own form of hash.
     expect(await codeOf(() => su!`INSERT INTO public.custom_code_blocked_hashes (sha256, blocked_by, reason) VALUES ('nothex', 'operator', 'x')`)).toBe('23514');
+    // blocked_by names an operator label, never a person: a company erasure keeps this list. A user id, alone or behind
+    // the label, is refused (each with a valid hash, so the refusal is this check's); a label with a channel is taken.
+    const label = (blockedBy: string, sha256: string) =>
+      codeOf(() => su!`INSERT INTO public.custom_code_blocked_hashes (sha256, blocked_by, reason) VALUES (${sha256}, ${blockedBy}, 'phishing')`);
+    expect({
+      user_id: await label(randomUUID(), '5'.repeat(64)),
+      label_with_user_id: await label(`operator:${randomUUID()}`, '6'.repeat(64)),
+      other_word: await label('admin', '7'.repeat(64)),
+      label_with_channel: await label('operator:abuse-report', '8'.repeat(64)),
+    }).toEqual({ user_id: '23514', label_with_user_id: '23514', other_word: '23514', label_with_channel: 'ok' });
+    await su!`DELETE FROM public.custom_code_blocked_hashes WHERE sha256 = ${'8'.repeat(64)}`;
     await su!`DELETE FROM public.sites WHERE id = ${again}`;
   });
 
@@ -839,6 +1050,72 @@ describe('the migration of slice C1b and this file, in either order', () => {
       function: false, trigger_functions: 0, tables: 0, column: 0, history: 0, other_history: true,
     });
     // The role exists in this cluster now, so the migration grants EXECUTE itself when it is applied again.
+    const migrated = migrate(ORDER_DB);
+    expect(migrated.status, migrated.output).toBe(0);
+    expect(await boxDocumentRights(other)).toEqual(ONLY_BOX_READER);
+  }, 240_000);
+
+  it('the migration\'s rollback.sql does not depend on the session\'s search path', async () => {
+    // Like every file the operator applies as a superuser, the rollback sets its own search path and names every object
+    // with its schema. Under psql's default path ("$user", public) a schema named after the superuser is searched
+    // first, and commerce_ddl may create schemas in this database (CREATE on it, from commerce-roles.sql). So a table
+    // `_prisma_migrations` in such a schema, with a trigger, is planted as commerce_ddl; the trigger tries to make
+    // commerce_ddl a superuser (it succeeds only when a superuser fires it). A copy of the file without its SET line and
+    // its qualifiers is the control: it must fire the trigger and leave the real history row. Then the real file:
+    // nothing fires, the real row goes.
+    const other = postgres(urlOf('postgres', ORDER_DB), { max: 1, prepare: false, onnotice: () => {} });
+    opened.push(other);
+    const superuser = async () => (await su!`SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = 'commerce_ddl'`)[0]!.rolsuper as boolean;
+    const history = async () =>
+      (await other`SELECT count(*)::int AS n FROM public._prisma_migrations WHERE migration_name = '20261115000000_custom_code'`)[0]!.n as number;
+    expect(await superuser()).toBe(false);
+    expect(await history()).toBe(1);
+    const [may] = await other`SELECT pg_catalog.has_database_privilege('commerce_ddl', current_database(), 'CREATE') AS create`;
+    expect(may!.create).toBe(true);
+    const ddl = as('commerce_ddl', ORDER_DB);
+    try {
+      await ddl`CREATE SCHEMA postgres`;
+      await ddl`CREATE TABLE postgres._prisma_migrations (migration_name text)`;
+      await ddl`
+        CREATE FUNCTION postgres.on_delete() RETURNS trigger LANGUAGE plpgsql AS $f$
+        BEGIN
+          BEGIN ALTER ROLE commerce_ddl SUPERUSER; EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+          RETURN NULL;
+        END $f$
+      `;
+      await ddl`CREATE TRIGGER on_delete BEFORE DELETE ON postgres._prisma_migrations FOR EACH STATEMENT EXECUTE FUNCTION postgres.on_delete()`;
+      const planted = async () => (await other`SELECT count(*)::int AS n FROM postgres._prisma_migrations`)[0]!.n as number;
+      await ddl`INSERT INTO postgres._prisma_migrations VALUES ('20261115000000_custom_code')`;
+
+      const text = readFileSync(MIGRATION_ROLLBACK, 'utf8');
+      const setLine = '\nSET search_path = pg_catalog, pg_temp;\n';
+      expect(text).toContain(setLine);
+      expect(text).toContain("pg_catalog.to_regclass('public._prisma_migrations')");
+      expect(text).toContain('DELETE FROM "public"."_prisma_migrations"');
+      const unqualified = text
+        .replace(setLine, '\n')
+        .replace("pg_catalog.to_regclass('public._prisma_migrations')", "to_regclass('_prisma_migrations')")
+        .replace('DELETE FROM "public"."_prisma_migrations"', 'DELETE FROM "_prisma_migrations"');
+      await container!.copyContentToContainer([{ content: unqualified, target: '/tmp/cut-custom-code-rollback.sql' }]);
+      const run = (file: string) => container!.exec(['psql', '-v', 'ON_ERROR_STOP=1', '-q', '-1', '-U', 'postgres', '-d', ORDER_DB, '-f', `/tmp/${file}`]);
+
+      // The control.
+      const cut = await run('cut-custom-code-rollback.sql');
+      expect(cut.exitCode, cut.output).toBe(0);
+      const control = { superuser: await superuser(), history: await history(), planted: await planted() };
+      await su!`ALTER ROLE commerce_ddl NOSUPERUSER`;
+      expect(control).toEqual({ superuser: true, history: 1, planted: 0 });
+
+      // The real file, with the planted table and its trigger still in place.
+      await ddl`INSERT INTO postgres._prisma_migrations VALUES ('20261115000000_custom_code')`;
+      const real = await run('custom-code-rollback.sql');
+      expect(real.exitCode, real.output).toBe(0);
+      expect({ superuser: await superuser(), history: await history(), planted: await planted() }).toEqual({ superuser: false, history: 0, planted: 1 });
+    } finally {
+      await su!`ALTER ROLE commerce_ddl NOSUPERUSER`;
+      await other`DROP SCHEMA IF EXISTS postgres CASCADE`;
+    }
+    // The migration applies again, grant included, for what follows.
     const migrated = migrate(ORDER_DB);
     expect(migrated.status, migrated.output).toBe(0);
     expect(await boxDocumentRights(other)).toEqual(ONLY_BOX_READER);
