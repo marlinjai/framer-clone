@@ -20,24 +20,78 @@ const NOT_FUNCTIONS = new Set([
   'timestamptz', 'date', 'time', 'char', 'varchar', 'numeric', 'decimal', 'conflict', 'do', 'nothing', 'key',
 ]);
 
-const SQL_TEMPLATE = /\$(?:queryRaw|executeRaw)(?:Unsafe)?(?:<[^`(]*?>)?\s*(?:\(\s*)?`((?:[^`\\]|\\.)*)`/g;
+const SQL_TEMPLATE_START = /\$(?:queryRaw|executeRaw)(?:Unsafe)?(?:<[^`(]*?>)?\s*(?:\(\s*)?`/g;
+
+/** Index just after the quoted JS string that opens at `i`. */
+function skipQuoted(s: string, i: number): number {
+  const q = s[i];
+  for (let j = i + 1; j < s.length; j++) {
+    if (s[j] === '\\') j++;
+    else if (s[j] === q) return j + 1;
+  }
+  return s.length;
+}
+
+/** Index just after the template literal that opens (backtick) at `i`, nested templates inside `${...}` included. */
+function skipTemplate(s: string, i: number): number {
+  for (let j = i + 1; j < s.length; j++) {
+    if (s[j] === '\\') j++;
+    else if (s[j] === '`') return j + 1;
+    else if (s[j] === '$' && s[j + 1] === '{') j = skipInterpolation(s, j) - 1;
+  }
+  return s.length;
+}
+
+/** Index just after the `${...}` that opens at `i`, matching braces and skipping strings and nested templates. */
+function skipInterpolation(s: string, i: number): number {
+  let depth = 0;
+  for (let j = i + 1; j < s.length; j++) {
+    const c = s[j];
+    if (c === '`') j = skipTemplate(s, j) - 1;
+    else if (c === "'" || c === '"') j = skipQuoted(s, j) - 1;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return j + 1;
+  }
+  return s.length;
+}
 
 /** The raw SQL templates of one source file, each with its line number. */
 export function rawSqlTemplates(source: string): { line: number; sql: string }[] {
   const out: { line: number; sql: string }[] = [];
-  for (const m of source.matchAll(SQL_TEMPLATE)) {
-    out.push({ line: source.slice(0, m.index).split('\n').length, sql: m[1] });
+  for (const m of source.matchAll(SQL_TEMPLATE_START)) {
+    const open = m.index + m[0].length - 1;
+    const end = skipTemplate(source, open);
+    out.push({ line: source.slice(0, m.index).split('\n').length, sql: source.slice(open + 1, Math.max(open + 1, end - 1)) });
   }
   return out;
 }
 
-/** Unqualified function calls in one SQL text: interpolations, comments, string literals and quoted names blanked first. */
+/** One token-aware pass: interpolations, comments, string literals and quoted names are blanked, the rest is kept. */
+function maskSql(sql: string): string {
+  let out = '';
+  for (let i = 0; i < sql.length; ) {
+    const c = sql[i];
+    if (c === '$' && sql[i + 1] === '{') { i = skipInterpolation(sql, i); out += ' '; }
+    else if (c === '-' && sql[i + 1] === '-') { while (i < sql.length && sql[i] !== '\n') i++; out += ' '; }
+    else if (c === '/' && sql[i + 1] === '*') {
+      const end = sql.indexOf('*/', i + 2);
+      i = end === -1 ? sql.length : end + 2;
+      out += ' ';
+    } else if (c === "'" || c === '"') {
+      let j = i + 1;
+      for (; j < sql.length; j++) {
+        if (sql[j] === c) { if (sql[j + 1] === c) j++; else break; }
+      }
+      i = j + 1;
+      out += c === "'" ? "''" : '"q"';
+    } else { out += c; i++; }
+  }
+  return out;
+}
+
+/** Unqualified function calls in one SQL text. */
 export function unqualifiedCalls(sql: string): string[] {
-  let s = sql;
-  // Interpolations, innermost braces first so nested template literals inside `${...}` disappear too.
-  for (let prev = ''; prev !== s; ) { prev = s; s = s.replace(/\$\{[^{}]*\}/g, ' $1 '); }
-  s = s.replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
-  s = s.replace(/'(?:[^']|'')*'/g, "''").replace(/"(?:[^"]|"")*"/g, '"q"');
+  const s = maskSql(sql);
   const found: string[] = [];
   for (const m of s.matchAll(/(?<![\w.$"])([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
     if (!NOT_FUNCTIONS.has(m[1].toLowerCase())) found.push(m[1]);
@@ -76,6 +130,11 @@ describe('raw SQL on the Prisma client calls only schema-qualified functions', (
     expect(unqualifiedCalls("SELECT id FROM public.sites WHERE id IN (${Prisma.join(ids)}) AND status IN ('a', 'b')")).toEqual([]);
     expect(unqualifiedCalls('SELECT COALESCE(pg_catalog.sum(x), 0), pg_catalog.count(*) FILTER (WHERE y) FROM t')).toEqual([]);
     expect(unqualifiedCalls("SELECT 'now()' AS s, \"weird(\" FROM t -- count(*)\n")).toEqual([]);
+    expect(unqualifiedCalls("SELECT '--', now()")).toEqual(['now']);
+    expect(unqualifiedCalls("SELECT 1 -- it's a comment\n, now()")).toEqual(['now']);
+    const nested = 'tx.$queryRaw`SELECT ${`site:${id}`}::text, now()`;';
+    expect(rawSqlTemplates(nested)).toEqual([{ line: 1, sql: 'SELECT ${`site:${id}`}::text, now()' }]);
+    expect(unqualifiedCalls(rawSqlTemplates(nested)[0].sql)).toEqual(['now']);
     expect(rawSqlTemplates('await tx.$queryRaw<{ n: bigint }[]>`SELECT now()`;')).toEqual([{ line: 1, sql: 'SELECT now()' }]);
     expect(rawSqlTemplates('await tx.$executeRawUnsafe(`SET LOCAL x = 1`);')).toEqual([{ line: 1, sql: 'SET LOCAL x = 1' }]);
   });
