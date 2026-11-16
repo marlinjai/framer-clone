@@ -13,7 +13,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist/box.cjs"
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist/box.cjs && esbuild src/launchMain.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist/launch.cjs"
   },
   "dependencies": {
     "postgres": "3.4.9"
