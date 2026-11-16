@@ -333,7 +333,7 @@ describe('the image, started without a decision to serve', () => {
     ['a database address that asks for encryption this version does not have', { INFISICAL_PROJECT_ID: PROJECT.encrypted }, 'BOX_DATABASE_URL'],
   ])('refuses to start with %s, naming the variable and nothing it holds', async (_name, env, variable) => {
     const { code, logs } = await exited(await runBox(env));
-    // The box ends with 78; `infisical run` reports a child that failed as its own status 1 (decision D46).
+    // The box ends with 78; `infisical run` reports a child that failed as its own status 1 (decision D51).
     expect(code).toBe('1');
     expect(logs).toContain(`box: ${variable} `);
     expect(logs).toContain('exit status 78');

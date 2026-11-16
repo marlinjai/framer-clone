@@ -1,7 +1,7 @@
 // services/box/src/launchMain.ts
 //
 // The image's entrypoint (Dockerfile.box), behind tini: logs in to Infisical
-// and runs the box inside `infisical run` (src/launch.ts, decision D45).
+// and runs the box inside `infisical run` (src/launch.ts, decision D50).
 
 import { EXIT_LOGIN, launch } from './launch';
 

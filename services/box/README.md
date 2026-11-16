@@ -62,13 +62,13 @@ The box's settings (every variable above but `BOX_DATABASE_URL`) are not secrets
 
 ## How it starts
 
-The image's entrypoint is `tini`, then `node /opt/box/launch.cjs` (the bundled `src/launch.ts`, decision D45 of the plan). The start program:
+The image's entrypoint is `tini`, then `node /opt/box/launch.cjs` (the bundled `src/launch.ts`, decision D50 of the plan). The start program:
 
 1. refuses to run as root, and checks its own variables (below). A missing or malformed one stops it with status 78 and a line naming the variable, never its value, before anything is started;
 2. logs in with the box's machine identity: `infisical login --method=universal-auth --silent --plain`, with the client id and secret in the client's environment, never on its command line, and the token read from a pipe and never written. A refused or hanging login (30 seconds) stops it with status 69 and the client's own message, with every credential taken out;
 3. runs `infisical run` for the box's project and environment, with the token in its environment, never as an argument, and the box under it through `env -u INFISICAL_TOKEN`, so the box's environment holds `BOX_DATABASE_URL` and no credential;
 4. passes on everything `infisical run` and the box write to standard error, a line at a time with every credential taken out (the client holds the token while it runs), and the box's request log on standard output as it is;
-5. passes SIGTERM and SIGINT on and ends with the status `infisical run` ends with, saying so when it is not 0. `infisical run` reports a child that failed as status 1, so a box that refuses its configuration (78) ends the container with 1, and so does a fetch of the secrets that Infisical refuses; the box's own line or the client's reason says which (decision D46).
+5. passes SIGTERM and SIGINT on and ends with the status `infisical run` ends with, saying so when it is not 0. `infisical run` reports a child that failed as status 1, so a box that refuses its configuration (78) ends the container with 1, and so does a fetch of the secrets that Infisical refuses; the box's own line or the client's reason says which (decision D51).
 
 | Variable | Required | Meaning |
 |---|---|---|
@@ -87,7 +87,7 @@ What the operator sets in step O1 (the ordered steps are in the infra repository
 - **Coolify:** an application `framer-clone-box` from the image `ghcr.io/marlinjai/framer-clone-box:latest`, on the network of the application's Postgres, port 8080, health check `GET /health` on 127.0.0.1, read-only root file system, every capability dropped, no new privileges, 0.5 CPU, 256 megabytes and a process limit of at least 64 (decision D11). No volume and no temporary file system: the box writes nothing. Its environment: the four `INFISICAL_` variables above and the box's settings (`BOX_EDITOR_HOST`, `BOX_SITES_BASE_HOST`, `BOX_TRUSTED_PROXIES`, the contacts, and `CUSTOM_CODE_DISABLED=0` once serving is decided).
 - **GitHub:** the repository secrets `COOLIFY_BOX_WEBHOOK` (the box application's deploy webhook) and `COOLIFY_TOKEN` (the Coolify API token the application's deploy already uses). Until both are set, the workflow pushes no image and deploys nothing, and says so in a notice. If the package `framer-clone-box` on GHCR stays private, Coolify needs a registry login for it.
 
-Then a push to main that touches the box, or a manual run of the `box` workflow on main, tests the image, pushes exactly that image (tags: the commit and `latest`), calls the webhook and waits until `https://run.lumitrausercontent.com/health/db` answers (decisions D48 and D49).
+Then a push to main that touches the box, or a manual run of the `box` workflow on main, tests the image, pushes exactly that image (tags: the commit and `latest`), calls the webhook and waits until `https://run.lumitrausercontent.com/health/db` answers (decisions D53 and D54).
 
 ## Testing
 

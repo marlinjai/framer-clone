@@ -11,7 +11,7 @@ name: box
 # COOLIFY_BOX_WEBHOOK and COOLIFY_TOKEN: the image the tests just ran is pushed
 # to ghcr.io/<owner>/framer-clone-box (tags: the commit and latest), the
 # box's Coolify deploy webhook is called, and the deploy is polled until the
-# box answers /health/db on its public host (plan, decisions D48 and D49).
+# box answers /health/db on its public host (plan, decisions D53 and D54).
 # Until both secrets exist the publish job says so in a notice and pushes and
 # deploys nothing, so main stays green before the box's infrastructure exists.
 # A pull request never pushes and never deploys.

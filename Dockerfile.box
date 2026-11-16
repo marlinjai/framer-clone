@@ -10,7 +10,7 @@
 # The context is cut down to the box and that one module by
 # Dockerfile.box.dockerignore.
 #
-# How it starts (decision D45 of the plan): tini is process 1 and starts a
+# How it starts (decision D50 of the plan): tini is process 1 and starts a
 # small node program (services/box/src/launch.ts) that logs in to Infisical
 # with the box's own machine identity and runs the box inside `infisical run`,
 # which puts the one secret, BOX_DATABASE_URL, into the box's environment. The

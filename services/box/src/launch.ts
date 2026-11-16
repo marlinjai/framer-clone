@@ -1,6 +1,6 @@
 // services/box/src/launch.ts
 //
-// How the box is started in its image (plan, decision D45): log in to
+// How the box is started in its image (plan, decision D50): log in to
 // Infisical with the box's own machine identity, then run the box inside
 // `infisical run`, which puts the one secret, BOX_DATABASE_URL, into the box's
 // environment. The image has no shell, so this is a small node program in
@@ -29,7 +29,7 @@ export const EXIT_CONFIG = 78;
 /** The status for a login that did not give a token (sysexits EX_UNAVAILABLE). */
 export const EXIT_LOGIN = 69;
 
-/** The Infisical instance of the stack. INFISICAL_DOMAIN may name another (decision D47). */
+/** The Infisical instance of the stack. INFISICAL_DOMAIN may name another (decision D52). */
 export const DEFAULT_INFISICAL_DOMAIN = 'https://infisical.lumitra.co';
 
 /** How long a login may take before it is given up on. */
