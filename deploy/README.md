@@ -660,6 +660,23 @@ replica keeps serving the erased company's cached pages until it restarts.
 Migration `20261102230000_site_erasures` is additive. Erase only once every container runs the new code: an older
 container neither refuses Save from editor tabs loaded before the erase nor knows the new cache key.
 
+## The box: the second application (sandboxed custom code)
+
+The box (`services/box`, plan `docs/plans/2026-11-02-sandboxed-custom-code.md`) is a separate small service that serves
+custom code blocks from their own domain. It is its own Coolify application with its own image, its own Infisical project
+and its own workflow (`.github/workflows/box.yml`); nothing in this application's image or start sequence changes for it.
+`services/box/README.md` ("How it starts", "Deploying") is the full reference. What the operator sets in step O1:
+
+| Where | What |
+|---|---|
+| Infisical | Project `framer-clone-box`, environment `prod`, path `/`, one secret: `BOX_DATABASE_URL` (the `box_reader` connection string on the private network the box shares with this Postgres; no encryption parameter, decision D23). Nothing else in that project: a value there overrides the container's environment. A machine identity with universal auth that can read this project only (decision D12) |
+| Coolify | Application `framer-clone-box`, image `ghcr.io/marlinjai/framer-clone-box:latest`, on this Postgres's network, port 8080, health check `GET /health` on 127.0.0.1, read-only root file system, every capability dropped, no new privileges, 0.5 CPU, 256 megabytes, process limit 64 or more (decision D11), no volume. Environment: `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` (the box's identity, not this application's), `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT=prod`, and the box's settings (`BOX_EDITOR_HOST`, `BOX_SITES_BASE_HOST`, `BOX_TRUSTED_PROXIES`, the contacts, `CUSTOM_CODE_DISABLED`). Never `BOX_DATABASE_URL`: the box refuses to start with it |
+| GitHub | Repository secrets `COOLIFY_BOX_WEBHOOK` (the box application's deploy webhook) and `COOLIFY_TOKEN` (shared with this application's deploy). Until both exist the box workflow pushes nothing and deploys nothing |
+
+Once they are set, a push to main that touches the box, or a manual run of the `box` workflow on main, pushes the image the
+tests just ran to `ghcr.io/marlinjai/framer-clone-box` (the commit and `latest`), calls the webhook and waits until
+`https://run.lumitrausercontent.com/health/db` answers.
+
 ## Operator commands (from a checkout, against a forwarded database)
 
 | Command | Use |
