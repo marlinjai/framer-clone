@@ -11,8 +11,9 @@
 // at a security boundary every import is surface. It uses only what every
 // runtime it runs in already has as a global (Web Crypto, TextEncoder).
 //
-// Nothing in the application imports this file yet (slice C1a builds the
-// service and the contract only; the sandbox is connected to nothing).
+// From slice C2 the application reads the hash's shape and the host name rule
+// from here (src/lib/customCode/customCode.ts); nothing in the application
+// serves or frames a block yet.
 
 /** The version of the postMessage protocol between the page and a frame. */
 export const BOX_PROTOCOL_VERSION = 1;
