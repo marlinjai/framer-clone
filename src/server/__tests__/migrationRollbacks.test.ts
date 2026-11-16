@@ -80,13 +80,20 @@ function statementLines(text: string): string[] {
 }
 
 /**
- * The statement lines that match no allowed shape, and every line of the file holding a character outside printable
- * ASCII and tab, a carriage return included (even in a comment: such a character is what could make a line read
- * differently to psql than to this test).
+ * The statement lines that match no allowed shape, and every line of the file, comments included, that could read
+ * differently to psql than to this test: one holding a character outside printable ASCII and tab (a carriage return
+ * ends a comment for psql), a backslash (a psql command), or `$$` anywhere but the allowed `DO $$` and `END $$;` lines
+ * (inside a `DO` block psql reads a comment as part of the quoted body, so a `$$` there ends the body and the rest of
+ * the line runs).
  */
 function unknownLines(text: string, folder: string): string[] {
   const allowed = shapes(folder);
-  const odd = text.split('\n').filter((line) => /[^\x20-\x7e\t]/.test(line));
+  const odd = text
+    .split('\n')
+    .filter(
+      (line) =>
+        /[^\x20-\x7e\t]|\\/.test(line) || (line.includes('$$') && !/^[ \t]*(?:DO \$\$|END \$\$;)[ \t]*$/.test(line)),
+    );
   const unknown = statementLines(text).filter((line) => !allowed.some((shape) => shape.test(line)));
   return [...new Set([...odd, ...unknown])];
 }
@@ -139,6 +146,12 @@ describe('the allowed shapes of a rollback line', () => {
     // Another schema than the application's.
     'DROP TABLE IF EXISTS "pg_catalog"."pg_authid";',
     'DELETE FROM "other"."t" WHERE "a" = \'b\';',
+    // Inside a DO block a comment is part of the quoted body for psql: `$$` ends it and the rest of the line runs,
+    // a backslash command included.
+    '-- $$ \\r \\\\ DROP TABLE "public"."victim"; DO $$ BEGIN',
+    '-- $$ \\! touch /tmp/marker',
+    '-- \\! touch /tmp/marker',
+    '    -- note $$',
     'RAISE NOTICE $m$ -- done $m$; DELETE FROM b;',
     'DROP TABLE IF EXISTS "public"."a"; -- don\'t',
     '/* it\'s */ DROP TABLE b;',
