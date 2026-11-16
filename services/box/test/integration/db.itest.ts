@@ -5,9 +5,11 @@ import { createBoxHandler } from '../../src/handler';
 import { createPostgresStore, type BoxStore } from '../../src/store';
 import { startScratchPostgres, type ScratchPostgres } from './docker';
 
-// The box's store and handler against a real Postgres 16 holding the fixture:
-// what the role can and cannot do, what the function lets through, and what
-// happens when the database goes away and comes back.
+// The box's store and handler against a real Postgres 16 holding the
+// application's database, built from the committed migrations and role files
+// (applicationSchema in ./docker): what the role can and cannot do, what the
+// function lets through, and what happens when the database goes away and
+// comes back.
 
 const SITE_A = '0b0e7c1a-5d2f-4c3b-9a8e-1f2d3c4b5a69';
 const SITE_B = '7a1f3c55-0e2d-4b6a-8c9d-2e3f4a5b6c7d';
@@ -35,16 +37,22 @@ let store: BoxStore;
 beforeAll(async () => {
   pg = await startScratchPostgres();
   pg.sql(`
-    INSERT INTO sites (id, custom_code_enabled) VALUES ('${SITE_A}', true), ('${SITE_B}', true), ('${SITE_OFF}', false);
-    INSERT INTO site_domains (id, site_id, subdomain, custom_hostname, verification_status) VALUES
-      ('d1', '${SITE_A}', 'shop', NULL, 'active'),
-      ('d2', '${SITE_A}', 'preview-abcdefghijklmnopqrstuvwxyz234567', NULL, 'active'),
-      ('d3', '${SITE_A}', NULL, 'www.example.com', 'active'),
-      ('d4', '${SITE_A}', NULL, 'pending.example.com', 'pending'),
-      ('d5', '${SITE_A}', NULL, 'preview-x.sites.lumitra.co', 'verified'),
-      ('d6', '${SITE_A}', NULL, '*.sites.lumitra.co', 'active'),
-      ('d8', '${SITE_A}', NULL, 'other.sites.lumitra.co', 'active'),
-      ('d7', '${SITE_B}', 'other', NULL, 'active');
+    INSERT INTO sites (id, workspace_id, tenant_group_id, name, project_created_at, project_updated_at, updated_at, custom_code_enabled) VALUES
+      ('${SITE_A}', 'w1', 't1', 'A', now(), now(), now(), true),
+      ('${SITE_B}', 'w1', 't1', 'B', now(), now(), now(), true),
+      ('${SITE_OFF}', 'w1', 't1', 'Off', now(), now(), now(), false);
+    INSERT INTO site_domains (id, site_id, workspace_id, tenant_group_id, subdomain, custom_hostname, verification_status, updated_at) VALUES
+      ('d1', '${SITE_A}', 'w1', 't1', 'shop', NULL, 'active', now()),
+      ('d2', '${SITE_A}', 'w1', 't1', 'preview-abcdefghijklmnopqrstuvwxyz234567', NULL, 'active', now()),
+      ('d3', '${SITE_A}', 'w1', 't1', NULL, 'www.example.com', 'active', now()),
+      ('d4', '${SITE_A}', 'w1', 't1', NULL, 'pending.example.com', 'pending', now()),
+      ('d5', '${SITE_A}', 'w1', 't1', NULL, 'preview-x.sites.lumitra.co', 'verified', now()),
+      ('d6', '${SITE_A}', 'w1', 't1', NULL, '*.sites.lumitra.co', 'active', now()),
+      ('d8', '${SITE_A}', 'w1', 't1', NULL, 'other.sites.lumitra.co', 'active', now()),
+      ('d7', '${SITE_B}', 'w1', 't1', 'other', NULL, 'active', now());
+    -- Something else of the application the box must not read.
+    INSERT INTO site_erasures (id, site_id, workspace_id, tenant_group_id, erased_by, erased_count, remaining_count, places) VALUES
+      ('e1', '${SITE_A}', 'w1', 't1', 'u1', 1, 0, '[]');
     INSERT INTO custom_code_blobs (site_id, sha256, document, declaration, title, created_by, blocked_at) VALUES
       ('${SITE_A}', '${HASH}', '<p>site a</p>', '{}', 'A', 'u1', NULL),
       ('${SITE_A}', '${BLOCKED}', '<p>blocked</p>', '{}', 'Blocked', 'u1', now()),
@@ -64,9 +72,9 @@ describe('the role box_reader', () => {
   it('can call the one function for a pair it knows', async () => {
     const sql = asReader();
     try {
-      const rows = await sql`SELECT document, live FROM box_document(${SITE_A}, ${HASH})`;
+      const rows = await sql`SELECT document, live FROM public.box_document(${SITE_A}, ${HASH})`;
       expect(rows.map((row) => [row.document, row.live])).toEqual([['<p>site a</p>', true]]);
-      expect(await sql`SELECT 1 FROM box_document(${SITE_B}, ${HASH})`).toHaveLength(0);
+      expect(await sql`SELECT 1 FROM public.box_document(${SITE_B}, ${HASH})`).toHaveLength(0);
     } finally {
       await sql.end();
     }
@@ -74,22 +82,24 @@ describe('the role box_reader', () => {
 
   // Each statement with the one error it must fail with: permission denied (42501) unless said otherwise.
   it.each([
-    ['read the blobs', 'SELECT * FROM custom_code_blobs', '42501'],
-    ['read the sites', 'SELECT * FROM sites', '42501'],
-    ['read the domains', 'SELECT * FROM site_domains', '42501'],
-    ['read anything else of the application', 'SELECT * FROM application_rows', '42501'],
+    ['read the blobs', 'SELECT * FROM public.custom_code_blobs', '42501'],
+    ['read the sites', 'SELECT * FROM public.sites', '42501'],
+    ['read the domains', 'SELECT * FROM public.site_domains', '42501'],
+    ['read anything else of the application', 'SELECT * FROM public.site_erasures', '42501'],
+    ['read the custom code audit', 'SELECT * FROM public.custom_code_audit', '42501'],
+    ['read the custom code proposals', 'SELECT * FROM public.custom_code_proposals', '42501'],
     ['read password hashes', 'SELECT rolpassword FROM pg_authid', '42501'],
-    ['write a blob', "INSERT INTO custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES ('x', 'y', 'z', '{}', 't', 'u')", '42501'],
-    ['unblock a blob', 'UPDATE custom_code_blobs SET blocked_at = NULL', '42501'],
-    ['switch a site on', 'UPDATE sites SET custom_code_enabled = true', '42501'],
-    ['delete blobs', 'DELETE FROM custom_code_blobs', '42501'],
-    ['empty a table', 'TRUNCATE custom_code_blobs', '42501'],
-    ['create a table', 'CREATE TABLE box_owned (id int)', '42501'],
+    ['write a blob', "INSERT INTO public.custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES ('x', 'y', 'z', '{}', 't', 'u')", '42501'],
+    ['unblock a blob', 'UPDATE public.custom_code_blobs SET blocked_at = NULL', '42501'],
+    ['switch a site on', 'UPDATE public.sites SET custom_code_enabled = true', '42501'],
+    ['delete blobs', 'DELETE FROM public.custom_code_blobs', '42501'],
+    ['empty a table', 'TRUNCATE public.custom_code_blobs', '42501'],
+    ['create a table', 'CREATE TABLE public.box_owned (id int)', '42501'],
     ['create a temporary table', 'CREATE TEMPORARY TABLE box_temp (id int)', '42501'],
     ['create a schema', 'CREATE SCHEMA box_owned', '42501'],
-    ['replace the function', "CREATE OR REPLACE FUNCTION box_document(p_site_id text, p_sha256 text) RETURNS TABLE (document text, live boolean, subdomain_labels text[], custom_hostnames text[]) LANGUAGE sql AS 'SELECT NULL::text, true, ARRAY[]::text[], ARRAY[]::text[]'", '42501'],
-    ['drop the function', 'DROP FUNCTION box_document(text, text)', '42501'],
-    ['run a program on the server', "COPY application_rows TO PROGRAM 'id'", '42501'],
+    ['replace the function', "CREATE OR REPLACE FUNCTION public.box_document(p_site_id text, p_sha256 text) RETURNS TABLE (document text, live boolean, subdomain_labels text[], custom_hostnames text[]) LANGUAGE sql AS 'SELECT NULL::text, true, ARRAY[]::text[], ARRAY[]::text[]'", '42501'],
+    ['drop the function', 'DROP FUNCTION public.box_document(text, text)', '42501'],
+    ['run a program on the server', "COPY public.site_erasures TO PROGRAM 'id'", '42501'],
     ['read a file of the server', "SELECT pg_read_file('/etc/passwd')", '42501'],
     ['become another role', 'SET ROLE postgres', '42501'],
   ])('cannot %s', async (_what, statement, code) => {
@@ -110,7 +120,7 @@ describe('the role box_reader', () => {
       `;
       expect(readable).toHaveLength(0);
       // The function's own text holds table names, never rows.
-      await expect(sql.unsafe('SELECT * FROM box_documents')).rejects.toMatchObject({ code: '42P01' });
+      await expect(sql.unsafe('SELECT * FROM public.box_documents')).rejects.toMatchObject({ code: '42P01' });
     } finally {
       await sql.end();
     }
@@ -119,8 +129,8 @@ describe('the role box_reader', () => {
   it('never gets the code of a blocked blob or of a site that is off', async () => {
     const sql = asReader();
     try {
-      expect((await sql`SELECT document, live FROM box_document(${SITE_A}, ${BLOCKED})`).map((r) => [r.document, r.live])).toEqual([[null, false]]);
-      expect((await sql`SELECT document, live FROM box_document(${SITE_OFF}, ${HASH})`).map((r) => [r.document, r.live])).toEqual([[null, false]]);
+      expect((await sql`SELECT document, live FROM public.box_document(${SITE_A}, ${BLOCKED})`).map((r) => [r.document, r.live])).toEqual([[null, false]]);
+      expect((await sql`SELECT document, live FROM public.box_document(${SITE_OFF}, ${HASH})`).map((r) => [r.document, r.live])).toEqual([[null, false]]);
     } finally {
       await sql.end();
     }
@@ -130,13 +140,13 @@ describe('the role box_reader', () => {
     const sql = asReader();
     try {
       for (const hostile of ["' OR '1'='1", "x'; DROP TABLE sites; --", '%', '_', `${SITE_A}' --`, '\\']) {
-        expect(await sql`SELECT 1 FROM box_document(${hostile}, ${HASH})`).toHaveLength(0);
-        expect(await sql`SELECT 1 FROM box_document(${SITE_A}, ${hostile})`).toHaveLength(0);
+        expect(await sql`SELECT 1 FROM public.box_document(${hostile}, ${HASH})`).toHaveLength(0);
+        expect(await sql`SELECT 1 FROM public.box_document(${SITE_A}, ${hostile})`).toHaveLength(0);
       }
     } finally {
       await sql.end();
     }
-    expect(pg.sql('SELECT count(*) FROM sites;').trim()).toBe('3');
+    expect(pg.sql('SELECT count(*) FROM public.sites;').trim()).toBe('3');
   });
 
   it('is stopped after two seconds by default and at four connections', async () => {
@@ -157,35 +167,80 @@ describe('the role box_reader', () => {
 
   it('gets no document larger than a block may be', async () => {
     const big = 'e'.repeat(64);
-    pg.sql(`INSERT INTO custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES ('${SITE_A}', '${big}', repeat('x', 262145), '{}', 'Big', 'u1');`);
+    pg.sql(`INSERT INTO public.custom_code_blobs (site_id, sha256, document, declaration, title, created_by) VALUES ('${SITE_A}', '${big}', repeat('x', 262145), '{}', 'Big', 'u1');`);
     const sql = asReader();
     try {
-      expect((await sql`SELECT document, live FROM box_document(${SITE_A}, ${big})`).map((r) => [r.document, r.live])).toEqual([[null, true]]);
+      expect((await sql`SELECT document, live FROM public.box_document(${SITE_A}, ${big})`).map((r) => [r.document, r.live])).toEqual([[null, true]]);
     } finally {
       await sql.end();
-      pg.sql(`DELETE FROM custom_code_blobs WHERE sha256 = '${big}';`);
+      pg.sql(`DELETE FROM public.custom_code_blobs WHERE sha256 = '${big}';`);
     }
   });
 
   it('RESIDUAL: it can read the catalogs (names of tables, columns and functions), never their rows', async () => {
     const sql = asReader();
     try {
-      const names = await sql`SELECT relname FROM pg_class WHERE relname IN ('custom_code_blobs', 'application_rows') ORDER BY relname`;
-      expect(names.map((row) => row.relname)).toEqual(['application_rows', 'custom_code_blobs']);
+      const names = await sql`SELECT relname FROM pg_class WHERE relname IN ('custom_code_blobs', 'site_erasures') ORDER BY relname`;
+      expect(names.map((row) => row.relname)).toEqual(['custom_code_blobs', 'site_erasures']);
     } finally {
       await sql.end();
     }
   });
 
+  // The application's owner role, commerce_ddl, keeps CREATE on the database, so it may create schemas, and until
+  // commerce-roles.sql is applied again after the first start (not done here) it may create functions in `public`. Neither
+  // a closer match for to_json nor a schema named after the box's role (searched first as "$user" by default) may change
+  // what the box gets: the box qualifies every name, and box-reader.sql gives the role a search path of pg_catalog only.
+  it('gets the same answer when the application\'s owner role plants a public.to_json(text[]) and a schema box_reader', async () => {
+    pg.sql(`
+      SET ROLE commerce_ddl;
+      CREATE FUNCTION public.to_json(text[]) RETURNS json LANGUAGE sql AS $$ SELECT '["evil"]'::json $$;
+      CREATE SCHEMA box_reader;
+      GRANT USAGE ON SCHEMA box_reader TO box_reader;
+      CREATE FUNCTION box_reader.box_document(p_site_id text, p_sha256 text)
+        RETURNS TABLE (document text, live boolean, subdomain_labels text[], custom_hostnames text[])
+        LANGUAGE sql AS $$ SELECT '<p>planted</p>'::text, true, ARRAY['evil']::text[], ARRAY['evil.example']::text[] $$;
+      GRANT EXECUTE ON FUNCTION box_reader.box_document(text, text) TO box_reader;
+      RESET ROLE;
+    `);
+    const planted = createPostgresStore(pg.readerUrl);
+    const sql = asReader();
+    try {
+      expect(await planted.find(SITE_A, HASH)).toEqual({
+        document: '<p>site a</p>',
+        live: true,
+        subdomainLabels: ['shop'],
+        customHostnames: ['*.sites.lumitra.co', 'other.sites.lumitra.co', 'preview-x.sites.lumitra.co', 'www.example.com'],
+      });
+      expect(await planted.find(SITE_B, HASH)).toBeNull();
+      expect((await sql`SELECT current_setting('search_path') AS path`)[0]?.path).toBe('pg_catalog');
+    } finally {
+      await sql.end();
+      await planted.close();
+      pg.sql('DROP SCHEMA box_reader CASCADE; DROP FUNCTION public.to_json(text[]);');
+    }
+  });
+
   // Decision D20: stated residuals of a stolen password, asserted so that a change in either direction is noticed.
-  it('RESIDUAL: a session can lift its own timeout and take an advisory lock', async () => {
+  it('RESIDUAL: a session can lift its own timeout', async () => {
     const sql = postgres(pg.readerUrl, { max: 1, onnotice: () => {} });
     try {
       await sql.begin(async (tx) => {
         await tx`SET LOCAL statement_timeout = 0`;
         expect((await tx`SELECT pg_sleep(2.5) IS NOT NULL AS slept`)[0]?.slept).toBe(true);
-        expect((await tx`SELECT pg_try_advisory_xact_lock(424242) AS locked`)[0]?.locked).toBe(true);
       });
+    } finally {
+      await sql.end();
+    }
+  });
+
+  // Closed by prisma/sql/box-reader.sql (decision D24), which this database is built with: the advisory lock
+  // functions are taken from PUBLIC and given by name to the application's roles only.
+  it('cannot take an advisory lock, nor write a large object', async () => {
+    const sql = asReader();
+    try {
+      await expect(sql`SELECT pg_try_advisory_xact_lock(424242)`).rejects.toMatchObject({ code: '42501' });
+      await expect(sql`SELECT lo_creat(-1)`).rejects.toMatchObject({ code: '42501' });
     } finally {
       await sql.end();
     }

@@ -8,12 +8,40 @@
 
 import { execFile, execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { createServer } from 'node:net';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
+
+/** The application's database, as a deploy names it in its own cluster. */
+export const DATABASE = 'framer_clone';
+
+/**
+ * The application's database built from the committed files only, in production's order. It is the state of a first
+ * build: commerce-roles.sql is not applied again after the migrations, so commerce_ddl still holds CREATE on `public`
+ * here (commerce-roles.sql takes it away when it is applied again after the first start):
+ *   1. prisma/sql/commerce-roles.sql (the application's two roles; box-reader.sql needs them),
+ *   2. every migration in prisma/migrations, in the order of its folder name, each whole or not at all (what
+ *      `prisma migrate deploy` does at every container start; the box's package has no Prisma, so psql runs them),
+ *   3. prisma/sql/box-reader.sql (the box's role, applied by the operator), which grants EXECUTE on box_document
+ *      because the migration made it before.
+ * The other order (the role file first) is held by the application's rehearsal,
+ * src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts.
+ */
+export function applicationSchema(): string[] {
+  const migrations = path.join(REPO_ROOT, 'prisma/migrations');
+  const folders = readdirSync(migrations, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  return [
+    readFileSync(path.join(REPO_ROOT, 'prisma/sql/commerce-roles.sql'), 'utf8'),
+    ...folders.map((folder) => `BEGIN;\n${readFileSync(path.join(migrations, folder, 'migration.sql'), 'utf8')}\nCOMMIT;\n`),
+    readFileSync(path.join(REPO_ROOT, 'prisma/sql/box-reader.sql'), 'utf8'),
+  ];
+}
 
 /** Postgres 16 on Alpine, by digest: the tests run the same bytes every time. */
 const POSTGRES_IMAGE = 'postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229';
@@ -86,7 +114,7 @@ export interface ScratchPostgres {
   remove(): void;
 }
 
-/** A scratch Postgres 16 with the fixture applied and `box_reader` given a random password. */
+/** A scratch Postgres 16 holding the application's database (applicationSchema), and `box_reader` given a login and a random password. */
 export async function startScratchPostgres(): Promise<ScratchPostgres> {
   const network = randomName('box-itest-net');
   const container = randomName('box-itest-pg');
@@ -98,17 +126,21 @@ export async function startScratchPostgres(): Promise<ScratchPostgres> {
     ['run', '-d', '--name', container, '--network', network, '--network-alias', 'pg', '-p', `127.0.0.1:${port}:5432`, '-e', 'POSTGRES_PASSWORD', POSTGRES_IMAGE],
     { env: { POSTGRES_PASSWORD: adminPassword } },
   );
-  const sql = (text: string) => docker(['exec', '-i', container, 'psql', '-v', 'ON_ERROR_STOP=1', '-q', '-t', '-A', '-U', 'postgres', '-d', 'postgres'], { input: text });
+  const sqlIn = (database: string, text: string) =>
+    docker(['exec', '-i', container, 'psql', '-v', 'ON_ERROR_STOP=1', '-q', '-t', '-A', '-U', 'postgres', '-d', database], { input: text });
+  const sql = (text: string) => sqlIn(DATABASE, text);
   // The image starts Postgres once to initialize and again for real: ready means a query answers over TCP.
   const ready = () => until(() => docker(['exec', container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-t', '-A', '-c', 'select 1']).trim() === '1', 'the scratch database');
   await ready();
-  sql(readFileSync(path.join(__dirname, 'fixture.sql'), 'utf8'));
-  sql(`ALTER ROLE box_reader PASSWORD '${readerPassword}';`);
+  sqlIn('postgres', `CREATE DATABASE ${DATABASE};`);
+  for (const file of applicationSchema()) sql(file);
+  // What the operator's script does in O1: a login and a fresh password. None is written anywhere.
+  sql(`ALTER ROLE box_reader LOGIN PASSWORD '${readerPassword}';`);
   return {
     network,
     container,
-    readerUrl: `postgres://box_reader:${readerPassword}@127.0.0.1:${port}/postgres`,
-    readerUrlInNetwork: `postgres://box_reader:${readerPassword}@pg:5432/postgres`,
+    readerUrl: `postgres://box_reader:${readerPassword}@127.0.0.1:${port}/${DATABASE}`,
+    readerUrlInNetwork: `postgres://box_reader:${readerPassword}@pg:5432/${DATABASE}`,
     sql,
     stop: () => void docker(['stop', '-t', '2', container]),
     pause: () => void docker(['pause', container]),

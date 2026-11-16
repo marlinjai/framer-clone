@@ -526,6 +526,75 @@ repeat the same search and erase on each affected site once the code is forward 
 A record whose branch older code deleted as a site is closed as discarded by the database (a trigger), so it keeps no
 copy and frees its name.
 
+## Sandboxed custom code: the schema and the box's role
+
+Plan `docs/plans/2026-11-02-sandboxed-custom-code.md`, slice C1b. The box (`services/box`) is the small service that will
+serve a site's own HTML and JavaScript into an isolated frame from its own domain. No deploy step of the
+application starts it (it gets its own host in operator step O1); this section is about what the application's database holds for it.
+
+**What migration `20261115000000_custom_code` adds.** Additive only; no existing row, column, constraint or privilege
+changes:
+
+- `sites.custom_code_enabled`, boolean, default false: every existing site stays off.
+- `custom_code_blobs`: one piece of code of one site, keyed by `(site_id, sha256)`, the hash of the code and its
+  declaration. Immutable (a trigger refuses any update but of `blocked_at`, the per-blob takedown); deleted with its site.
+- `custom_code_audit`: who did what to a site's code (enable, disable, blob-write, blob-erase, blob-block, blob-unblock,
+  proposal-accept), never the code. Append-only (a trigger refuses any update), and without a foreign key to the site,
+  so it outlives it.
+- `custom_code_proposals`: code an importer or an agent proposes; never served, never rendered; deleted with its site.
+- The function `box_document(site_id text, sha256 text)`, the only thing the box may call. `SECURITY DEFINER` with a
+  fixed `search_path`, it returns at most one row (`document`, `live`, `subdomain_labels`, `custom_hostnames`) for a
+  pair the caller already knows, and `document` is NULL unless the site has custom code on, the blob is not blocked and
+  its hash is not on the takedown list. EXECUTE is taken from PUBLIC, as on the migration's two trigger functions.
+- `custom_code_blocked_hashes`: the takedown list. A hash in it is served on no site, whatever happens to blob rows; no
+  foreign key to any site, so neither deleting a site nor erasing a company removes an entry. Because an erasure keeps
+  it, `blocked_by` holds an operator label only (`operator` or `operator:<channel>`, held by a `CHECK`), never a
+  person's id, and `reason` must name no person either.
+
+The triggers, the `CHECK` constraints and the function exist in the database only (Prisma's schema cannot name them),
+so `prisma migrate diff` does not list them. Run from the migrations to the schema on 2026-11-15, it showed only the two
+`site_branches` differences documented under "Site branches" and nothing for this migration. Nothing in the application reads
+or writes any of it until the guarded routes of later slices exist. Like every migration it is applied by the boot of
+the first deployment that contains it. Marlin approved this migration by name on 2026-11-15. Reversing it:
+`rollback.sql` beside the migration, **only after the application runs the previous image** (this image's Prisma client
+reads `sites.custom_code_enabled` on every site query); by hand, one transaction, safe to run twice, no `migrate
+resolve`; run it with `psql -X -v ON_ERROR_STOP=1 -1 -f`, as its header says (`-X` keeps a `~/.psqlrc` from turning the stop on error off); the rehearsal runs it twice and then lets `prisma migrate deploy` apply the migration again. It destroys every
+stored blob, proposal, audit row and takedown entry, so it needs its own explicit authorization; leaving the column, the tables and the
+function in place after a code rollback is the default.
+
+**The order rule between the migration and the box's role.** `prisma/sql/box-reader.sql` creates the role `box_reader`
+(and takes advisory locks, large objects, the write-ahead log and `CONNECT` from PUBLIC, decision D24 of the plan). It is
+applied separately, by the operator, once per database, after `commerce-roles.sql`, and **only with Marlin's yes by
+name**; the rollback is `prisma/sql/box-reader-rollback.sql`. `prisma migrate deploy`, by contrast, runs at every
+container start, and every fresh database (CI, local development, the integration tests) runs the migrations without
+the role file. So the EXECUTE grant on `box_document` is made from both sides, each only if the other side's
+object exists: the migration grants it to `box_reader` if the role exists, the role file grants it if the function
+exists. Whichever runs first, the end state is the same (EXECUTE for the function's owner and `box_reader`, nobody
+else), and a database without the role migrates as before. That holds also when the two run at the same time (the
+operator applies the role file while a container start is migrating): each side's check sees only what is committed,
+so both take the same transaction-level advisory lock (`pg_catalog.pg_advisory_xact_lock(7461001200)`, the
+migration's first statement, the role file's first in its transaction) and hold it until they commit; the later one
+waits, and its check then sees the other side's object. The rehearsal holds both orders of that race too.
+
+**Applying `box-reader.sql` (operator step O1).** Only with `psql -X -v ON_ERROR_STOP=1 -f prisma/sql/box-reader.sql`
+(and its rollback the same way), never with `\i` from an interactive session and never pasted. The file's first statement
+in its transaction takes the lock every container start's migration of slice C1b also takes, so a session left open on
+it (after an error under `\i`, or an interrupted paste) holds that lock and stops a container start that applies the
+migration `20261115000000_custom_code` (the first deploy with it, or one after its rollback) until it ends.
+If that happens, end the session at once: `ROLLBACK`, or quit psql.
+
+The rehearsal is
+`src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts`; the box's own integration
+suite builds its database from these files in production's order. Re-apply `box-reader.sql` after any restore, as
+`commerce-roles.sql` is: a plain dump does not carry the database's `CONNECT` rights. A dump restore runs no migration: it carries `_prisma_migrations` and every object as it was, and with them the grants, which name `commerce_app`, `commerce_ddl` and `box_reader`; restored into a fresh cluster, the restore stops at the first of them that does not exist (role does not exist). Before restoring into a fresh cluster, create the three roles bare, as superuser (`CREATE ROLE commerce_app NOLOGIN; CREATE ROLE commerce_ddl NOLOGIN; CREATE ROLE box_reader NOLOGIN`), restore, then apply `commerce-roles.sql` and `box-reader.sql`, which give them their shape. Do not apply `commerce-roles.sql` before the restore: its `CREATE SCHEMA IF NOT EXISTS ext` makes the dump's own `CREATE SCHEMA ext` fail, and a restore with `ON_ERROR_STOP` stops there. The role file's
+rollback leaves the grant on `box_document` in place: without a login the role cannot use it, and re-applying
+`box-reader.sql` restores it.
+
+**The app's own roles get nothing on these tables.** The application writes them as the Prisma role (the bootstrap
+superuser, `DATABASE_URL`), like every site table; `commerce_app` and `commerce_ddl` hold no right on the Prisma tables
+and are given none. Because no grant restrains a superuser, the immutability of a blob and the append-only audit are
+held by triggers, not by grants.
+
 ## Migration rollbacks
 
 `20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan
@@ -536,16 +605,23 @@ redo. Do not drop anything to "tidy up" after a rollback.
 
 **Dropping the columns is destructive and needs its own explicit authorization** (the attempt keys of every site are lost,
 and the autosave of the previous image has no use for them either way). If it is authorized, do both steps in ONE
-transaction, after the application runs the previous image:
+transaction, after the application runs the previous image. Save the block below to a file and run it with
+`psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f <file>`, never pasted: with `-X` no `~/.psqlrc` can set
+`ON_ERROR_ROLLBACK`, which would undo only a failing `ALTER` and still commit the `DELETE`, and with `ON_ERROR_STOP` an
+error ends the run inside the transaction, so nothing commits:
 
 ```sql
 BEGIN;
-ALTER TABLE "sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
-DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261104000000_site_last_write_key';
+SET LOCAL search_path = pg_catalog, pg_temp;
+ALTER TABLE "public"."sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
+DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = '20261104000000_site_last_write_key';
 COMMIT;
 ```
 
-The second statement is what makes the next deploy apply the migration again. **Do not use `prisma migrate resolve
+Like every file the operator applies as a superuser, it sets its own search path and names each object with its schema,
+so what it drops and deletes does not depend on the session's search path.
+
+The `DELETE` is what makes the next deploy apply the migration again. **Do not use `prisma migrate resolve
 --rolled-back` for this:** it works only on a migration Prisma recorded as FAILED, and for one that applied it stops with
 `P3012: cannot be rolled back because it is not in a failed state`. And do not drop the columns alone: Prisma still has
 the migration recorded as applied, answers "No pending migrations to apply", and the columns stay gone while newer code

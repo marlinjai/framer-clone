@@ -1,10 +1,13 @@
 -- prisma/sql/box-reader.sql
 --
--- STATE: PREPARED AND REHEARSED OFFLINE ONLY. Not applied to any real
--- database. Applying it to production is a privilege change that needs
+-- STATE: PREPARED AND REHEARSED OFFLINE. Applying it to a real database
+-- is a privilege change that needs
 -- Marlin's yes by name (docs/plans/2026-11-02-sandboxed-custom-code.md,
--- decisions D20 and D24). Nothing in this repository applies it: no start
--- script, no workflow, no migration.
+-- decisions D20 and D24). Nothing in this repository applies it to a real
+-- database: no start script, no migration, no deploy step. Only tests apply
+-- it, each to a throwaway container of its own: the rehearsal
+-- (box-reader-roles.itest.ts) and the box's integration suite
+-- (services/box, run by .github/workflows/box.yml).
 --
 -- WHAT IT IS. The database role of the box, the small service that will serve
 -- sandboxed custom code (services/box), and a hardening of the database it is
@@ -18,7 +21,8 @@
 -- for more than it is.
 --
 -- WHO RUNS IT. Once per database, by a superuser (on Coolify the database's own
--- bootstrap user), with `psql -f`, AFTER prisma/sql/commerce-roles.sql (it
+-- bootstrap user), with `psql -X -v ON_ERROR_STOP=1 -f` and never with `\i`
+-- from an interactive session, AFTER prisma/sql/commerce-roles.sql (it
 -- grants to the two commerce roles and stops if they do not exist). It is
 -- idempotent: running it again changes nothing and fails nothing, and
 -- re-applying it is how an upgrade of this file, or a restore of a dump, gets
@@ -34,18 +38,45 @@
 -- of the transaction goes on and commits. Its checks (Postgres version, the
 -- commerce roles) are separate statements from what they guard, inside the one
 -- transaction; with those settings a failed check ends the run and the
--- transaction is never committed.
+-- transaction is never committed. Its first statement in that transaction
+-- takes the lock every container start's migration of slice C1b also takes
+-- (see "The one thing the box may call"): a session left open on this file,
+-- for example after an error under `\i` or an interrupted paste, holds that
+-- lock and stops a container start that applies that migration (the first
+-- deploy with it, or one after its rollback) until it ends. End such a session
+-- at once (ROLLBACK, or quit psql).
 --
 -- NO PASSWORD, NO LOGIN. The role is created NOLOGIN. The operator's script
 -- gives it a login and a freshly generated password and writes the connection
 -- string into the box's own Infisical project (plan, D12). Re-running this
 -- file never takes the LOGIN attribute away again.
 --
+-- THE ONE THING THE BOX MAY CALL. The function box_document(text, text)
+-- belongs to the application's migration 20261115000000_custom_code (plan,
+-- slice C1b), which `prisma migrate deploy` applies at every container start,
+-- at a time that has nothing to do with this file. So the grant is made from
+-- both sides, each only if the other side's object already exists: the
+-- migration grants EXECUTE to box_reader if the role exists, and this file
+-- grants it if the function exists (the last block below). Whichever runs
+-- first, the end state is the same: EXECUTE on box_document for its owner and
+-- box_reader, nobody else (the migration always takes it from PUBLIC). The
+-- rehearsal holds both orders. It holds also when the two run at the same
+-- time: each side's check sees only what is committed, so both take the same
+-- transaction-level advisory lock, key 7461001200 (the migration names the
+-- same key), as a statement of its own before their check, and hold it until
+-- they commit. This file takes it first thing in its transaction. The later
+-- side waits for the earlier one's commit, and under READ COMMITTED its check,
+-- a new statement, then sees the other side's object (rehearsed in both
+-- orders). The key is a fixed constant outside the int4 range, the range of
+-- every pg_catalog.hashtext key, so it equals none of the repository's fixed
+-- keys (74610010 and 74610011 in the application, 74610020 in a test
+-- fixture, Prisma's own 72707369, and the small keys of the tests, all in that
+-- range). Keys made with pg_catalog.hashtextextended span all 64 bits; a
+-- collision with one of them is negligible (about 2^-64 per key).
+--
 -- WHAT IT DOES NOT DO.
---   - It grants nothing on any table, view or function of the application. The
---     one thing the box may call, the function box_document(text, text),
---     belongs to the application's migration (plan, slice C1b), which is not
---     approved; that migration grants EXECUTE on it to box_reader.
+--   - It grants nothing on any table or view of the application, and on no
+--     function but box_document (above).
 --   - It takes nothing from PUBLIC in the other databases of the cluster (see
 --     "What is left"). Only the role's own defaults, which belong to the
 --     cluster, are reset there too.
@@ -85,6 +116,13 @@
 --   - statement_timeout 2s, idle_in_transaction_session_timeout 5s,
 --     idle_session_timeout 60s. These are defaults a session can change, so
 --     they bound the box, not a thief.
+--   - search_path pg_catalog, role-wide: commerce_ddl keeps CREATE on this
+--     database, so it may create schemas here (a schema named box_reader would
+--     be searched first as "$user"), and commerce-roles.sql leaves it CREATE on
+--     public until the application's first start has run the public
+--     migrations and the file is applied again. So the box's sessions search
+--     no schema that role can write; the box also schema-qualifies every name
+--     it uses.
 --
 -- WHAT IS LEFT to someone who holds the role's password. None of it reads or
 -- writes a row of the application. The rehearsal test holds the first six as
@@ -118,7 +156,10 @@
 --   - It may execute any function outside pg_catalog that the application
 --     leaves executable by PUBLIC. Today that is four trigger functions of the
 --     site branches migrations, which cannot be called directly; the rehearsal
---     pins the list.
+--     pins the list. (The migration of slice C1b takes EXECUTE from PUBLIC on
+--     each function it creates.)
+--   - It may call box_document for a pair of site id and hash it knows, as the
+--     box does, and gets the code only when that pair is live.
 --   In the other databases of the cluster (postgres, template1), as long as
 --   PUBLIC may connect to them:
 --   - Everything PUBLIC may do there, which this file does not touch: large
@@ -151,6 +192,12 @@ SET search_path = pg_catalog, pg_temp;
 -- that starts meanwhile sees the database as it was before the file, never
 -- half of it.
 BEGIN;
+
+-- The lock the migration 20261115000000_custom_code takes too (key 7461001200,
+-- see "The one thing the box may call" above), held until COMMIT, so the grant
+-- at the end and the migration's own grant cannot both miss. Inside a DO
+-- block, so it prints nothing.
+DO $$ BEGIN PERFORM pg_catalog.pg_advisory_xact_lock(7461001200); END $$;
 
 DO $$
 BEGIN
@@ -222,6 +269,9 @@ ALTER ROLE box_reader SET idle_session_timeout = '60s';
 -- Only a superuser can change temp_file_limit, so the role cannot lift this
 -- one.
 ALTER ROLE box_reader SET temp_file_limit = 0;
+-- No schema the application's owner role can write is searched (see the
+-- header).
+ALTER ROLE box_reader SET search_path = pg_catalog;
 
 -- =====================================================================
 -- This database: who may connect, and no temporary tables for PUBLIC
@@ -302,6 +352,21 @@ BEGIN
     EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', f.signature);
     EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM box_reader', f.signature);
   END LOOP;
+END
+$$;
+
+-- =====================================================================
+-- The one function the box calls, if the application's migration made it
+-- =====================================================================
+--
+-- If the migration has not run yet in this database, it grants this itself
+-- when it runs, because by then the role exists.
+
+DO $$
+BEGIN
+  IF to_regprocedure('public.box_document(text, text)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.box_document(text, text) TO box_reader;
+  END IF;
 END
 $$;
 

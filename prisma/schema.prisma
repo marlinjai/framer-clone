@@ -314,6 +314,11 @@ model Site {
   // moves the version and leaves the key, and that unbinds it.
   lastWriteVersion Int?    @map("last_write_version")
 
+  // Sandboxed custom code (docs/plans/2026-11-02-sandboxed-custom-code.md, D3): off by default, switched only through
+  // the guarded route of a later slice. While it is false the box serves none of this site's code (the function
+  // `box_document` answers `live` false and no document).
+  customCodeEnabled Boolean @default(false) @map("custom_code_enabled")
+
   // Site branches (docs/plans/2026-11-10-site-branches.md): the main site this row is a hidden branch of, or
   // NULL for a main site (every site that existed before branches). Set once at creation and never changed (a
   // trigger refuses an update). The composite foreign key with `workspace_id` makes a branch of another
@@ -330,13 +335,15 @@ model Site {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  pages       SitePage[]
-  domains     SiteDomain[]
-  experiments SiteExperiment[]
-  cspReports  CspReportCount[]
-  revisions   SiteRevision[]   @relation("SiteRevisions")
-  images      SiteImage[]
-  models      SiteModel[]
+  pages               SitePage[]
+  domains             SiteDomain[]
+  experiments         SiteExperiment[]
+  cspReports          CspReportCount[]
+  revisions           SiteRevision[]       @relation("SiteRevisions")
+  images              SiteImage[]
+  models              SiteModel[]
+  customCodeBlobs     CustomCodeBlob[]
+  customCodeProposals CustomCodeProposal[]
 
   @@unique([id, workspaceId])
   @@index([workspaceId])
@@ -903,5 +910,104 @@ model ModelBlobTombstone {
 
   @@index([expiresAt])
   @@map("model_blob_tombstones")
+  @@schema("public")
+}
+
+/// One piece of sandboxed custom code of a site (docs/plans/2026-11-02-sandboxed-custom-code.md, D3 and D4): the
+/// document the box serves and the declaration it was approved with, named by `sha256`, the hash of the canonical
+/// manifest over both. The same code on two sites is two rows, so one site naming another's hash finds nothing.
+/// Immutable: a trigger refuses an update of anything but `blockedAt` (the per-blob takedown); a changed document is a
+/// new row under a new hash. Deleted when no kept revision names it (D4) and with its site (cascade). The box never
+/// reads this table: it calls the function `box_document`, which the migration creates in raw SQL (D18).
+model CustomCodeBlob {
+  siteId      String    @map("site_id")
+  sha256      String
+  document    String
+  declaration Json
+  title       String
+  // The auth-brain user who wrote it through the guarded route.
+  createdBy   String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  // Set: the blob answers 410 even on an enabled site, and the guarded route refuses to write it again.
+  blockedAt   DateTime? @map("blocked_at")
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@id([siteId, sha256])
+  @@map("custom_code_blobs")
+  @@schema("public")
+}
+
+/// What happened to a site's custom code (D3): who, when and which hash, NEVER the code. Append-only (a trigger
+/// refuses an update) and without a foreign key to the site, so it outlives the site, as `SiteErasure` does.
+/// Actions: enable, disable, blob-write, blob-erase, blob-block, blob-unblock, proposal-accept (a CHECK holds the list).
+model CustomCodeAudit {
+  id String @id @default(uuid())
+
+  siteId        String @map("site_id")
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  // The auth-brain user (or, for a takedown, the operator) who did it.
+  actor  String
+  action String
+  // The blob concerned; NULL for enable and disable.
+  sha256 String?
+  // Ids only (for blob-erase the old and the new hash, for proposal-accept the proposal), never code.
+  detail Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([siteId, createdAt])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@map("custom_code_audit")
+  @@schema("public")
+}
+
+/// Code an importer or an agent PROPOSES for a block (D7). Never served by the box, never rendered: the node names
+/// the proposal and shows its fallback until a person holding `manageCustomCode` accepts it, which writes a blob
+/// through the guarded route and `proposal-accept` to the audit. Deleted with its site (cascade).
+model CustomCodeProposal {
+  id String @id @default(uuid())
+
+  siteId String @map("site_id")
+
+  // --- hard isolation boundary (both indexed), denormalised from the Site ---
+  workspaceId   String @map("workspace_id")
+  tenantGroupId String @map("tenant_group_id")
+
+  // `import` or `agent` (a CHECK holds it).
+  source      String
+  document    String
+  // The suggested declaration; the person accepting it may change it.
+  declaration Json
+  title       String
+  // The auth-brain user, or the API key, on whose behalf it was written.
+  createdBy   String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  site Site @relation(fields: [siteId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+
+  @@index([siteId])
+  @@index([workspaceId])
+  @@index([tenantGroupId])
+  @@map("custom_code_proposals")
+  @@schema("public")
+}
+
+/// The takedown list of sandboxed custom code (docs/plans/2026-11-02-sandboxed-custom-code.md, D32): a hash in it is never
+/// served on any site, whatever happens to blob rows. No foreign key to any site on purpose, so deleting a site or
+/// erasing a company leaves the entry in place; `CustomCodeBlob.blockedAt` stays as the per-row takedown beside it.
+model CustomCodeBlockedHash {
+  sha256    String   @id
+  blockedAt DateTime @default(now()) @map("blocked_at")
+  // An operator label (`operator`, or `operator:<channel>` in lower case words), NEVER a person's id: a company
+  // erasure keeps this list, so it must name no person (plan D34; a CHECK in the migration holds the format).
+  blockedBy String   @map("blocked_by")
+  // Why, for the abuse record; never the code, and no person's name or id.
+  reason    String
+
+  @@map("custom_code_blocked_hashes")
   @@schema("public")
 }

@@ -1,14 +1,14 @@
 ---
 type: readme
 title: "The box: the service that serves sandboxed custom code"
-summary: "What the box is, what it refuses, how it is configured and how to test it. Built and tested only: it is deployed nowhere and connected to nothing."
+summary: "What the box is, what it refuses, how it is configured and how to test it. Built and tested only: nothing in the application imports it or its contract."
 ---
 
 # The box
 
 The box is the small service that serves a *custom code block* of a site built in Lumitra Sites: the author's own HTML and JavaScript, as one document, to be run in an isolated frame. It is slice C1a of the [sandboxed custom code plan](../../docs/plans/2026-11-02-sandboxed-custom-code.md), which holds the design and every decision.
 
-**State: built and tested only.** The box is deployed nowhere, its image is pushed nowhere, and nothing in the application imports it or its contract. The database objects it needs (the function `box_document` and the role `box_reader`) do not exist in the application yet: they are slice C1b, which waits for Marlin's yes to a production migration. Until then the tests run against a fixture.
+**State: built and tested only.** Nothing in the application imports it or its contract, and no deploy step of the application starts it. The database objects it needs exist in this repository (slice C1b): the function `box_document` in the migration `prisma/migrations/20261115000000_custom_code`, and the role `box_reader` in `prisma/sql/box-reader.sql`, which the operator applies separately, with Marlin's yes (see `deploy/README.md`, "Sandboxed custom code").
 
 ## What it is made of
 
@@ -70,7 +70,7 @@ pnpm test:integration   # needs Docker: a scratch Postgres and the built image, 
 
 The integration suite starts its own containers with random names and random passwords and removes them. It runs the image the way it is meant to run: read-only root file system, every capability dropped, no new privileges, memory and process limits.
 
-`test/integration/fixture.sql` is a test fixture, not a migration. It also states the contract the application's migration has to meet: the function, its columns and what the role may do.
+The database is the application's own, built from the committed files in production's order: `prisma/sql/commerce-roles.sql`, every migration in `prisma/migrations` in order, then `prisma/sql/box-reader.sql` (`applicationSchema` in `test/integration/docker.ts`). It is the state of a first build: `commerce-roles.sql` is not applied again after the first start, so `commerce_ddl` still holds CREATE on `public` there, which the test that plants a `public.to_json` relies on. So a change to a migration or a role file that breaks the box fails here; `.github/workflows/box.yml` runs on changes to both folders.
 
 The application's type check, lint and image leave `services/` out, so `pnpm typecheck` and `pnpm lint` here, run by `.github/workflows/box.yml`, are the box's only ones. The contract module lives in the application's source and is checked on both sides.
 

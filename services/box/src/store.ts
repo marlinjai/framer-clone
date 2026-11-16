@@ -3,8 +3,9 @@
 // The one thing the box may do in the database: call the function
 // `box_document(site_id, sha256)`, as the role `box_reader`, which can read no
 // table and no view. A caller gets the row of a pair it already knows and can
-// list nothing. The function is the contract the application's migration has
-// to meet (decision D18, and the fixture in test/integration/fixture.sql):
+// list nothing. The function is made by the application's migration
+// prisma/migrations/20261115000000_custom_code (decision D18), which the
+// integration suite applies with the whole migration chain:
 //
 //   box_document(text, text) RETURNS TABLE (
 //     document text, live boolean, subdomain_labels text[], custom_hostnames text[])
@@ -145,9 +146,13 @@ export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: numbe
   return {
     async find(siteId, sha256) {
       refuseWhilePaused();
+      // Every name the statement uses is schema-qualified: the application's owner role keeps CREATE on the database,
+      // so it may create schemas (a schema `box_reader` comes first as "$user"), and until commerce-roles.sql is
+      // applied again after the first start it may create functions in `public` (a `public.to_json(text[])` matches
+      // exactly). An unqualified `to_json` or `box_document` could resolve to one of its own.
       const rows = await sql<{ document: unknown; live: unknown; subdomain_labels: unknown; custom_hostnames: unknown }[]>`
-        SELECT document, live, to_json(subdomain_labels) AS subdomain_labels, to_json(custom_hostnames) AS custom_hostnames
-        FROM box_document(${siteId}, ${sha256})
+        SELECT document, live, pg_catalog.to_json(subdomain_labels) AS subdomain_labels, pg_catalog.to_json(custom_hostnames) AS custom_hostnames
+        FROM public.box_document(${siteId}, ${sha256})
         LIMIT 1
       `;
       const row = rows[0];
@@ -157,7 +162,7 @@ export function openPostgresPool(target: DatabaseTarget, connectTimeoutMs: numbe
     async ping() {
       refuseWhilePaused();
       // A pair no site can have: the call itself is what is checked.
-      await sql`SELECT 1 AS ok FROM box_document(${'00000000-0000-0000-0000-000000000000'}, ${'0'.repeat(64)})`;
+      await sql`SELECT 1 AS ok FROM public.box_document(${'00000000-0000-0000-0000-000000000000'}, ${'0'.repeat(64)})`;
     },
     end: () => sql.end({ timeout: 2 }),
     destroy() {
