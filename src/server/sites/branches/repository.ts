@@ -189,7 +189,7 @@ export async function openNameTaken(
 ): Promise<boolean> {
   const rows = await client.$queryRaw<{ id: string }[]>`
     SELECT id FROM public.site_branches
-    WHERE site_id = ${mainSiteId} AND status IN ('open', 'ready') AND lower(name) = lower(${name})
+    WHERE site_id = ${mainSiteId} AND status IN ('open', 'ready') AND pg_catalog.lower(name) = pg_catalog.lower(${name})
       AND (${exceptBranchId}::text IS NULL OR id <> ${exceptBranchId}::text)
     LIMIT 1`;
   return rows.length > 0;
@@ -279,7 +279,7 @@ async function pruneClosedRecords(tx: Prisma.TransactionClient, mainSiteId: stri
   const old = await tx.$queryRaw<{ id: string }[]>`
     SELECT b.id FROM public.site_branches b
     WHERE b.site_id = ${mainSiteId} AND b.status IN ('merged', 'discarded')
-      AND (b.main_before_expires_at IS NULL OR b.main_before_expires_at <= (now() AT TIME ZONE 'UTC'))
+      AND (b.main_before_expires_at IS NULL OR b.main_before_expires_at <= (pg_catalog.now() AT TIME ZONE 'UTC'))
       AND NOT EXISTS (
         SELECT 1 FROM public.site_branches o WHERE o.site_id = b.site_id AND o.undone_into_branch_id = b.id
       )
@@ -350,7 +350,7 @@ export class SiteBranchRepository {
         // Any other row under that id (another workspace's site or record): refused the same way. A caller learns
         // only that an id it already holds is in use, never whose or what; ids are random, so none can be guessed.
         const taken = await tx.$queryRaw<{ n: bigint }[]>`
-          SELECT (SELECT count(*) FROM public.sites WHERE id = ${branchId}) + (SELECT count(*) FROM public.site_branches WHERE id = ${branchId}) AS n`;
+          SELECT (SELECT pg_catalog.count(*) FROM public.sites WHERE id = ${branchId}) + (SELECT pg_catalog.count(*) FROM public.site_branches WHERE id = ${branchId}) AS n`;
         if (Number(taken[0]?.n ?? 0) > 0) throw new BranchNotFoundError(branchId);
 
         const open = await tx.siteBranch.count({ where: { siteId: main.id, status: { in: ['open', 'ready'] }, } });
