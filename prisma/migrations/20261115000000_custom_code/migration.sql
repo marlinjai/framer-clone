@@ -171,6 +171,8 @@ CREATE TRIGGER "custom_code_audit_append_only"
 --     it would refuse anyway.
 --   - `subdomain_labels` leaves out every label kept for branch preview links (D13); the box drops them a second time.
 --   - `custom_hostnames` holds live claims only (verified or active).
+--   - Both lists are empty unless `live`: the box answers a pair that is not live without them, so it is not told a
+--     site's host names for a pair it will refuse anyway.
 CREATE FUNCTION "public"."box_document"(p_site_id text, p_sha256 text)
 RETURNS TABLE (document text, live boolean, subdomain_labels text[], custom_hostnames text[])
 LANGUAGE sql
@@ -179,22 +181,25 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT
-    CASE WHEN s.custom_code_enabled AND b.blocked_at IS NULL AND h.sha256 IS NULL AND octet_length(b.document) <= 262144 THEN b.document END,
-    (s.custom_code_enabled AND b.blocked_at IS NULL AND h.sha256 IS NULL),
-    COALESCE(
+    CASE WHEN q.live AND octet_length(q.document) <= 262144 THEN q.document END,
+    q.live,
+    CASE WHEN q.live THEN COALESCE(
       (SELECT array_agg(d.subdomain ORDER BY d.subdomain)
          FROM public.site_domains d
-        WHERE d.site_id = b.site_id AND d.subdomain IS NOT NULL AND d.subdomain NOT LIKE 'preview-%'),
-      ARRAY[]::text[]),
-    COALESCE(
+        WHERE d.site_id = q.site_id AND d.subdomain IS NOT NULL AND d.subdomain NOT LIKE 'preview-%'),
+      ARRAY[]::text[]) ELSE ARRAY[]::text[] END,
+    CASE WHEN q.live THEN COALESCE(
       (SELECT array_agg(d.custom_hostname ORDER BY d.custom_hostname)
          FROM public.site_domains d
-        WHERE d.site_id = b.site_id AND d.custom_hostname IS NOT NULL AND d.verification_status IN ('verified', 'active')),
-      ARRAY[]::text[])
-  FROM public.custom_code_blobs b
-  JOIN public.sites s ON s.id = b.site_id
-  LEFT JOIN public.custom_code_blocked_hashes h ON h.sha256 = b.sha256
-  WHERE b.site_id = p_site_id AND b.sha256 = p_sha256
+        WHERE d.site_id = q.site_id AND d.custom_hostname IS NOT NULL AND d.verification_status IN ('verified', 'active')),
+      ARRAY[]::text[]) ELSE ARRAY[]::text[] END
+  FROM (
+    SELECT b.site_id, b.document, (s.custom_code_enabled AND b.blocked_at IS NULL AND h.sha256 IS NULL) AS live
+      FROM public.custom_code_blobs b
+      JOIN public.sites s ON s.id = b.site_id
+      LEFT JOIN public.custom_code_blocked_hashes h ON h.sha256 = b.sha256
+     WHERE b.site_id = p_site_id AND b.sha256 = p_sha256
+  ) q
 $$;
 
 -- Postgres gives EXECUTE on every new function to PUBLIC. This migration takes it from each of its own functions:

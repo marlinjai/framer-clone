@@ -884,7 +884,9 @@ describe('the migration of slice C1b and this file, in either order', () => {
       INSERT INTO public.site_domains (id, site_id, workspace_id, tenant_group_id, subdomain, custom_hostname, verification_status, updated_at) VALUES
         (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, 'shop', NULL, 'active', now()),
         (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, NULL, 'www.example.com', 'verified', now()),
-        (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, NULL, 'pending.example.com', 'pending', now())
+        (${randomUUID()}, ${SITE}, ${WORKSPACE}, ${tenantGroupId}, NULL, 'pending.example.com', 'pending', now()),
+        (${randomUUID()}, ${OFF}, ${WORKSPACE}, ${tenantGroupId}, 'offshop', NULL, 'active', now()),
+        (${randomUUID()}, ${OFF}, ${WORKSPACE}, ${tenantGroupId}, NULL, 'off.example.com', 'verified', now())
     `;
     await su!`
       INSERT INTO public.custom_code_blobs (site_id, sha256, document, declaration, title, created_by, blocked_at) VALUES
@@ -899,7 +901,8 @@ describe('the migration of slice C1b and this file, in either order', () => {
     const ask = async (siteId: string, sha256: string) =>
       (await box`SELECT document, live, subdomain_labels, custom_hostnames FROM public.box_document(${siteId}, ${sha256})`).map((row) => ({ ...row }));
     expect(await ask(SITE, LIVE)).toEqual([{ document: '<p>live</p>', live: true, subdomain_labels: ['shop'], custom_hostnames: ['www.example.com'] }]);
-    expect(await ask(SITE, BLOCKED)).toEqual([{ document: null, live: false, subdomain_labels: ['shop'], custom_hostnames: ['www.example.com'] }]);
+    // Not live: neither the code nor the site's host names (the site switched off has a label and a verified host).
+    expect(await ask(SITE, BLOCKED)).toEqual([{ document: null, live: false, subdomain_labels: [], custom_hostnames: [] }]);
     expect(await ask(OFF, LIVE)).toEqual([{ document: null, live: false, subdomain_labels: [], custom_hostnames: [] }]);
     // Larger than a block may be: live, but no document.
     expect(await ask(SITE, BIG)).toEqual([{ document: null, live: true, subdomain_labels: ['shop'], custom_hostnames: ['www.example.com'] }]);
@@ -1037,7 +1040,7 @@ describe('the migration of slice C1b and this file, in either order', () => {
     const other = postgres(urlOf('postgres', ORDER_DB), { max: 1, prepare: false, onnotice: () => {} });
     opened.push(other);
     for (let run = 0; run < 2; run += 1) {
-      const { exitCode, output } = await container!.exec(['psql', '-v', 'ON_ERROR_STOP=1', '-q', '-1', '-U', 'postgres', '-d', ORDER_DB, '-f', '/tmp/custom-code-rollback.sql']);
+      const { exitCode, output } = await container!.exec(['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-q', '-1', '-U', 'postgres', '-d', ORDER_DB, '-f', '/tmp/custom-code-rollback.sql']);
       expect(exitCode, output).toBe(0);
     }
     const [left] = await other`

@@ -1,7 +1,7 @@
 -- Rollback of 20261115000000_custom_code. NOT run by `prisma migrate deploy` (Prisma reads migration.sql only); run by
 -- hand, in ONE transaction:
 --
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f prisma/migrations/20261115000000_custom_code/rollback.sql
+--   psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -1 -f prisma/migrations/20261115000000_custom_code/rollback.sql
 --
 -- Run it only AFTER the application runs the previous image: this commit's Prisma client selects
 -- sites.custom_code_enabled on every site query, so with this image still running every site read would fail, and its

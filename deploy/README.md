@@ -558,7 +558,7 @@ or writes any of it until the guarded routes of later slices exist. Like every m
 the first deployment that contains it. Marlin approved this migration by name on 2026-11-15. Reversing it:
 `rollback.sql` beside the migration, **only after the application runs the previous image** (this image's Prisma client
 reads `sites.custom_code_enabled` on every site query); by hand, one transaction, safe to run twice, no `migrate
-resolve`; the rehearsal runs it twice and then lets `prisma migrate deploy` apply the migration again. It destroys every
+resolve`; run it with `psql -X -v ON_ERROR_STOP=1 -1 -f`, as its header says (`-X` keeps a `~/.psqlrc` from turning the stop on error off); the rehearsal runs it twice and then lets `prisma migrate deploy` apply the migration again. It destroys every
 stored blob, proposal, audit row and takedown entry, so it needs its own explicit authorization; leaving the column, the tables and the
 function in place after a code rollback is the default.
 

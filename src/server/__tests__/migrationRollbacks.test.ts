@@ -52,8 +52,9 @@ function shapes(folder: string): RegExp[] {
   const escapedSet = literal(SET_LINE);
   return [
     new RegExp(`^${escapedSet}$`),
-    new RegExp(String.raw`^DROP (?:TABLE|INDEX) IF EXISTS ${Q}(?: CASCADE)?;$`),
-    new RegExp(String.raw`^DROP FUNCTION IF EXISTS ${Q}\((?:pg_catalog\.[a-z_]+(?:, pg_catalog\.[a-z_]+)*)?\)(?: CASCADE)?;$`),
+    // No CASCADE: it drops what depends on the object in any schema, which no line of the file names.
+    new RegExp(String.raw`^DROP (?:TABLE|INDEX) IF EXISTS ${Q};$`),
+    new RegExp(String.raw`^DROP FUNCTION IF EXISTS ${Q}\((?:pg_catalog\.[a-z_]+(?:, pg_catalog\.[a-z_]+)*)?\);$`),
     new RegExp(
       String.raw`^ALTER TABLE ${Q} DROP (?:COLUMN|CONSTRAINT) IF EXISTS ${COLUMN}(?:, DROP (?:COLUMN|CONSTRAINT) IF EXISTS ${COLUMN})*;$`,
     ),
@@ -167,6 +168,8 @@ describe('the allowed shapes of a rollback line', () => {
     '/* it\'s */ DROP TABLE b;',
     'TRUNCATE "public"."a";',
     'DROP SCHEMA IF EXISTS "postgres" CASCADE;',
+    'DROP TABLE IF EXISTS "public"."custom_code_audit" CASCADE;',
+    'DROP FUNCTION IF EXISTS "public"."box_document"(pg_catalog.text, pg_catalog.text) CASCADE;',
     'UPDATE "public"."sites" SET "custom_code_enabled" = false;',
     // Another search path (built from its words, like SET_LINE).
     ['SET', 'search_path', '=', 'public;'].join(' '),

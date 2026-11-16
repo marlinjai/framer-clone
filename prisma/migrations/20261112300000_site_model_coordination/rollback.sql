@@ -1,7 +1,7 @@
 -- Rollback of 20261112300000_site_model_coordination. NOT run by `prisma migrate deploy` (Prisma reads migration.sql
 -- only); run by hand, in ONE transaction:
 --
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f prisma/migrations/20261112300000_site_model_coordination/rollback.sql
+--   psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -1 -f prisma/migrations/20261112300000_site_model_coordination/rollback.sql
 --
 -- Leaving the added columns and the empty table in place after a code rollback is the default and harmless; running this
 -- script is a destructive step that needs its own explicit authorization. Do NOT run `prisma migrate resolve
