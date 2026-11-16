@@ -65,6 +65,12 @@
 -- required for that guarantee, but it keeps a leaked owner URL from reaching
 -- the rest of the server (other databases, roles, files).
 
+-- Every name below resolves in pg_catalog and nowhere else: under the default
+-- path ("$user", public) a function someone created in public with a closer
+-- argument type (format(text, name)) would win over the built-in and run with
+-- the superuser's rights. commerce_ddl may create functions in public.
+SET search_path = pg_catalog, pg_temp;
+
 -- ---------------------------------------------------------------------
 -- 0. Refuse to run on a server older than Postgres 16.
 -- ---------------------------------------------------------------------

@@ -1,0 +1,308 @@
+-- prisma/sql/box-reader.sql
+--
+-- STATE: PREPARED AND REHEARSED OFFLINE ONLY. Not applied to any real
+-- database. Applying it to production is a privilege change that needs
+-- Marlin's yes by name (docs/plans/2026-11-02-sandboxed-custom-code.md,
+-- decisions D20 and D24). Nothing in this repository applies it: no start
+-- script, no workflow, no migration.
+--
+-- WHAT IT IS. The database role of the box, the small service that will serve
+-- sandboxed custom code (services/box), and a hardening of the database it is
+-- applied to. The box is the one host that serves customer code, so its
+-- password is the one most likely to be stolen. With this file applied, that
+-- password can no longer take an advisory lock the application waits for,
+-- write a large object or a temporary file or write straight to the
+-- write-ahead log in this database, or be used by any role that was not
+-- named. It narrows what a thief can do; it does not make the role
+-- harmless. What is left is listed below, in full, so nobody takes this file
+-- for more than it is.
+--
+-- WHO RUNS IT. Once per database, by a superuser (on Coolify the database's own
+-- bootstrap user), with `psql -f`, AFTER prisma/sql/commerce-roles.sql (it
+-- grants to the two commerce roles and stops if they do not exist). It is
+-- idempotent: running it again changes nothing and fails nothing, and
+-- re-applying it is how an upgrade of this file, or a restore of a dump, gets
+-- the same shape again. It names no database: every database-level statement
+-- uses current_database(). The role and its defaults belong to the whole
+-- cluster, so it also resets the role's defaults for every database of the
+-- cluster (see "Defaults" below). Never paste it, or part of it, into an
+-- interactive session: there an error returns psql to its prompt instead of
+-- ending the run, and the rest of the pasted text would go on. The file sets
+-- ON_ERROR_STOP on and ON_ERROR_ROLLBACK off itself (the `\set` lines below),
+-- so `psql -f` stops at the first error and exits with a non-zero status
+-- whatever was given with `-v`, and no error is quietly undone while the rest
+-- of the transaction goes on and commits. Its checks (Postgres version, the
+-- commerce roles) are separate statements from what they guard, inside the one
+-- transaction; with those settings a failed check ends the run and the
+-- transaction is never committed.
+--
+-- NO PASSWORD, NO LOGIN. The role is created NOLOGIN. The operator's script
+-- gives it a login and a freshly generated password and writes the connection
+-- string into the box's own Infisical project (plan, D12). Re-running this
+-- file never takes the LOGIN attribute away again.
+--
+-- WHAT IT DOES NOT DO.
+--   - It grants nothing on any table, view or function of the application. The
+--     one thing the box may call, the function box_document(text, text),
+--     belongs to the application's migration (plan, slice C1b), which is not
+--     approved; that migration grants EXECUTE on it to box_reader.
+--   - It takes nothing from PUBLIC in the other databases of the cluster (see
+--     "What is left"). Only the role's own defaults, which belong to the
+--     cluster, are reset there too.
+--   - It does not grant TEMPORARY to anyone. commerce-roles.sql already takes
+--     it from PUBLIC and the application's roles do without it; this file only
+--     takes it away again, in case it is applied to a database where it came
+--     back.
+--
+-- WHAT IT TAKES FROM PUBLIC, IN THIS DATABASE, AND WHO GETS IT BACK BY NAME.
+--   1. EXECUTE on every advisory lock function (pg_catalog, names starting
+--      pg_advisory_ or pg_try_advisory_). The application takes such locks as
+--      commerce_app (Books, the asset delete trigger) and as commerce_ddl (the
+--      start step and provisioning), so those two get EXECUTE by name. The
+--      bootstrap superuser (Prisma migrations, sites, domains) needs no grant.
+--      box_reader gets none: it can no longer hold a lock the application
+--      waits for.
+--   2. EXECUTE on every large object function (lo_*, loread, lowrite). Nobody
+--      gets it back: the application stores no large objects.
+--   3. CONNECT on this database. commerce_app and commerce_ddl already hold it
+--      by name (commerce-roles.sql); box_reader gets it here. ANY OTHER
+--      NON-SUPERUSER LOGIN ROLE OF THE REAL DATABASE LOSES ITS CONNECTION
+--      RIGHT: run prisma/sql/box-reader-preflight.sql first and grant CONNECT
+--      by name to every role it lists that should keep it.
+--   4. TEMPORARY on this database (already taken by commerce-roles.sql).
+--   5. EXECUTE on pg_logical_emit_message (every signature), which writes
+--      straight to the write-ahead log, the server's change log on disk.
+--      Nobody gets it back: the application does not use it. A role of the
+--      real database that calls it (replication or change capture) would lose
+--      it too; the preflight lists every role besides the commerce roles.
+--
+-- WHAT IT SETS ON box_reader.
+--   - No superuser, database creation, role creation, replication or row
+--     security bypass, no inherited role, at most 4 connections.
+--   - temp_file_limit 0: it can write no temporary file (a sort or hash that
+--     does not fit in memory fails). Only a superuser can change this setting,
+--     so the role cannot lift it.
+--   - statement_timeout 2s, idle_in_transaction_session_timeout 5s,
+--     idle_session_timeout 60s. These are defaults a session can change, so
+--     they bound the box, not a thief.
+--
+-- WHAT IS LEFT to someone who holds the role's password. None of it reads or
+-- writes a row of the application. The rehearsal test holds the first six as
+-- they are ("RESIDUAL"); the rest are known from how Postgres works and are not
+-- rehearsed.
+--   In this database:
+--   - It reads the catalogs and the statistics views: names of tables, columns,
+--     functions and roles, the text of functions, per-table row counts, and
+--     who is connected (pg_stat_activity, pg_locks). Never a row.
+--   - It changes its own password and its own defaults, also its defaults for
+--     one database (Postgres lets every role do that). A thief could set a one
+--     millisecond statement timeout that stops the box and survives a password
+--     rotation. Re-applying this file puts every default back, and the
+--     operator's script should check them on every run. Neither re-applying
+--     this file nor a new password ends a session the thief already holds:
+--     the operator's script (step O1) ends every session of box_reader after
+--     it rotates the password and re-applies this file.
+--   - It lifts its own session timeouts, holds its 4 connections, and ends
+--     sessions of its own role (the box's own connections).
+--   - It can make a statement wait: PREPARE on a table takes a lock on it
+--     before any right is checked, and a transaction left open keeps that
+--     lock. An ALTER TABLE of a migration then waits, and readers behind it.
+--     The operator ends the session; idle_in_transaction_session_timeout ends
+--     it after 5 seconds unless the thief lifted that for the session.
+--   - It can use the server: memory (work_mem is a session setting), processor
+--     time on 4 connections, transaction ids, and the NOTIFY queue. That queue
+--     is kept on disk and can grow to several gigabytes while a session of the
+--     role listens with a transaction left open. The NOTIFY command needs no
+--     right, so taking pg_notify from PUBLIC would close nothing; it is left as
+--     it is. An open transaction also holds back vacuum.
+--   - It may execute any function outside pg_catalog that the application
+--     leaves executable by PUBLIC. Today that is four trigger functions of the
+--     site branches migrations, which cannot be called directly; the rehearsal
+--     pins the list.
+--   In the other databases of the cluster (postgres, template1), as long as
+--   PUBLIC may connect to them:
+--   - Everything PUBLIC may do there, which this file does not touch: large
+--     objects and temporary tables there are written to the same disk, so the
+--     disk can still be filled from there, and pg_logical_emit_message there
+--     writes to the same write-ahead log, which the whole cluster shares.
+--     Advisory locks there are not locks in this database. Closing this is a
+--     cluster-wide change, or a rule in pg_hba.conf limiting box_reader to
+--     this database, and belongs to the operator step O1. UNTIL THEN THE
+--     DISK CAN BE FILLED FROM THERE.
+--   Even after O1 this file only narrows how the role can use the disk (the
+--   NOTIFY queue above stays). IT DOES NOT PROTECT THE DISK.
+--
+-- ROLLBACK: prisma/sql/box-reader-rollback.sql takes the login away from
+-- box_reader and ends its sessions, then gives PUBLIC back what this file
+-- took.
+--
+-- REQUIRES POSTGRES 16 OR LATER, like commerce-roles.sql.
+
+\set ON_ERROR_STOP on
+\set ON_ERROR_ROLLBACK off
+
+-- Every name below resolves in pg_catalog and nowhere else: under the default
+-- path ("$user", public) a function someone created in public with a closer
+-- argument type (pg_sleep(integer), format(text, name)) would win over the
+-- built-in and run with the superuser's rights.
+SET search_path = pg_catalog, pg_temp;
+
+-- Everything in one transaction: it is applied whole or not at all. A session
+-- that starts meanwhile sees the database as it was before the file, never
+-- half of it.
+BEGIN;
+
+DO $$
+BEGIN
+  IF current_setting('server_version_num')::int < 160000 THEN
+    RAISE EXCEPTION 'box-reader.sql needs Postgres 16 or later (found %)',
+      current_setting('server_version');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commerce_app')
+     OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commerce_ddl') THEN
+    RAISE EXCEPTION 'box-reader.sql must be applied after commerce-roles.sql (commerce_app or commerce_ddl is missing)';
+  END IF;
+END
+$$;
+
+-- =====================================================================
+-- The role
+-- =====================================================================
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'box_reader') THEN
+    CREATE ROLE box_reader NOLOGIN;
+  END IF;
+END
+$$;
+
+-- Every power named, so a re-run also takes away one that was added by hand.
+-- LOGIN is not named: the operator's script grants it, and a re-run keeps it.
+ALTER ROLE box_reader NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT CONNECTION LIMIT 4;
+
+-- It is a member of no role and no role is a member of it. CASCADE: if it held
+-- a membership with the admin option and handed it on, the memberships it
+-- handed on go too, so no role keeps one that came through box_reader.
+DO $$
+DECLARE
+  m record;
+BEGIN
+  FOR m IN
+    SELECT pg_get_userbyid(roleid) AS role, pg_get_userbyid(member) AS member, pg_get_userbyid(grantor) AS grantor
+      FROM pg_auth_members
+     WHERE roleid = 'box_reader'::regrole OR member = 'box_reader'::regrole
+  LOOP
+    EXECUTE format('REVOKE %I FROM %I GRANTED BY %I CASCADE', m.role, m.member, m.grantor);
+  END LOOP;
+END
+$$;
+
+-- Defaults. Set again on every run, so a default the role changed for itself is
+-- put back: its defaults for single databases first (a role may set those for
+-- itself too, and they win over the role-wide ones), then the role-wide ones.
+DO $$
+DECLARE
+  d record;
+BEGIN
+  FOR d IN
+    SELECT db.datname
+      FROM pg_db_role_setting s
+      JOIN pg_database db ON db.oid = s.setdatabase
+     WHERE s.setrole = 'box_reader'::regrole
+  LOOP
+    EXECUTE format('ALTER ROLE box_reader IN DATABASE %I RESET ALL', d.datname);
+  END LOOP;
+END
+$$;
+ALTER ROLE box_reader RESET ALL;
+ALTER ROLE box_reader SET statement_timeout = '2s';
+ALTER ROLE box_reader SET idle_in_transaction_session_timeout = '5s';
+ALTER ROLE box_reader SET idle_session_timeout = '60s';
+-- Only a superuser can change temp_file_limit, so the role cannot lift this
+-- one.
+ALTER ROLE box_reader SET temp_file_limit = 0;
+
+-- =====================================================================
+-- This database: who may connect, and no temporary tables for PUBLIC
+-- =====================================================================
+
+DO $$
+BEGIN
+  EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+  -- The two commerce roles already hold CONNECT by name (commerce-roles.sql);
+  -- granted again so this file is safe whatever state that grant is in.
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO commerce_app, commerce_ddl, box_reader', current_database());
+  -- Taken from box_reader by name too, in case it was ever granted by name.
+  EXECUTE format('REVOKE TEMPORARY, CREATE ON DATABASE %I FROM box_reader', current_database());
+END
+$$;
+
+-- =====================================================================
+-- Advisory locks: the application's two roles by name, nobody through PUBLIC
+-- =====================================================================
+--
+-- Listed from the catalog, not by hand: every signature of every variant
+-- (session and transaction, exclusive and shared, waiting and trying, and the
+-- unlocks), whatever this server version has. The pattern names its own escape
+-- character, so it reads the same whatever the server's string settings are.
+
+DO $$
+DECLARE
+  f record;
+BEGIN
+  FOR f IN
+    SELECT p.oid::regprocedure AS signature
+      FROM pg_proc p
+     WHERE p.pronamespace = 'pg_catalog'::regnamespace
+       AND (p.proname LIKE 'pg!_advisory!_%' ESCAPE '!' OR p.proname LIKE 'pg!_try!_advisory!_%' ESCAPE '!')
+  LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', f.signature);
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM box_reader', f.signature);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO commerce_app, commerce_ddl', f.signature);
+  END LOOP;
+END
+$$;
+
+-- =====================================================================
+-- Large objects: nobody through PUBLIC
+-- =====================================================================
+
+DO $$
+DECLARE
+  f record;
+BEGIN
+  FOR f IN
+    SELECT p.oid::regprocedure AS signature
+      FROM pg_proc p
+     WHERE p.pronamespace = 'pg_catalog'::regnamespace
+       AND (p.proname LIKE 'lo!_%' ESCAPE '!' OR p.proname IN ('loread', 'lowrite'))
+  LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', f.signature);
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM box_reader', f.signature);
+  END LOOP;
+END
+$$;
+
+-- =====================================================================
+-- The write-ahead log: nobody writes to it directly through PUBLIC
+-- =====================================================================
+
+DO $$
+DECLARE
+  f record;
+BEGIN
+  FOR f IN
+    SELECT p.oid::regprocedure AS signature
+      FROM pg_proc p
+     WHERE p.pronamespace = 'pg_catalog'::regnamespace
+       AND p.proname = 'pg_logical_emit_message'
+  LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', f.signature);
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM box_reader', f.signature);
+  END LOOP;
+END
+$$;
+
+COMMIT;
