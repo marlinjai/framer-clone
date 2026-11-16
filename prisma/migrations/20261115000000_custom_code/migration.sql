@@ -4,7 +4,8 @@
 -- ADDITIVE: one column on `sites` (default false, so every existing site stays off), four new empty tables, two
 -- trigger functions with their triggers on those new tables, and the function `box_document`. No existing row, column,
 -- constraint or privilege is changed. Nothing in the application reads or writes any of it until the guarded routes of
--- later slices exist; the box (services/box) is deployed nowhere yet. Rollback: rollback.sql beside this file.
+-- later slices exist, and nothing in the application imports the box (services/box). Rollback: rollback.sql beside
+-- this file.
 --
 -- THE ORDER WITH prisma/sql/box-reader.sql. That file creates the role `box_reader` and is applied by the operator,
 -- separately and at a time of its own (it needs Marlin's yes). `prisma migrate deploy` runs at EVERY container start,
@@ -17,13 +18,15 @@
 -- transaction-level advisory lock, key 7461001200 (box-reader.sql names the same key), as a statement of its own
 -- before its check (here the first statement), and hold it until they commit. The later one waits for the earlier one's commit, and under READ
 -- COMMITTED its check, a new statement, then sees the other side's object (the rehearsal holds both orders of that
--- too). The key is above 2^32, so it is none of the repository's other lock keys (74610010 and 74610011, the int4
--- range of pg_catalog.hashtext) nor Prisma's own migration lock (72707369).
+-- too). The key is a fixed constant outside the int4 range, the range of every pg_catalog.hashtext key, so it equals
+-- none of the repository's fixed keys (74610010 and 74610011 in the application, 74610020 in a test fixture, Prisma's
+-- own 72707369, and the small keys of the tests, all in that range). Keys made with pg_catalog.hashtextextended span
+-- all 64 bits; a collision with one of them is negligible (about 2^-64 per key).
 
 -- The lock box-reader.sql takes too (key 7461001200, see "THE ORDER"), as a statement of its own and first, so this
 -- migration waits for a box-reader.sql that holds it before it touches anything (no lock on `sites` held meanwhile),
--- and its check at the end runs after that file has committed.
-SELECT pg_catalog.pg_advisory_xact_lock(7461001200);
+-- and its check at the end runs after that file has committed. Inside a DO block, so it prints nothing.
+DO $$ BEGIN PERFORM pg_catalog.pg_advisory_xact_lock(7461001200); END $$;
 
 -- AlterTable: off by default; switched only through the guarded route of a later slice.
 ALTER TABLE "public"."sites" ADD COLUMN "custom_code_enabled" BOOLEAN NOT NULL DEFAULT false;

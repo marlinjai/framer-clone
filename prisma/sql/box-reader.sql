@@ -1,7 +1,7 @@
 -- prisma/sql/box-reader.sql
 --
--- STATE: PREPARED AND REHEARSED OFFLINE ONLY. Not applied to any real
--- database. Applying it to production is a privilege change that needs
+-- STATE: PREPARED AND REHEARSED OFFLINE. Applying it to a real database
+-- is a privilege change that needs
 -- Marlin's yes by name (docs/plans/2026-11-02-sandboxed-custom-code.md,
 -- decisions D20 and D24). Nothing in this repository applies it to a real
 -- database: no start script, no migration, no deploy step. Only tests apply
@@ -21,7 +21,8 @@
 -- for more than it is.
 --
 -- WHO RUNS IT. Once per database, by a superuser (on Coolify the database's own
--- bootstrap user), with `psql -f`, AFTER prisma/sql/commerce-roles.sql (it
+-- bootstrap user), with `psql -X -v ON_ERROR_STOP=1 -f` and never with `\i`
+-- from an interactive session, AFTER prisma/sql/commerce-roles.sql (it
 -- grants to the two commerce roles and stops if they do not exist). It is
 -- idempotent: running it again changes nothing and fails nothing, and
 -- re-applying it is how an upgrade of this file, or a restore of a dump, gets
@@ -37,7 +38,12 @@
 -- of the transaction goes on and commits. Its checks (Postgres version, the
 -- commerce roles) are separate statements from what they guard, inside the one
 -- transaction; with those settings a failed check ends the run and the
--- transaction is never committed.
+-- transaction is never committed. Its first statement in that transaction
+-- takes the lock every container start's migration of slice C1b also takes
+-- (see "The one thing the box may call"): a session left open on this file,
+-- for example after an error under `\i` or an interrupted paste, holds that
+-- lock and stops every container start until it ends. End such a session at
+-- once (ROLLBACK, or quit psql).
 --
 -- NO PASSWORD, NO LOGIN. The role is created NOLOGIN. The operator's script
 -- gives it a login and a freshly generated password and writes the connection
@@ -60,8 +66,12 @@
 -- they commit. This file takes it first thing in its transaction. The later
 -- side waits for the earlier one's commit, and under READ COMMITTED its check,
 -- a new statement, then sees the other side's object (rehearsed in both
--- orders). The key is above 2^32: none of the application's other lock keys,
--- nor Prisma's own migration lock (72707369).
+-- orders). The key is a fixed constant outside the int4 range, the range of
+-- every pg_catalog.hashtext key, so it equals none of the repository's fixed
+-- keys (74610010 and 74610011 in the application, 74610020 in a test
+-- fixture, Prisma's own 72707369, and the small keys of the tests, all in that
+-- range). Keys made with pg_catalog.hashtextextended span all 64 bits; a
+-- collision with one of them is negligible (about 2^-64 per key).
 --
 -- WHAT IT DOES NOT DO.
 --   - It grants nothing on any table or view of the application, and on no
@@ -184,8 +194,9 @@ BEGIN;
 
 -- The lock the migration 20261115000000_custom_code takes too (key 7461001200,
 -- see "The one thing the box may call" above), held until COMMIT, so the grant
--- at the end and the migration's own grant cannot both miss.
-SELECT pg_catalog.pg_advisory_xact_lock(7461001200);
+-- at the end and the migration's own grant cannot both miss. Inside a DO
+-- block, so it prints nothing.
+DO $$ BEGIN PERFORM pg_catalog.pg_advisory_xact_lock(7461001200); END $$;
 
 DO $$
 BEGIN
@@ -257,7 +268,8 @@ ALTER ROLE box_reader SET idle_session_timeout = '60s';
 -- Only a superuser can change temp_file_limit, so the role cannot lift this
 -- one.
 ALTER ROLE box_reader SET temp_file_limit = 0;
--- No schema the application's owner role can write is searched (see the header).
+-- No schema the application's owner role can write is searched (see the
+-- header).
 ALTER ROLE box_reader SET search_path = pg_catalog;
 
 -- =====================================================================

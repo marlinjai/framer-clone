@@ -3,18 +3,22 @@
 -- The way back from prisma/sql/box-reader.sql. PREPARED AND REHEARSED OFFLINE
 -- ONLY, like that file.
 --
--- WHO RUNS IT. A superuser, with `psql -f`, on the database box-reader.sql was
--- applied to. Idempotent. Never paste it, or part of it, into an interactive
--- session: there an error returns psql to its prompt instead of ending the run,
--- and the rest of the pasted text would go on. The file sets ON_ERROR_STOP on
--- and ON_ERROR_ROLLBACK off itself (the `\set` lines below), so `psql -f` stops
--- at the first error and exits with a non-zero status whatever was given with
--- `-v`, and no error is quietly undone while the run goes on. Those lines are
--- psql commands, which another client does not understand. Step 3's safety does
--- not rest on any of this: its check and its grants are one statement, so a
--- check that fails undoes every grant with it, with or without those settings
--- and whether or not autocommit is on (with autocommit off, steps 2 and 3 share
--- one transaction, which changes nothing of this).
+-- WHO RUNS IT. A superuser, with `psql -X -v ON_ERROR_STOP=1 -f` and never with
+-- `\i` from an interactive session, on the database box-reader.sql was applied
+-- to. Idempotent. It takes no lock a container start waits for, but a session
+-- left open on it after an error keeps what it changed uncommitted: end it at
+-- once (ROLLBACK, or quit psql). Never paste it, or part of it, into an
+-- interactive session: there an error returns psql to its prompt instead of
+-- ending the run, and the rest of the pasted text would go on. The file sets
+-- ON_ERROR_STOP on and ON_ERROR_ROLLBACK off itself (the `\set` lines below),
+-- so `psql -f` stops at the first error and exits with a non-zero status
+-- whatever was given with `-v`, and no error is quietly undone while the run
+-- goes on. Those lines are psql commands, which another client does not
+-- understand. Step 3's safety does not rest on any of this: its check and its
+-- grants are one statement, so a check that fails undoes every grant with it,
+-- with or without those settings and whether or not autocommit is on (with
+-- autocommit off, steps 2 and 3 share one transaction, which changes nothing of
+-- this).
 --
 -- NEVER AT THE SAME TIME AS THE OPERATOR'S ROLE SCRIPT (O1). Step 3's check
 -- takes no lock on the role: an `ALTER ROLE box_reader LOGIN` committed while

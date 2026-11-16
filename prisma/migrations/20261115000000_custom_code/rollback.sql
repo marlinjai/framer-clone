@@ -6,7 +6,7 @@
 -- Run it only AFTER the application runs the previous image: this commit's Prisma client selects
 -- sites.custom_code_enabled on every site query, so with this image still running every site read would fail, and its
 -- next start would apply the migration again. Leaving the column, the tables and the functions in place after a code
--- rollback is the default and harmless: older code ignores them, and the box is deployed nowhere. Running this script is a destructive step that needs its own
+-- rollback is the default and harmless: older code ignores them, and nothing in the application imports the box. Running this script is a destructive step that needs its own
 -- explicit authorization: it destroys every stored custom code blob, proposal, audit row and takedown entry. Do NOT run `prisma migrate
 -- resolve --rolled-back` for it (refused for an applied migration, P3012). This script forgets the migration itself, so
 -- a later deploy of the same commit applies it again. It drops only what this migration created (the grant to
