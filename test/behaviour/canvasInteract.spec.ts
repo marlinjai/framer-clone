@@ -168,7 +168,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     expect(await editor(page, (api) => api.tool())).toBe('interact');
     // The HUD lets go of the selection while the page runs, and the toolbar says which tool.
     await expect.poll(() => overlay.isVisible()).toBe(false);
-    expect(await page.getByRole('button', { name: 'Interact' }).getAttribute('aria-pressed')).toBe('true');
+    expect(await page.getByRole('button', { name: 'Interact', exact: true }).getAttribute('aria-pressed')).toBe('true');
     await inFrames(page, 'btn').first().click();
     expect(await displays(inFrames(page, 'panel'))).toEqual(['block', ...Array(count - 1).fill('none')]);
     expect(await inFrames(page, 'btn').first().getAttribute('aria-expanded')).toBe('true');
@@ -448,7 +448,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
   it('at 390 pixels, a finger enters Interact, runs the page, and leaves', async () => {
     const { page, crashes } = await mount(PHONE);
     const bar = page.getByTestId('phone-bottom-bar');
-    await bar.getByRole('button', { name: 'Interact' }).tap();
+    await bar.getByRole('button', { name: 'Interact', exact: true }).tap();
     await expect.poll(() => frames(page).evaluateAll((els) => els.every((el) => el.hasAttribute('data-surface-running')))).toBe(true);
     // The phone opens fitted to its own frame, the last one.
     const button = inFrames(page, 'btn').last();
