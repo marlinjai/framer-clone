@@ -253,8 +253,10 @@ export interface ConsentRuntimeConfig {
  * A stored "yes" whose cookie expired sets it again, and on a page with a map
  * reloads once before anything starts. A page without a map only sets the cookie.
  * When storage throws, the "yes" would not survive a reload, so it is announced as
- * before; `mapsAtLoad` on the API tells a map island that this document's policy
- * refuses Google, so it keeps its placeholder, and `mapsAllowed()` whether the cookie
+ * before, and so it is while a form field on the page holds input the visitor typed,
+ * which a reload would lose: the map then offers the reload itself. `mapsAtLoad` on
+ * the API tells a map island that this document's policy refuses Google, so it keeps
+ * its placeholder, and `mapsAllowed()` whether the cookie
  * is set now: when it is not (the browser blocks cookies), no reload can help, and the
  * island says so instead of offering one. A maps reload is announced first as a
  * `lumitra:maps-reload` event, so the map whose "Load map" asked can leave a focus
@@ -322,11 +324,17 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     'var mapsAtLoad=mapsAllowed();' +
     // Whether a "yes" survives a new document: storage that throws keeps it for this view only.
     "function kept(c){var r=stored();return !!r&&r[c]===true;}" +
+    // Whether a form field on the page holds something the visitor changed: a reload
+    // would lose it, so a maps "yes" is announced instead and the map offers the reload.
+    "function typed(){var f=[];try{f=d.querySelectorAll('input,textarea,select');}catch(e){}for(var i=0;i<f.length;i++){var x=f[i],t=(x.type||'').toLowerCase(),o,j;" +
+    "if(x.tagName==='SELECT'){o=x.options||[];for(j=0;j<o.length;j++)if(o[j].selected!==o[j].defaultSelected)return true;continue;}" +
+    "if(t==='checkbox'||t==='radio'){if(x.checked!==x.defaultChecked)return true;continue;}" +
+    "if(t==='hidden'||t==='submit'||t==='button'||t==='reset'||t==='image')continue;if(x.value!==x.defaultValue)return true;}return false;}" +
     // Whether a maps "yes" needs a new document: this page has a map (it asks about
     // maps by itself only then), was served without the cookie, the cookie is set now,
     // and the answer survives the reload. A page without a map only sets the cookie:
-    // the next document's policy allows Google.
-    "function mapsReload(){return asks('maps')&&!mapsAtLoad&&mapsAllowed()&&kept('maps');}" +
+    // the next document's policy allows Google. Not while a form holds input.
+    "function mapsReload(){return asks('maps')&&!mapsAtLoad&&mapsAllowed()&&kept('maps')&&!typed();}" +
     // Reloads without the #cookie-settings address, which would open the banner again.
     // A maps reload is announced first, synchronously, as `lumitra:maps-reload`: its
     // detail says whether a map's own "Load map" opened this banner, so that map (and
