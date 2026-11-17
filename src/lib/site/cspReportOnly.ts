@@ -75,26 +75,31 @@ export function reportOnlyPolicy(mapsConsented: boolean): string {
 // The enforced frame policy (decision D6 of docs/plans/2026-11-02-sandboxed-custom-code.md)
 // ---------------------------------------------------------------------------
 //
-// One directive, enforced, beside the report-only policy above, which stays as it
+// Two directives, enforced, beside the report-only policy above, which stays as it
 // is. A published page holds exactly two kinds of frame: the Google map after the
 // visitor consents to maps, and a sandboxed custom code block, whose frame is the
 // box's (`https://run.<box domain>/box/`). So `frame-src` names those two and
-// nothing else, and the browser refuses every other frame, also one a stored page
-// could sneak past the render gate. Constant per consent state and per server
-// configuration, so the middleware needs no database read for it. With no box
-// source (no origin configured, or the kill switch on) and no consent it is
-// `frame-src 'none'`. The standalone preview route of the editor host sends the
-// same directive (src/middleware.ts), joined to its `frame-ancestors 'none'`.
+// nothing else, and `object-src 'none'` refuses every `object` and `embed` (no
+// published page uses one; WebKit loads them under `frame-src` alone). The browser
+// then refuses every other frame or plugin a stored page could sneak past the
+// render gate that makes a request. It cannot refuse a frame that makes none: an
+// `iframe srcdoc` or an `about:blank` frame runs in the page's own origin whatever
+// `frame-src` says, so the render gate refusing `iframe` stays the line that holds.
+// Constant per consent state and per server configuration, so the middleware needs
+// no database read for it. With no box source (no origin configured, or the kill
+// switch on) and no consent it is `frame-src 'none'`. The standalone preview route
+// of the editor host sends the same policy (src/middleware.ts), joined to its
+// `frame-ancestors 'none'`.
 
 /** The enforced policy's header. */
 export const CSP_ENFORCED_HEADER = 'content-security-policy';
 
 /**
- * The enforced `frame-src` for one response: the box's path when this server
+ * The enforced policy for one response, `frame-src` then `object-src 'none'`: the box's path when this server
  * may frame it (customCode.ts, boxFrameSource), and Google when the request
  * carries maps consent.
  */
 export function enforcedFramePolicy(mapsConsented: boolean, boxSource: string | null): string {
   const sources = [...(boxSource ? [boxSource] : []), ...(mapsConsented ? [ALLOWED_FRAME_ORIGIN] : [])];
-  return `frame-src ${sources.length > 0 ? sources.join(' ') : "'none'"}`;
+  return `frame-src ${sources.length > 0 ? sources.join(' ') : "'none'"}; object-src 'none'`;
 }

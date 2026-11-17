@@ -151,7 +151,7 @@ describe('the enforced frame policy', () => {
       expect([refused.map, loaded.map]).toEqual(['refused', 'loaded']);
       // What the browser holds is the header the middleware sent.
       const response = await after.goto(url);
-      expect(response?.headers()['content-security-policy']).toBe(`frame-src ${BOX_ORIGIN}/box/ https://www.google.com`);
+      expect(response?.headers()['content-security-policy']).toBe(`frame-src ${BOX_ORIGIN}/box/ https://www.google.com; object-src 'none'`);
     } finally {
       await browser.close();
     }
@@ -215,11 +215,65 @@ describe('maps consent given on a page already loaded', () => {
           .waitForFunction(() => (window as unknown as { __map: string }).__map !== 'pending', undefined, { timeout: 10_000 })
           .catch(() => {});
         expect(await page.evaluate(() => (window as unknown as { __map: string }).__map)).toBe('loaded');
-        expect(served).toEqual([`frame-src ${BOX_ORIGIN}/box/`, `frame-src ${BOX_ORIGIN}/box/ https://www.google.com`]);
+        expect(served).toEqual([`frame-src ${BOX_ORIGIN}/box/; object-src 'none'`, `frame-src ${BOX_ORIGIN}/box/ https://www.google.com; object-src 'none'`]);
       } finally {
         await browser.close();
       }
     },
     60_000,
   );
+});
+
+// An object or an embed is not a frame for frame-src in WebKit: object-src 'none' refuses both.
+const PLUGIN_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
+<script>
+  window.__plugins = { object: 'pending', embed: 'pending' };
+  addEventListener('message', (event) => { const n = event.data && event.data.frame; if (n in window.__plugins) window.__plugins[n] = 'loaded'; });
+  window.__violations = [];
+  document.addEventListener('securitypolicyviolation', (event) => {
+    window.__violations.push(event.disposition + ' ' + event.effectiveDirective + ' ' + event.blockedURI);
+    if (event.disposition !== 'enforce' || event.effectiveDirective !== 'object-src') return;
+    // The blocked address may be reported as its origin only: each element has its own host.
+    if (event.blockedURI.startsWith('https://object.frame.test')) window.__plugins.object = 'refused';
+    if (event.blockedURI.startsWith('https://embed.frame.test')) window.__plugins.embed = 'refused';
+  });
+  const object = document.createElement('object');
+  object.type = 'text/html';
+  object.data = 'https://object.frame.test/object';
+  document.body.appendChild(object);
+  const embed = document.createElement('embed');
+  embed.type = 'text/html';
+  embed.src = 'https://embed.frame.test/embed';
+  document.body.appendChild(embed);
+</script></body></html>`;
+
+describe('objects and embeds under the enforced policy', () => {
+  it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])('in %s: a published page refuses both', async (_name, type) => {
+    const url = `https://${SITE}/about`;
+    const headers = await headersFor(url, '');
+    expect(headers['content-security-policy']).toContain("object-src 'none'");
+    const browser = await type.launch();
+    try {
+      const page = await browser.newPage();
+      await page.route('**/*', (route) => {
+        const target = route.request().url();
+        if (target === url) return route.fulfill({ status: 200, contentType: 'text/html', headers, body: PLUGIN_PAGE });
+        if (target.endsWith('/object')) return route.fulfill({ status: 200, contentType: 'text/html', body: FRAME_DOCUMENT('object') });
+        if (target.endsWith('/embed')) return route.fulfill({ status: 200, contentType: 'text/html', body: FRAME_DOCUMENT('embed') });
+        return route.fulfill({ status: 204 });
+      });
+      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      await page
+        .waitForFunction(() => Object.values((window as unknown as { __plugins: Record<string, string> }).__plugins).every((o) => o !== 'pending'), undefined, { timeout: 10_000 })
+        .catch(() => {});
+      const seen = await page.evaluate(() => {
+        const w = window as unknown as { __plugins: Record<string, string>; __violations: string[] };
+        return { __plugins: w.__plugins, __violations: w.__violations };
+      });
+      // The violations the page saw, as the message when it fails.
+      expect(seen.__plugins, seen.__violations.join('\n')).toEqual({ object: 'refused', embed: 'refused' });
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
 });
