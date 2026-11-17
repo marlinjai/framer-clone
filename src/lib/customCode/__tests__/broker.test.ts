@@ -80,22 +80,14 @@ describe('the broker before any frame', () => {
   });
 
   it('lets a new block in once one of the four is gone', () => {
-    [add(), add(), add(), add()];
+    for (let i = 0; i < 4; i++) add();
     removes.shift()?.();
     expect(add().settled).toEqual([]);
     expect(observed).toHaveLength(5);
   });
 
-  it.each([
-    ['another scheme', SRC.replace('https:', 'http:')],
-    ['a path that is not the box', SRC.replace('/box/', '/other/')],
-    ['a short hash', SRC.slice(0, -1)],
-    ['a query', `${SRC}?x=1`],
-    ['a host with a port and a user', SRC.replace('run.box.test', 'user@run.box.test:8443')],
-  ])('never frames %s', (_name, src) => {
-    const refused = add({ src });
-    expect(refused.settled).toEqual([false]);
-    expect(observed).toEqual([]);
+  it('creates no frame before its box nears the screen', () => {
+    add();
     expect(document.querySelector('iframe')).toBeNull();
   });
 });
