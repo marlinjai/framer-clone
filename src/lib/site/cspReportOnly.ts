@@ -80,7 +80,7 @@ export function reportOnlyPolicy(mapsConsented: boolean): string {
 // visitor consents to maps, and a sandboxed custom code block, whose frame is the
 // box's (`https://run.<box domain>/box/`). So `frame-src` names those two and
 // nothing else, and `object-src 'none'` refuses every `object` and `embed` (no
-// published page uses one; WebKit loads them under `frame-src` alone). The browser
+// published page uses one; not every engine checks them against `frame-src`). The browser
 // then refuses every other frame or plugin a stored page could sneak past the
 // render gate that makes a request. It cannot refuse a frame that makes none: an
 // `iframe srcdoc` or an `about:blank` frame runs in the page's own origin whatever
