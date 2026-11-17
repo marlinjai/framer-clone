@@ -45,12 +45,60 @@ interface ConsentApi {
  * served without the maps cookie refuses: a frame drawn then would only show the
  * browser's blocked-content page, so the placeholder stays.
  */
+function reloadPage(): void {
+  try {
+    window.location.reload();
+  } catch {
+    // Nothing to do: the note still says what would help.
+  }
+}
+
 function frameAllowed(): boolean {
   return consentApi()?.mapsAtLoad !== false;
 }
 
 function consentApi(): ConsentApi | undefined {
   return (window as unknown as { __lumitraConsent?: ConsentApi }).__lumitraConsent;
+}
+
+/**
+ * The session key naming the map box whose "Load map" asked, kept across the reload a
+ * yes may cause (decision D48 of docs/plans/2026-11-02-sandboxed-custom-code.md): the
+ * new page focuses that map's frame once, as the same page would have. One shot: the
+ * first page load on the same path reads it and removes it.
+ */
+export const MAP_FOCUS_KEY = 'fc-map-focus';
+
+interface MapFocusMark {
+  path: string;
+  index: number;
+}
+
+/** This box's position among the page's map boxes (their light copies), or -1. */
+function boxIndex(box: HTMLElement | null): number {
+  if (!box) return -1;
+  const boxes = Array.from(document.querySelectorAll('[data-fc-map-placeholder]')).map((placeholder) => placeholder.parentElement);
+  return boxes.indexOf(box);
+}
+
+function writeFocusMark(mark: MapFocusMark | null): void {
+  try {
+    if (mark) window.sessionStorage.setItem(MAP_FOCUS_KEY, JSON.stringify(mark));
+    else window.sessionStorage.removeItem(MAP_FOCUS_KEY);
+  } catch {
+    // Storage that throws: the new page just does not move focus.
+  }
+}
+
+function readFocusMark(): MapFocusMark | null {
+  try {
+    const raw = window.sessionStorage.getItem(MAP_FOCUS_KEY);
+    if (!raw) return null;
+    const mark = JSON.parse(raw) as Partial<MapFocusMark> | null;
+    return mark && typeof mark.path === 'string' && typeof mark.index === 'number' ? { path: mark.path, index: mark.index } : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface MapEmbedIslandProps {
@@ -68,12 +116,20 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
   // goes to it instead of being lost with the button.
   const asked = useRef(false);
 
+  // A focus mark left by this box before a reload: focus the frame once it is drawn.
+  const focusOnShow = useRef(false);
   useEffect(() => {
-    if (!granted || !asked.current) return;
-    asked.current = false;
-    const active = document.activeElement;
-    if (!active || active === document.body) frame.current?.focus();
-  }, [granted]);
+    const mark = readFocusMark();
+    if (!mark) return;
+    if (mark.path !== window.location.pathname) {
+      writeFocusMark(null);
+      return;
+    }
+    // Another box on this page asked: its island reads the mark.
+    if (mark.index !== boxIndex(host.current)) return;
+    writeFocusMark(null);
+    focusOnShow.current = true;
+  }, []);
 
   useEffect(() => {
     if (consentApi()?.get?.('maps') === 'granted') setGranted(true);
@@ -89,6 +145,8 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
     const api = consentApi();
     if (api && typeof api.open === 'function') {
       asked.current = true;
+      // A yes may reload the page; the new one focuses this map (MAP_FOCUS_KEY).
+      writeFocusMark({ path: window.location.pathname, index: boxIndex(host.current) });
       api.open('maps');
       return;
     }
@@ -121,7 +179,26 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
   }, []);
 
   const src = view.src;
-  const show = granted && frameAllowed() && isRebuiltMapSrc(src);
+  const allowed = frameAllowed();
+  const show = granted && allowed && isRebuiltMapSrc(src);
+  // A yes this page's policy cannot honour (storage blocked, so no reload carried it):
+  // the placeholder says so and offers the reload, which the cookie already allows.
+  const needsReload = granted && !allowed && isRebuiltMapSrc(src);
+
+  // After this box asked, focus goes where the answer leads: the map, or the reload
+  // button, never lost with the "Load map" button. A mark from before a reload does the same.
+  useEffect(() => {
+    if (!granted) return;
+    const fromMark = focusOnShow.current && show;
+    if (!asked.current && !fromMark) return;
+    asked.current = false;
+    focusOnShow.current = false;
+    writeFocusMark(null);
+    const active = document.activeElement;
+    if (active && active !== document.body && !fromMark) return;
+    if (show) frame.current?.focus();
+    else if (needsReload) (shadow?.querySelector('[data-fc-map-reload]') as HTMLElement | null)?.focus();
+  }, [granted, show, needsReload, shadow]);
   const own = show ? (
     <iframe
       ref={frame}
@@ -140,7 +217,7 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
       style={MAP_FRAME_STYLE}
     />
   ) : (
-    mapPlaceholder(view, { onLoad: load, liveLink: true })
+    mapPlaceholder(view, { onLoad: load, liveLink: true, onReload: needsReload ? reloadPage : undefined })
   );
   return React.createElement(
     'div',
