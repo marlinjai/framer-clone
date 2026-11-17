@@ -726,7 +726,12 @@ server (never from `process.env` in the client bundle, which does not have it).
 `Content-Security-Policy: frame-src https://run.<box domain>/box/`, plus `https://www.google.com` when the maps consent cookie is
 set (the same switch the report-only policy uses), or `frame-src 'none'` when neither applies. The report-only policy measures
 `frame-src 'self'`; the enforced one leaves `'self'` out because a published page holds exactly the two kinds of frame D6 names,
-and no part of a published page frames its own origin. The report-only header is unchanged. **For C3:** once blocks run, the
+and no part of a published page frames its own origin. The same header carries `object-src 'none'` (added after the second review
+of pull request #450): WebKit loads an `object` or an `embed` from another host under `frame-src` alone, and no published page uses
+either. The standalone preview and branch preview hosts send it too. What no policy refuses: an `iframe srcdoc` or an `about:blank`
+frame makes no request, so it runs in the page's own origin whatever `frame-src` says. The policy is a second line for frames and
+plugins that load from somewhere; the render gate refusing `iframe`, `object` and `embed` stays the line that holds. The report-only
+header is unchanged. **For C3:** once blocks run, the
 report-only `frame-src` (which has no box) will report every box frame. C3 either adds the box there or drops `frame-src` from the
 report-only policy, now that it is enforced.
 
@@ -792,12 +797,16 @@ the document it replaces starts no tracker and a visit is not counted twice (cha
 and the `#cookie-settings` address is dropped first, so the banner does not open again. A stored "yes" whose cookie has expired (a
 year at most, seven days for a cookie set by script in Safari) sets the cookie again before the tracker could start, and on a page
 with a map reloads once. When storage throws, a reload would forget the answer, so it is announced as before; the runtime exposes
-`mapsAtLoad`, and the map island keeps its placeholder rather than draw a frame the policy refuses. The visitor still has "Open in
-Google Maps". Two limits remain. A visitor whose tracker already runs (analytics granted earlier) and who then accepts maps on a page
+`mapsAtLoad`, and the map island draws no frame the policy would refuse. Its placeholder says "Reload the page to show the map" with a
+reload button, which gets focus (the cookie is already set, so the new page allows the map, and its banner asks again because the
+answer was not stored). The visitor also keeps "Open in Google Maps". Focus survives the reload: "Load map" leaves a one-shot
+`sessionStorage` mark naming its box (path and position among the page's maps), and after the reload that box focuses its frame once
+and removes the mark; a mark for another page is removed unread. Two limits remain. A visitor whose tracker already runs (analytics granted earlier) and who then accepts maps on a page
 with a map still reloads, so that page view is counted twice; the alternative, a placeholder asking for a manual reload, costs every
-map visitor a step for a rarer double count. And `mapsAtLoad` is read from the cookie as the page starts, not from the response: a
-page restored from the browser's back-forward cache after consent given elsewhere can believe its policy allows Google when it does
-not, and then shows a refused frame until the next load. The address cleanup applies to the analytics revoke reload as well. A placeholder that says "reload to show the map" was the alternative; a reload is what the visitor asked
+map visitor a step for a rarer double count. And `mapsAtLoad` is read from the cookie as the runtime starts, not from the response: if
+the maps cookie is set (in another tab, say) between the request leaving and the runtime script running, the page believes its policy
+allows Google when it does not, and shows a refused frame until the next load. A page restored from the back-forward cache keeps the
+value it had at load, which matches the policy it was served with, so a later yes takes the reload path as it should. The address cleanup applies to the analytics revoke reload as well. A placeholder that says "reload to show the map" was the alternative; a reload is what the visitor asked
 for in one step. The render gate proves it in Chromium and WebKit: a page served without the cookie, the banner's yes, a second
 document with Google in `frame-src`, and the map loads.
 
@@ -818,12 +827,20 @@ by the first review of pull request #450.
 
 **D96. The tile is drawn in a plain container, as a labelled group.** On the canvas a block stored as a link, a button, an SVG
 element or any tag that cannot hold the tile (a paragraph, a list, a table part) draws the tile in a `div`, without the control's
-own attributes (`href`, `type` and the like), so the tile's link is never inside another control. Plain containers (`div`,
+own attributes (`href`, `type` and the like). A block whose ancestor is a link, a button, a label or a summary leaves the tile's link
+out (found by the second review of pull request #450), so the tile's link is never inside another control. Plain containers (`div`,
 `section`, `article`, `aside`, `header`, `footer`, `main`, `nav`, `figure`, `blockquote`, `li`, `dd`, `td`, `th`) keep their tag. A
 block standing inside an `svg` draws a `g` with its attributes and the tile as HTML in a `foreignObject`, because React draws an HTML
 tag under `svg` as an SVG element, which shows nothing; inside `math`, where React draws no HTML at all, the tile is its label as text
 in `mtext`. The tile carries `role="group"`, which may hold its `aria-label`. This is wider than the review asked (every tag that
 cannot hold the tile, not only controls and SVG). Found by the first review of pull request #450.
+
+**D97. A title refuses invisible formatting characters and lone surrogate halves.** Besides control characters, the parser now
+refuses the bidirectional marks, embeddings, overrides and isolates (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069), the
+zero-width characters and the word joiner range (U+200B to U+200D, U+2060 to U+2064), the byte order mark, and half of a surrogate
+pair without its other half. They change how a title reads without being seen, on the editor surfaces now and in a frame's `title`
+from C3. An emoji joined with a zero-width joiner is refused with them; titles in any script, right-to-left ones included, and single
+emoji still pass. Found by the second review of pull request #450.
 
 ## For Marlin
 
