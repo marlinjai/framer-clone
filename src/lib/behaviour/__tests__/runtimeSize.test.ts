@@ -26,7 +26,7 @@ async function gzippedSize(entry: string): Promise<{ raw: string; bytes: number 
     target: 'es2022',
     alias: { '@': path.resolve(__dirname, '../../..') },
   });
-  const file = result.outputFiles.find((output) => path.basename(output.path) === entry.replace('.ts', '.js'));
+  const file = result.outputFiles.find((output) => path.basename(output.path) === path.basename(entry).replace('.ts', '.js'));
   if (!file) throw new Error(`no output for ${entry}`);
   return { raw: file.text, bytes: gzipSync(file.text).length };
 }
@@ -48,7 +48,13 @@ describe('the behaviour chunks', () => {
     expect(bytes).toBeLessThanOrEqual(3 * KILOBYTE);
   });
 
-  it.each(['runtime.ts', 'rove.ts', 'verbs.ts'])('%s holds no part of the parser, and no code from a string', async (entry) => {
+  // The custom code broker, the third lazy chunk (slice C3 of the sandboxed custom code plan).
+  it('the custom code broker stays within 2 kilobytes gzipped', async () => {
+    const { bytes } = await gzippedSize('../customCode/broker.ts');
+    expect(bytes).toBeLessThanOrEqual(2 * KILOBYTE);
+  });
+
+  it.each(['runtime.ts', 'rove.ts', 'verbs.ts', '../customCode/broker.ts'])('%s holds no part of the parser, and no code from a string', async (entry) => {
     const { raw } = await gzippedSize(entry);
     expect(raw).not.toContain('a trigger needs');
     expect(raw).not.toMatch(/\beval\(|new Function\(/);

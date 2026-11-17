@@ -21,6 +21,8 @@ import { publishPages } from './site';
 
 /** In the runtime chunk and nowhere else. */
 const RUNTIME_MARK = 'Page behaviour stopped';
+/** In the custom code broker's chunk and nowhere else (src/lib/customCode/broker.ts). */
+const BROKER_MARK = 'took the keyboard';
 /** In the effects chunk and nowhere else: its observer's margin. */
 const EFFECTS_MARK = '0px 0px -10% 0px';
 const CHUNKS = '**/_next/static/chunks/**';
@@ -58,6 +60,7 @@ describe("the size of Next's real chunks, as gzip sends them", () => {
     ['the core', RUNTIME_MARK, 5000],
     ['rove', 'data-u-active', 3000],
     ['verbs', 'the browser refused', 2500],
+    ['the custom code broker', BROKER_MARK, 2000],
   ])('holds %s to its limit', (name, mark, limit) => {
     const found = fs.readdirSync(CHUNKS_ON_DISK).filter((file) => file.endsWith('.js'))
       .map((file) => fs.readFileSync(path.join(CHUNKS_ON_DISK, file), 'utf8'))
@@ -167,6 +170,14 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     it('fetches it on a page with one, which shows what the test above looks for', async () => {
       const scripts = await scriptsOf('accordion');
       expect(scripts.filter(({ body }) => body.includes(RUNTIME_MARK))).toHaveLength(1);
+    });
+
+    // The broker is in the build (the size row above finds its one chunk), and a page holds
+    // it only when a block of custom code is on it: not a plain page, not one with triggers.
+    it.each(['plain', 'still', 'accordion'])('fetches no byte of the custom code broker on /%s', async (slug) => {
+      const scripts = await scriptsOf(slug);
+      expect(scripts.length).toBeGreaterThan(0);
+      expect(scripts.filter(({ body }) => body.includes(BROKER_MARK))).toEqual([]);
     });
 
     it('fetches no byte of the motion code either, until a page has an effect', async () => {
