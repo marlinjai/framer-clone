@@ -41,7 +41,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, rawText, rootsOf, valueText, writeBehaviour, type BehaviourPage } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, storedText, rootsOf, valueText, writeBehaviour, type BehaviourPage } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface PageStatePanelProps {
@@ -161,7 +161,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
   const { editorUI } = useStore();
   // A refusal of what a person just entered, shown until the stored value changes.
   const [error, setError] = useState<{ reason: string; for: string } | null>(null);
-  const storedKey = rawText(entry);
+  const storedKey = storedText(entry);
   const shownError = error && error.for === storedKey ? error.reason : null;
 
   if (!isRecord(entry)) {

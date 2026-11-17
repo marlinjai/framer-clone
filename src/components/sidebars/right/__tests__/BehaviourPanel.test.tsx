@@ -348,6 +348,28 @@ describe('backtrack and revise', () => {
     expect(interactions().queryByRole('group', { name: 'Interaction' })).toBeNull();
   });
 
+  it('an open editor closes when a long interaction changes only near its end, and when another takes its place', () => {
+    mount();
+    select(button);
+    const open = addPageValue('Open');
+    // Five actions: stored, it is longer than the 160 characters the old key was cut to.
+    const steps: Record<string, unknown>[] = [{ toggle: open }, { set: open, value: true }, { set: open, value: false }, { emit: 'the-first-event' }, { emit: 'the-second-event' }];
+    act(() => button.setBehaviour({ on: [{ id: 't-long0001', on: 'click', do: steps }] }));
+    expect(JSON.stringify(behaviourOf(button)).length).toBeGreaterThan(160);
+    fireEvent.click(interactions().getByRole('button', { name: /^Edit: / }));
+    expect(interactions().getByRole('group', { name: 'Interaction' })).toBeTruthy();
+    // Only the last action changes, as an AI edit or another tab could.
+    act(() => button.setBehaviour({ on: [{ id: 't-long0001', on: 'click', do: [...steps.slice(0, 4), { emit: 'the-other-event' }] }] }));
+    expect(interactions().queryByRole('group', { name: 'Interaction' })).toBeNull();
+    expect((behaviourOf(button)?.on as { do: unknown[] }[])[0].do[4]).toEqual({ emit: 'the-other-event' });
+
+    // Another trigger in the same place, the same text but another id: the editor closes too.
+    fireEvent.click(interactions().getByRole('button', { name: /^Edit: / }));
+    const same = (behaviourOf(button)?.on as Record<string, unknown>[])[0];
+    act(() => button.setBehaviour({ on: [{ ...same, id: 't-long0002' }] }));
+    expect(interactions().queryByRole('group', { name: 'Interaction' })).toBeNull();
+  });
+
   it('shows what a preset wrote with its mark, and offers no edit that the preset would undo', () => {
     mount();
     const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;

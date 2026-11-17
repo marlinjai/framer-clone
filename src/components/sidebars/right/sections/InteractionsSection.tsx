@@ -54,7 +54,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL, PropertyRow, PropertySwitch } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, namesFor, rawText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, namesFor, storedText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface InteractionsSectionProps {
@@ -84,7 +84,8 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
   const { editorUI } = useStore();
   const page = editorUI.currentPage as unknown as BehaviourPage | undefined;
   // Drafts belong to one element: picking another closes them (RightSidebar keys this by id too).
-  const [editing, setEditing] = useState<{ nodeId: string; index: number; base: string } | null>(null);
+  // An open editor names its trigger by node, place and id, and holds the whole stored trigger it opened on.
+  const [editing, setEditing] = useState<{ nodeId: string; index: number; triggerId: string; base: string } | null>(null);
   const [adding, setAdding] = useState<{ nodeId: string; draft: StoredRecord } | null>(null);
   if (!page) return null;
   const roots = rootsOf(page);
@@ -133,13 +134,15 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
           const reason = refused.find((r) => r.entry === 'on' && r.index === index)?.reason;
           const sentence = describeTrigger(trigger, names);
           const preset = isRecord(trigger) && trigger.preset === true;
-          const base = rawText(trigger);
-          // An open editor whose stored entry changed (an undo, another tab) closes rather than save over it.
-          if (editingHere && editingHere.index === index && editingHere.base === base) {
+          const base = storedText(trigger);
+          const triggerId = isRecord(trigger) && typeof trigger.id === 'string' ? trigger.id : '';
+          // An open editor whose stored entry changed (an undo, another tab, an AI edit) closes rather than save
+          // over it: compared whole, so a change past any length counts.
+          if (editingHere && editingHere.index === index && editingHere.triggerId === triggerId && editingHere.base === base) {
             return (
               <li key={`edit-${index}`}>
                 <TriggerEditor
-                  key={`edit-${component.id}-${index}`}
+                  key={`edit-${component.id}-${index}-${triggerId}`}
                   initial={isRecord(trigger) ? trigger : { id: freshTriggerId(stored), on: 'click', do: [firstAction(context)] }}
                   states={states}
                   nodes={nodes}
@@ -161,7 +164,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
                 <span className="min-w-0 flex-1 text-[12px] leading-snug text-foreground">{sentence}</span>
                 {!preset && (
                   <>
-                    <IconButton label={`Edit: ${sentence}`} onClick={() => { setAdding(null); setEditing({ nodeId: component.id, index, base }); }}>
+                    <IconButton label={`Edit: ${sentence}`} onClick={() => { setAdding(null); setEditing({ nodeId: component.id, index, triggerId, base }); }}>
                       <Pencil size={12} aria-hidden />
                     </IconButton>
                     <IconButton label={`Delete: ${sentence}`} onClick={() => { setEditing(null); writeBehaviour(component, removeEntry(stored, 'on', index)); }}>
@@ -587,7 +590,7 @@ interface ShowWhenProps {
 function ShowWhen({ component, stored, states, roots, names, reason }: ShowWhenProps) {
   const [error, setError] = useState<{ reason: string; for: string } | null>(null);
   const condition = stored.showWhen;
-  const key = rawText(condition);
+  const key = storedText(condition);
   const write = (next: unknown) => {
     const behaviour = putField(stored, 'showWhen', next);
     const refusal = next === undefined ? null : refusalAt(roots, component.id, behaviour, next, names.node);

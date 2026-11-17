@@ -159,11 +159,15 @@ export function CommitField({ value, onCommit, 'aria-label': label, numeric, dis
   );
 }
 
-/** The stored entry as one line of JSON, for an entry no picker can show. */
-export const rawText = (value: unknown): string => {
+/**
+ * The whole stored value as text, for telling two stored entries apart: an edit an
+ * error belongs to, or whether an open editor's entry changed underneath it. Never
+ * shortened, since two triggers can differ only past any length.
+ */
+export const storedText = (value: unknown): string => {
   try {
     const text = JSON.stringify(value);
-    return text === undefined ? String(value) : text.length > 160 ? `${text.slice(0, 160)}...` : text;
+    return text === undefined ? String(value) : text;
   } catch {
     return String(value);
   }
