@@ -525,7 +525,7 @@ C1 to C6 can be built now: nothing is served on the real domain until O1, and no
 | C1b | `sandbox-schema`. **Built 2026-11-15** on `feat/sandbox-box-schema` after Marlin's yes to the migration by name that day, see "Decided in slice C1b" | Prisma migration `20261115000000_custom_code` (`custom_code_blobs`, `custom_code_audit`, `custom_code_proposals`, `sites.custom_code_enabled`, the function `box_document` of D18 instead of the view), the grant of EXECUTE on it in `prisma/sql/box-reader.sql` (no password in it, applied by the operator in O1), the `deploy/README.md` section, and the box's integration suite pointed at the real migration instead of the fixture | C1a, #394 merged, **Marlin's yes to the migration** | 1 session | The box's integration suite passes against the migrated schema; `box_reader` may call only `box_document`, reads no table and never gets the code of a blob that is not live; the migration is additive and applies on a database without `box_reader` |
 | O1 | `sandbox-domain-and-host` (operator, not a worker). **Repository half built 2026-11-17 on `feat/sandbox-box-deploy`,** see "Decided in step O1 (repository half)"; the operator half (infra repository, Coolify, Infisical, DNS, monitors) is open | Infra repo: Cloudflare zone and records in Terraform, Infisical project `framer-clone-box` and its machine identity, Coolify application, `box_reader` applied, five Kuma monitors. In this repository: the Infisical client and login entrypoint in `Dockerfile.box`, and the push, webhook and health poll steps in `box.yml` | C1a, C1b, **M2 bought** | Half a day | `curl` with and without fetch metadata headers gives 200 and 403 on `run.<domain>`; certificates valid; no `Set-Cookie`; all monitors green; abuse page answers |
 | C2 | `sandbox-element`. **Built 2026-11-16 on `feat/sandbox-element`,** see "Decided in slice C2" | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `blockedNodes.ts`, `renderVocabulary.ts`, `previewSafe.ts`, `src/components/CustomCodeSurface.tsx` with `EditorApp.tsx` and `PreviewMount.tsx` (the surface context), `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), `src/lib/consent/consent.ts` and `MapEmbedIsland.tsx` (D48), `PreviewShell.tsx` and `src/lib/site/sitePath.ts` (D49), `applyBindings.ts` (D98); no registry entry (D43), `HeadlessComponentRenderer.tsx` unchanged | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
-| C3 | `sandbox-bridge` | `src/lib/customCode/broker.ts`, `CustomCodeIsland.tsx`, the shell client in `contract.ts`, `runtime.ts` (third lazy chunk), size test (broker at most 2 kilobytes gzipped, as the behaviour plan holds) | C2, B4 | 3 sessions | Bridge tests above in three engines; a page without blocks loads no broker byte; the focus watch proven or replaced with the proof attached |
+| C3 | `sandbox-bridge`. **Built 2026-11-17 on `feat/sandbox-bridge`,** see "Decided in slice C3" | `src/lib/customCode/broker.ts`, `CustomCodeIsland.tsx`, the shell client in `contract.ts`, `runtime.ts` (third lazy chunk), size test (broker at most 2 kilobytes gzipped, as the behaviour plan holds) | C2, B4 | 3 sessions | Bridge tests above in three engines; a page without blocks loads no broker byte; the focus watch proven or replaced with the proof attached |
 | C4 | `sandbox-authoring` | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
 | C5 | `sandbox-lifecycle` | `src/server/sites/repository.ts` (blob pruning with revisions), `src/server/sites/erase.ts` (D9), publish dialog listing, `publishCheck.ts` warnings, proposals (D7): `propose_custom_code` in the site operations, the importer's "Propose as custom code", the panel's Accept, `POST /api/internal/custom-code/block` | C4 | 2 sessions | Rollback to a revision whose blob was blocked shows the fallback; an erase inside code rewrites the hash in every kept revision in one transaction; a proposal never reaches the box; an agent key cannot write a hash |
 | C6 | `sandbox-escape-suite` | `test/sandbox/escape.spec.ts` and hostile fixtures, a path-filtered workflow on `src/lib/customCode/**`, `services/box/**` and the suite, `events.score.ts`, `report.ts`, `exclusions.json`, `samples.json` | C5 | 3 sessions | Every probe above, in Chromium, WebKit and Firefox, against the real box image; residuals asserted as residuals; the score rows the behaviour plan lists |
@@ -882,6 +882,115 @@ binding into `customCode` or any path below it, as it does for `behaviour` and F
 create a block nor choose which approved code it names: that stays the stored revision's choice, which D4 relies on to know which code
 a revision uses. The agent refusal (`namesCustomCodeProp`) matches every name whose folded form starts with `customcode`, so a dotted
 path such as `customCode.sha256` is refused in every spelling. Found by the third review of pull request #450.
+
+## Decided in slice C3, say so if you disagree
+
+Built 2026-11-17 on `feat/sandbox-bridge`, stacked on C2. A published page now draws an accepted block as a sandboxed frame
+through the broker, the behaviour runtime's third lazy chunk; every other surface still shows the fallback. Numbering starts at
+D60 (O1 holds D50 to D58).
+
+**D60. Reads come from the attributes the runtime already reflects; writes and events go through the kit.** The runtime writes
+every state but `text` to `data-fcs-<id>` on its scope. The broker sends a declared read at `connect` and on every change of that
+attribute (one `MutationObserver` per block, observing each scope once with every read's attribute), so the core needed no change notification and no byte for it.
+A write goes through `Kit.write`, an event through `Kit.emit`, both new on the kit the core lends its chunks.
+
+**D61. A frame's event runs state verbs only, and starts no chain.** `Kit.emit` fires `custom:<name>` as a replayed run: `set`,
+`toggle` and `step` run, while `navigate`, the focus verbs, `emit` and `delay` do not. The parser already refuses `navigate` and the
+focus verbs in a `custom:` trigger; the run-time rule holds on its own (a program handed past the parser is tested in jsdom and in
+three browsers). A frame is not a person, so it may change what the page shows but never move the visitor.
+
+**D62. A block that writes makes the page changeable, and any block brings the runtime.** `applyBehaviour` takes
+`{ changeable }`: a page whose block declares a write holds its cells like a page with a trigger. A page with any accepted block gets
+`program.broker = true` (with an empty program when it had none), which is what makes BehaviourIsland fetch the broker. A page with
+no block carries neither, proven in jsdom and on Next's real chunks.
+
+**D63. A wrong write is dropped, never clamped.** A `setState` must name a declared write of a state that stands above the block,
+with a value of exactly its type: a boolean, a finite number within `min` and `max`, one of a choice's options. No coercion (`"5"`
+is not 5), no clamping (99 for a maximum of 9 is dropped, not stored as 9), and `text` never, whatever a declaration says.
+
+**D64. `lumitra.ready()` needs no new message.** The shell's client (shell version 2) resolves it once every declared read has a
+value; it queues up to 30 calls made before `connect`. `onState` calls a new watcher at once with a known value. `emit('done')` and
+`emit('custom:done')` mean the same. The client is a frozen object on a non-configurable `window.lumitra`.
+
+**D65. The 64 kilobyte rule is the UTF-8 length of the message's JSON form.** A message JSON cannot express (a cycle) is dropped as
+oversize. The rate is counted before anything else, so a flood costs one comparison per message.
+
+**D66. Four blocks a page, held twice.** The server accepts the first four blocks in document order (`applyCustomCode`) and
+draws the rest as their fallback with a warning; the broker refuses a fifth on its own.
+
+**D67. The per-site `<meta>` names the site's box path, and Google only on a page with a map.** A policy in a `<meta>` element
+narrows the header's, never widens it, so the consent cookie still decides the map in the header (D48); the `<meta>` only keeps a
+page from framing another site's path. A page without blocks carries no `<meta>`. `frameSrc.gate.ts` proves it in Chromium and
+WebKit with the `<meta>` taken from a real render: the site's own box frame loads, another site's box path is refused, and the map
+is refused before consent and loads after it.
+
+**D68. What may run is read per request, from the blob row alone.** `loadLiveCustomCode` reads the blobs the page names, keyed by
+the site, not blocked, not on the takedown list, of a site whose switch is on, and the declaration stored with each. The switch is
+read live, never from the cached published site, so turning it off reaches every page at its next request. A preview, the kill
+switch, a missing origin or a failed read means no frames. The standalone project preview keeps the fallback in C3: it would need
+C4's read route.
+
+**D69. A frame is hidden until `hello`, and its fallback stays until then and for good after any failure.** The `hello` is accepted
+only from the frame's own window, with the opaque origin `null` a sandboxed frame has, once. The frame is laid out at the box's width
+but invisible before it, so a lazy frame still loads and the page never shows an empty box. A second `hello`, a second `load`,
+no `hello` within 5 seconds of `load`, or three unanswered pings (removed at the fourth tick, about 20 seconds after the last
+answer) take the frame away and bring the fallback back for good.
+
+**D70. The frame is created only within one viewport of the screen,** so a block far down the page costs nothing until the
+visitor nears it, and its 5 second clock starts at its own `load`.
+
+**D71. The focus watch, D8 as built and proven.** The behaviour plan marked it "designed, not probed"; the probe changed the design
+three times.
+- A first version listened only for the window's `blur`. Chromium fires it when a frame takes the keyboard; Firefox does not (it
+  blurs only the element that had it), so in Firefox a frame took the keyboard six times and stayed. The broker now listens for
+  `focus` and `blur` in the capture phase, the window's own included, reads a task later which element holds the keyboard, and
+  counts each arrival in a frame once.
+- In Firefox the frame runs in the page's process and can take the keyboard back before that task runs, so the page holding the
+  keyboard is now noted at once, inside the event.
+- Firefox as Playwright runs it holds the page's focus events back until the page's next focus change. Every ping (5 seconds)
+  therefore also looks where the keyboard is, so a theft no event announces is still seen within one ping. Seen that late, a
+  person's own move needs as long to explain it, so for those arrivals the grace is 6 seconds instead of 1.
+
+The rule: a move into a non-interactive frame removes it the first time. A move into an interactive frame counts as theft unless
+the pointer is over the frame (`:hover`), or the pointer entered a frame or a Tab was pressed in the page within the last second
+(6 seconds when only a ping saw the move); the third theft removes it. The proof, in `customCodeBridge.gate.ts` with real input
+from Playwright:
+- Chromium and Firefox: a frame whose script focuses an input inside it every 300 ms takes the keyboard back after the page
+  takes it, and is removed at its third arrival (interactive) or its first (not interactive). An attempt where Firefox did not
+  apply the page's `focus()` at all is not counted as a theft; at most two such attempts are allowed.
+- WebKit never lets a frame of another site take the keyboard by script: the page keeps it in every attempt, so the watch has
+  nothing to do there. The test asserts exactly that, so a change in WebKit shows.
+- No false removal in any of the three engines: four clicks into an interactive frame and out again, four Tabs into it and back,
+  four taps on a touch screen, and three clicks into it with the pointer then moved away past a ping leave it in place.
+
+The per-engine moves are written to `custom-code-bridge.log` in the system's temporary folder on every run.
+
+**D72. D39 settled: the report-only `frame-src` expects the box.** Wherever the box may be framed (`boxFrameSource`), the report-only
+policy's `frame-src` is `'self'`, the box's path and, after consent, Google, so a block's frame reports nothing and any other frame
+still does.
+
+**D73. The broker's size, and what it does not check twice.** 2 kilobytes gzipped, held on esbuild's measure in the unit suite
+and on Next's real chunk in the behaviour suite. Next compiles `?.`, `??` and template strings into longer code than esbuild does
+(its first real chunk came to 2037 bytes against esbuild's 1990), so the broker is written without them, and its numbers are
+literals at their use, since a bundler keeps a module's constants as variables. The registry it shares with the island and the
+attribute names it shares with the core sit in other chunks in Next and are left out of the esbuild measure too. The broker does not
+check the frame's address again: the server builds it (`boxPath`, from the site's id and a stored hash), and the page's enforced
+`frame-src` and its per-site `<meta>` admit only that site's box path, which `frameSrc.gate.ts` proves in the browser. The core's
+own limit (5 kilobytes) had 14 bytes to spare before C3; the kit's two new members and the broker's start cost about 50, so nine
+empty fallbacks in the core (`x ?? []` where `x` is an array or nothing) became `x || []`, which means the same and costs less
+after Next compiles it.
+
+**D74. The bridge tests run in Chromium, WebKit and Firefox.** `test/renderGate/customCodeBridge.gate.ts` bundles the real runtime,
+broker and registry and frames documents from a local stand-in for the box that answers with the real headers and the real shell
+(or, for a hostile block, a document that speaks the protocol by hand). The render gate job now installs Firefox for it; a run
+without Firefox fails unless `CUSTOM_CODE_GATE_NO_FIREFOX=1` says it may be left out. A frame that stops answering pings is
+removed in all three engines. A frozen frame (`for (;;) {}`) can only be removed where the engine runs it apart from the page:
+Chromium launched with site isolation (`--site-per-process`, as desktop Chrome ships) removes it while the page answers
+throughout. Every box frame is of one site, so they share that process, and a healthy block beside the frozen one stops and is
+removed with it; the page keeps every fallback. WebKit, and Firefox as Playwright runs it (Fission does not start there even when
+asked), run the frame in the page's own process: a frozen frame holds the page as well. That is the residual M7 the plan already
+names, asserted as such so a change shows; the plan's wish to prove the watchdog on a frozen frame in Firefox could not be met in
+this harness.
 
 ## For Marlin
 
