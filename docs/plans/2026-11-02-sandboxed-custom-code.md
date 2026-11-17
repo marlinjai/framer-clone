@@ -524,7 +524,7 @@ C1 to C6 can be built now: nothing is served on the real domain until O1, and no
 | C1a | `sandbox-service`, the service and the contract. **Built 2026-11-12,** see "Decided in slice C1a" | `services/box/` (server, cache, rate limit, shell, tests, a fixture that states the view's columns), `src/lib/customCode/contract.ts`, `Dockerfile.box`, `Dockerfile.box.dockerignore`, `.github/workflows/box.yml` (build and test only) | none | 1 session | Every box test above passes against the built image and a real Postgres holding the fixture; `box_reader` reads only the view; the image runs read-only as non-root with every capability dropped; `contract.ts` imports nothing; nothing in the application imports it; no image is pushed and nothing is deployed |
 | C1b | `sandbox-schema`. **Built 2026-11-15** on `feat/sandbox-box-schema` after Marlin's yes to the migration by name that day, see "Decided in slice C1b" | Prisma migration `20261115000000_custom_code` (`custom_code_blobs`, `custom_code_audit`, `custom_code_proposals`, `sites.custom_code_enabled`, the function `box_document` of D18 instead of the view), the grant of EXECUTE on it in `prisma/sql/box-reader.sql` (no password in it, applied by the operator in O1), the `deploy/README.md` section, and the box's integration suite pointed at the real migration instead of the fixture | C1a, #394 merged, **Marlin's yes to the migration** | 1 session | The box's integration suite passes against the migrated schema; `box_reader` may call only `box_document`, reads no table and never gets the code of a blob that is not live; the migration is additive and applies on a database without `box_reader` |
 | O1 | `sandbox-domain-and-host` (operator, not a worker). **Repository half built 2026-11-17 on `feat/sandbox-box-deploy`,** see "Decided in step O1 (repository half)"; the operator half (infra repository, Coolify, Infisical, DNS, monitors) is open | Infra repo: Cloudflare zone and records in Terraform, Infisical project `framer-clone-box` and its machine identity, Coolify application, `box_reader` applied, five Kuma monitors. In this repository: the Infisical client and login entrypoint in `Dockerfile.box`, and the push, webhook and health poll steps in `box.yml` | C1a, C1b, **M2 bought** | Half a day | `curl` with and without fetch metadata headers gives 200 and 403 on `run.<domain>`; certificates valid; no `Set-Cookie`; all monitors green; abuse page answers |
-| C2 | `sandbox-element`. **Built 2026-11-16 on `feat/sandbox-element`,** see "Decided in slice C2" | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `blockedNodes.ts`, `renderVocabulary.ts`, `previewSafe.ts`, `src/components/CustomCodeSurface.tsx` with `EditorApp.tsx` and `PreviewMount.tsx` (the surface context), `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), `src/lib/consent/consent.ts` and `MapEmbedIsland.tsx` (D48), `PreviewShell.tsx` (D49); no registry entry (D43), `HeadlessComponentRenderer.tsx` unchanged | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
+| C2 | `sandbox-element`. **Built 2026-11-16 on `feat/sandbox-element`,** see "Decided in slice C2" | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `blockedNodes.ts`, `renderVocabulary.ts`, `previewSafe.ts`, `src/components/CustomCodeSurface.tsx` with `EditorApp.tsx` and `PreviewMount.tsx` (the surface context), `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), `src/lib/consent/consent.ts` and `MapEmbedIsland.tsx` (D48), `PreviewShell.tsx` and `src/lib/site/sitePath.ts` (D49), `applyBindings.ts` (D98); no registry entry (D43), `HeadlessComponentRenderer.tsx` unchanged | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
 | C3 | `sandbox-bridge` | `src/lib/customCode/broker.ts`, `CustomCodeIsland.tsx`, the shell client in `contract.ts`, `runtime.ts` (third lazy chunk), size test (broker at most 2 kilobytes gzipped, as the behaviour plan holds) | C2, B4 | 3 sessions | Bridge tests above in three engines; a page without blocks loads no broker byte; the focus watch proven or replaced with the proof attached |
 | C4 | `sandbox-authoring` | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
 | C5 | `sandbox-lifecycle` | `src/server/sites/repository.ts` (blob pruning with revisions), `src/server/sites/erase.ts` (D9), publish dialog listing, `publishCheck.ts` warnings, proposals (D7): `propose_custom_code` in the site operations, the importer's "Propose as custom code", the panel's Accept, `POST /api/internal/custom-code/block` | C4 | 2 sessions | Rollback to a revision whose blob was blocked shows the fallback; an erase inside code rewrites the hash in every kept revision in one transaction; a proposal never reaches the box; an agent key cannot write a hash |
@@ -800,9 +800,17 @@ year at most, seven days for a cookie set by script in Safari) sets the cookie a
 with a map reloads once. When storage throws, a reload would forget the answer, so it is announced as before; the runtime exposes
 `mapsAtLoad`, and the map island draws no frame the policy would refuse. Its placeholder says "Reload the page to show the map" with a
 reload button, which gets focus (the cookie is already set, so the new page allows the map, and its banner asks again because the
-answer was not stored). The visitor also keeps "Open in Google Maps". Focus survives the reload: "Load map" leaves a one-shot
-`sessionStorage` mark naming its box (path and position among the page's maps), and after the reload that box focuses its frame once
-and removes the mark; a mark for another page is removed unread. Two limits remain. A visitor whose tracker already runs (analytics granted earlier) and who then accepts maps on a page
+answer was not stored). The visitor also keeps "Open in Google Maps". The same holds while a form field on the page holds input the
+visitor changed (a value, a tick, a choice that differs from the page's default): a reload would lose it, so the "yes" is announced
+and the map offers the reload, which the visitor presses when ready (decided after the third review of pull request #450, instead of
+listing the lost input as a limit). Where the browser blocks cookies the maps cookie never sticks, so no reload could help; the runtime
+exposes `mapsAllowed()`, and the placeholder then says the map cannot be shown while this browser blocks cookies, with no button, and
+"Open in Google Maps" gets focus (found by the third review; before C2 those visitors saw the map in the same page). Focus survives
+the reload: the runtime announces a maps reload first, as a `lumitra:maps-reload` event saying whether a map's "Load map" opened the
+banner, and only then does the last map that asked leave a one-shot `sessionStorage` mark naming its box (path and position among the
+page's maps); a map's own reload button does the same. After the reload that box focuses its frame once and removes the mark; a mark
+for another page is removed unread. A banner declined or closed without a "yes" leaves no mark (the third review found one written on
+"Load map" that lingered). Two limits remain. A visitor whose tracker already runs (analytics granted earlier) and who then accepts maps on a page
 with a map still reloads, so that page view is counted twice; the alternative, a placeholder asking for a manual reload, costs every
 map visitor a step for a rarer double count. And `mapsAtLoad` is read from the cookie as the runtime starts, not from the response: if
 the maps cookie is set (in another tab, say) between the request leaving and the runtime script running, the page believes its policy
@@ -815,7 +823,9 @@ document with Google in `frame-src`, and the map loads.
 with. A client-side step from `/projects/<id>/preview` back into the editor would keep the preview's `frame-src` there and refuse
 the editor's own frames (the Books PDF preview in `ImportRowEditor.tsx`). "Editor" and the "Open your projects" link of the
 preview now load a new document (`src/components/preview/leavePreview.ts`). The way in is already a full load: the tile's link
-opens a new tab, and no other client-side link leads to the route. The demo preview at `/preview` stays client-side, because its
+opens a new tab, and no other client-side link leads to the route. The preview over the editor and Interact read every link to a
+path as a page of the site (`sitePathOfClick`, `src/lib/site/sitePath.ts`); a link with the tile's reserved
+`data-fc-custom-code-preview` attribute is left alone, so it opens its tab (the third review found it cancelled with a false notice). The demo preview at `/preview` stays client-side, because its
 project lives only in the tab's memory, and it never carries the policy. The checkout draws no frame (no payment script runs on
 the page), so nothing else on the policed documents is affected.
 
@@ -833,15 +843,28 @@ out (found by the second review of pull request #450), so the tile's link is nev
 `section`, `article`, `aside`, `header`, `footer`, `main`, `nav`, `figure`, `blockquote`, `li`, `dd`, `td`, `th`) keep their tag. A
 block standing inside an `svg` draws a `g` with its attributes and the tile as HTML in a `foreignObject`, because React draws an HTML
 tag under `svg` as an SVG element, which shows nothing; inside `math`, where React draws no HTML at all, the tile is its label as text
-in `mtext`. The tile carries `role="group"`, which may hold its `aria-label`. This is wider than the review asked (every tag that
+in `mtext`. The tile carries `role="group"`, which may hold its `aria-label`. On the published page and in the standalone preview a
+block stored as a void tag (which cannot hold the fallback) is drawn as a container of the content it stands in: a `div` in HTML, a
+`g` inside `svg`, an `mrow` inside `math` (`customCodeBoxTag`); a `div` there would be parsed out of the SVG or MathML by the browser
+and no longer match hydration (found by the third review). This is wider than the review asked (every tag that
 cannot hold the tile, not only controls and SVG). Found by the first review of pull request #450.
 
-**D97. A title refuses invisible formatting characters and lone surrogate halves.** Besides control characters, the parser now
-refuses the bidirectional marks, embeddings, overrides and isolates (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069), the
-zero-width characters and the word joiner range (U+200B to U+200D, U+2060 to U+2064), the byte order mark, and half of a surrogate
-pair without its other half. They change how a title reads without being seen, on the editor surfaces now and in a frame's `title`
-from C3. An emoji joined with a zero-width joiner is refused with them; titles in any script, right-to-left ones included, and single
-emoji still pass. Found by the second review of pull request #450.
+**D97. A title refuses invisible formatting characters and lone surrogate halves, and must show something.** Besides control
+characters, the parser refuses every format character (Unicode category Cf: the bidirectional marks, embeddings, overrides and
+isolates, the zero-width characters and the word joiner range, the soft hyphen, the deprecated format marks U+206A to U+206F, the
+interlinear annotation marks, the Mongolian vowel separator, the byte order mark and the tag characters, which are invisible text an
+agent reading the title would still see), the combining grapheme joiner, the blank fillers that draw nothing (the Hangul fillers and
+the blank braille pattern), and half of a surrogate pair without its other half. A title must also hold at least one visible letter,
+number, symbol or punctuation mark. They change how a title reads without being seen, on the editor surfaces now and in a frame's
+`title` from C3. An emoji joined with a zero-width joiner is refused with them; titles in any script, right-to-left ones included,
+single emoji and emoji with a variation selector still pass. Found by the second review of pull request #450, widened from a
+hand-written list to the category after the third.
+
+**D98. Nothing is bound into a custom code block's value.** `applyBindings` (`src/lib/bindings/resolver/applyBindings.ts`) skips a
+binding into `customCode` or any path below it, as it does for `behaviour` and FX scenes, so page data and the address bar can neither
+create a block nor choose which approved code it names: that stays the stored revision's choice, which D4 relies on to know which code
+a revision uses. The agent refusal (`namesCustomCodeProp`) matches every name whose folded form starts with `customcode`, so a dotted
+path such as `customCode.sha256` is refused in every spelling. Found by the third review of pull request #450.
 
 ## For Marlin
 
