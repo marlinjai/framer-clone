@@ -26,14 +26,21 @@ export const SMALL_BUTTON =
  * wraps, the hint is shown under it rather than only on hover, and the label names the
  * switch for assistive technology.
  */
-export function SwitchRow({ label, hint, checked, onCheckedChange }: { label: string; hint: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+export function SwitchRow({ label, name, hint, checked, onCheckedChange }: {
+  label: string;
+  /** The switch's accessible name when the label alone repeats (one per action). Defaults to the label. */
+  name?: string;
+  hint: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-1 pt-1.5">
         <span className={cn(FIELD_LABEL, 'leading-snug')}>{label}</span>
         <span className={HINT}>{hint}</span>
       </div>
-      <PropertySwitch aria-label={label} checked={checked} onCheckedChange={onCheckedChange} />
+      <PropertySwitch aria-label={name ?? label} checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   );
 }

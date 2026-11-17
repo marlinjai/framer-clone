@@ -54,7 +54,7 @@ import {
   verbOf,
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
-import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL, PropertyRow, PropertySwitch } from '../primitives';
+import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
 import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, namesFor, storedText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
@@ -334,6 +334,8 @@ function TriggerEditor({ initial, states, nodes, selfId, saveLabel, onSave, onCa
   const on = typeof draft.on === 'string' ? draft.on : '';
   const custom = on.startsWith('custom:');
   const actions = Array.isArray(draft.do) ? draft.do : [];
+  // An address the field marks as unsafe is never saved: Save waits until it is one.
+  const unsafeAddress = actions.some((action) => verbOf(action) === 'navigate' && isRecord(action) && !(typeof action.navigate === 'string' && action.navigate !== '' && isSafeHref(action.navigate)));
 
   const setEvent = (value: string) => {
     let next = putField(draft, 'on', value === CUSTOM_EVENT_CHOICE ? 'custom:open' : value);
@@ -435,7 +437,7 @@ function TriggerEditor({ initial, states, nodes, selfId, saveLabel, onSave, onCa
           type="button"
           aria-label={`${saveLabel} this interaction`}
           className={cn(SMALL_BUTTON, 'border-brand text-brand')}
-          disabled={keysError !== null}
+          disabled={keysError !== null || unsafeAddress}
           onClick={() => setReason(onSave(draft))}
         >
           {saveLabel}
@@ -528,7 +530,7 @@ function ActionEditor({ index, action, states, nodes, selfId, onChange, onRemove
         )
       )}
       {verb === 'step' && state && (
-        <div className="grid grid-cols-2 items-center gap-1.5">
+        <div className="flex flex-col gap-1.5">
           <CommitField aria-label={`Step by in action ${n}`} numeric placeholder="1" value={typeof record.by === 'number' ? String(record.by) : ''} onCommit={(text) => {
             const by = Number(text);
             const next = { ...record };
@@ -536,14 +538,18 @@ function ActionEditor({ index, action, states, nodes, selfId, onChange, onRemove
             else next.by = by;
             onChange(next);
           }} />
-          <PropertyRow label="Wrap around">
-            <PropertySwitch checked={record.wrap === true} onCheckedChange={(checked) => {
+          <SwitchRow
+            label="Wrap around"
+            name={`Wrap around in action ${n}`}
+            hint="Past the last, back to the first."
+            checked={record.wrap === true}
+            onCheckedChange={(checked) => {
               const next = { ...record };
               if (checked) next.wrap = true;
               else delete next.wrap;
               onChange(next);
-            }} />
-          </PropertyRow>
+            }}
+          />
         </div>
       )}
       {['focus', 'scroll', 'dialog', 'popover', 'details', 'media', 'fullscreen', 'pictureInPicture', 'form', 'effect'].includes(verb as string) && (
@@ -593,7 +599,8 @@ function AddressField({ index, value, onChange }: { index: number; value: string
         onChange={(event) => {
           const next = event.target.value;
           setDraft(next);
-          if (next.trim() !== '' && isSafeHref(next.trim())) onChange(next.trim());
+          // Passed on as typed: the draft then holds what the field shows, and Save stays off while it is not safe.
+          onChange(next.trim());
         }}
         className={cn(FIELD_CONTROL, 'font-mono text-[11px]')}
       />

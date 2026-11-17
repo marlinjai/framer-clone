@@ -196,6 +196,21 @@ describe('forward', () => {
     expect(interactions().queryByRole('group', { name: 'Interaction' })).toBeNull();
   });
 
+  it('a step action names its Wrap around switch by its number', () => {
+    mount();
+    select(button);
+    addPageValue('Count');
+    retypeTo('Count', 'number', 'Number');
+    fireEvent.click(interactions().getByRole('button', { name: 'Add interaction' }));
+    fireEvent.change(interactions().getByLabelText('Action 1', { exact: true }), { target: { value: 'step' } });
+    fireEvent.click(interactions().getByRole('button', { name: 'Add action' }));
+    fireEvent.change(interactions().getByLabelText('Action 2', { exact: true }), { target: { value: 'step' } });
+    expect(interactions().getByRole('switch', { name: 'Wrap around in action 1' })).toBeTruthy();
+    fireEvent.click(interactions().getByRole('switch', { name: 'Wrap around in action 2' }));
+    fireEvent.click(interactions().getByRole('button', { name: 'Add this interaction' }));
+    expect((behaviourOf(button)?.on as { do: unknown[] }[])[0].do).toMatchObject([{ step: expect.any(String) }, { step: expect.any(String), wrap: true }]);
+  });
+
   it('takes an address that leaves the site only as a safe link, typed by a person', () => {
     mount();
     select(button);
@@ -204,7 +219,15 @@ describe('forward', () => {
       const address = interactions().getByLabelText('Address in action 1');
       fireEvent.change(address, { target: { value: 'javascript:alert(1)' } });
       expect(interactions().getByRole('alert').textContent).toContain('Use a page path');
+      // Save stays off while the field shows an address it would not save.
+      const save = interactions().getByRole('button', { name: 'Add this interaction' }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      fireEvent.change(address, { target: { value: 'https://exam' } });
+      expect(save.disabled).toBe(false);
+      fireEvent.change(address, { target: { value: 'https:/' } });
+      expect(save.disabled).toBe(true);
       fireEvent.change(address, { target: { value: 'https://example.com/book' } });
+      expect(save.disabled).toBe(false);
       expect(interactions().getByText(/Leaves the site/)).toBeTruthy();
     });
     expect((behaviourOf(button)?.on as unknown[])[0]).toMatchObject({ on: 'click', do: [{ navigate: 'https://example.com/book' }] });
