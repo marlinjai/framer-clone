@@ -72,6 +72,19 @@ describe('parseCustomCode', () => {
     ['a title with a lone high surrogate', { sha256: HASH, title: 'a\ud83db' }],
     ['a title ending in a lone high surrogate', { sha256: HASH, title: 'scene\ud83d' }],
     ['a title with a lone low surrogate', { sha256: HASH, title: 'a\ude00b' }],
+    ['a title with a soft hyphen', { sha256: HASH, title: 'sce\u00adne' }],
+    ['a title with an inhibit symmetric swapping mark', { sha256: HASH, title: 'a\u206ab' }],
+    ['a title with a nominal digit shape mark', { sha256: HASH, title: 'a\u206fb' }],
+    ['a title with an interlinear annotation anchor', { sha256: HASH, title: 'a\ufff9b\ufffac\ufffb' }],
+    ['a title with a Mongolian vowel separator', { sha256: HASH, title: 'a\u180eb' }],
+    ['a title with a combining grapheme joiner', { sha256: HASH, title: 'a\u034fb' }],
+    ['a title with hidden tag characters', { sha256: HASH, title: `Scene${String.fromCodePoint(0xe0001, 0xe0069, 0xe0067, 0xe006e, 0xe007f)}` }],
+    ['a title only of Hangul fillers', { sha256: HASH, title: '\u3164\u115f\u1160\uffa0' }],
+    ['a title only of blank braille', { sha256: HASH, title: '\u2800\u2800' }],
+    ['a title only of soft hyphens', { sha256: HASH, title: '\u00ad' }],
+    ['a title with a Hangul filler beside letters', { sha256: HASH, title: 'scene\u3164' }],
+    ['a title only of combining marks', { sha256: HASH, title: '\u0301\u0308' }],
+    ['a title only of spaces of every width', { sha256: HASH, title: '\u2003\u3000\u00a0 ' }],
     ['a proposal title with an override', { proposal: 'p1', title: '\u202dx' }],
     ['a title too long', { sha256: HASH, title: 'x'.repeat(201) }],
     ['a proposal id with a slash', { proposal: 'a/b', title: 'x' }],
@@ -90,7 +103,7 @@ describe('parseCustomCode', () => {
   });
 
   it('keeps a title in another script, a right-to-left one and a whole emoji', () => {
-    for (const title of ['Waschanlage für LKW', 'מכונת שטיפה', 'غسيل الشاحنات', 'Scene \ud83d\ude9a']) {
+    for (const title of ['Waschanlage für LKW', 'מכונת שטיפה', 'غسيل الشاحنات', 'Scene \ud83d\ude9a', '\ud83d\ude9a', '\u2764\ufe0f', '한국어 장면', '+', 'Café\u0301']) {
       expect(parseCustomCode({ sha256: HASH, title })).toEqual({ ok: true, value: { kind: 'block', sha256: HASH, title } });
     }
   });
