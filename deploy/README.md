@@ -700,10 +700,24 @@ The order, in O1 and afterwards:
    `ghcr.io/marlinjai/framer-clone-box`.
 
 From then on a push to main publishes when the box's own files changed since the commit running in `box-production`
-(the last successful deployment there), so a run that was cancelled or failed is made good by the next one. If GitHub
-cannot say which commit that is, or the newest successful deployment was not made by this workflow's publish or
-rollback job on main, the run fails instead of guessing: re-run it, or run the workflow by hand (decision D59). Each deploy replaces the running container without waiting for the new one, since Coolify's health check is off:
+(the last successful deployment there), so a run that was cancelled or failed is made good by the next one. Until one
+deployment has succeeded, every run counts as the first deploy, so a failed first deploy (step 3) is simply run again.
+Each deploy replaces the running container without waiting for the new one, since Coolify's health check is off:
 expect a few seconds of errors per deploy while the new box logs in and fetches its secret.
+
+When a run does not publish, it says why, and each case has a way out (decisions D56 and D59):
+
+| The run says | Way out |
+|---|---|
+| deploy the application first (the database changed) | Deploy the application, then run the workflow by hand on main |
+| too many changes to check the database (more than 300 files since the deployed commit) | Deploy the application if `prisma/migrations` or `prisma/sql` changed, then run the workflow by hand on main |
+| the commit running in `box-production` is not known, or is not an ancestor (the decision step fails) | Re-run it; or check in Coolify and GitHub what runs, then run the workflow by hand on main |
+| the guard refuses (in the publish job): not known, or an older run over a newer one | If meant after checking what runs, run the workflow by hand on main with `override_guard`; to go back on purpose, roll back instead |
+| pinned | Lift the pin (below), or run by hand with `publish_while_pinned` |
+
+A manual run waiting for a running one can be replaced by a later push run (GitHub keeps only the newest waiting run of
+a group), and that push may then hold the publish back for a database change: if a manual run shows as cancelled, look
+at the newer run's notice and run by hand again.
 
 **Rolling the box back** (decision D53):
 
@@ -724,7 +738,8 @@ expect a few seconds of errors per deploy while the new box logs in and fetches 
 Re-running an older workflow run is not a rollback. A full re-run is refused once production has moved on (the
 deployed commit is then not an ancestor). "Re-run failed jobs" would keep the earlier decision and artifact, so the
 publish job asks again before pushing: it refuses while pinned and refuses unless the commit running in
-`box-production` is that run's commit or an ancestor of it.
+`box-production` is that run's commit or an ancestor of it. Re-running an old rollback run, by contrast, has no such
+check: while pinned it deploys that run's digest again, which is only right when that is the image meant.
 
 ## Operator commands (from a checkout, against a forwarded database)
 
