@@ -268,3 +268,40 @@ describe('createCustomCodeElement', () => {
     }
   });
 });
+
+describe('a block inside a client island (decision D50)', () => {
+  // An island's props are serialized into the page's script data (the React Server
+  // Components payload), so the props as handed to the island are what reaches the page.
+  const nested = (): ComponentNode => ({
+    type: 'div',
+    id: 'outer',
+    props: {},
+    children: [
+      { type: 'div', id: 'cc', props: { customCode: { sha256: HASH, title: TITLE } }, children: [fallback('cc')] },
+      { type: 'div', id: 'cp', props: { customCode: { proposal: 'prop_1', title: 'Proposed scene' } }, children: [fallback('cp')] },
+    ],
+  });
+  const islandProps = (element: React.ReactNode) => JSON.stringify((element as React.ReactElement<Record<string, unknown>>).props);
+
+  it.each([
+    ['a form', { type: 'form', id: 'f', props: { 'data-form-kind': 'form' } }],
+    ['a form field', { type: 'div', id: 'ff', props: { 'data-form-kind': 'form-field' } }],
+    ['a form submit button', { type: 'div', id: 'fs', props: { 'data-form-kind': 'form-submit' } }],
+    ['a shop control', { type: 'div', id: 'atc', props: { 'data-component-kind': 'add-to-cart' } }],
+  ] as [string, ComponentNode][])('%s carries no stored custom code value to the page', (_name, host) => {
+    const element = renderComponentNode({ ...host, children: [nested()] });
+    expect(React.isValidElement(element)).toBe(true);
+    const serialized = islandProps(element);
+    // The island still gets its subtree, the fallbacks included.
+    expect(serialized).toContain('Fallback of cc');
+    expect(serialized).not.toContain('customCode');
+    expect(serialized).not.toContain(HASH.slice(0, 12));
+    expect(serialized).not.toContain('prop_1');
+    expect(serialized).not.toContain(TITLE);
+  });
+
+  it('a block itself marked as a form field loses the value too', () => {
+    const element = renderComponentNode({ type: 'div', id: 'x', props: { 'data-form-kind': 'form-field', customCode: { sha256: HASH, title: TITLE } } });
+    expect(islandProps(element)).not.toContain('customCode');
+  });
+});

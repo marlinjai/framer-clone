@@ -121,6 +121,29 @@ export function withoutCustomCodeProp<P extends Record<string, unknown>>(props: 
   return rest as P;
 }
 
+/** The part of a stored node this module reads: its props and its children. */
+export interface CustomCodeTreeNode {
+  props?: Record<string, unknown>;
+  children?: CustomCodeTreeNode[];
+}
+
+/**
+ * A node and every descendant without `props.customCode`, for a node that crosses
+ * into a client island (a form, a shop control): an island's props are serialized
+ * into the page's script data, and nothing of a block's stored value may reach the
+ * page (decisions D36, D45 and D50). Unchanged nodes are returned as they are.
+ */
+export function withoutCustomCodeTree<N extends CustomCodeTreeNode>(node: N): N {
+  const props = node.props ? withoutCustomCodeProp(node.props) : node.props;
+  let children = node.children;
+  if (Array.isArray(node.children)) {
+    const next = node.children.map((child) => (child && typeof child === 'object' ? withoutCustomCodeTree(child) : child));
+    if (next.some((child, i) => child !== node.children![i])) children = next;
+  }
+  if (props === node.props && children === node.children) return node;
+  return { ...node, props, children } as N;
+}
+
 // ---------------------------------------------------------------------------
 // The switches the application reads at run time
 // ---------------------------------------------------------------------------
