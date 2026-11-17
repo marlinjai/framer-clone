@@ -10,7 +10,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BehaviourNode, StateValue } from '@/lib/behaviour/format';
 import { isRecord, sameStored, storedBehaviourOf, type Names, type StoredRecord } from '@/lib/behaviour/authoring';
-import { FIELD_CONTROL } from '../primitives';
+import { FIELD_CONTROL, FIELD_LABEL, PropertySwitch } from '../primitives';
 import { cn } from '@/lib/utils';
 
 export const HINT = 'text-[11px] leading-snug text-muted-foreground';
@@ -19,6 +19,24 @@ export const SMALL_BUTTON =
   'inline-flex h-7 items-center justify-center rounded-[6px] border border-border px-2 text-[11px] text-foreground '
   + 'transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand '
   + 'disabled:cursor-not-allowed disabled:opacity-50';
+
+/**
+ * A switch with a label too long for a PropertyRow's 64 pixel label column, which cut
+ * "Stop the browser's own response" to "Stop the b...". The label takes the width and
+ * wraps, the hint is shown under it rather than only on hover, and the label names the
+ * switch for assistive technology.
+ */
+export function SwitchRow({ label, hint, checked, onCheckedChange }: { label: string; hint: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-1 pt-1.5">
+        <span className={cn(FIELD_LABEL, 'leading-snug')}>{label}</span>
+        <span className={HINT}>{hint}</span>
+      </div>
+      <PropertySwitch aria-label={label} checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
 
 /** What the page's trees, the page and its floating elements, need from a page. */
 export interface BehaviourPage {

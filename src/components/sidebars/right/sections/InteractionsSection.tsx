@@ -54,7 +54,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL, PropertyRow, PropertySwitch } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, namesFor, rawText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, namesFor, rawText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface InteractionsSectionProps {
@@ -207,12 +207,12 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
       )}
       {states.length === 0 && <p className={HINT}>To show, hide or switch something, add a value in Page state first.</p>}
       <ShowWhen component={component} stored={stored} states={states} roots={roots} names={names} reason={refused.find((r) => r.entry === 'showWhen')?.reason} />
-      <PropertyRow label="Hide without JavaScript" hint="With scripts off this element is hidden: for a control that only works with them">
-        <PropertySwitch
-          checked={stored.noScript === 'hide'}
-          onCheckedChange={(checked) => writeBehaviour(component, putField(stored, 'noScript', checked ? 'hide' : undefined))}
-        />
-      </PropertyRow>
+      <SwitchRow
+        label="Hide without JavaScript"
+        hint="For a control that only works with scripts on."
+        checked={stored.noScript === 'hide'}
+        onCheckedChange={(checked) => writeBehaviour(component, putField(stored, 'noScript', checked ? 'hide' : undefined))}
+      />
       <Bindings component={component} stored={stored} names={names} refused={refused} />
     </Shell>
   );
@@ -373,9 +373,12 @@ function TriggerEditor({ initial, states, nodes, selfId, saveLabel, onSave, onCa
         </label>
       )}
       {isDomName(on) && (
-        <PropertyRow label="Stop the browser's own response" hint="Calls preventDefault: a form does not send, a key does not scroll">
-          <PropertySwitch checked={draft.prevent === true} onCheckedChange={(checked) => change(putField(draft, 'prevent', checked ? true : undefined))} />
-        </PropertyRow>
+        <SwitchRow
+          label="Stop the browser's own response"
+          hint="A form does not send, a key does not scroll."
+          checked={draft.prevent === true}
+          onCheckedChange={(checked) => change(putField(draft, 'prevent', checked ? true : undefined))}
+        />
       )}
       {(draft.if !== undefined || draft.scope !== undefined) && (
         <p className={HINT}>Also holds {draft.if !== undefined ? 'a condition' : ''}{draft.if !== undefined && draft.scope !== undefined ? ' and ' : ''}{draft.scope !== undefined ? 'a page-wide listener' : ''}, kept as it is.</p>
