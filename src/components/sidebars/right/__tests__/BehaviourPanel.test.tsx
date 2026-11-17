@@ -75,6 +75,12 @@ function addPageValue(name: string): string {
   return added.id;
 }
 
+/** Picks a type for a value and applies it with the button: picking alone changes nothing. */
+function retypeTo(name: string, type: string, label: string) {
+  fireEvent.change(pageState().getByLabelText(`Type of ${name}`), { target: { value: type } });
+  fireEvent.click(pageState().getByRole('button', { name: `Change to ${label}` }));
+}
+
 /** Opens the add form, picks the event and saves. Actions start as the form suggests. */
 function addInteraction(event: string, before?: () => void) {
   fireEvent.click(interactions().getByRole('button', { name: 'Add interaction' }));
@@ -154,7 +160,7 @@ describe('forward', () => {
     mount();
     select(button);
     addPageValue('Size');
-    fireEvent.change(pageState().getByLabelText('Type of Size'), { target: { value: 'number' } });
+    retypeTo('Size', 'number', 'Number');
     const size = () => (behaviourOf(root)?.state as Record<string, unknown>[])[0];
     expect(size()).toMatchObject({ type: 'number', initial: 0 });
     typeAndCommit(pageState().getByLabelText('Lowest of Size'), '5');
@@ -164,7 +170,7 @@ describe('forward', () => {
     typeAndCommit(pageState().getByLabelText('Lowest of Size'), '5');
     expect(size()).toMatchObject({ initial: 7, min: 5 });
 
-    fireEvent.change(pageState().getByLabelText('Type of Size'), { target: { value: 'choice' } });
+    retypeTo('Size', 'choice', 'Choice');
     typeAndCommit(pageState().getByLabelText('Options of Size'), 'small, small');
     expect(screen.getByRole('alert').textContent).toContain('two options are the same');
     typeAndCommit(pageState().getByLabelText('Options of Size'), 'small, large');
@@ -258,6 +264,26 @@ describe('the page as a whole', () => {
     expect((behaviourOf(root)?.state as unknown[]).length).toBe(16);
   });
 
+  it('changes a type only on the button, never on the pick, and refuses one that breaks what reads the value', () => {
+    mount();
+    select(button);
+    addPageValue('Menu open');
+    addInteraction('click');
+    const before = history().undoIdx;
+    const type = () => pageState().getByLabelText('Type of Menu open') as HTMLSelectElement;
+    // Moving through the list (an arrow key fires change in some browsers) writes nothing.
+    fireEvent.change(type(), { target: { value: 'number' } });
+    fireEvent.change(type(), { target: { value: 'choice' } });
+    expect(history().undoIdx).toBe(before);
+    expect((behaviourOf(root)?.state as { type: string }[])[0].type).toBe('boolean');
+    fireEvent.click(pageState().getByRole('button', { name: 'Keep the type' }));
+    expect(type().value).toBe('boolean');
+    // Applied: the toggle on the button needs on or off, so the page check refuses it and names the reader.
+    retypeTo('Menu open', 'number', 'Number');
+    expect(pageState().getByRole('alert').textContent).toMatch(/^Not changed: it would stop "Button" working: /);
+    expect(history().undoIdx).toBe(before);
+  });
+
   it('shows on the rows when the page refuses a scope\'s behaviour whole', () => {
     mount();
     select(button);
@@ -275,8 +301,18 @@ describe('backtrack and revise', () => {
     select(drawer);
     fireEvent.change(interactions().getByLabelText('Show when value'), { target: { value: menu } });
 
+    // The row says what reads it, and deleting it asks first, naming them.
+    expect(pageState().getByText(/^Read by 2 elements: /)).toBeTruthy();
     const before = history().undoIdx;
     fireEvent.click(pageState().getByRole('button', { name: 'Delete Menu open' }));
+    const confirm = () => within(pageState().getByRole('group', { name: 'Delete Menu open?' }));
+    expect(confirm().getByText(/stops what reads it from working/)).toBeTruthy();
+    expect(history().undoIdx).toBe(before);
+    fireEvent.click(confirm().getByRole('button', { name: 'Keep it' }));
+    expect(pageState().queryByRole('group', { name: 'Delete Menu open?' })).toBeNull();
+    expect(history().undoIdx).toBe(before);
+    fireEvent.click(pageState().getByRole('button', { name: 'Delete Menu open' }));
+    fireEvent.click(confirm().getByRole('button', { name: 'Delete Menu open' }));
     expect(history().undoIdx).toBe(before + 1);
     expect(interactions().getByText(/Shown always: .*menu|Shown always:/)).toBeTruthy();
     select(button);
@@ -305,7 +341,7 @@ describe('backtrack and revise', () => {
     mount();
     select(button);
     const size = addPageValue('Size');
-    fireEvent.change(pageState().getByLabelText('Type of Size'), { target: { value: 'choice' } });
+    retypeTo('Size', 'choice', 'Choice');
     typeAndCommit(pageState().getByLabelText('Options of Size'), 'small, medium, large');
     fireEvent.change(pageState().getByLabelText('Preview Size'), { target: { value: 'large' } });
     expect(store.editorUI.previewState).toEqual({ [size]: 'large' });
@@ -318,7 +354,7 @@ describe('backtrack and revise', () => {
     expect(store.editorUI.previewState).toEqual({});
 
     fireEvent.change(pageState().getByLabelText('Preview Size'), { target: { value: 'medium' } });
-    fireEvent.change(pageState().getByLabelText('Type of Size'), { target: { value: 'boolean' } });
+    retypeTo('Size', 'boolean', 'On or off');
     expect(store.editorUI.previewState).toEqual({});
   });
 

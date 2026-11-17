@@ -227,6 +227,32 @@ export function stateRefusal(candidate: unknown): string | null {
   return read.refused[0]?.reason ?? null;
 }
 
+/**
+ * The elements whose stored behaviour names a value, by id: a trigger setting it, a
+ * binding or a Show when reading it. The value's own declaration does not count. Read
+ * from what is stored, so a reader already refused is still one that deleting the value
+ * would leave without it.
+ */
+export function readersOf(roots: readonly BehaviourNode[], stateId: string): string[] {
+  const out: string[] = [];
+  const names = (value: unknown): boolean => {
+    if (value === stateId) return true;
+    if (Array.isArray(value)) return value.some(names);
+    if (isRecord(value)) return Object.values(value).some(names);
+    return false;
+  };
+  const walk = (node: BehaviourNode) => {
+    const stored = isRecord(node.props) ? node.props.behaviour : undefined;
+    if (isRecord(stored) && typeof node.id === 'string') {
+      const rest = Object.entries(stored).filter(([key]) => key !== 'state' && key !== 'preset').map(([, value]) => value);
+      if (rest.some(names) && !out.includes(node.id)) out.push(node.id);
+    }
+    childrenOf(node).forEach(walk);
+  };
+  roots.forEach(walk);
+  return out;
+}
+
 /** A refusal's identity across two reads of one page: a whole behaviour by its node, an entry by its node, kind and stored value. */
 function refusalKey(refusal: RefusedOnNode): string {
   if (refusal.entry === 'behaviour') return `${refusal.nodeId}|behaviour`;

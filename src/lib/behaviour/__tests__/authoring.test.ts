@@ -14,6 +14,7 @@ import {
   keysFromText,
   optionsFromText,
   putEntry,
+  readersOf,
   refusalAt,
   refusalsOn,
   removeEntry,
@@ -148,6 +149,13 @@ describe('what a person entered goes through the parser', () => {
     // Saving the refused one unchanged is still refused.
     expect(refusalAt([tree], 'drawer', { on: [good, bad] }, bad)).toMatch(/tab/);
     expect(roots).toHaveLength(1);
+  });
+
+  it('names the elements whose behaviour reads a value, not the one declaring it', () => {
+    const shown = withBehaviourAt(page(), 'drawer', { showWhen: { state: 'menu', eq: true } })!;
+    const tree = withBehaviourAt(shown, 'button', { on: [{ id: 't1', on: 'click', do: [{ toggle: 'menu' }] }] })!;
+    expect(readersOf([tree], 'menu')).toEqual(['button', 'drawer']);
+    expect(readersOf([tree], 'tab')).toEqual([]);
   });
 
   it('reads a refusal already stored, by node', () => {

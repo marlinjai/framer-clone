@@ -31,6 +31,7 @@ import {
   optionsFromText,
   pathTo,
   putEntry,
+  readersOf,
   refusalAt,
   refusalsOn,
   removeEntry,
@@ -161,6 +162,11 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
   const { editorUI } = useStore();
   // A refusal of what a person just entered, shown until the stored value changes.
   const [error, setError] = useState<{ reason: string; for: string } | null>(null);
+  // A type picked but not yet applied, and a delete waiting for its confirmation: a select's
+  // change (an arrow key in some browsers) never retypes, and a value something reads is
+  // never deleted on one press.
+  const [pendingType, setPendingType] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const storedKey = storedText(entry);
   const shownError = error && error.for === storedKey ? error.reason : null;
 
@@ -177,22 +183,27 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
   const name = typeof entry.name === 'string' && entry.name ? entry.name : `Value ${index + 1}`;
   const preset = entry.preset === true;
 
-  /** Writes one change through the parser; a refusal is shown and nothing is written. */
-  const commit = (next: StoredRecord) => {
+  /** Writes one change through the parser; a refusal is shown and nothing is written. True when written. */
+  const commit = (next: StoredRecord): boolean => {
     const behaviour = putEntry(stored, 'state', next, index);
     const refusal = stateRefusal(next) ?? refusalAt(rootsOf(page), scope.id, behaviour, next, nameIn(page));
     if (refusal) {
       setError({ reason: refusal, for: storedKey });
-      return;
+      return false;
     }
     setError(null);
     writeBehaviour(scope, behaviour);
     // A preview this value can no longer hold goes, rather than hiding behind the first value.
     const previewed = editorUI.previewState[id];
     if (previewed !== undefined && !fitsState(next, previewed)) editorUI.setPreviewValue(id, undefined);
+    return true;
   };
 
+  const readers = id ? readersOf(rootsOf(page), id) : [];
+  const readerNames = readers.map((reader) => page.findComponent(reader)?.displayName ?? reader);
+
   const remove = () => {
+    setConfirmDelete(false);
     writeBehaviour(scope, removeEntry(stored, 'state', index));
     if (editorUI.previewState[id] !== undefined) editorUI.setPreviewValue(id, undefined);
   };
@@ -222,19 +233,31 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
     <div className="flex flex-col gap-1.5 rounded-[6px] border border-border p-2" data-state-id={id}>
       <div className="flex items-center gap-1.5">
         <CommitField aria-label={`Name of ${name}`} value={typeof entry.name === 'string' ? entry.name : ''} onCommit={(text) => commit({ ...entry, name: text.trim() })} />
-        {!preset && <DeleteButton label={`Delete ${name}`} onClick={remove} />}
+        {!preset && <DeleteButton label={`Delete ${name}`} onClick={() => (readers.length > 0 ? setConfirmDelete(true) : remove())} />}
       </div>
+      {readers.length > 0 && (
+        <p className={HINT}>{`Read by ${readers.length === 1 ? 'one element' : `${readers.length} elements`}: ${readerNames.join(', ')}`}</p>
+      )}
+      {confirmDelete && (
+        <div className="flex flex-col gap-1.5 rounded-[6px] border border-destructive/40 p-2" role="group" aria-label={`Delete ${name}?`}>
+          <p className={REASON}>{`Deleting ${name} stops what reads it from working until it is back: ${readerNames.join(', ')}.`}</p>
+          <div className="flex gap-1.5">
+            <button type="button" className={SMALL_BUTTON} onClick={remove}>{`Delete ${name}`}</button>
+            <button type="button" className={SMALL_BUTTON} onClick={() => setConfirmDelete(false)}>Keep it</button>
+          </div>
+        </div>
+      )}
       {preset && <p className={HINT}>Made by a preset, which writes it again when the preset changes.</p>}
       <div className="grid grid-cols-2 gap-1.5">
         <label className="flex min-w-0 flex-col gap-1">
           <span className={FIELD_LABEL}>Type</span>
           <select
             aria-label={`Type of ${name}`}
-            value={isStateType(entry.type) ? entry.type : ''}
+            value={pendingType ?? (isStateType(entry.type) ? entry.type : '')}
             disabled={preset}
             onChange={(event) => {
               const type = event.target.value;
-              if (isStateType(type) && type !== entry.type) commit(retype(entry, type) as unknown as StoredRecord);
+              setPendingType(isStateType(type) && type !== entry.type ? type : null);
             }}
             className={cn(FIELD_CONTROL, 'cursor-pointer')}
           >
@@ -249,6 +272,21 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
           }} />
         </label>
       </div>
+      {pendingType && isStateType(pendingType) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={HINT}>{`Its first value starts again${readers.length > 0 ? ', and what reads it must still fit' : ''}.`}</span>
+          <button
+            type="button"
+            className={cn(SMALL_BUTTON, 'border-brand text-brand')}
+            onClick={() => {
+              if (commit(retype(entry, pendingType) as unknown as StoredRecord)) setPendingType(null);
+            }}
+          >
+            {`Change to ${STATE_TYPES.find((option) => option.type === pendingType)?.label ?? pendingType}`}
+          </button>
+          <button type="button" className={SMALL_BUTTON} onClick={() => setPendingType(null)}>Keep the type</button>
+        </div>
+      )}
       {entry.type === 'choice' && (
         <label className="flex min-w-0 flex-col gap-1">
           <span className={FIELD_LABEL}>Options, separated by commas</span>
