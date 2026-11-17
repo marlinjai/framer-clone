@@ -1,4 +1,8 @@
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { type Answer, type Call, deploy, DEPLOY_LIMIT_MS, HEALTH_TRIES } from '../ci/deploy';
 
@@ -116,14 +120,17 @@ describe('the deploy through Coolify', () => {
   });
 
   it.each([
-    ['the webhook is refused', { webhook: { status: 401, body: null } }, 'The Coolify deploy webhook answered HTTP 401.'],
-    ['the webhook does not answer', { webhook: { status: 0, body: null } }, 'The Coolify deploy webhook answered HTTP 0.'],
-    ['no deployment is named', { webhook: { status: 200, body: { deployments: [] } } }, 'Coolify named no deployment'],
-    ['a malformed deployment is named', { webhook: { status: 200, body: { deployments: [{ deployment_uuid: '../x' }] } } }, 'Coolify named no deployment'],
-    ['Coolify did not queue the deployment', { statuses: [{ status: 404, body: null }] }, 'Coolify did not queue a deployment (one may already be running for the box).'],
-  ] as const)('puts the earlier image back when %s before a deployment started', async (_name, script, message) => {
+    ['the webhook is refused', { webhook: { status: 401, body: null } }, 'The Coolify deploy webhook answered HTTP 401.', true],
+    ['the webhook does not answer', { webhook: { status: 0, body: null } }, 'The Coolify deploy webhook answered HTTP 0.', false],
+    ['no deployment is named', { webhook: { status: 200, body: { deployments: [] } } }, 'Coolify named no deployment', false],
+    ['a malformed deployment is named', { webhook: { status: 200, body: { deployments: [{ deployment_uuid: '../x' }] } } }, 'Coolify named no deployment', false],
+    // Coolify 4.7.5 answers a token without the deploy permission with 200, this message and no id.
+    ['the token may not deploy', { webhook: { status: 200, body: { deployments: [{ message: 'Unauthorized to deploy this application.' }] } } }, 'Coolify named no deployment', true],
+    ['Coolify did not queue the deployment', { statuses: [{ status: 404, body: null }] }, 'Coolify did not queue a deployment (one may already be running for the box).', false],
+  ] as const)('puts the earlier image back when %s before a deployment started', async (_name, script, message, hint) => {
     const { done, lines, calls, image } = run(script);
     expect(await done).toBe(1);
+    expect(shown(lines).includes('read, write and deploy permissions, limited to the box application')).toBe(hint);
     const patches = calls.filter((c) => c.method === 'PATCH');
     expect(patches.map((c) => JSON.parse(c.body ?? '{}').docker_registry_image_tag)).toEqual([`sha256-${image.slice(7)}`, PREVIOUS_TAG]);
     expect(shown(lines)).toContain(message);
@@ -179,5 +186,20 @@ describe('the deploy through Coolify', () => {
     expect(await done).toBe(1);
     expect(calls).toEqual([]);
     expect(shown(lines)).toContain(message);
+  });
+});
+
+describe('the script as the workflow runs it', () => {
+  it('runs when started through a symlinked path, so a wrong entry check cannot pass the step having done nothing', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'deploy-'));
+    try {
+      const linked = path.join(dir, 'deploy.ts');
+      symlinkSync(path.join(__dirname, '..', 'ci', 'deploy.ts'), linked);
+      const result = spawnSync(process.execPath, [linked], { env: { PATH: process.env.PATH }, encoding: 'utf8' });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe('::error::COOLIFY_BOX_WEBHOOK is not an address.\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

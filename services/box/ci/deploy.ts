@@ -12,7 +12,18 @@
 // the status names below, and the Coolify address and the application's id (both part of the webhook
 // secret) are masked in the log before anything is asked.
 
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/** Whether this file is the program node was started with, by real path, so a symlinked path still runs it. */
+function isEntry(argv1: string | undefined, moduleUrl: string): boolean {
+  if (argv1 === undefined) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
 
 export interface Answer {
   status: number;
@@ -114,8 +125,14 @@ export async function deploy(env: Record<string, string | undefined>, deps: Depl
   if (started.status < 200 || started.status >= 300) {
     return failBeforeStart(`The Coolify deploy webhook answered HTTP ${started.status}.${hint(started.status)}`);
   }
-  const deployment = (started.body as { deployments?: { deployment_uuid?: unknown }[] } | null)?.deployments?.[0]?.deployment_uuid;
-  if (typeof deployment !== 'string' || !ID.test(deployment)) return failBeforeStart('Coolify named no deployment, so the deploy cannot be followed.');
+  const first = (started.body as { deployments?: { deployment_uuid?: unknown; message?: unknown }[] } | null)?.deployments?.[0];
+  const deployment = first?.deployment_uuid;
+  if (typeof deployment !== 'string' || !ID.test(deployment)) {
+    // A token without the deploy permission gets 200 with "Unauthorized to deploy" and no id; Coolify's words
+    // are not printed, only the hint.
+    const refused = typeof first?.message === 'string' && /unauthori[sz]ed/i.test(first.message);
+    return failBeforeStart(`Coolify named no deployment, so the deploy cannot be followed.${refused ? TOKEN_HINT : ''}`);
+  }
 
   const begun = deps.now();
   let notFound = 0;
@@ -177,7 +194,7 @@ const realCall: Call = async (url, init) => {
   }
 };
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntry(process.argv[1], import.meta.url)) {
   deploy(process.env, {
     call: realCall,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
