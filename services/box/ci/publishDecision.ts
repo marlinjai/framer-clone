@@ -59,7 +59,13 @@ const DATABASE_NOTICE = {
 const PINNED_NOTICE = {
   title: 'box not published: pinned',
   message:
-    'The repository variable BOX_DEPLOY_PINNED is true: a rollback holds, so nothing is published. To publish main anyway, run the box workflow by hand with publish_while_pinned; to lift the pin, set BOX_DEPLOY_PINNED to false and run the workflow by hand on main (deploy/README.md, the box).',
+    'The repository variable BOX_DEPLOY_PINNED is true: a rollback holds, so nothing is published. To lift the pin, deploy the application first if a migration landed since the rollback, then set BOX_DEPLOY_PINNED to false and run the box workflow by hand on main (deploy/README.md, the box).',
+};
+
+const PINNED_DATABASE_NOTICE = {
+  title: 'box not published: pinned, and deploy the application first',
+  message:
+    'The repository variable BOX_DEPLOY_PINNED is true: a rollback holds, so nothing is published. The database the box reads (prisma/migrations or prisma/sql) has also changed since the commit running in box-production: before lifting the pin, deploy the application, then set BOX_DEPLOY_PINNED to false and run the box workflow by hand on main (deploy/README.md, the box).',
 };
 
 export function decide(input: DecisionInput): Decision {
@@ -79,7 +85,12 @@ export function decide(input: DecisionInput): Decision {
     return { publish: false, notice: { title: 'box rollback', message: `This run redeploys the image ${input.rollbackDigest} and publishes nothing.` } };
   }
   // Pinned after a rollback: only a manual run that says so publishes, whatever changed.
-  if (input.pinned) return manual && input.publishWhilePinned ? { publish: true } : { publish: false, notice: PINNED_NOTICE };
+  if (input.pinned) {
+    if (manual && input.publishWhilePinned) return { publish: true };
+    // The comparison is made while pinned too (on a push), so a database change is not hidden by the pin.
+    const database = input.deployed.kind === 'commit' && input.sinceDeployed.kind === 'files' && touches(input.sinceDeployed.files, DATABASE_PATHS);
+    return { publish: false, notice: database ? PINNED_DATABASE_NOTICE : PINNED_NOTICE };
+  }
   // A manual run is the operator's word, given after the application's deploy: it always publishes.
   if (manual) return { publish: true };
 
@@ -114,14 +125,41 @@ export type GetJson = (path: string) => Promise<{ status: number; body: unknown 
 interface DeploymentRow {
   id?: unknown;
   sha?: unknown;
+  creator?: { login?: unknown } | null;
 }
+
+/** The workflow file and the jobs of it that deploy to box-production. */
+export const WORKFLOW = 'box.yml';
+export const DEPLOYING_JOBS = ['publish and deploy', 'roll back'];
 
 const COMMIT = /^[0-9a-f]{40}$/;
 
 /**
- * The commit of the newest deployment to box-production whose latest status is success. GitHub lists
- * deployments newest first; a later success marks the earlier ones inactive, and a failed or cancelled
- * one never reaches success, so the first success found is what production runs.
+ * Whether a commit was deployed by this workflow: a run of box.yml on main at that commit in which the
+ * publish or the rollback job succeeded. A deployment's status names no run (its log address is the
+ * commit's checks page), so the runs of the commit are asked instead. Undefined when GitHub cannot say.
+ */
+export async function deployedByWorkflow(get: GetJson, repository: string, sha: string): Promise<boolean | undefined> {
+  const runs = await get(`/repos/${repository}/actions/workflows/${WORKFLOW}/runs?head_sha=${sha}&branch=main&per_page=20`);
+  const list = (runs.body as { workflow_runs?: unknown } | null)?.workflow_runs;
+  if (runs.status !== 200 || !Array.isArray(list)) return undefined;
+  for (const run of list as { id?: unknown; head_branch?: unknown; head_sha?: unknown; path?: unknown }[]) {
+    if (typeof run.id !== 'number' || run.head_branch !== 'main' || run.head_sha !== sha) continue;
+    if (typeof run.path === 'string' && !run.path.endsWith(`.github/workflows/${WORKFLOW}`)) continue;
+    const jobs = await get(`/repos/${repository}/actions/runs/${run.id}/jobs?per_page=50`);
+    const jobList = (jobs.body as { jobs?: unknown } | null)?.jobs;
+    if (jobs.status !== 200 || !Array.isArray(jobList)) return undefined;
+    if ((jobList as { name?: unknown; conclusion?: unknown }[]).some((job) => typeof job.name === 'string' && DEPLOYING_JOBS.includes(job.name) && job.conclusion === 'success')) return true;
+  }
+  return false;
+}
+
+/**
+ * The commit of the newest deployment to box-production whose latest status is success, made by this
+ * workflow. GitHub lists deployments newest first; a later success marks the earlier ones inactive, and a
+ * failed or cancelled one never reaches success, so the first success found is what production runs. A
+ * success this workflow did not make (by hand, or by another workflow through the API) is not trusted:
+ * what runs is then not known, and the run fails loudly.
  */
 export async function lastDeployed(get: GetJson, repository: string): Promise<Deployed> {
   const list = await get(`/repos/${repository}/deployments?environment=${ENVIRONMENT}&per_page=30`);
@@ -134,7 +172,13 @@ export async function lastDeployed(get: GetJson, repository: string): Promise<De
       return { kind: 'unknown', reason: `a deployment's statuses answered HTTP ${statuses.status}` };
     }
     const latest = statuses.body[0] as { state?: unknown } | undefined;
-    if (latest?.state === 'success') return { kind: 'commit', sha: row.sha };
+    if (latest?.state !== 'success') continue;
+    const short = row.sha.slice(0, 12);
+    if (row.creator?.login !== 'github-actions[bot]') return { kind: 'unknown', reason: `the newest successful deployment, of ${short}, was not made by GitHub Actions` };
+    const made = await deployedByWorkflow(get, repository, row.sha);
+    if (made === undefined) return { kind: 'unknown', reason: `the runs of ${short} could not be read` };
+    if (!made) return { kind: 'unknown', reason: `the newest successful deployment, of ${short}, was not made by a publish or rollback job of ${WORKFLOW} on main` };
+    return { kind: 'commit', sha: row.sha };
   }
   return { kind: 'unknown', reason: 'none of the last 30 deployments succeeded' };
 }
@@ -160,6 +204,44 @@ export async function changedFiles(get: GetJson, repository: string, base: strin
 
 const ZERO = /^0+$/;
 
+function checkRun(repository: string, sha: string): void {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !COMMIT.test(sha)) {
+    throw new Error('GITHUB_REPOSITORY or SHA is not what a run on main gives');
+  }
+}
+
+export interface Guard {
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * Asked again at the start of the publish job, with that job's own token, because "Re-run failed jobs"
+ * keeps the box job's decision and artifact from an earlier attempt: the pin is read again (unless this is
+ * a manual run with publish_while_pinned), and the image is pushed only when the commit running in
+ * box-production is this commit or an ancestor of it, so an older run cannot deploy over a newer one.
+ */
+export async function guard(env: Record<string, string | undefined>, get: GetJson): Promise<Guard> {
+  const repository = env.GITHUB_REPOSITORY ?? '';
+  const sha = env.SHA ?? '';
+  if (env.REF !== 'refs/heads/main') return { ok: false, message: 'Only main publishes.' };
+  const manualOverride = env.EVENT === 'workflow_dispatch' && env.PUBLISH_WHILE_PINNED === 'true';
+  if (env.PINNED === 'true' && !manualOverride) {
+    return { ok: false, message: 'BOX_DEPLOY_PINNED is true now: a rollback holds, so this run publishes nothing (a re-run keeps an earlier decision, which is asked again here).' };
+  }
+  checkRun(repository, sha);
+  const deployed = await lastDeployed(get, repository);
+  if (deployed.kind === 'none') return { ok: true, message: 'Nothing has been deployed to box-production yet.' };
+  if (deployed.kind === 'unknown') return { ok: false, message: `The commit running in box-production is not known (${deployed.reason}); nothing is pushed. Run the box workflow by hand on main.` };
+  if (deployed.sha === sha) return { ok: true, message: `This commit is the one running in box-production.` };
+  const since = await changedFiles(get, repository, deployed.sha, sha);
+  if (since.kind === 'files') return { ok: true, message: `${deployed.sha.slice(0, 12)}, the commit running in box-production, is an ancestor of this one.` };
+  return {
+    ok: false,
+    message: `${deployed.sha.slice(0, 12)}, the commit running in box-production, is not this commit or an ancestor of it (${since.reason}), so this run would deploy an older box over a newer one; nothing is pushed.`,
+  };
+}
+
 
 /** Reads the run, asks GitHub, decides. Everything it reads comes in through `env` and `get`. */
 export async function decideRun(env: Record<string, string | undefined>, get: GetJson): Promise<Decision> {
@@ -174,13 +256,11 @@ export async function decideRun(env: Record<string, string | undefined>, get: Ge
   const rollbackDigest = env.ROLLBACK_DIGEST ?? '';
   const unknown = (reason: string): Changes => ({ kind: 'unknown', reason });
   const settings = { event, ref, enabled, pinned, publishWhilePinned, rollbackDigest };
-  // Only a push to main with publishing on and no pin needs GitHub at all.
-  if (event !== 'push' || ref !== 'refs/heads/main' || !enabled || pinned) {
+  // Only a push to main with publishing on needs GitHub at all.
+  if (event !== 'push' || ref !== 'refs/heads/main' || !enabled) {
     return decide({ ...settings, deployed: { kind: 'none' }, sinceDeployed: unknown('not asked'), thisPush: unknown('not asked') });
   }
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !COMMIT.test(sha)) {
-    throw new Error('GITHUB_REPOSITORY or SHA is not what a push to main gives');
-  }
+  checkRun(repository, sha);
   const deployed = await lastDeployed(get, repository);
   const sinceDeployed = deployed.kind === 'commit' ? await changedFiles(get, repository, deployed.sha, sha) : unknown('no deployed commit');
   const thisPush = deployed.kind !== 'none' ? unknown('not needed') : !COMMIT.test(before) || ZERO.test(before) ? unknown('the push has no previous commit') : await changedFiles(get, repository, before, sha);
@@ -218,7 +298,14 @@ export function noticeLine(notice: { title: string; message: string }): string {
 
 async function main(): Promise<void> {
   const env = process.env;
-  const decision = await decideRun(env, githubGet(env.GITHUB_API_URL ?? 'https://api.github.com', env.GITHUB_TOKEN ?? ''));
+  const get = githubGet(env.GITHUB_API_URL ?? 'https://api.github.com', env.GITHUB_TOKEN ?? '');
+  if (process.argv[2] === 'guard') {
+    const result = await guard(env, get);
+    process.stdout.write(result.ok ? `${result.message}\n` : `::error::${result.message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}\n`);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+  const decision = await decideRun(env, get);
   if (decision.notice) process.stdout.write(`${noticeLine(decision.notice)}\n`);
   const output = env.GITHUB_OUTPUT;
   if (!output) throw new Error('GITHUB_OUTPUT is not set');
