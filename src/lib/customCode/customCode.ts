@@ -131,7 +131,7 @@ export interface CustomCodeTreeNode {
  * A node and every descendant without `props.customCode`, for a node that crosses
  * into a client island (a form, a shop control): an island's props are serialized
  * into the page's script data, and nothing of a block's stored value may reach the
- * page (decisions D36, D45 and D50). Unchanged nodes are returned as they are.
+ * page (decisions D36, D45 and D95). Unchanged nodes are returned as they are.
  */
 export function withoutCustomCodeTree<N extends CustomCodeTreeNode>(node: N): N {
   const props = node.props ? withoutCustomCodeProp(node.props) : node.props;

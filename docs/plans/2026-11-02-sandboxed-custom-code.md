@@ -809,14 +809,14 @@ opens a new tab, and no other client-side link leads to the route. The demo prev
 project lives only in the tab's memory, and it never carries the policy. The checkout draws no frame (no payment script runs on
 the page), so nothing else on the policed documents is affected.
 
-**D50. A block inside a form or a shop control shows its fallback, with no stored value in the page's script data.** Form and shop
+**D95. A block inside a form or a shop control shows its fallback, with no stored value in the page's script data.** Form and shop
 controls are client islands that receive their whole stored node, and an island's props are serialized into the page (the React
 Server Components payload). `withoutCustomCodeTree` (`src/lib/customCode/customCode.ts`) takes `customCode` off such a node and
 every descendant before it crosses, so nothing of a block's value reaches the page, as D36 and D45 say; inside one the block renders
 as its fallback, without the trace mark. Running a block inside a form or a shop control is left to C3 if it is ever wanted. Found
 by the first review of pull request #450.
 
-**D51. The tile is drawn in a plain container, as a labelled group.** On the canvas a block stored as a link, a button, an SVG
+**D96. The tile is drawn in a plain container, as a labelled group.** On the canvas a block stored as a link, a button, an SVG
 element or any tag that cannot hold the tile (a paragraph, a list, a table part) draws the tile in a `div`, without the control's
 own attributes (`href`, `type` and the like), so the tile's link is never inside another control. Plain containers (`div`,
 `section`, `article`, `aside`, `header`, `footer`, `main`, `nav`, `figure`, `blockquote`, `li`, `dd`, `td`, `th`) keep their tag. A

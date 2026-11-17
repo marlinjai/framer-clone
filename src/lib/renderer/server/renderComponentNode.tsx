@@ -204,7 +204,7 @@ export function renderComponentNode(
   // time feeds the no-JavaScript fill-time check of the submit endpoint.
   const formKind = formKindOf(node.props as Record<string, unknown> | undefined);
   if (formKind === 'form') {
-    // A client island's props are serialized into the page: no stored custom code value goes with them (D50).
+    // A client island's props are serialized into the page: no stored custom code value goes with them (D95).
     return <FormIsland key={key} node={withoutCustomCodeTree(node)} scope={scope} renderedAt={Date.now()} />;
   }
   if (formKind === 'form-field') return <FormFieldIsland key={key} node={withoutCustomCodeTree(node)} />;
@@ -270,7 +270,7 @@ export function renderComponentNode(
       <CommerceIsland
         key={key}
         kind={dataKind as CommerceIslandProps['kind']}
-        // Serialized into the page with the island: no stored custom code value goes with it (D50).
+        // Serialized into the page with the island: no stored custom code value goes with it (D95).
         node={withoutCustomCodeTree(node)}
         // The product, variant and availability of the source the island sits in (hydrateBindings
         // records them on the node): a variant selector inside a product detail reads its product here.
