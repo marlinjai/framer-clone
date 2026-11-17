@@ -59,6 +59,9 @@ export function describeTag(tag: string | null): string {
   return TAG.test(tag) ? `the tag ${tag}` : 'an unreadable tag';
 }
 
+/** Coolify 4.7.5's statuses of a deployment that has not ended, and how many of the newest are looked at. */
+const BUSY = ['queued', 'in_progress'];
+const BUSY_LOOK = 20;
 const TOKEN_HINT = ' The token needs the read, write and deploy permissions, limited to the box application.';
 
 export async function deploy(env: Record<string, string | undefined>, deps: DeployDeps): Promise<number> {
@@ -98,6 +101,17 @@ export async function deploy(env: Record<string, string | undefined>, deps: Depl
   const previousTag = (current.body as { docker_registry_image_tag?: unknown } | null)?.docker_registry_image_tag;
   const previous = typeof previousTag === 'string' && TAG.test(previousTag) ? previousTag : null;
   const was = describeTag(typeof previousTag === 'string' ? previousTag : null);
+
+  // A deployment already queued or running for the box makes Coolify skip ours, and it would read the tag set
+  // below when it starts: refuse before changing anything. The three 404s further down remain for one queued
+  // in the moments between this look and the webhook.
+  const listed = await deps.call(`${webhook.origin}/api/v1/deployments/applications/${app}?take=${BUSY_LOOK}`, { method: 'GET', headers });
+  if (listed.status !== 200) return fail(`Coolify did not list the application's deployments (HTTP ${listed.status}); nothing was changed.${hint(listed.status)}`);
+  const recent = (listed.body as { deployments?: unknown } | null)?.deployments;
+  if (!Array.isArray(recent)) return fail("Coolify listed no deployments of the application; nothing was changed.");
+  if (recent.some((row) => BUSY.includes((row as { status?: unknown } | null)?.status as string))) {
+    return fail('A deployment of the box is already queued or running in Coolify, so this one would be skipped; nothing was changed. Run the workflow again once that deployment has ended.');
+  }
 
   const setTag = (value: string) =>
     deps.call(appUrl, { method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ docker_registry_image_tag: value }) });

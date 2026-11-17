@@ -12,11 +12,14 @@ const HEALTH = 'https://run.example.test/health/db';
 const digest = () => `sha256:${randomBytes(32).toString('hex')}`;
 const PREVIOUS = digest();
 const PREVIOUS_TAG = `sha256-${PREVIOUS.slice(7)}`;
+const RECENT = `${COOLIFY}/api/v1/deployments/applications/${APP}?take=20`;
 const WEBHOOK_CALL = `${COOLIFY}/api/v1/deploy?uuid=${APP}&force=false&cancel_previous=queued`;
 
 interface Script {
   /** The application as Coolify shows it before the change. */
   app?: Answer;
+  /** The application's newest deployments, as Coolify lists them before the change. */
+  recent?: Answer;
   patch?: Answer;
   /** The answer to putting the earlier tag back. */
   restore?: Answer;
@@ -40,6 +43,7 @@ function run(script: Script, env: Record<string, string | undefined> = {}) {
   const call: Call = async (url, init) => {
     calls.push({ url, ...init });
     if (init.method === 'GET' && url === `${COOLIFY}/api/v1/applications/${APP}`) return script.app ?? { status: 200, body: { uuid: APP, docker_registry_image_tag: PREVIOUS_TAG } };
+    if (init.method === 'GET' && url === RECENT) return script.recent ?? { status: 200, body: { count: 2, deployments: [{ status: 'finished' }, { status: 'failed' }] } };
     if (init.method === 'PATCH') return (patches++ === 0 ? script.patch : script.restore) ?? { status: 200, body: { uuid: APP } };
     if (init.method === 'POST') return script.webhook ?? { status: 200, body: { deployments: [{ deployment_uuid: 'dep-1', resource_uuid: APP }] } };
     if (url === HEALTH) return pick(script.health, healthIndex++, { status: 200, body: null });
@@ -64,6 +68,7 @@ describe('the deploy through Coolify', () => {
     expect(await done).toBe(0);
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `GET ${COOLIFY}/api/v1/applications/${APP}`,
+      `GET ${RECENT}`,
       `PATCH ${COOLIFY}/api/v1/applications/${APP}`,
       `POST ${WEBHOOK_CALL}`,
       `GET ${COOLIFY}/api/v1/deployments/dep-1`,
@@ -73,11 +78,11 @@ describe('the deploy through Coolify', () => {
       `GET ${HEALTH}`,
     ]);
     // The digest in Coolify's form, which it deploys as <image>@sha256:<hex>.
-    expect(JSON.parse(calls[1]?.body ?? '{}')).toEqual({ docker_registry_image_tag: `sha256-${image.slice(7)}` });
-    for (const c of calls.slice(0, 6)) expect(c.headers.Authorization).toBe(`Bearer ${token}`);
+    expect(JSON.parse(calls[2]?.body ?? '{}')).toEqual({ docker_registry_image_tag: `sha256-${image.slice(7)}` });
+    for (const c of calls.slice(0, 7)) expect(c.headers.Authorization).toBe(`Bearer ${token}`);
     // The health check is asked without the token, with its own short limit.
-    expect(calls[6]?.headers.Authorization).toBeUndefined();
-    expect(calls[6]?.timeoutMs).toBe(5_000);
+    expect(calls[7]?.headers.Authorization).toBeUndefined();
+    expect(calls[7]?.timeoutMs).toBe(5_000);
     // Both images named: the new one and the one before.
     expect(shown(lines)).toContain(`now names the image ${image} (it named ${PREVIOUS})`);
     // The address and the application's id are masked before anything else is written, and the token never shows.
@@ -141,9 +146,28 @@ describe('the deploy through Coolify', () => {
   it('stops after three answers of 404 in a row, not after 15 minutes, and keeps following after a single one', async () => {
     const notQueued = run({ statuses: [{ status: 404, body: null }] });
     expect(await notQueued.done).toBe(1);
-    expect(notQueued.calls.filter((c) => c.url.includes('/deployments/'))).toHaveLength(3);
+    expect(notQueued.calls.filter((c) => c.url.includes('/deployments/dep-1'))).toHaveLength(3);
     const blip = run({ statuses: [{ status: 404, body: null }, { status: 404, body: null }, { status: 200, body: { status: 'in_progress' } }, { status: 404, body: null }, { status: 200, body: { status: 'finished' } }] });
     expect(await blip.done).toBe(0);
+  });
+
+  it.each([['queued'], ['in_progress']])('refuses, changing nothing, while a deployment of the box is %s in Coolify', async (status) => {
+    const { done, calls, lines } = run({ recent: { status: 200, body: { count: 3, deployments: [{ status: 'finished' }, { status }, { status: 'failed' }] } } });
+    expect(await done).toBe(1);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`GET ${COOLIFY}/api/v1/applications/${APP}`, `GET ${RECENT}`]);
+    expect(shown(lines)).toContain('A deployment of the box is already queued or running in Coolify, so this one would be skipped; nothing was changed.');
+  });
+
+  it.each([
+    ['the list is refused for the token', { status: 403, body: null }, 'did not list the application\'s deployments (HTTP 403); nothing was changed.', true],
+    ['the list does not answer', { status: 0, body: null }, 'did not list the application\'s deployments (HTTP 0); nothing was changed.', false],
+    ['the list is not a list', { status: 200, body: { message: 'x' } }, 'Coolify listed no deployments of the application; nothing was changed.', false],
+  ] as const)('fails, changing nothing, when %s', async (_name, recent, message, hint) => {
+    const { done, calls, lines } = run({ recent });
+    expect(await done).toBe(1);
+    expect(calls.some((c) => c.method !== 'GET')).toBe(false);
+    expect(shown(lines)).toContain(message);
+    expect(shown(lines).includes('read, write and deploy permissions, limited to the box application')).toBe(hint);
   });
 
   it('says so when the earlier image cannot be put back', async () => {
