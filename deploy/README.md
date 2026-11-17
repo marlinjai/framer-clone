@@ -711,7 +711,7 @@ When a run does not publish, it says why, and each case has a way out (decisions
 |---|---|
 | deploy the application first (the database changed) | Deploy the application, then run the workflow by hand on main |
 | too many changes to check the database (more than 300 files since the deployed commit) | Deploy the application if `prisma/migrations` or `prisma/sql` changed, then run the workflow by hand on main |
-| the commit running in `box-production` is not known, or is not an ancestor (the decision step fails) | Re-run it; or check in Coolify and GitHub what runs, then run the workflow by hand on main |
+| the commit running in `box-production` is not known, or is not an ancestor (the decision step fails) | Re-run it; or check in Coolify and GitHub what runs, then run the workflow by hand on main with `override_guard` (without it, the publish job's guard asks the same question and refuses again when the cause lasts) |
 | the guard refuses (in the publish job): not known, or an older run over a newer one | If meant after checking what runs, run the workflow by hand on main with `override_guard`; to go back on purpose, roll back instead |
 | pinned | Lift the pin (below), or run by hand with `publish_while_pinned` |
 
@@ -740,6 +740,9 @@ deployed commit is then not an ancestor). "Re-run failed jobs" would keep the ea
 publish job asks again before pushing: it refuses while pinned and refuses unless the commit running in
 `box-production` is that run's commit or an ancestor of it. Re-running an old rollback run, by contrast, has no such
 check: while pinned it deploys that run's digest again, which is only right when that is the image meant.
+`override_guard` holds for the first attempt of a run only: a re-run of an override run (GitHub repeats its inputs) is
+refused by the guard, so an old override can never deploy its commit over a newer production. Start a new manual run
+instead, after checking again what runs.
 
 ## Operator commands (from a checkout, against a forwarded database)
 
