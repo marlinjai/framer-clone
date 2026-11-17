@@ -7,7 +7,7 @@
 // stood in for.
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { createRootStore, getDragManager, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
 import { EditorTool } from '@/stores/EditorUIStore';
 import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
@@ -144,5 +144,29 @@ describe('a custom code block in the mounted editor', () => {
     const overlay = document.querySelector('[data-testid="preview-overlay"]');
     expect(overlay).not.toBeNull();
     expectTilesAndNoFrame(overlay!);
+  });
+});
+
+describe('the tile link to the standalone preview', () => {
+  const href = () => `/projects/${encodeURIComponent(store.editorUI.currentProject!.id)}/preview?page=${encodeURIComponent(store.editorUI.currentPage!.id)}`;
+
+  it('opens a new tab from the preview over the editor, and is not read as a page of the site', () => {
+    act(() => store.editorUI.setPreviewOpen(true));
+    const overlay = document.querySelector('[data-testid="preview-overlay"]')!;
+    const link = overlay.querySelector('a[data-fc-custom-code-preview]') as HTMLAnchorElement;
+    expect(link.getAttribute('target')).toBe('_blank');
+    // The browser follows a click nobody cancelled; jsdom does not navigate.
+    const followed = fireEvent.click(link);
+    expect(followed).toBe(true);
+    expect(overlay.textContent).not.toContain('has no page at');
+  });
+
+  it('opens a new tab from the canvas in Interact', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    act(() => store.editorUI.setSelectedTool(EditorTool.INTERACT));
+    const link = document.querySelector('a[data-fc-custom-code-preview]') as HTMLAnchorElement;
+    fireEvent.click(link);
+    expect(open).toHaveBeenCalledWith(new URL(href(), document.baseURI).href, '_blank', 'noopener,noreferrer');
+    expect(document.body.textContent).not.toContain('has no page at');
   });
 });
