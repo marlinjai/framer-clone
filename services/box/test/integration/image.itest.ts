@@ -309,6 +309,19 @@ describe('the image', () => {
     await until(async () => (await httpGet(box.port, `/box/${SITE_A}/${'f'.repeat(64)}`, FRAME_HEADERS)).status === 404, 'the box to reach the database again', 30_000);
     await until(async () => (await httpGet(box.port, '/health/db')).status === 200, 'the health check to recover', 20_000);
   });
+
+  it("reads healthy by the image's own health check, the only health signal while Coolify's is off", async () => {
+    // The image's HEALTHCHECK command as built, with a short interval and start period so the test is quick
+    // (a start period of 0s would mean the image's own 60 seconds, in which failures do not count).
+    const box = await runBox({}, ['--health-interval=1s', '--health-start-period=1s', '--health-timeout=3s']);
+    // Ends on either verdict, so a broken check fails here on the status, not on the test's time limit.
+    const status = () => docker(['inspect', '--format', '{{.State.Health.Status}}', box.name]).trim();
+    await until(() => ['healthy', 'unhealthy'].includes(status()), 'the health check to give a verdict', 40_000);
+    expect(status()).toBe('healthy');
+    const health = JSON.parse(docker(['inspect', '--format', '{{json .State.Health.Log}}', box.name])) as { ExitCode: number }[];
+    expect(health.at(-1)?.ExitCode).toBe(0);
+    docker(['rm', '-f', box.name]);
+  });
 });
 
 describe('the image, started without a decision to serve', () => {
