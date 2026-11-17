@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildSync } from 'esbuild';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_INFISICAL_DOMAIN, EXIT_CONFIG, EXIT_LOGIN, healthUrlOf, isAcceptableDomain, launch, readLaunchConfig, redact, START_TIMEOUT_MS, STDERR_LINE_LIMIT } from '../src/launch';
+import { DEFAULT_INFISICAL_DOMAIN, EXIT_CONFIG, EXIT_LOGIN, healthUrlOf, isAcceptableDomain, launch, readLaunchConfig, redact, safeCut, START_TIMEOUT_MS, STDERR_LINE_LIMIT } from '../src/launch';
 
 // The image's entrypoint, against a stand-in for the Infisical client and a
 // stand-in for the box, both small node scripts written to a scratch directory
@@ -59,9 +59,10 @@ if (args[0] === 'login') {
       process.stderr.write('x'.repeat(cfg.cutAt - 5) + value + 'y'.repeat(100));
       process.exit(1);
     }
-    process.stderr.write('x'.repeat(cfg.cutAt + 10) + value.slice(0, 10));
+    const split = cfg.splitAt ?? 10;
+    process.stderr.write('x'.repeat(cfg.cutAt + 10) + value.slice(0, split));
     setTimeout(() => {
-      process.stderr.write(value.slice(10) + 'y'.repeat(100));
+      process.stderr.write(value.slice(split) + 'y'.repeat(100));
       process.exit(1);
     }, 300);
     return;
@@ -324,6 +325,22 @@ describe('the configuration it reads', { timeout: 20_000 }, () => {
     const jwtLike = ['eyJ', 'hbGciOiJIUzI1NiJ9', '.', 'e30', '.', 'c2lnbmF0dXJl'].join('');
     expect(redact(`a ${secret} b ${jwtLike} c`, [secret])).toBe('a [redacted] b [redacted] c');
   });
+
+  it('never cuts a long line inside a run that starts with eyJ and reaches the cut or the end', () => {
+    const plain = 'a'.repeat(100);
+    // Nothing token-shaped: the cut is the overlap before the end.
+    expect(safeCut(`${plain} ${plain}`, 10)).toBe(191);
+    // A run starting before the cut and reaching past it: the cut moves back to its start.
+    expect(safeCut(`${plain} eyJabc.def ${'b'.repeat(3)}`, 10)).toBe(101);
+    // A run at the very end, after the cut position: the overlap already keeps it back.
+    expect(safeCut(`${plain} ${plain} eyJab`, 6)).toBe(201);
+    // The same run starting before the cut position: the cut moves back to it.
+    expect(safeCut(`${plain} ${plain} eyJab`, 2)).toBe(202);
+    // A run that ends before the cut is written; only a later one moves the cut.
+    expect(safeCut(`eyJa ${plain} eyJ${'c'.repeat(20)}`, 5)).toBe(106);
+    // A run that fills the text: nothing can be written yet.
+    expect(safeCut(`eyJ${'d'.repeat(50)}`, 4)).toBe(0);
+  });
 });
 
 describe('the login', { timeout: 20_000 }, () => {
@@ -387,7 +404,15 @@ describe('the box, run inside infisical run', { timeout: 20_000 }, () => {
 
     // The login: the client credentials in its environment, nothing secret on its command line.
     expect(login?.name).toBe('login');
-    expect(login?.argv?.slice(1)).toEqual(['login', '--method=universal-auth', '--silent', '--plain', `--domain=${DEFAULT_INFISICAL_DOMAIN}`]);
+    expect(login?.argv?.slice(1)).toEqual([
+      'login',
+      '--method=universal-auth',
+      '--silent',
+      '--plain',
+      '--log-level=error',
+      '--log-destination=stderr',
+      `--domain=${DEFAULT_INFISICAL_DOMAIN}`,
+    ]);
     expect(login?.env?.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID).toBe(credentials.clientId);
     expect(login?.env?.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET).toBe(credentials.clientSecret);
     // Only what the client needs: not the box's settings, and no telemetry.
@@ -400,7 +425,16 @@ describe('the box, run inside infisical run', { timeout: 20_000 }, () => {
     expect(runCall?.env?.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID).toBeUndefined();
     expect(runCall?.env?.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET).toBeUndefined();
     expect(runCall?.env?.INFISICAL_DISABLE_TELEMETRY).toBe('true');
-    expect(runCall?.argv?.slice(1, 7)).toEqual(['run', '--silent', `--domain=${DEFAULT_INFISICAL_DOMAIN}`, '--projectId=test-project', '--env=prod', '--path=/']);
+    expect(runCall?.argv?.slice(1, 9)).toEqual([
+      'run',
+      '--silent',
+      '--log-level=error',
+      '--log-destination=stderr',
+      `--domain=${DEFAULT_INFISICAL_DOMAIN}`,
+      '--projectId=test-project',
+      '--env=prod',
+      '--path=/',
+    ]);
     expect(runCall?.argv?.some((arg) => arg.startsWith('--token'))).toBe(false);
 
     // The box: its settings and the one secret, and no credential and no INFISICAL_ variable at all.
@@ -432,6 +466,54 @@ describe('the box, run inside infisical run', { timeout: 20_000 }, () => {
     // The line as written, the credential replaced whole, nothing lost or doubled.
     expect(text).toBe(`${'x'.repeat(before)}[redacted]${'y'.repeat(100)}`);
     expectNoCredentialIn(text, 'standard error');
+  });
+
+  it.each([
+    ['one write', STDERR_LINE_LIMIT - 5, undefined],
+    // Cut just after the token's first dot: the head alone matches the token pattern, the rest never would.
+    ['two writes, cut after the first dot', STDERR_LINE_LIMIT + 10, 'after the first dot'],
+    ['two writes, cut inside the header', STDERR_LINE_LIMIT + 10, 'inside the header'],
+  ] as const)('takes a JWT-shaped token out of a long line that straddles the cut whole (%s)', async (_shape, before, split) => {
+    const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const jwt = `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ identityId: hex(), kind: 'access' })}.${randomBytes(32).toString('base64url')}`;
+    credentials.token = jwt;
+    const splitAt = split === undefined ? undefined : split === 'after the first dot' ? jwt.indexOf('.') + 3 : 5;
+    writeConfig({ runLongLine: 'token', longLineShape: split === undefined ? 'one write' : 'two writes', splitAt });
+    const run = start(baseEnv());
+    expect(await within(run.done)).toBe(1);
+    const text = run.stderr.join('');
+    expect(text).toBe(`${'x'.repeat(before)}[redacted]${'y'.repeat(100)}`);
+    for (const [index, piece] of jwt.split('.').entries()) expect(text, `part ${index} of the token`).not.toContain(piece);
+  });
+
+  it('passes only the allow-listed variables to infisical run and the box, whatever else the container sets', async () => {
+    const run = start(
+      baseEnv({
+        LOG_LEVEL: 'debug',
+        LOG_DESTINATION: 'stdout',
+        LOG_FORMAT: 'json',
+        HTTPS_PROXY: 'http://proxy.example.test:3128',
+        https_proxy: 'http://proxy.example.test:3128',
+        HTTP_PROXY: 'http://proxy.example.test:3128',
+        ALL_PROXY: 'http://proxy.example.test:3128',
+        NO_PROXY: '*',
+        NODE_OPTIONS: '--require=/tmp/elsewhere.js',
+        SSL_CERT_FILE: '/tmp/elsewhere.pem',
+        TZ: 'Europe/Berlin',
+      }),
+    );
+    await until(() => calls().some((call) => call.name === 'box'), 'the box to start');
+    run.signal('SIGTERM');
+    expect(await within(run.done)).toBe(0);
+    const [login, runCall, box] = calls();
+    for (const call of [login, runCall, box]) {
+      const names = Object.keys(call?.env ?? {});
+      expect(names.filter((name) => /^LOG_|PROXY$|^NODE_OPTIONS$|^SSL_CERT/i.test(name)), call?.name).toEqual([]);
+    }
+    // What the box needs still arrives.
+    expect(box?.env?.TZ).toBe('Europe/Berlin');
+    expect(box?.env?.BOX_EDITOR_HOST).toBe('app.example.test');
+    expect(box?.env?.BOX_PORT).toBe(String(port));
   });
 
   it('stops infisical run when the box has not answered /health within the time limit, for a fetch that never ends', async () => {

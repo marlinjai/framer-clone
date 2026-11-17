@@ -39,7 +39,7 @@ export const LOGIN_TIMEOUT_MS = 30_000;
  * How long the box may take to answer /health after `infisical run` was started, unless
  * BOX_START_TIMEOUT_SECONDS says otherwise. The client sets no time limit of its own on its HTTP calls (its
  * resty client has none), so a fetch of the secrets that Infisical accepts and never answers would
- * otherwise leave a container with no box in it, for good (decision D56).
+ * otherwise leave a container with no box in it, for good (decision D58).
  */
 export const START_TIMEOUT_MS = 60_000;
 
@@ -172,11 +172,42 @@ function cliBaseEnv(env: Env): Record<string, string> {
   };
 }
 
-/** Takes every credential, and anything shaped like a token, out of a text before it is written. */
-export function redact(text: string, secrets: readonly string[]): string {
+/** The client's own log: errors only, to standard error (which the start program redacts), whatever the environment says. */
+const CLI_LOG_FLAGS = ['--log-level=error', '--log-destination=stderr'];
+
+/** The container variables that reach `infisical run` and the box, besides every BOX_ setting. */
+const RUN_ENV_NAMES = new Set(['PATH', 'HOME', 'NODE_ENV', 'TZ', 'CUSTOM_CODE_DISABLED']);
+
+/** Takes every credential out of a text, by its exact value. */
+export function redactExact(text: string, secrets: readonly string[]): string {
   let out = text;
   for (const secret of secrets) if (secret.length >= 4) out = out.split(secret).join('[redacted]');
-  return out.replace(/eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+){1,2}/g, '[redacted]');
+  return out;
+}
+
+/** Takes every credential, and anything shaped like a signed token (a JWT), out of a text before it is written. */
+export function redact(text: string, secrets: readonly string[]): string {
+  return redactExact(text, secrets).replace(/eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+){1,2}/g, '[redacted]');
+}
+
+/**
+ * Where a long line without a newline may be cut: `overlap` characters before its end, so the start of a
+ * credential still arriving is kept back, and further back to the start of any run of token characters
+ * beginning with `eyJ` that reaches the cut or the end, so a JWT-shaped token is never written in two pieces
+ * (its pattern would find neither). A run that fills the whole text gives 0: nothing can be written yet.
+ */
+export function safeCut(text: string, overlap: number): number {
+  let cut = text.length - overlap;
+  for (const match of text.matchAll(/eyJ[A-Za-z0-9._-]*/g)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (start >= cut) break;
+    if (end > cut || end === text.length) {
+      cut = start;
+      break;
+    }
+  }
+  return cut;
 }
 
 /** A token as `infisical login --plain` prints it: one line of token characters. */
@@ -221,7 +252,7 @@ export async function launch(deps: LaunchDeps): Promise<number> {
     INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: config.clientId,
     INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: config.clientSecret,
   };
-  const login = spawn(deps.paths.infisical, ['login', '--method=universal-auth', '--silent', '--plain', `--domain=${config.domain}`], {
+  const login = spawn(deps.paths.infisical, ['login', '--method=universal-auth', '--silent', '--plain', ...CLI_LOG_FLAGS, `--domain=${config.domain}`], {
     env: loginEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -282,15 +313,19 @@ export async function launch(deps: LaunchDeps): Promise<number> {
   // 2. Run the box inside `infisical run`. The container's environment goes on to the box (its BOX_*
   // settings), less every INFISICAL_ variable; the token is added for `infisical run` only, and `env -u`
   // takes it out again before the box starts, so the box's environment holds no credential.
+  // An allow-list: only what the box reads goes on (decision D52). Anything else on the container could steer
+  // the client (LOG_LEVEL=debug logs every injected value, LOG_DESTINATION=stdout sends its log past the
+  // redaction, a proxy variable sends the token elsewhere) or node (NODE_OPTIONS).
   const runEnv: Record<string, string> = {};
   for (const [name, value] of Object.entries(deps.env)) {
-    if (value === undefined || name.startsWith('INFISICAL_') || name === 'GOMAXPROCS' || name === 'DO_NOT_TRACK') continue;
-    runEnv[name] = value;
+    if (value === undefined) continue;
+    if (RUN_ENV_NAMES.has(name) || (name.startsWith('BOX_') && name !== 'BOX_DATABASE_URL')) runEnv[name] = value;
   }
   Object.assign(runEnv, cliBaseEnv(deps.env), { INFISICAL_TOKEN: token });
   const runArgs = [
     'run',
     '--silent',
+    ...CLI_LOG_FLAGS,
     `--domain=${config.domain}`,
     `--projectId=${config.projectId}`,
     `--env=${config.environment}`,
@@ -329,16 +364,20 @@ export async function launch(deps: LaunchDeps): Promise<number> {
       newline = pending.indexOf('\n');
     }
     if (pending.length > STDERR_LINE_LIMIT) {
-      pending = redact(pending, scrub);
-      const cut = pending.length - overlap;
+      // Exact credentials are taken out of the whole; the token pattern only out of the part written, so
+      // the part kept back is still whole when the rest of a token arrives.
+      pending = redactExact(pending, scrub);
+      let cut = safeCut(pending, overlap);
+      // One unbroken token-shaped run four times the limit long is written as it stands, pattern applied.
+      if (cut <= 0 && pending.length > 4 * STDERR_LINE_LIMIT) cut = pending.length;
       if (cut > 0) {
-        deps.stderr(pending.slice(0, cut));
+        deps.stderr(redact(pending.slice(0, cut), []));
         pending = pending.slice(cut);
       }
     }
   });
 
-  // The box must answer /health within the time limit, or `infisical run` is stopped (decision D56).
+  // The box must answer /health within the time limit, or `infisical run` is stopped (decision D58).
   let started = false;
   let gaveUp = false;
   let ended = false;
