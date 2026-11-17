@@ -992,7 +992,8 @@ the pointer is over the frame (`:hover`), or the pointer entered a frame or a Ta
 from Playwright:
 - Chromium and Firefox: a frame whose script focuses an input inside it every 300 ms takes the keyboard back after the page
   takes it, and is removed at its third arrival (interactive) or its first (not interactive). An attempt where Firefox did not
-  apply the page's `focus()` at all is not counted as a theft; at most two such attempts are allowed.
+  apply the page's `focus()` at all is not counted as a theft; the test keeps trying until six attempts counted or the frame is
+  gone, within twelve in all, so a slow machine costs attempts and never the verdict.
 - WebKit never lets a frame of another site take the keyboard by script: the page keeps it in every attempt, so the watch has
   nothing to do there. The test asserts exactly that, so a change in WebKit shows.
 - No false removal in any of the three engines: four clicks into an interactive frame and out again, four Tabs into it and back,
@@ -1026,6 +1027,21 @@ removed with it; the page keeps every fallback. WebKit, and Firefox as Playwrigh
 asked), run the frame in the page's own process: a frozen frame holds the page as well. That is the residual M7 the plan already
 names, asserted as such so a change shows; the plan's wish to prove the watchdog on a frozen frame in Firefox could not be met in
 this harness.
+
+The gate starts the runtime and the broker by hand, so the chain as it ships has a test of its own in the behaviour suite
+(`test/behaviour/customCode.spec.ts`, Chromium and WebKit): a stored page with a block, published through the real repository,
+its blob row and the site's switch in the real database, served by `next start` of a production build with the box's origin
+configured. Only the box's answer comes from the test, with the real headers and the real shell. It proves that BehaviourIsland
+fetches the broker chunk once and starts it, that the island and the broker share one registry across Next's chunks, that React
+keeps the broker's frame through both settles while the fallback goes, that the frame's write reaches a bound text, and that the
+per-site `<meta>` lands in `<head>` (React hoists it there) where the browser refuses another site's box path. The suite's
+server now runs with custom code served, so the maps spec's report-only expectation names the box as well (D72).
+
+The bridge gate stays in the render gate job rather than a path-filtered workflow of its own, as C6 will have. On the last run
+of `main` before this slice the jobs took 12 minutes (verify), 14 (render gate) and 27 (behaviour), and a pull request waits for
+the longest. Locally, under heavy load, the bridge and frame policy gates took about 6 minutes together; added to the render
+gate that stays well inside the behaviour job, so a pull request's wait does not change. What it costs is runner minutes, a few
+per pull request, which buys the bridge in three engines on every change to the runtime it rides on.
 
 ## For Marlin
 
