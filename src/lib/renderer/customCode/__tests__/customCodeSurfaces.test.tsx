@@ -370,3 +370,26 @@ describe('the tile inside svg and math', () => {
     expect(group.textContent).toBe(`${CUSTOM_CODE_TILE_TEXT}: ${TITLE}`);
   });
 });
+
+describe('the tile inside a control', () => {
+  const block: ComponentNode = { type: 'div', id: 'cc', props: { customCode: { sha256: HASH, title: TITLE } }, children: [] };
+  const info = { standalone: false, previewHref: '/projects/s/preview?page=p' };
+
+  it.each(['a', 'button', 'label', 'summary'])('leaves its link out inside %s, and still says what it is', (parent) => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const host: ComponentNode = parent === 'summary'
+      ? { type: 'details', id: 'd', props: {}, children: [{ type: 'summary', id: 's', props: {}, children: [block] }] }
+      : { type: parent, id: 'p', props: parent === 'a' ? { href: '/x' } : {}, children: [block] };
+    const container = drawPreview(host, info);
+    const tile = container.querySelector('[data-fc-custom-code-tile]');
+    expect(tile?.textContent).toContain(CUSTOM_CODE_TILE_TEXT);
+    expect(tile?.querySelector('a')).toBeNull();
+    expect(container.querySelector('[data-fc-custom-code-preview]')).toBeNull();
+    expect(errors.mock.calls.map((c) => String(c[0])).filter((m) => /cannot be a descendant/.test(m))).toEqual([]);
+  });
+
+  it('keeps its link inside a plain container', () => {
+    const container = drawPreview({ type: 'section', id: 'p', props: {}, children: [block] }, info);
+    expect(container.querySelector('[data-fc-custom-code-preview]')?.getAttribute('href')).toBe('/projects/s/preview?page=p');
+  });
+});

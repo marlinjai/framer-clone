@@ -113,6 +113,12 @@ export interface CustomCodeElementInput {
    * there; inside `math` it is its label as text. The editor surfaces only.
    */
   foreign?: ForeignContent;
+  /**
+   * Set when the block sits inside a link, a button, a label or a summary: the tile then
+   * leaves its link out, since a link inside another control does not follow in every
+   * browser and assistive technology meets nested interactive content. The editor surfaces only.
+   */
+  insideControl?: boolean;
 }
 
 function tileOf(parsed: CustomCodeParse, previewHref: string | null): React.ReactElement {
@@ -155,7 +161,7 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
     if (input.foreign === 'svg') {
       // The tile's HTML lives in a foreignObject, whose content React draws as HTML
       // again; the block's own attributes stay on the group outside it.
-      const tile = React.createElement('div', { role: 'group', 'aria-label': label, style: { position: 'relative' } }, tileOf(parsed, input.previewHref ?? null));
+      const tile = React.createElement('div', { role: 'group', 'aria-label': label, style: { position: 'relative' } }, tileOf(parsed, input.insideControl ? null : input.previewHref ?? null));
       return React.createElement(
         'g',
         { ...domProps, key: input.key },
@@ -166,7 +172,7 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
     // A control's own attributes mean nothing on the div that replaces it.
     if (host !== tag) for (const name of ['href', 'target', 'rel', 'download', 'type', 'disabled', 'form', 'name', 'value']) delete domProps[name];
     // A group, so its label is allowed (ARIA 1.2 names no plain div).
-    return React.createElement(host, { ...domProps, key: input.key, style, role: 'group', 'aria-label': label }, tileOf(parsed, input.previewHref ?? null));
+    return React.createElement(host, { ...domProps, key: input.key, style, role: 'group', 'aria-label': label }, tileOf(parsed, input.insideControl ? null : input.previewHref ?? null));
   }
   const trace = parsed.ok && parsed.value.kind === 'block' ? { [CUSTOM_CODE_ATTR]: customCodeTrace(parsed.value.sha256) } : {};
   return React.createElement(tag, { ...domProps, key: input.key, ...trace }, input.children);
