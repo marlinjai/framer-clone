@@ -6,9 +6,16 @@ const COOLIFY = 'https://coolify.example.test:8443';
 const APP = 'app0123456789';
 const HEALTH = 'https://run.example.test/health/db';
 const digest = () => `sha256:${randomBytes(32).toString('hex')}`;
+const PREVIOUS = digest();
+const PREVIOUS_TAG = `sha256-${PREVIOUS.slice(7)}`;
+const WEBHOOK_CALL = `${COOLIFY}/api/v1/deploy?uuid=${APP}&force=false&cancel_previous=queued`;
 
 interface Script {
+  /** The application as Coolify shows it before the change. */
+  app?: Answer;
   patch?: Answer;
+  /** The answer to putting the earlier tag back. */
+  restore?: Answer;
   webhook?: Answer;
   /** The answers to the deployment's status, in order; the last one repeats. */
   statuses?: readonly Answer[];
@@ -19,15 +26,17 @@ interface Script {
 function run(script: Script, env: Record<string, string | undefined> = {}) {
   const token = `test-token-${randomBytes(12).toString('hex')}`;
   const image = digest();
-  const calls: { url: string; method: string; headers: Record<string, string>; body?: string }[] = [];
+  const calls: { url: string; method: string; headers: Record<string, string>; body?: string; timeoutMs?: number }[] = [];
   const lines: string[] = [];
   let clock = 0;
   let statusIndex = 0;
   let healthIndex = 0;
   const pick = (list: readonly Answer[] | undefined, index: number, fallback: Answer) => (list ? (list[Math.min(index, list.length - 1)] ?? fallback) : fallback);
+  let patches = 0;
   const call: Call = async (url, init) => {
     calls.push({ url, ...init });
-    if (init.method === 'PATCH') return script.patch ?? { status: 200, body: { uuid: APP } };
+    if (init.method === 'GET' && url === `${COOLIFY}/api/v1/applications/${APP}`) return script.app ?? { status: 200, body: { uuid: APP, docker_registry_image_tag: PREVIOUS_TAG } };
+    if (init.method === 'PATCH') return (patches++ === 0 ? script.patch : script.restore) ?? { status: 200, body: { uuid: APP } };
     if (init.method === 'POST') return script.webhook ?? { status: 200, body: { deployments: [{ deployment_uuid: 'dep-1', resource_uuid: APP }] } };
     if (url === HEALTH) return pick(script.health, healthIndex++, { status: 200, body: null });
     return pick(script.statuses, statusIndex++, { status: 200, body: { status: 'finished' } });
@@ -50,8 +59,9 @@ describe('the deploy through Coolify', () => {
     });
     expect(await done).toBe(0);
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${COOLIFY}/api/v1/applications/${APP}`,
       `PATCH ${COOLIFY}/api/v1/applications/${APP}`,
-      `POST ${COOLIFY}/api/v1/deploy?uuid=${APP}&force=false`,
+      `POST ${WEBHOOK_CALL}`,
       `GET ${COOLIFY}/api/v1/deployments/dep-1`,
       `GET ${COOLIFY}/api/v1/deployments/dep-1`,
       `GET ${COOLIFY}/api/v1/deployments/dep-1`,
@@ -59,10 +69,13 @@ describe('the deploy through Coolify', () => {
       `GET ${HEALTH}`,
     ]);
     // The digest in Coolify's form, which it deploys as <image>@sha256:<hex>.
-    expect(JSON.parse(calls[0]?.body ?? '{}')).toEqual({ docker_registry_image_tag: `sha256-${image.slice(7)}` });
-    for (const c of calls.slice(0, 5)) expect(c.headers.Authorization).toBe(`Bearer ${token}`);
-    // The health check is asked without the token.
-    expect(calls[5]?.headers.Authorization).toBeUndefined();
+    expect(JSON.parse(calls[1]?.body ?? '{}')).toEqual({ docker_registry_image_tag: `sha256-${image.slice(7)}` });
+    for (const c of calls.slice(0, 6)) expect(c.headers.Authorization).toBe(`Bearer ${token}`);
+    // The health check is asked without the token, with its own short limit.
+    expect(calls[6]?.headers.Authorization).toBeUndefined();
+    expect(calls[6]?.timeoutMs).toBe(5_000);
+    // Both images named: the new one and the one before.
+    expect(shown(lines)).toContain(`now names the image ${image} (it named ${PREVIOUS})`);
     // The address and the application's id are masked before anything else is written, and the token never shows.
     expect(lines.slice(0, 4)).toEqual([`::add-mask::${COOLIFY}`, '::add-mask::coolify.example.test:8443', '::add-mask::coolify.example.test', `::add-mask::${APP}`]);
     expect(lines.join('\n')).not.toContain(token);
@@ -82,20 +95,58 @@ describe('the deploy through Coolify', () => {
   });
 
   it.each([
+    ['the application cannot be read', { app: { status: 403, body: null } }, 'Coolify did not show the application (HTTP 403); nothing was changed.', true],
     ['the tag is refused for the token', { patch: { status: 403, body: null } }, 'Coolify did not take the image', true],
     ['the tag is refused', { patch: { status: 422, body: { message: 'x' } } }, 'Coolify did not take the image', false],
-    ['the webhook is refused', { webhook: { status: 401, body: null } }, 'The Coolify deploy webhook answered HTTP 401.', true],
-    ['the webhook does not answer', { webhook: { status: 0, body: null } }, 'The Coolify deploy webhook answered HTTP 0.', false],
-    ['no deployment is named', { webhook: { status: 200, body: { deployments: [] } } }, 'Coolify named no deployment', false],
-    ['a malformed deployment is named', { webhook: { status: 200, body: { deployments: [{ deployment_uuid: '../x' }] } } }, 'Coolify named no deployment', false],
     ['the token cannot read deployments', { statuses: [{ status: 401, body: null }] }, 'cannot read deployments (HTTP 401)', true],
-  ] as const)('fails when %s', async (_name, script, message, hint) => {
+  ] as const)('fails when %s, putting nothing back that was not changed', async (_name, script, message, hint) => {
     const { done, lines, calls } = run(script);
     expect(await done).toBe(1);
     const log = shown(lines);
     expect(log).toContain(message);
     expect(log.includes('read, write and deploy permissions, limited to the box application')).toBe(hint);
+    expect(calls.filter((c) => c.method === 'PATCH').length).toBeLessThanOrEqual(1);
     expect(calls.some((c) => c.url === HEALTH)).toBe(false);
+  });
+
+  it('names both images when the tag is refused', async () => {
+    const { done, lines, image } = run({ patch: { status: 422, body: null } });
+    expect(await done).toBe(1);
+    expect(shown(lines)).toContain(`Coolify did not take the image ${image} (HTTP 422); it still names ${PREVIOUS}.`);
+  });
+
+  it.each([
+    ['the webhook is refused', { webhook: { status: 401, body: null } }, 'The Coolify deploy webhook answered HTTP 401.'],
+    ['the webhook does not answer', { webhook: { status: 0, body: null } }, 'The Coolify deploy webhook answered HTTP 0.'],
+    ['no deployment is named', { webhook: { status: 200, body: { deployments: [] } } }, 'Coolify named no deployment'],
+    ['a malformed deployment is named', { webhook: { status: 200, body: { deployments: [{ deployment_uuid: '../x' }] } } }, 'Coolify named no deployment'],
+    ['Coolify did not queue the deployment', { statuses: [{ status: 404, body: null }] }, 'Coolify did not queue a deployment (one may already be running for the box).'],
+  ] as const)('puts the earlier image back when %s before a deployment started', async (_name, script, message) => {
+    const { done, lines, calls, image } = run(script);
+    expect(await done).toBe(1);
+    const patches = calls.filter((c) => c.method === 'PATCH');
+    expect(patches.map((c) => JSON.parse(c.body ?? '{}').docker_registry_image_tag)).toEqual([`sha256-${image.slice(7)}`, PREVIOUS_TAG]);
+    expect(shown(lines)).toContain(message);
+    expect(shown(lines)).toContain(`Coolify names ${PREVIOUS} again, not ${image}.`);
+    expect(calls.some((c) => c.url === HEALTH)).toBe(false);
+  });
+
+  it('stops after three answers of 404 in a row, not after 15 minutes, and keeps following after a single one', async () => {
+    const notQueued = run({ statuses: [{ status: 404, body: null }] });
+    expect(await notQueued.done).toBe(1);
+    expect(notQueued.calls.filter((c) => c.url.includes('/deployments/'))).toHaveLength(3);
+    const blip = run({ statuses: [{ status: 404, body: null }, { status: 404, body: null }, { status: 200, body: { status: 'in_progress' } }, { status: 404, body: null }, { status: 200, body: { status: 'finished' } }] });
+    expect(await blip.done).toBe(0);
+  });
+
+  it('says so when the earlier image cannot be put back', async () => {
+    const failed = run({ webhook: { status: 500, body: null }, restore: { status: 500, body: null } });
+    expect(await failed.done).toBe(1);
+    expect(shown(failed.lines)).toContain(`Putting back ${PREVIOUS} failed (HTTP 500): Coolify still names ${failed.image}. Set the tag in Coolify.`);
+    const none = run({ webhook: { status: 500, body: null }, app: { status: 200, body: { docker_registry_image_tag: null } } });
+    expect(await none.done).toBe(1);
+    expect(none.calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+    expect(shown(none.lines)).toContain('it named no tag before, which cannot be put back');
   });
 
   it('keeps following a deployment Coolify does not answer for, prints no status it does not know, and gives up after 15 minutes', async () => {
@@ -112,7 +163,7 @@ describe('the deploy through Coolify', () => {
     const { done, calls, lines } = run({ health: [{ status: 503, body: null }] });
     expect(await done).toBe(1);
     expect(calls.filter((c) => c.url === HEALTH)).toHaveLength(HEALTH_TRIES);
-    expect(shown(lines)).toContain(`::error::The box did not answer ${HEALTH} within 120 seconds.`);
+    expect(shown(lines)).toContain(`::error::The box did not answer ${HEALTH} in ${HEALTH_TRIES} tries over about 4 minutes.`);
   });
 
   it.each([
@@ -122,6 +173,7 @@ describe('the deploy through Coolify', () => {
     ['a tag instead of a digest', { IMAGE_DIGEST: 'latest' }, 'IMAGE_DIGEST is not an image digest'],
     ['a short digest', { IMAGE_DIGEST: 'sha256:abc' }, 'IMAGE_DIGEST is not an image digest'],
     ['a plain http health address', { HEALTH_URL: 'http://run.example.test/health/db' }, 'HEALTH_URL'],
+    ['a plain http webhook', { COOLIFY_BOX_WEBHOOK: `http://coolify.example.test:8000/api/v1/deploy?uuid=${APP}` }, 'COOLIFY_BOX_WEBHOOK is not an https address'],
   ])('refuses %s before asking Coolify anything', async (_name, env, message) => {
     const { done, calls, lines } = run({}, env);
     expect(await done).toBe(1);
