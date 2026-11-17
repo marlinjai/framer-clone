@@ -25,6 +25,7 @@
 
 import React from 'react';
 import { isVoidTag } from '@/lib/drag/voidTags';
+import type { ForeignContent } from '@/lib/renderer/blockedNodes';
 import {
   CUSTOM_CODE_ATTR,
   customCodeTrace,
@@ -106,6 +107,12 @@ export interface CustomCodeElementInput {
   key?: React.Key;
   /** The editor surfaces' link to the standalone preview. */
   previewHref?: string | null;
+  /**
+   * What the block stands in for the HTML parser (blockedNodes.ts): inside `svg` an
+   * HTML element is drawn as SVG and shows nothing, so the tile gets a foreignObject
+   * there; inside `math` it is its label as text. The editor surfaces only.
+   */
+  foreign?: ForeignContent;
 }
 
 function tileOf(parsed: CustomCodeParse, previewHref: string | null): React.ReactElement {
@@ -128,9 +135,10 @@ function tileOf(parsed: CustomCodeParse, previewHref: string | null): React.Reac
  * The stored tags the tile may be drawn in: plain HTML containers that may hold a
  * `div`, a link and a badge. Any other tag (a link or a button, which would nest
  * the tile's link inside another control; an SVG element, inside which HTML is not
- * drawn; a paragraph or a list item of a table) draws the tile in a `div`.
+ * drawn; a paragraph, a list or a table row) draws the tile in a `div`. A block
+ * standing inside `svg` or `math` is drawn as the `foreign` input says.
  */
-const TILE_HOST_TAGS: ReadonlySet<string> = new Set(['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'figure', 'blockquote', 'li', 'dd']);
+const TILE_HOST_TAGS: ReadonlySet<string> = new Set(['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'figure', 'blockquote', 'li', 'dd', 'td', 'th']);
 
 /** A block on a surface. Never a frame: the frame belongs to the published island (slice C3). */
 export function createCustomCodeElement(surface: CustomCodeSurface, input: CustomCodeElementInput): React.ReactElement {
@@ -142,6 +150,18 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
   if (surface === 'editor' || surface === 'preview') {
     const style = { ...((domProps.style as React.CSSProperties | undefined) ?? {}), position: 'relative' as const };
     const label = parsed.ok ? `${CUSTOM_CODE_TILE_TEXT}: ${parsed.value.title}` : CUSTOM_CODE_TILE_TEXT;
+    // React draws every child of `math` as MathML, so there the tile is its label as text.
+    if (input.foreign === 'math') return React.createElement('mtext', { ...domProps, key: input.key, role: 'group', 'aria-label': label }, label);
+    if (input.foreign === 'svg') {
+      // The tile's HTML lives in a foreignObject, whose content React draws as HTML
+      // again; the block's own attributes stay on the group outside it.
+      const tile = React.createElement('div', { role: 'group', 'aria-label': label, style: { position: 'relative' } }, tileOf(parsed, input.previewHref ?? null));
+      return React.createElement(
+        'g',
+        { ...domProps, key: input.key },
+        React.createElement('foreignObject', { x: 0, y: 0, width: '100%', height: '100%', style: { overflow: 'visible' } }, tile),
+      );
+    }
     const host = TILE_HOST_TAGS.has(tag) ? tag : 'div';
     // A control's own attributes mean nothing on the div that replaces it.
     if (host !== tag) for (const name of ['href', 'target', 'rel', 'download', 'type', 'disabled', 'form', 'name', 'value']) delete domProps[name];

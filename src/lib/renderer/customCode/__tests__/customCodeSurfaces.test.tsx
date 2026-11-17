@@ -326,7 +326,7 @@ describe('the tile and the stored tag', () => {
     expect(host.querySelector('a')!.closest('button, a:not([data-fc-custom-code-preview])')).toBeNull();
   });
 
-  it.each(['div', 'section', 'article', 'li'])('keeps a plain container (%s) as the tile host', (tag) => {
+  it.each(['div', 'section', 'article', 'li', 'td', 'th'])('keeps a plain container (%s) as the tile host', (tag) => {
     expect(tileOn(tag).tagName).toBe(tag.toUpperCase());
   });
 
@@ -334,5 +334,39 @@ describe('the tile and the stored tag', () => {
     const host = tileOn('div', { role: 'button' });
     expect(host.getAttribute('role')).toBe('group');
     expect(host.getAttribute('aria-label')).toBe(`${CUSTOM_CODE_TILE_TEXT}: ${TITLE}`);
+  });
+});
+
+describe('the tile inside svg and math', () => {
+  const XHTML = 'http://www.w3.org/1999/xhtml';
+  const block = (id: string, type: string): ComponentNode => ({ type, id, props: { customCode: { sha256: HASH, title: TITLE } }, children: [] });
+
+  it('a block stored as an svg element inside svg draws its tile as HTML, in a foreignObject', () => {
+    const container = drawPreview({ type: 'svg', id: 'art', props: { viewBox: '0 0 100 100' }, children: [block('cc', 'g')] }, { standalone: false, previewHref: '/p' });
+    const tile = container.querySelector('[data-fc-custom-code-tile]') as Element;
+    expect(tile).not.toBeNull();
+    expect(tile.namespaceURI).toBe(XHTML);
+    const group = tile.closest('[role="group"]') as Element;
+    expect(group.namespaceURI).toBe(XHTML);
+    expect(group.getAttribute('aria-label')).toBe(`${CUSTOM_CODE_TILE_TEXT}: ${TITLE}`);
+    expect(group.parentElement?.localName).toBe('foreignObject');
+    expect(tile.querySelector('a')?.namespaceURI).toBe(XHTML);
+    expect(container.querySelector('iframe')).toBeNull();
+  });
+
+  it('a block stored as the svg itself, in HTML, draws its tile in an HTML div', () => {
+    const container = drawPreview({ type: 'div', id: 'page', props: {}, children: [block('cc', 'svg')] }, { standalone: false, previewHref: '/p' });
+    const group = container.querySelector('[role="group"]') as Element;
+    expect(group.localName).toBe('div');
+    expect(group.namespaceURI).toBe(XHTML);
+  });
+
+  it('inside math the tile is its label, as text in mtext (React draws no HTML there)', () => {
+    const { container } = render(
+      React.createElement('math', null, createCustomCodeElement('editor', { tag: 'mi', domProps: {}, config: { sha256: HASH, title: TITLE }, children: null, foreign: 'math' })),
+    );
+    const group = container.querySelector('[role="group"]') as Element;
+    expect(group.localName).toBe('mtext');
+    expect(group.textContent).toBe(`${CUSTOM_CODE_TILE_TEXT}: ${TITLE}`);
   });
 });
