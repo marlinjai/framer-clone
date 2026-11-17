@@ -396,6 +396,46 @@ describe('the tile inside svg and math', () => {
   });
 });
 
+describe('a block with a void tag inside svg or math', () => {
+  const voidBlock = (type: string): ComponentNode => ({ type, id: 'cc', props: { customCode: { sha256: HASH, title: TITLE } }, children: [fallback('cc')] });
+
+  /** The markup as the browser parses it: where the box lands. */
+  function parsedBox(markup: string): Element {
+    const holder = document.createElement('div');
+    holder.innerHTML = markup;
+    return holder.querySelector('[data-fc-custom-code]') as Element;
+  }
+
+  // The tags the render gate lets stand in svg (br, img and the like break out, so it drops them).
+  it.each(['input', 'col', 'wbr', 'source'])('stays inside the svg on the published page as a group (<%s>)', async (type) => {
+    const markup = await publish({ type: 'svg', id: 'art', props: { viewBox: '0 0 10 10' }, children: [voidBlock(type)] });
+    const box = parsedBox(markup);
+    expect(box).not.toBeNull();
+    expect(box.localName).toBe('g');
+    expect(box.parentElement?.localName).toBe('svg');
+    expect(markup).not.toMatch(/<div[^>]*data-fc-custom-code/);
+  });
+
+  it('stays inside math on the published page as an mrow', async () => {
+    const markup = await publish({ type: 'math', id: 'eq', props: {}, children: [voidBlock('input')] });
+    const box = parsedBox(markup);
+    expect(box.localName).toBe('mrow');
+    expect(box.parentElement?.localName).toBe('math');
+  });
+
+  it('stays inside the svg in the standalone preview', () => {
+    const container = drawPreview({ type: 'svg', id: 'art', props: { viewBox: '0 0 10 10' }, children: [voidBlock('input')] }, { standalone: true, previewHref: null });
+    const box = container.querySelector('[data-fc-custom-code]') as Element;
+    expect(box.localName).toBe('g');
+    expect(box.parentElement?.localName).toBe('svg');
+  });
+
+  it('is a div in HTML', async () => {
+    const markup = await publish({ type: 'div', id: 'page', props: {}, children: [voidBlock('input')] });
+    expect(parsedBox(markup).localName).toBe('div');
+  });
+});
+
 describe('the tile inside a control', () => {
   const block: ComponentNode = { type: 'div', id: 'cc', props: { customCode: { sha256: HASH, title: TITLE } }, children: [] };
   const info = { standalone: false, previewHref: '/projects/s/preview?page=p' };

@@ -40,7 +40,7 @@ import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEm
 import { isFxSceneProp } from '@/lib/fxScene/marker';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
 import { hasCustomCode, withoutCustomCodeTree } from '@/lib/customCode/customCode';
-import { createCustomCodeElement } from '../customCode/customCodeElement';
+import { createCustomCodeElement, customCodeBoxTag } from '../customCode/customCodeElement';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { ShopPartElement } from '@/lib/commerce/shopRuntime';
@@ -229,9 +229,10 @@ export function renderComponentNode(
   // is the island's (slice C3); a proposal or an invalid value is the fallback for good.
   if (hasCustomCode(node.props)) {
     const tag = resolveHtmlTag(node.type) ?? 'div';
-    const boxTag = isVoidTag(tag) ? 'div' : tag;
+    const boxTag = customCodeBoxTag(tag, foreign);
     return createCustomCodeElement('published', {
       tag: boxTag,
+      foreign,
       domProps: nodeDomProps(node),
       config: (node.props as Record<string, unknown>).customCode,
       children: renderNodeChildren(node, scope, contentBelow(boxTag, foreign), inLink || !runLinksAllowedIn(boxTag)),

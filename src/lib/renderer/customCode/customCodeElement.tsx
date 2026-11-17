@@ -146,10 +146,24 @@ function tileOf(parsed: CustomCodeParse, previewHref: string | null): React.Reac
  */
 const TILE_HOST_TAGS: ReadonlySet<string> = new Set(['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'figure', 'blockquote', 'li', 'dd', 'td', 'th']);
 
+/**
+ * The tag a block's box is drawn in on the published page and the standalone preview:
+ * its own, unless that is a void tag, which cannot hold the fallback. Then a container
+ * of the content it stands in: a `div` in HTML, a `g` inside `svg` and an `mrow` inside
+ * `math`, since a `div` there would break out of the SVG or MathML when the browser
+ * parses the page (and no longer match what hydration draws).
+ */
+export function customCodeBoxTag(tag: string, foreign: ForeignContent = false): string {
+  if (!isVoidTag(tag)) return tag;
+  if (foreign === 'svg') return 'g';
+  if (foreign === 'math') return 'mrow';
+  return 'div';
+}
+
 /** A block on a surface. Never a frame: the frame belongs to the published island (slice C3). */
 export function createCustomCodeElement(surface: CustomCodeSurface, input: CustomCodeElementInput): React.ReactElement {
   const parsed = parseCustomCode(input.config);
-  const tag = isVoidTag(input.tag) ? 'div' : input.tag;
+  const tag = customCodeBoxTag(input.tag, input.foreign);
   // A copy: the caller's object is never changed.
   const domProps: Record<string, unknown> = { ...withoutCustomCodeProp(input.domProps) };
   delete domProps.children;
