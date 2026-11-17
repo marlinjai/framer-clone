@@ -14,6 +14,7 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import { EditorTool } from '@/stores/EditorUIStore';
 import { surfaceBehaviour } from '@/lib/behaviour/surfaceBehaviour';
+import { readBehaviourTree } from '@/lib/behaviour/format';
 
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
@@ -213,6 +214,55 @@ describe('forward', () => {
     addPageValue('Open');
     addInteraction('click');
     expect(interactions().getByText('On click, toggle Open')).toBeTruthy();
+  });
+});
+
+describe('the page as a whole', () => {
+  /** Text values of 4,096 characters: 15 of them fit the page's 64 KB, a 16th does not. */
+  const bigText = (n: number, initial = 'x'.repeat(4096)) => ({ id: `v-big${String(n).padStart(5, '0')}`, name: `Big ${n}`, type: 'text', initial });
+
+  it('refuses a value edit that would take the page past its size cap and cut off what reads the page values', () => {
+    mount();
+    select(button);
+    const menu = addPageValue('Menu open');
+    addInteraction('click');
+    const stored = behaviourOf(root)!;
+    act(() => root.setBehaviour({ ...stored, state: [...(stored.state as unknown[]), ...Array.from({ length: 15 }, (_, i) => bigText(i)), bigText(99, '')] }));
+    const before = JSON.stringify(behaviourOf(root));
+    // Each value on its own is fine: only the page check sees the cap.
+    typeAndCommit(pageState().getByLabelText('First value of Big 99'), 'y'.repeat(4096));
+    expect(pageState().getByRole('alert').textContent).toMatch(/^Not changed: .*65536 bytes/);
+    expect(JSON.stringify(behaviourOf(root))).toBe(before);
+    expect(interactions().queryByText(/Does not run/)).toBeNull();
+    expect((behaviourOf(button)?.on as { do: unknown[] }[])[0].do).toEqual([{ toggle: menu }]);
+  });
+
+  it('refuses Add value when the page has no room for it, and says why', () => {
+    mount();
+    select(button);
+    // Filled to within a few bytes of the cap, so a new on or off value does not fit: the
+    // longest last value the page still takes whole, found by halving.
+    const fill = (length: number) => ({ state: [...Array.from({ length: 15 }, (_, i) => bigText(i)), bigText(15, 'x'.repeat(length))] });
+    const whole = (length: number) => readBehaviourTree({ id: 'root', type: 'div', props: { behaviour: fill(length) }, children: [] } as never).refused.length === 0;
+    let low = 0;
+    let high = 4096;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (whole(mid)) low = mid;
+      else high = mid - 1;
+    }
+    expect(whole(low) && !whole(low + 1)).toBe(true);
+    act(() => root.setBehaviour(fill(low)));
+    fireEvent.click(pageState().getByRole('button', { name: 'Add a value to the page' }));
+    expect(pageState().getByRole('alert').textContent).toMatch(/^Not added: .*65536 bytes.*\.$/);
+    expect((behaviourOf(root)?.state as unknown[]).length).toBe(16);
+  });
+
+  it('shows on the rows when the page refuses a scope\'s behaviour whole', () => {
+    mount();
+    select(button);
+    act(() => root.setBehaviour({ state: Array.from({ length: 17 }, (_, i) => bigText(i)) }));
+    expect(pageState().getByText(/^None of these values is used: .*65536 bytes/)).toBeTruthy();
   });
 });
 

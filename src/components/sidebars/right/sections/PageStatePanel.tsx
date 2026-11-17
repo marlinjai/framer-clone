@@ -7,8 +7,10 @@
 // "Add value" puts a value on the page; "Keep per row" puts it on the selected element,
 // so each row of a list, or each copy of a component, keeps its own.
 //
-// Every edit goes through the parser before it is written (`stateRefusal`) and is one
-// undo step. The preview is the canvas's (EditorUIStore.previewState): volatile, never
+// Every edit goes through the parser before it is written, the value on its own
+// (`stateRefusal`) and then the whole page (`refusalAt`), so a value that would push the
+// page past its size cap, or break what reads it elsewhere, is refused with the parser's
+// reason. Each edit is one undo step. The preview is the canvas's (EditorUIStore.previewState): volatile, never
 // saved, never in undo, and off in Interact, where the page runs from its first values.
 // A value that no longer fits its state after an edit (an option removed, a type
 // changed) is taken out of the preview, not just hidden.
@@ -29,6 +31,7 @@ import {
   optionsFromText,
   pathTo,
   putEntry,
+  refusalAt,
   refusalsOn,
   removeEntry,
   retype,
@@ -53,6 +56,7 @@ function insideCollection(path: readonly { props?: unknown }[]): boolean {
 
 export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
   const { editorUI } = useStore();
+  const [addError, setAddError] = useState<string | null>(null);
   const page = editorUI.currentPage as unknown as (BehaviourPage & { appComponentTree: ComponentInstance }) | undefined;
   if (!page) return null;
   const root = page.appComponentTree;
@@ -76,7 +80,10 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
     if (stored === null || holdsNonList(stored, 'state')) return;
     const count = storedList(stored, 'state').length + 1;
     const state = newState(freshStateId(roots), `Value ${count}`, 'boolean');
-    writeBehaviour(on, putEntry(stored, 'state', state));
+    const next = putEntry(stored, 'state', state);
+    const reason = refusalAt(roots, on.id, next, state, nameIn(page));
+    setAddError(reason);
+    if (!reason) writeBehaviour(on, next);
   };
 
   return (
@@ -95,12 +102,16 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
             </button>
           )}
         </div>
+        {addError && <p role="alert" className={REASON}>Not added: {addError}.</p>}
       </CollapsibleSection>
     </div>
   );
 });
 
 PageStatePanel.displayName = 'PageStatePanel';
+
+/** An element as a refusal names it: its layer name. */
+const nameIn = (page: BehaviourPage) => (id: string): string => `"${page.findComponent(id)?.displayName ?? id}"`;
 
 const ScopeStates = observer(({ scope, page, title }: { scope: ComponentInstance; page: BehaviourPage; title: string }) => {
   const stored = storedBehaviourOf(scope.props);
@@ -118,14 +129,17 @@ const ScopeStates = observer(({ scope, page, title }: { scope: ComponentInstance
     );
   }
   const list = storedList(stored, 'state');
+  // The page's caps refuse a node's behaviour whole: then none of its values is in reach.
+  const whole = refused.find((entry) => entry.entry === 'behaviour')?.reason;
   return (
     <div className="flex flex-col gap-2" role="group" aria-label={`Values of ${title}`}>
       <span className={FIELD_LABEL}>{title}</span>
+      {whole && <p className={REASON}>None of these values is used: {whole}.</p>}
       {list.length === 0 && <p className={HINT}>No values yet. A value is what an interaction sets and a Show when reads.</p>}
       {list.map((entry, index) => {
         const id = isRecord(entry) && typeof entry.id === 'string' ? entry.id : `#${index}`;
         const reason = refused.find((r) => r.entry === 'state' && r.index === index)?.reason;
-        return <StateRow key={`${scope.id}:${id}:${index}`} scope={scope} stored={stored} entry={entry} index={index} reason={reason} />;
+        return <StateRow key={`${scope.id}:${id}:${index}`} scope={scope} page={page} stored={stored} entry={entry} index={index} reason={reason} />;
       })}
     </div>
   );
@@ -135,6 +149,7 @@ ScopeStates.displayName = 'ScopeStates';
 
 interface StateRowProps {
   scope: ComponentInstance;
+  page: BehaviourPage;
   stored: StoredRecord;
   entry: unknown;
   index: number;
@@ -142,7 +157,7 @@ interface StateRowProps {
   reason?: string;
 }
 
-const StateRow = observer(({ scope, stored, entry, index, reason }: StateRowProps) => {
+const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateRowProps) => {
   const { editorUI } = useStore();
   // A refusal of what a person just entered, shown until the stored value changes.
   const [error, setError] = useState<{ reason: string; for: string } | null>(null);
@@ -164,13 +179,14 @@ const StateRow = observer(({ scope, stored, entry, index, reason }: StateRowProp
 
   /** Writes one change through the parser; a refusal is shown and nothing is written. */
   const commit = (next: StoredRecord) => {
-    const refusal = stateRefusal(next);
+    const behaviour = putEntry(stored, 'state', next, index);
+    const refusal = stateRefusal(next) ?? refusalAt(rootsOf(page), scope.id, behaviour, next, nameIn(page));
     if (refusal) {
       setError({ reason: refusal, for: storedKey });
       return;
     }
     setError(null);
-    writeBehaviour(scope, putEntry(stored, 'state', next, index));
+    writeBehaviour(scope, behaviour);
     // A preview this value can no longer hold goes, rather than hiding behind the first value.
     const previewed = editorUI.previewState[id];
     if (previewed !== undefined && !fitsState(next, previewed)) editorUI.setPreviewValue(id, undefined);
