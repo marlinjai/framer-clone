@@ -276,13 +276,20 @@ function refuseOnPublishedHost(request: NextRequest, routePath: string): NextRes
  *     working at once, also from a cache;
  *   - never sent on as a referrer: a link on the page, or a font or picture
  *     loaded from elsewhere, would hand the address to that site;
- *   - never framed: the page is the branch, shown to whoever holds the link.
+ *   - never framed: the page is the branch, shown to whoever holds the link;
+ *   - framing nothing (`frame-src 'none'`): a preview draws no frame (a map shows a
+ *     notice, a custom code block its fallback), so a frame a stored page could
+ *     sneak past the render gate is refused here too (decision D44 of
+ *     docs/plans/2026-11-02-sandboxed-custom-code.md).
  */
+/** The enforced policy of a preview host: never framed, and framing nothing. */
+const PREVIEW_HOST_POLICY = "frame-ancestors 'none'; frame-src 'none'";
+
 function withPreviewHeaders(response: NextResponse | Response): NextResponse | Response {
   response.headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
   response.headers.set('cache-control', 'private, no-store');
   response.headers.set('referrer-policy', 'no-referrer');
-  response.headers.set('content-security-policy', "frame-ancestors 'none'");
+  response.headers.set('content-security-policy', PREVIEW_HOST_POLICY);
   response.headers.set('x-frame-options', 'DENY');
   return response;
 }

@@ -933,7 +933,7 @@ describe('middleware: a preview host (the public preview link of a site branch, 
     expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow, noarchive');
     expect(res.headers.get('cache-control')).toBe('private, no-store');
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
-    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
+    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'none'; frame-src 'none'");
   };
 
   it('serves its home as the site home and its pages as reads, without any cookie or key travelling on', async () => {
@@ -1110,12 +1110,16 @@ describe('middleware: the enforced frame policy (decision D6 of the sandboxed cu
     expect(enforced(res)).toBe("frame-ancestors 'none'");
   });
 
-  it('leaves a branch preview host as it was: frame-ancestors none, blocks show their fallback (decision D13)', async () => {
+  it('gives a branch preview host frame-src none, maps consent or not: a preview frames nothing (decisions D13, D44)', async () => {
     serve();
     process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
     try {
       const res = await middleware(req('https://preview-abc123.sites.lumitra.co/about', { host: 'preview-abc123.sites.lumitra.co', cookie: consent }));
-      expect(enforced(res)).toBe("frame-ancestors 'none'");
+      expect(enforced(res)).toBe("frame-ancestors 'none'; frame-src 'none'");
+      // A refusal of the preview host carries it too.
+      const refused = await middleware(req('https://preview-abc123.sites.lumitra.co/api/forms/submit', { host: 'preview-abc123.sites.lumitra.co' }));
+      expect(refused.status).toBeGreaterThanOrEqual(400);
+      expect(enforced(refused)).toBe("frame-ancestors 'none'; frame-src 'none'");
     } finally {
       delete process.env.PUBLIC_SITE_BASE_HOST;
     }
