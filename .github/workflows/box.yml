@@ -8,13 +8,17 @@ name: box
 #
 # Publishing and deploying (plan, decisions D53, D54, D56, D57 and D59) happen
 # only on main, only once the operator step O1 has set the repository variable
-# BOX_DEPLOY_ENABLED to true, and only when the box's own files changed since
-# the commit running in box-production (the last successful deployment there),
-# or on a manual run on main. services/box/ci/publishDecision.ts decides it.
-# The image the tests just ran, checked by its id, is pushed to
-# ghcr.io/<owner>/framer-clone-box under the commit's tag, the box's Coolify
-# application is pointed at that tag, its deploy is started and followed, and
-# the run waits until the box answers /health/db on its public host. The
+# BOX_DEPLOY_ENABLED to true, never while the repository variable
+# BOX_DEPLOY_PINNED is true (a rollback holds), and only when the box's own
+# files changed since the commit running in box-production (the last
+# successful deployment there), or on a manual run on main.
+# services/box/ci/publishDecision.ts decides it. The image the tests just ran,
+# checked by its id, is pushed to ghcr.io/<owner>/framer-clone-box under the
+# commit's tag, and services/box/ci/deploy.ts points the box's Coolify
+# application at the pushed digest, starts and follows its deploy, and waits
+# until the box answers /health/db on its public host. A manual run with the
+# input rollback_digest redeploys an image already in the registry instead,
+# building nothing into production. The
 # webhook and the Coolify token are secrets of the GitHub environment
 # box-production, which only main may deploy to; nothing else in this workflow
 # can read them. A pull request never pushes and never deploys.
@@ -30,8 +34,18 @@ name: box
 # Every action is pinned by commit, with its version in a comment.
 
 on:
-  # A manual run on main publishes and deploys the current main, for the first deploy after O1.
+  # A manual run on main publishes and deploys the current main (the first deploy after O1, after the
+  # application's deploy, or to lift a pin), or redeploys an image already pushed (a rollback).
   workflow_dispatch:
+    inputs:
+      rollback_digest:
+        description: 'Roll back: the digest (sha256:...) of an image already in the registry to deploy again. Builds nothing into production. Set BOX_DEPLOY_PINNED first.'
+        type: string
+        default: ''
+      publish_while_pinned:
+        description: 'Publish main although BOX_DEPLOY_PINNED is true.'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -109,21 +123,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: services/box/pnpm-lock.yaml
 
-      # Whether this run publishes: main, not a pull request, O1 done (the variable), and either a manual
-      # run or a change to the box's own files since the commit running in box-production. A database
-      # change since then holds publishing back until the application is deployed (decisions D56, D59).
-      - name: Does this run publish
-        id: publish
-        working-directory: .
-        env:
-          EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          BEFORE: ${{ github.event.before }}
-          SHA: ${{ github.sha }}
-          ENABLED: ${{ vars.BOX_DEPLOY_ENABLED }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node services/box/ci/publishDecision.ts
-
       - name: Install
         run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
 
@@ -153,6 +152,25 @@ jobs:
         env:
           BOX_IMAGE: framer-clone-box:ci
         run: pnpm test:integration
+
+      # Whether this run publishes: main, not a pull request, O1 done (the variable), not pinned, and either
+      # a manual run or a change to the box's own files since the commit running in box-production. A
+      # database change since then holds publishing back until the application is deployed, and not
+      # knowing what runs fails this step (decisions D56, D59). After the tests, so they report first.
+      - name: Does this run publish
+        id: publish
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          ENABLED: ${{ vars.BOX_DEPLOY_ENABLED }}
+          PINNED: ${{ vars.BOX_DEPLOY_PINNED }}
+          ROLLBACK_DIGEST: ${{ inputs.rollback_digest }}
+          PUBLISH_WHILE_PINNED: ${{ inputs.publish_while_pinned }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node services/box/ci/publishDecision.ts
 
       # The image the suite just tested is the one that is pushed, byte for byte, never a rebuild. It goes to
       # the publish job as an artifact because only that job asks to write packages and can read the deploy
@@ -233,9 +251,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Only the commit's tag, no latest: the Coolify application is pointed at this exact tag below, so what
-      # production runs is set by this job alone, and the previous commit's tag is the rollback point.
+      # The commit's tag names the image for people; production is pointed at the digest the push reports,
+      # so what runs is this image whatever the tag holds later (decision D53).
       - name: Push the tested image
+        id: push
         env:
           OWNER: ${{ github.repository_owner }}
           SHA: ${{ github.sha }}
@@ -244,105 +263,103 @@ jobs:
           image="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/framer-clone-box"
           docker tag framer-clone-box:ci "$image:$SHA"
           docker push "$image:$SHA"
+          digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' framer-clone-box:ci | sed -n "s#^$image@##p" | head -n 1)
+          if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::The push reported no digest for $image; nothing is deployed."
+            exit 1
+          fi
+          echo "Pushed $image:$SHA as $image@$digest (the digest to give rollback_digest to deploy this image again)."
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-      # Points the box's Coolify application at this commit's tag, calls the deploy webhook and follows the
-      # deployment until it finishes. Every way it can go wrong fails the run: a refused token, no deployment
-      # named, a failed, cancelled or skipped deployment, or no end within 15 minutes. Nothing Coolify
-      # answers is printed beyond the status names below, and the Coolify address and the application's id
-      # (both part of the webhook secret) are masked in the log.
+      - name: Checkout the deploy script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .nvmrc
+            services/box/ci
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      # Points the Coolify application at the digest, calls the deploy webhook, follows the deployment until
+      # it finishes and waits for /health/db. Every way it can go wrong fails the run; nothing Coolify answers
+      # is printed beyond the status names it knows, and the Coolify address and application id are masked.
       - name: Deploy through Coolify
         env:
           COOLIFY_BOX_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-          SHA: ${{ github.sha }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        run: node services/box/ci/deploy.ts
+
+  # A rollback: deploys an image already in the registry, named by its digest, and builds nothing. Main only,
+  # O1 done, and in the same environment as the publish job, so it reads the same secrets and no other job
+  # does. Set BOX_DEPLOY_PINNED first, so the next push does not publish main over it (decision D53).
+  rollback:
+    name: roll back
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.rollback_digest != '' && vars.BOX_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    environment:
+      name: box-production
+      url: https://run.lumitrausercontent.com/health/db
+    env:
+      HEALTH_URL: https://run.lumitrausercontent.com/health/db
+    steps:
+      - name: Is the image in the registry
+        env:
+          DIGEST: ${{ inputs.rollback_digest }}
+          OWNER: ${{ github.repository_owner }}
+          PINNED: ${{ vars.BOX_DEPLOY_PINNED }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -uo pipefail
-          base=$(printf '%s' "$COOLIFY_BOX_WEBHOOK" | sed -E 's#^(https?://[^/?]+).*#\1#')
-          host=${base#*://}
-          app=$(printf '%s' "$COOLIFY_BOX_WEBHOOK" | sed -nE 's#.*[?&]uuid=([A-Za-z0-9_-]+).*#\1#p')
-          echo "::add-mask::$base"
-          echo "::add-mask::$host"
-          echo "::add-mask::${host%%:*}"
-          if [ -z "$app" ]; then
-            echo "::error::COOLIFY_BOX_WEBHOOK names no application (it has no uuid= parameter)."
+          set -euo pipefail
+          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::rollback_digest is not an image digest (sha256: and 64 hex digits)."
             exit 1
           fi
-          echo "::add-mask::$app"
-
-          # curl prints 000 itself when it gets no answer; the fallback only covers an empty result.
-          code=$(curl -sS -X PATCH --max-time 30 -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer $COOLIFY_TOKEN" -H 'Content-Type: application/json' \
-            --data "{\"docker_registry_image_tag\":\"$SHA\"}" "$base/api/v1/applications/$app") || true
-          code=${code:-000}
-          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
-            hint=""
-            if [ "$code" = "401" ] || [ "$code" = "403" ]; then hint=" The token needs the write and deploy permissions."; fi
-            echo "::error::Coolify did not take the image tag $SHA (HTTP $code).$hint"
+          if [ "$PINNED" != "true" ]; then
+            echo "::warning::BOX_DEPLOY_PINNED is not true: the next push that changes the box publishes main over this rollback."
+          fi
+          image="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/framer-clone-box"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          if ! docker buildx imagetools inspect "$image@$DIGEST" >/dev/null; then
+            echo "::error::$image@$DIGEST is not in the registry; nothing is deployed."
             exit 1
           fi
-          echo "The Coolify application now runs the tag $SHA once deployed."
+          docker logout ghcr.io >/dev/null
 
-          code=$(curl -sS -X POST --max-time 30 -o "$RUNNER_TEMP/coolify.json" -w '%{http_code}' \
-            -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_BOX_WEBHOOK") || true
-          code=${code:-000}
-          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
-            echo "::error::The Coolify deploy webhook answered HTTP $code."
-            exit 1
-          fi
-          deployment=$(jq -r '.deployments[0].deployment_uuid // empty' "$RUNNER_TEMP/coolify.json" 2>/dev/null || true)
-          rm -f "$RUNNER_TEMP/coolify.json"
-          if ! printf '%s' "$deployment" | grep -Eq '^[A-Za-z0-9_-]+$'; then
-            echo "::error::Coolify named no deployment, so the deploy cannot be followed. Its log is in Coolify."
-            exit 1
-          fi
-
-          started=$(date +%s)
-          while true; do
-            probe=$(curl -sS --max-time 15 -o "$RUNNER_TEMP/deployment.json" -w '%{http_code}' \
-              -H "Authorization: Bearer $COOLIFY_TOKEN" "$base/api/v1/deployments/$deployment") || true
-            probe=${probe:-000}
-            if [ "$probe" = "401" ] || [ "$probe" = "403" ]; then
-              echo "::error::The Coolify token cannot read deployments (HTTP $probe), so the deploy cannot be followed."
-              exit 1
-            fi
-            status=unanswered
-            if [ "$probe" = "200" ]; then
-              status=$(jq -r '.status // "unknown"' "$RUNNER_TEMP/deployment.json" 2>/dev/null || echo "unknown")
-            fi
-            rm -f "$RUNNER_TEMP/deployment.json"
-            elapsed=$(( $(date +%s) - started ))
-            # Coolify's statuses: queued, in_progress, finished, failed, cancelled-by-user, skipped.
-            case "$status" in
-              finished)
-                echo "The Coolify deployment finished (${elapsed}s)."
-                exit 0 ;;
-              failed|cancelled-by-user|skipped)
-                echo "::error::The Coolify deployment ended with status $status. Its log is in Coolify."
-                exit 1 ;;
-              queued|in_progress)
-                echo "Deployment status: $status (${elapsed}s)" ;;
-              unanswered)
-                echo "Deployment status: no answer (HTTP $probe, ${elapsed}s)" ;;
-              *)
-                echo "Deployment status: not one Coolify is known to give (${elapsed}s)" ;;
-            esac
-            if [ "$elapsed" -ge 900 ]; then
-              echo "::error::The Coolify deployment did not end within 900 seconds."
-              exit 1
-            fi
-            sleep 10
-          done
-
-      # Readiness, not liveness: /health/db calls the box's one database function as box_reader, so a box
-      # that cannot read (no role, no function, no network to the database) fails the deploy loudly.
-      - name: Wait for the box to answer /health/db
+      - name: Are the deploy secrets set
+        env:
+          HAS_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK != '' }}
+          HAS_TOKEN: ${{ secrets.COOLIFY_TOKEN != '' }}
         run: |
-          for attempt in $(seq 1 24); do
-            if curl --fail --silent --show-error --max-time 10 -o /dev/null "$HEALTH_URL"; then
-              echo "The box answers /health/db (attempt $attempt)."
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::The box did not answer $HEALTH_URL within two minutes."
-          exit 1
+          if [ "$HAS_WEBHOOK" != "true" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::The environment box-production lacks COOLIFY_BOX_WEBHOOK or COOLIFY_TOKEN (deploy/README.md, the box)."
+            exit 1
+          fi
+
+      - name: Checkout the deploy script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .nvmrc
+            services/box/ci
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Deploy through Coolify
+        env:
+          COOLIFY_BOX_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          IMAGE_DIGEST: ${{ inputs.rollback_digest }}
+        run: node services/box/ci/deploy.ts
