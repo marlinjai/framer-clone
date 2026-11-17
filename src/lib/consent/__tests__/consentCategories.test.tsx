@@ -86,9 +86,9 @@ const stored = () => JSON.parse(window.localStorage.getItem(CONSENT_STORAGE_KEY)
 const mapsCookie = () => document.cookie.split('; ').find((c) => c.startsWith(`${CONSENT_MAPS_COOKIE}=`)) ?? null;
 const store = (value: Record<string, unknown>) => window.localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: CONSENT_VERSION, at: 'x', ...value }));
 /** jsdom has no navigation: the runtime's reload, observed instead. */
-const mockReload = () => {
+const mockReload = (hash = '') => {
   const reload = vi.fn();
-  vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload, hash: '' } as Location);
+  vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload, hash, pathname: '/contact', search: '?a=1' } as Location);
   return reload;
 };
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole('button', { name }));
@@ -130,6 +130,24 @@ describe('a site with one purpose', () => {
     expect(api.get('maps')).toBe('granted');
     expect(events).toEqual([{ maps: true }]);
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('tells a map island whether this document was served with the maps cookie', () => {
+    mockReload();
+    expect(load(['maps']).mapsAtLoad).toBe(false);
+    cleanup();
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
+    expect(load(['maps']).mapsAtLoad).toBe(true);
+  });
+
+  it('drops the cookie settings address before the reload, so the banner does not open again', () => {
+    const reload = mockReload('#cookie-settings');
+    const replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+    load(['maps']);
+    click('Accept');
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/contact?a=1');
+    expect(replaceState.mock.invocationCallOrder[0]).toBeLessThan(reload.mock.invocationCallOrder[0]);
   });
 
   it('a stored yes whose cookie is gone sets the cookie again and reloads once', () => {
@@ -333,5 +351,53 @@ describe('stored value and copy', () => {
         expect(`${copy.body} ${copy.rows.analytics.text} ${copy.rows.maps.text}`).not.toMatch(/[–—]/);
       }
     }
+  });
+});
+
+describe('the maps reload and the tracker', () => {
+  // The banner has no single "accept all" button; the runtime's accept() answers every question shown at once.
+  it('A: accepting everything on a first visit to a page with a map reloads without starting the tracker in this document', () => {
+    const reload = mockReload();
+    load(['analytics', 'maps']).accept();
+    expect(stored()).toMatchObject({ analytics: true, maps: true });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(importTracker).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it('B: both answers stored and the maps cookie gone, on a page with a map: reloads before the tracker starts', () => {
+    const reload = mockReload();
+    store({ analytics: true, maps: true });
+    load(['analytics', 'maps']);
+    expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(importTracker).not.toHaveBeenCalled();
+    // The new document is served with the cookie: it starts the tracker, once, and does not reload.
+    cleanup();
+    load(['analytics', 'maps']);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(importTracker).toHaveBeenCalledTimes(1);
+  });
+
+  it('C: accepting everything from Cookie settings on a page without a map sets the cookie and does not reload', () => {
+    const reload = mockReload();
+    store({ analytics: true });
+    const api = load(['analytics'], ['analytics', 'maps']);
+    expect(importTracker).toHaveBeenCalledTimes(1);
+    cookieSettings();
+    api.accept();
+    expect(stored()).toMatchObject({ analytics: true, maps: true });
+    expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
+    expect(reload).not.toHaveBeenCalled();
+    expect(importTracker).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stored yes whose cookie is gone, on a page without a map: sets the cookie, no reload', () => {
+    const reload = mockReload();
+    store({ analytics: true, maps: true });
+    load(['analytics'], ['analytics', 'maps']);
+    expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
+    expect(reload).not.toHaveBeenCalled();
+    expect(importTracker).toHaveBeenCalledTimes(1);
   });
 });
