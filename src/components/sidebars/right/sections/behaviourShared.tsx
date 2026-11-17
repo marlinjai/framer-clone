@@ -5,7 +5,7 @@
 // parser reads them, the one write, and a control for a value of each state type. See
 // "The panel" in docs/plans/2026-11-02-behaviour-model.md.
 
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BehaviourNode, StateValue } from '@/lib/behaviour/format';
@@ -43,6 +43,35 @@ export function SwitchRow({ label, name, hint, checked, onCheckedChange }: {
       <PropertySwitch aria-label={name ?? label} checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   );
+}
+
+/**
+ * Where keyboard focus goes after a write, and what is said about it. A control that a
+ * write takes away (Add swapped for the editor, a deleted row, a closed editor) would
+ * leave focus on the page body, so after the write the first control that matches one of
+ * `selectors` inside the section takes it. `message` is announced politely, since adding
+ * or deleting changes the panel out of sight of a screen reader. The focus moves after the
+ * render the write causes, so the control it looks for is there.
+ */
+export function useFocusAfter() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pending, setPending] = useState<{ selectors: readonly string[]; message?: string } | null>(null);
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    if (!pending) return;
+    for (const selector of pending.selectors) {
+      const target = ref.current?.querySelector<HTMLElement>(selector);
+      if (target) {
+        target.focus();
+        break;
+      }
+    }
+    if (pending.message) setMessage(pending.message);
+    setPending(null);
+  }, [pending]);
+  const request = useCallback((selectors: readonly string[], said?: string) => setPending({ selectors, message: said }), []);
+  const live = <p role="status" aria-live="polite" className="sr-only">{message}</p>;
+  return { ref, request, live };
 }
 
 /** What the page's trees, the page and its floating elements, need from a page. */

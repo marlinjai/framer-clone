@@ -246,6 +246,63 @@ describe('forward', () => {
   });
 });
 
+describe('focus and what is said', () => {
+  const status = (section: () => ReturnType<typeof within>) => section().getByRole('status').textContent;
+
+  it('the interaction editor takes the focus when it opens, and gives it back to a control that is there when it closes', () => {
+    mount();
+    select(button);
+    addPageValue('Open');
+    fireEvent.click(interactions().getByRole('button', { name: 'Add interaction' }));
+    expect(document.activeElement).toBe(interactions().getByLabelText('Event', { exact: true }));
+    fireEvent.click(interactions().getByRole('button', { name: 'Cancel' }));
+    expect(document.activeElement).toBe(interactions().getByRole('button', { name: 'Add interaction' }));
+
+    addInteraction('click');
+    expect(document.activeElement).toBe(interactions().getByRole('button', { name: 'Add interaction' }));
+    expect(status(interactions)).toBe('Added: On click, toggle Open');
+    addInteraction('mouseenter');
+
+    fireEvent.click(interactions().getByRole('button', { name: 'Edit: On click, toggle Open' }));
+    expect(document.activeElement).toBe(interactions().getByLabelText('Event', { exact: true }));
+    fireEvent.click(interactions().getByRole('button', { name: 'Save this interaction' }));
+    expect(document.activeElement).toBe(interactions().getByRole('button', { name: 'Edit: On click, toggle Open' }));
+    expect(status(interactions)).toBe('Saved: On click, toggle Open');
+
+    // Deleting the first row: the next row, now first, takes the focus; deleting the last: Add interaction.
+    fireEvent.click(interactions().getByRole('button', { name: 'Delete: On click, toggle Open' }));
+    expect(document.activeElement).toBe(interactions().getByRole('button', { name: 'Edit: On mouse enter, toggle Open' }));
+    expect(status(interactions)).toBe('Deleted: On click, toggle Open');
+    fireEvent.click(interactions().getByRole('button', { name: 'Delete: On mouse enter, toggle Open' }));
+    expect(document.activeElement).toBe(interactions().getByRole('button', { name: 'Add interaction' }));
+  });
+
+  it('a new value\'s name takes the focus; a deleted one gives it to the next value or to Add value', () => {
+    mount();
+    select(button);
+    fireEvent.click(pageState().getByRole('button', { name: 'Add a value to the page' }));
+    expect(document.activeElement).toBe(pageState().getByLabelText('Name of Value 1'));
+    expect(status(pageState)).toBe('Added Value 1');
+    fireEvent.click(pageState().getByRole('button', { name: 'Add a value to the page' }));
+    fireEvent.click(pageState().getByRole('button', { name: 'Delete Value 1' }));
+    expect(document.activeElement).toBe(pageState().getByLabelText('Name of Value 2'));
+    expect(status(pageState)).toBe('Deleted Value 1');
+    fireEvent.click(pageState().getByRole('button', { name: 'Delete Value 2' }));
+    expect(document.activeElement).toBe(pageState().getByRole('button', { name: 'Add a value to the page' }));
+  });
+
+  it('a delete that asks first puts the focus on Keep it, and Keep it gives it back to the delete button', () => {
+    mount();
+    select(button);
+    addPageValue('Open');
+    addInteraction('click');
+    fireEvent.click(pageState().getByRole('button', { name: 'Delete Open' }));
+    expect(document.activeElement).toBe(pageState().getByRole('button', { name: 'Keep it' }));
+    fireEvent.click(pageState().getByRole('button', { name: 'Keep it' }));
+    expect(document.activeElement).toBe(pageState().getByRole('button', { name: 'Delete Open' }));
+  });
+});
+
 describe('the page as a whole', () => {
   /** Text values of 4,096 characters: 15 of them fit the page's 64 KB, a 16th does not. */
   const bigText = (n: number, initial = 'x'.repeat(4096)) => ({ id: `v-big${String(n).padStart(5, '0')}`, name: `Big ${n}`, type: 'text', initial });

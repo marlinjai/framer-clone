@@ -14,7 +14,7 @@
 // say) stays stored and shows its reason; it can be edited or deleted. Entries a preset
 // wrote carry its mark and are shown, not edited: the preset writes them again.
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { MousePointerClick, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
@@ -55,7 +55,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, namesFor, storedText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, namesFor, useFocusAfter, storedText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface InteractionsSectionProps {
@@ -88,6 +88,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
   // An open editor names its trigger by node, place and id, and holds the whole stored trigger it opened on.
   const [editing, setEditing] = useState<{ nodeId: string; index: number; triggerId: string; base: string } | null>(null);
   const [adding, setAdding] = useState<{ nodeId: string; draft: StoredRecord } | null>(null);
+  const focus = useFocusAfter();
   if (!page) return null;
   const roots = rootsOf(page);
   const found = pathTo(roots, component.id);
@@ -97,7 +98,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
   if (!found) return null;
   if (stored === null) {
     return (
-      <Shell>
+      <Shell focus={focus}>
         <p className={REASON}>Its behaviour is not used: {refused[0]?.reason ?? 'behaviour is an object'}.</p>
         <button type="button" className={SMALL_BUTTON} onClick={() => writeBehaviour(component, undefined)}>Remove what cannot be read</button>
       </Shell>
@@ -123,8 +124,11 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
     return null;
   };
 
+  /** Focus after a write: a row's Edit button, then the next one, then the one before, then Add interaction. */
+  const rowThenAdd = (index: number) => [index, index - 1].map((at) => `[data-trigger-index="${at}"] button[aria-label^="Edit:"]`).concat('[data-add-interaction]');
+
   return (
-    <Shell>
+    <Shell focus={focus}>
       <PresetItemControls component={component} page={page} />
       {holdsNonList(stored, 'on') && (
         <p className={REASON}>Its interactions are not used: {refused.find((r) => r.entry === 'on')?.reason ?? 'on is a list'}.</p>
@@ -151,16 +155,22 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
                   saveLabel="Save"
                   onSave={(draft) => {
                     const reasonNow = save(draft, index);
-                    if (!reasonNow) setEditing(null);
+                    if (!reasonNow) {
+                      setEditing(null);
+                      focus.request(rowThenAdd(index), `Saved: ${describeTrigger(draft, names)}`);
+                    }
                     return reasonNow;
                   }}
-                  onCancel={() => setEditing(null)}
+                  onCancel={() => {
+                    setEditing(null);
+                    focus.request(rowThenAdd(index));
+                  }}
                 />
               </li>
             );
           }
           return (
-            <li key={`row-${index}`} className="flex flex-col gap-1 rounded-[6px] border border-border p-2">
+            <li key={`row-${index}`} data-trigger-index={index} className="flex flex-col gap-1 rounded-[6px] border border-border p-2">
               <div className="flex items-start gap-1.5">
                 <span className="min-w-0 flex-1 text-[12px] leading-snug text-foreground">{sentence}</span>
                 {!preset && (
@@ -168,7 +178,14 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
                     <IconButton label={`Edit: ${sentence}`} onClick={() => { setAdding(null); setEditing({ nodeId: component.id, index, triggerId, base }); }}>
                       <Pencil size={12} aria-hidden />
                     </IconButton>
-                    <IconButton label={`Delete: ${sentence}`} onClick={() => { setEditing(null); writeBehaviour(component, removeEntry(stored, 'on', index)); }}>
+                    <IconButton
+                      label={`Delete: ${sentence}`}
+                      onClick={() => {
+                        setEditing(null);
+                        writeBehaviour(component, removeEntry(stored, 'on', index));
+                        focus.request(rowThenAdd(index), `Deleted: ${sentence}`);
+                      }}
+                    >
                       <Trash2 size={12} aria-hidden />
                     </IconButton>
                   </>
@@ -190,15 +207,22 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
           saveLabel="Add"
           onSave={(draft) => {
             const reason = save(draft);
-            if (!reason) setAdding(null);
+            if (!reason) {
+              setAdding(null);
+              focus.request(['[data-add-interaction]'], `Added: ${describeTrigger(draft, names)}`);
+            }
             return reason;
           }}
-          onCancel={() => setAdding(null)}
+          onCancel={() => {
+            setAdding(null);
+            focus.request(['[data-add-interaction]']);
+          }}
         />
       ) : (
         !holdsNonList(stored, 'on') && (
           <button
             type="button"
+            data-add-interaction=""
             className={SMALL_BUTTON}
             onClick={() => {
               setEditing(null);
@@ -288,12 +312,13 @@ const PresetItemControls = observer(({ component, page }: { component: Component
 
 PresetItemControls.displayName = 'PresetItemControls';
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, focus }: { children: React.ReactNode; focus: ReturnType<typeof useFocusAfter> }) {
   return (
-    <div data-testid="interactions-section">
+    <div data-testid="interactions-section" ref={focus.ref}>
       <CollapsibleSection title="Interactions" icon={<MousePointerClick size={14} />} normalOnly>
         {children}
       </CollapsibleSection>
+      {focus.live}
     </div>
   );
 }
@@ -327,6 +352,11 @@ function TriggerEditor({ initial, states, nodes, selfId, saveLabel, onSave, onCa
   const [reason, setReason] = useState<string | null>(null);
   const [keysText, setKeysText] = useState(Array.isArray(initial.keys) ? initial.keys.map(String).join(', ') : '');
   const [keysError, setKeysError] = useState<string | null>(null);
+  // Opening the editor takes the focus to its first field, since the button that opened it is gone.
+  const eventRef = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    eventRef.current?.focus();
+  }, []);
   const change = (next: StoredRecord) => {
     setDraft(next);
     setReason(null);
@@ -354,7 +384,7 @@ function TriggerEditor({ initial, states, nodes, selfId, saveLabel, onSave, onCa
     <div className="flex flex-col gap-2 rounded-[6px] border border-brand/40 p-2" role="group" aria-label="Interaction">
       <label className="flex min-w-0 flex-col gap-1">
         <span className={FIELD_LABEL}>When</span>
-        <select aria-label="Event" value={custom ? CUSTOM_EVENT_CHOICE : on} onChange={(event) => setEvent(event.target.value)} className={cn(FIELD_CONTROL, 'cursor-pointer')}>
+        <select ref={eventRef} aria-label="Event" value={custom ? CUSTOM_EVENT_CHOICE : on} onChange={(event) => setEvent(event.target.value)} className={cn(FIELD_CONTROL, 'cursor-pointer')}>
           {QUICK_EVENTS.map((entry) => <option key={entry.on} value={entry.on}>{entry.label}</option>)}
           <optgroup label="All events">
             {ALL_EVENTS.map((name) => <option key={name} value={name}>{name}</option>)}

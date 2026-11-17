@@ -15,7 +15,7 @@
 // A value that no longer fits its state after an edit (an option removed, a type
 // changed) is taken out of the preview, not just hidden.
 
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { Variable, Plus, Trash2 } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
@@ -42,7 +42,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, storedText, rootsOf, valueText, writeBehaviour, type BehaviourPage } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, storedText, rootsOf, useFocusAfter, valueText, writeBehaviour, type BehaviourPage } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface PageStatePanelProps {
@@ -58,6 +58,7 @@ function insideCollection(path: readonly { props?: unknown }[]): boolean {
 export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
   const { editorUI } = useStore();
   const [addError, setAddError] = useState<string | null>(null);
+  const focus = useFocusAfter();
   const page = editorUI.currentPage as unknown as (BehaviourPage & { appComponentTree: ComponentInstance }) | undefined;
   if (!page) return null;
   const root = page.appComponentTree;
@@ -84,17 +85,20 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
     const next = putEntry(stored, 'state', state);
     const reason = refusalAt(roots, on.id, next, state, nameIn(page));
     setAddError(reason);
-    if (!reason) writeBehaviour(on, next);
+    if (reason) return;
+    writeBehaviour(on, next);
+    focus.request([`[data-state-id="${state.id}"] input[aria-label^="Name of"]`], `Added ${state.name}`);
   };
 
   return (
-    <div data-testid="page-state-panel">
+    <FocusRequest.Provider value={focus.request}>
+    <div data-testid="page-state-panel" ref={focus.ref}>
       <CollapsibleSection title="Page state" icon={<Variable size={14} />} normalOnly>
         {scopes.map((scope) => (
           <ScopeStates key={scope.id} scope={scope} page={page} title={scope === root ? 'This page' : scope.displayName} />
         ))}
         <div className="flex flex-wrap gap-1.5">
-          <button type="button" className={SMALL_BUTTON} onClick={() => add(root)} aria-label="Add a value to the page">
+          <button type="button" data-add-value="" className={SMALL_BUTTON} onClick={() => add(root)} aria-label="Add a value to the page">
             <Plus size={12} aria-hidden className="mr-1" /> Add value
           </button>
           {canKeepHere && selected && (
@@ -105,11 +109,16 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
         </div>
         {addError && <p role="alert" className={REASON}>Not added: {addError}.</p>}
       </CollapsibleSection>
+      {focus.live}
     </div>
+    </FocusRequest.Provider>
   );
 });
 
 PageStatePanel.displayName = 'PageStatePanel';
+
+/** Where focus goes after a row's write, handed down from the panel (useFocusAfter). */
+const FocusRequest = React.createContext<(selectors: readonly string[], said?: string) => void>(() => {});
 
 /** An element as a refusal names it: its layer name. */
 const nameIn = (page: BehaviourPage) => (id: string): string => `"${page.findComponent(id)?.displayName ?? id}"`;
@@ -160,6 +169,7 @@ interface StateRowProps {
 
 const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateRowProps) => {
   const { editorUI } = useStore();
+  const requestFocus = useContext(FocusRequest);
   // A refusal of what a person just entered, shown until the stored value changes.
   const [error, setError] = useState<{ reason: string; for: string } | null>(null);
   // A type picked but not yet applied, and a delete waiting for its confirmation: a select's
@@ -204,7 +214,13 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
 
   const remove = () => {
     setConfirmDelete(false);
+    // Focus goes to the next value, or the one before, or Add value, since this row is gone.
+    const list = storedList(stored, 'state');
+    const near = [list[index + 1], list[index - 1]]
+      .map((other) => (isRecord(other) && typeof other.id === 'string' ? `[data-state-id="${other.id}"] input[aria-label^="Name of"]` : null))
+      .filter((selector): selector is string => selector !== null);
     writeBehaviour(scope, removeEntry(stored, 'state', index));
+    requestFocus([...near, '[data-add-value]'], `Deleted ${name}`);
     if (editorUI.previewState[id] !== undefined) editorUI.setPreviewValue(id, undefined);
   };
 
@@ -243,7 +259,18 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
           <p className={REASON}>{`Deleting ${name} stops what reads it from working until it is back: ${readerNames.join(', ')}.`}</p>
           <div className="flex gap-1.5">
             <button type="button" className={SMALL_BUTTON} onClick={remove}>{`Delete ${name}`}</button>
-            <button type="button" className={SMALL_BUTTON} onClick={() => setConfirmDelete(false)}>Keep it</button>
+            {/* The question takes the focus, on the choice that loses nothing; keeping it gives the focus back to the row's delete. */}
+            <button
+              type="button"
+              autoFocus
+              className={SMALL_BUTTON}
+              onClick={() => {
+                setConfirmDelete(false);
+                requestFocus([`[data-state-id="${id}"] button[aria-label="Delete ${name}"]`]);
+              }}
+            >
+              Keep it
+            </button>
           </div>
         </div>
       )}
