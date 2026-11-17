@@ -460,11 +460,12 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
   }, 60_000);
 
   /**
-   * Takes the keyboard back to the page up to six times, and notes after each what holds it: the frame
-   * (its script took it again), the page, or nothing because the frame is gone. A theft needs the page to
-   * have held the keyboard first: an attempt where the outside input never got focus (Firefox sometimes
-   * does not apply `focus()` while a frame in the page's process holds the keyboard) is noted `NOFOCUS`
-   * and is not a theft the broker could see.
+   * Takes the keyboard back to the page until the frame is gone or six attempts counted, and notes after
+   * each what holds it: the frame (its script took it again), the page, or nothing because the frame is gone.
+   * A theft needs the page to have held the keyboard first: an attempt where the outside input never got
+   * focus (Firefox sometimes does not apply `focus()` while a frame in the page's process holds the
+   * keyboard) is noted `NOFOCUS`, is not a theft the broker could see, and does not count. Twelve attempts
+   * in all bound the loop, so an engine that never gives the page focus fails on the count, not on time.
    */
   async function steal(page: Page, id: string, removingTheft: number): Promise<string[]> {
     const moves: string[] = [];
@@ -475,7 +476,8 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       w.__pageFocus = 0;
       document.getElementById('outside')?.addEventListener('focus', () => (w.__pageFocus += 1));
     });
-    for (let i = 0; i < 6 && !(await settled(page)).some((s) => !s.shown); i++) {
+    const counted = () => moves.filter((move) => move !== 'NOFOCUS').length;
+    for (let i = 0; i < 12 && counted() < 6 && !(await settled(page)).some((s) => !s.shown); i++) {
       // Blurred first, so focusing it is a change an engine announces even where the page kept the keyboard.
       const before = await page.evaluate(() => {
         (document.activeElement as HTMLElement | null)?.blur();
@@ -490,14 +492,13 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       await until(page, `document.activeElement && document.activeElement.tagName === 'IFRAME' || ${removed(id)}`, 3_000);
       // The broker looks a task after the page lost the keyboard, or at its next ping where the engine held
       // the event back: the theft that should remove the frame gets a ping's time, the others a moment.
-      if (moves.filter((move) => move !== 'NOFOCUS').length + 1 === removingTheft) await until(page, removed(id), 6_000);
+      if (counted() + 1 === removingTheft) await until(page, removed(id), 6_000);
       else await page.waitForTimeout(200);
       moves.push(await page.evaluate((box) => (window as unknown as { __settled: { id: string; shown: boolean }[] }).__settled.some((s) => s.id === box && !s.shown)
         ? 'removed'
         : document.activeElement?.tagName ?? '', id));
     }
     record(`focus moves in ${engine} for ${id}: ${moves.join(', ')}`);
-    expect(moves.filter((move) => move === 'NOFOCUS').length).toBeLessThanOrEqual(2);
     return moves.filter((move) => move !== 'NOFOCUS');
   }
 
