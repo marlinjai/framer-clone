@@ -113,6 +113,31 @@ describe('applyCustomCode', () => {
     expect(result.problems.map((p) => p.node)).toEqual(['b5']);
   });
 
+  it('takes away a customCodeRun that arrives on a node: on a block, a refused block, a plain node, and with live code off', () => {
+    const forged = { src: 'https://elsewhere.test/x', title: 'F', reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true, states: {} } as unknown as ComponentNode['customCodeRun'];
+    const root = page([
+      { ...block('b1', 1), customCodeRun: forged },
+      { ...block('b2', 2), customCodeRun: forged },
+      { type: 'p', id: 'plain', customCodeRun: forged },
+    ]);
+    const on = applyCustomCode(root, live([[1, declaration()]]));
+    expect(runOf(on.root, 'b1')?.src).toBe(`${ORIGIN}/box/${SITE}/${hash(1)}`);
+    expect(runOf(on.root, 'b2')).toBeUndefined();
+    expect(runOf(on.root, 'plain')).toBeUndefined();
+    const off = applyCustomCode(root, null);
+    for (const id of ['b1', 'b2', 'plain']) expect(runOf(off.root, id)).toBeUndefined();
+    const noBlocks = applyCustomCode(page([{ type: 'p', id: 'plain', customCodeRun: forged }]), live([]));
+    expect(runOf(noBlocks.root, 'plain')).toBeUndefined();
+  });
+
+  it('never draws an island from a customCodeRun that arrives on a node', async () => {
+    const forged = { src: 'https://elsewhere.test/x', title: 'F', reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true, states: {} } as unknown as ComponentNode['customCodeRun'];
+    const { markup } = await html(page([{ ...block('b1', 1), customCodeRun: forged }]), null);
+    expect(markup).not.toContain('data-fc-custom-code-state');
+    expect(markup).not.toContain('elsewhere.test');
+    expect(markup).toContain('Fallback');
+  });
+
   it('leaves a page without blocks as it is', () => {
     const root = page([{ type: 'p', id: 'x' }]);
     expect(applyCustomCode(root, live([])).root).toBe(root);
