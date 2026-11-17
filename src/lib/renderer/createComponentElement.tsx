@@ -143,6 +143,14 @@ function ancestorsOf(component: ComponentInstance): { type?: unknown; props?: un
   return out;
 }
 
+/** The ancestors that make a link inside them nested interactive content. Lower case. */
+const CONTROL_HOSTS: ReadonlySet<string> = new Set(['a', 'button', 'label', 'summary']);
+
+/** Whether a node sits inside a link, a button, a label or a summary (its MST ancestors). */
+function insideControl(component: ComponentInstance): boolean {
+  return ancestorsOf(component).some((node) => typeof node.type === 'string' && CONTROL_HOSTS.has(node.type.toLowerCase()));
+}
+
 /** What a node stands in for the HTML parser, whatever its tag: its ancestors decide. */
 function standsIn(component: ComponentInstance): ForeignContent {
   const types = ancestorsOf(component).map((node) => node.type).filter((type): type is string => typeof type === 'string');
@@ -255,6 +263,7 @@ export function createComponentElement(
           config={(component.props as Record<string, unknown>).customCode}
           // Inside svg or math the tile needs an HTML island of its own (customCodeElement.tsx).
           foreign={standsIn(component)}
+          insideControl={options?.runLinksAllowed === false || insideControl(component)}
         >
           {content}
         </CustomCodeOnEditorSurface>
