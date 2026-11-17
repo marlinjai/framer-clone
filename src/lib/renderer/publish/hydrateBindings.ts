@@ -54,6 +54,7 @@
 // runtime-island hydration for the interactive commerce kinds is ALSO gated on
 // the static-html wave. Do NOT wire any of it here.
 
+import type { IslandBlock } from '@/lib/customCode/registry';
 import { wellFormedTree } from '@/lib/renderer/publish/nodeShape';
 import { applyBindings, type Props } from '@/lib/bindings/resolver/applyBindings';
 import { formattedPlainText, isFormattedText, isTextNodeType, renderableText } from '@/lib/renderer/textNode';
@@ -139,6 +140,11 @@ export interface ComponentNode {
   cloneIndex?: number;
   /** Set by applyBehaviour, never stored: what stands in for `props.rules`. Ends at applyResponsiveStyles. */
   compiledRules?: ParsedRule[];
+  /**
+   * Set by applyCustomCode, never stored: a sandboxed custom code block the server accepted for this
+   * request, which the renderer draws as CustomCodeIsland. Plain data, so it crosses the client boundary.
+   */
+  customCodeRun?: IslandBlock;
 }
 
 /**
