@@ -35,6 +35,18 @@ import { MAP_FRAME_SANDBOX, MAP_FRAME_STYLE, MAP_SHADOW_ROOT_STYLE, mapPlacehold
 interface ConsentApi {
   get?: (category?: string) => string | null;
   open?: (category?: string) => void;
+  /** False when this document was served without the maps cookie: its frame-src refuses Google. */
+  mapsAtLoad?: boolean;
+}
+
+/**
+ * Whether this document's enforced frame-src lets the map in (decision D48 of
+ * docs/plans/2026-11-02-sandboxed-custom-code.md). Only a runtime that says it was
+ * served without the maps cookie refuses: a frame drawn then would only show the
+ * browser's blocked-content page, so the placeholder stays.
+ */
+function frameAllowed(): boolean {
+  return consentApi()?.mapsAtLoad !== false;
 }
 
 function consentApi(): ConsentApi | undefined {
@@ -109,7 +121,7 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
   }, []);
 
   const src = view.src;
-  const show = granted && isRebuiltMapSrc(src);
+  const show = granted && frameAllowed() && isRebuiltMapSrc(src);
   const own = show ? (
     <iframe
       ref={frame}
