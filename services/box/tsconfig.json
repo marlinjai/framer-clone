@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "esModuleInterop": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "vitest.integration.config.ts", "../../src/lib/customCode/contract.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "ci/**/*.ts", "vitest.config.ts", "vitest.integration.config.ts", "../../src/lib/customCode/contract.ts"]
 }
