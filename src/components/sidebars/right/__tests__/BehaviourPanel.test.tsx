@@ -390,13 +390,80 @@ describe('a preset\'s items', () => {
     fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
     expect(group().getByText('4 tabs, made from a preset')).toBeTruthy();
     expect(history().undoIdx).toBe(before + 1);
-    fireEvent.change(group().getByLabelText('Remove a tab'), { target: { value: '0' } });
+    // Picking a tab removes nothing: only the Remove button does, so a key moving through the list is safe.
+    const pick = () => group().getByLabelText('Tab to remove') as HTMLSelectElement;
+    expect((group().getByRole('button', { name: 'Remove the picked tab' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(pick(), { target: { value: '0' } });
+    fireEvent.change(pick(), { target: { value: '1' } });
+    fireEvent.change(pick(), { target: { value: '0' } });
+    expect(group().getByText('4 tabs, made from a preset')).toBeTruthy();
+    expect(history().undoIdx).toBe(before + 1);
+    fireEvent.click(group().getByRole('button', { name: 'Remove First' }));
     expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
-    expect(Array.from((group().getByLabelText('Remove a tab') as HTMLSelectElement).options).map((o) => o.text)).toEqual(['Remove a tab', 'Second', 'Third', 'Tab 4']);
+    expect(history().undoIdx).toBe(before + 2);
+    expect(Array.from(pick().options).map((o) => o.text)).toEqual(['Pick a tab to remove', 'Second', 'Third', 'Tab 4']);
     act(() => history().undo());
     act(() => history().undo());
     expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
-    expect(Array.from((group().getByLabelText('Remove a tab') as HTMLSelectElement).options).map((o) => o.text)).toEqual(['Remove a tab', 'First', 'Second', 'Third']);
+    expect(Array.from(pick().options).map((o) => o.text)).toEqual(['Pick a tab to remove', 'First', 'Second', 'Third']);
+  });
+
+  /** Every id in a stored subtree, in order. */
+  const idsIn = (node: unknown): string[] => {
+    const record = node as { id?: string; children?: unknown[] };
+    return [...(record.id ? [record.id] : []), ...(record.children ?? []).flatMap(idsIn)];
+  };
+  const pageIds = () => idsIn(getSnapshot(store.editorUI.currentPage!.appComponentTree));
+
+  it('a new tab takes no id an element elsewhere holds, nor a removed tab\'s id', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    const seed = tabs.id;
+    // An element outside the tabs already holds the id the next panel would have taken.
+    act(() => main.addChildren([createIntrinsicComponent(`${seed}-panel-3`, 'div', { children: 'Dragged out' })]));
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    const ids = pageIds();
+    expect(new Set(ids).size).toBe(ids.length);
+    // Remove the middle tab, then add one: the removed ids do not come back.
+    const middle = idsIn(getSnapshot(tabs)).filter((id) => /-tab-1$|-panel-1$/.test(id));
+    expect(middle).toHaveLength(2);
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '1' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Second' }));
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    const after = pageIds();
+    expect(new Set(after).size).toBe(after.length);
+    for (const id of middle) expect(after).not.toContain(id);
+  });
+
+  it('a preset value keeps the name a person gave it when a tab is added, and a preview past the last tab goes', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    select(tabs);
+    const active = (behaviourOf(tabs)?.state as { id: string; name: string }[])[0];
+    typeAndCommit(pageState().getByLabelText(`Name of ${active.name}`), 'Section');
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect((behaviourOf(tabs)?.state as { name: string }[])[0].name).toBe('Section');
+    // Previewing the last tab, then removing a tab: the preview no longer fits and goes.
+    typeAndCommit(pageState().getByLabelText('Preview Section'), '3');
+    expect(store.editorUI.previewState).toEqual({ [active.id]: 3 });
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '0' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove First' }));
+    expect(store.editorUI.previewState).toEqual({});
+  });
+
+  it('replaceSubtree refuses a new id that an element elsewhere on the page holds, and changes nothing', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    const before = JSON.stringify(getSnapshot(tabs));
+    const snapshot = JSON.parse(before) as { children: Record<string, unknown>[] };
+    const clash = { ...snapshot, children: [...snapshot.children, { ...snapshot.children[1], id: 'drawer', children: [] }] };
+    expect(tabs.replaceSubtree(clash)).toEqual({ ok: false, reason: 'drawer is already an element elsewhere on the page.' });
+    expect(JSON.stringify(getSnapshot(tabs))).toBe(before);
+    // Its own ids, kept or dropped, are fine.
+    expect(tabs.replaceSubtree(JSON.parse(before)).ok).toBe(true);
   });
 
   it('a carousel gains a slide', () => {

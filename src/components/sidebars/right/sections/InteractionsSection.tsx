@@ -22,7 +22,8 @@ import { useStore } from '@/hooks/useStore';
 import { isSafeHref } from '@/lib/links/safeHref';
 import { getSnapshot } from 'mobx-state-tree';
 import { leavesSite, type StateValue } from '@/lib/behaviour/format';
-import { editPresetItems, presetItemsOf, type PresetEdit } from '@/lib/behaviour/presetItems';
+import { editPresetItems, idsInUse, presetItemsOf, type PresetEdit } from '@/lib/behaviour/presetItems';
+import { fitsState } from '@/lib/behaviour/surfaceBehaviour';
 import {
   ALL_EVENTS,
   CUSTOM_EVENT_CHOICE,
@@ -124,7 +125,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
 
   return (
     <Shell>
-      <PresetItemControls component={component} />
+      <PresetItemControls component={component} page={page} />
       {holdsNonList(stored, 'on') && (
         <p className={REASON}>Its interactions are not used: {refused.find((r) => r.entry === 'on')?.reason ?? 'on is a list'}.</p>
       )}
@@ -223,38 +224,64 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
 
 InteractionsSection.displayName = 'InteractionsSection';
 
-/** Adds or takes out a preset's items, through the preset's own functions, as one undo step. */
-const PresetItemControls = observer(({ component }: { component: ComponentInstance }) => {
+/**
+ * Adds or takes out a preset's items, through the preset's own functions, as one undo step.
+ * New ids avoid every id the page uses or names. Taking a tab out is two steps, a pick and
+ * a press, so a key moving through the list (which fires a change in some browsers)
+ * never takes one out. A preview the preset's values can no longer hold is dropped.
+ */
+const PresetItemControls = observer(({ component, page }: { component: ComponentInstance; page: BehaviourPage }) => {
+  const { editorUI } = useStore();
+  const [picked, setPicked] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const snapshot = getSnapshot(component) as unknown as StoredRecord;
   const items = presetItemsOf(snapshot);
   if (!items) return null;
   const apply = (edit: PresetEdit) => {
-    const next = editPresetItems(getSnapshot(component) as unknown as StoredRecord, edit);
-    if (next) component.replaceSubtree(next);
+    const next = editPresetItems(getSnapshot(component) as unknown as StoredRecord, edit, idsInUse(rootsOf(page)));
+    if (!next) return;
+    const written = component.replaceSubtree(next);
+    setError(written.ok ? null : written.reason);
+    if (!written.ok) return;
+    setPicked('');
+    const now = storedBehaviourOf(component.props);
+    for (const state of now ? storedList(now, 'state') : []) {
+      if (!isRecord(state) || typeof state.id !== 'string') continue;
+      const previewed = editorUI.previewState[state.id];
+      if (previewed !== undefined && !fitsState(state as never, previewed)) editorUI.setPreviewValue(state.id, undefined);
+    }
   };
   const noun = items.kind === 'tabs' ? 'tab' : 'slide';
+  const pickedIndex = picked === '' ? -1 : Number(picked);
   return (
     <div className="flex flex-col gap-1.5" role="group" aria-label={items.kind === 'tabs' ? 'Tabs' : 'Slides'}>
       <span className={FIELD_LABEL}>{`${items.items.length} ${noun}s, made from a preset`}</span>
-      <div className="flex flex-wrap gap-1.5">
-        <button type="button" className={SMALL_BUTTON} onClick={() => apply(items.kind === 'tabs' ? { kind: 'addTab' } : { kind: 'addSlide' })}>
-          <Plus size={12} aria-hidden className="mr-1" /> {`Add ${noun}`}
-        </button>
-        {items.canRemove && (
+      <button type="button" className={cn(SMALL_BUTTON, 'self-start')} onClick={() => apply(items.kind === 'tabs' ? { kind: 'addTab' } : { kind: 'addSlide' })}>
+        <Plus size={12} aria-hidden className="mr-1" /> {`Add ${noun}`}
+      </button>
+      {items.canRemove && (
+        <div className="flex gap-1.5">
           <select
-            aria-label="Remove a tab"
-            value=""
-            onChange={(event) => {
-              const index = Number(event.target.value);
-              if (event.target.value !== '' && Number.isInteger(index)) apply({ kind: 'removeTab', index });
-            }}
-            className={cn(FIELD_CONTROL, 'w-auto flex-1 cursor-pointer')}
+            aria-label="Tab to remove"
+            value={picked}
+            onChange={(event) => setPicked(event.target.value)}
+            className={cn(FIELD_CONTROL, 'min-w-0 flex-1 cursor-pointer')}
           >
-            <option value="">Remove a tab</option>
+            <option value="">Pick a tab to remove</option>
             {items.items.map((title, index) => <option key={index} value={index}>{title}</option>)}
           </select>
-        )}
-      </div>
+          <button
+            type="button"
+            className={SMALL_BUTTON}
+            disabled={pickedIndex < 0}
+            aria-label={pickedIndex < 0 ? 'Remove the picked tab' : `Remove ${items.items[pickedIndex] ?? 'the picked tab'}`}
+            onClick={() => apply({ kind: 'removeTab', index: pickedIndex })}
+          >
+            Remove
+          </button>
+        </div>
+      )}
+      {error && <p role="alert" className={REASON}>Not changed: {error}</p>}
     </div>
   );
 });
