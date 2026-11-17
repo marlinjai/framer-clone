@@ -39,7 +39,7 @@ import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
 import { isFxSceneProp } from '@/lib/fxScene/marker';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
-import { hasCustomCode } from '@/lib/customCode/customCode';
+import { hasCustomCode, withoutCustomCodeTree } from '@/lib/customCode/customCode';
 import { createCustomCodeElement } from '../customCode/customCodeElement';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
@@ -204,10 +204,11 @@ export function renderComponentNode(
   // time feeds the no-JavaScript fill-time check of the submit endpoint.
   const formKind = formKindOf(node.props as Record<string, unknown> | undefined);
   if (formKind === 'form') {
-    return <FormIsland key={key} node={node} scope={scope} renderedAt={Date.now()} />;
+    // A client island's props are serialized into the page: no stored custom code value goes with them (D50).
+    return <FormIsland key={key} node={withoutCustomCodeTree(node)} scope={scope} renderedAt={Date.now()} />;
   }
-  if (formKind === 'form-field') return <FormFieldIsland key={key} node={node} />;
-  if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={node} />;
+  if (formKind === 'form-field') return <FormFieldIsland key={key} node={withoutCustomCodeTree(node)} />;
+  if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={withoutCustomCodeTree(node)} />;
 
   // The sticky call to action bar draws its own link; renderPublishedPage
   // moved it to the end of the page and its stylesheet pins it on phones.
@@ -269,7 +270,8 @@ export function renderComponentNode(
       <CommerceIsland
         key={key}
         kind={dataKind as CommerceIslandProps['kind']}
-        node={node}
+        // Serialized into the page with the island: no stored custom code value goes with it (D50).
+        node={withoutCustomCodeTree(node)}
         // The product, variant and availability of the source the island sits in (hydrateBindings
         // records them on the node): a variant selector inside a product detail reads its product here.
         scope={node.islandFrames ? createScope([...scope.frames, ...node.islandFrames]) : scope}

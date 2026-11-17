@@ -13,6 +13,7 @@ import {
   sandboxOriginFrom,
   sandboxOriginProblem,
   withoutCustomCodeProp,
+  withoutCustomCodeTree,
 } from '../customCode';
 import { isKillSwitchOn } from '../../../../services/box/src/config';
 
@@ -169,5 +170,25 @@ describe('the box origin (decision D37)', () => {
     expect(sandboxOriginProblem('')).toBeNull();
     expect(sandboxOriginProblem('https://run.example.com')).toBeNull();
     expect(sandboxOriginProblem('run.example.com')).toMatch(/SANDBOX_ORIGIN/);
+  });
+});
+
+describe('withoutCustomCodeTree', () => {
+  it('drops the value from a node and every descendant, and leaves the input untouched', () => {
+    const tree = {
+      type: 'div',
+      props: { id: 'a', customCode: { sha256: 'x', title: 't' } },
+      children: [{ type: 'p', props: { children: 'keep' } }, { type: 'div', props: { customCode: 1 }, children: [{ type: 'span', props: { customCode: 2 } }] }],
+    };
+    const out = withoutCustomCodeTree(tree);
+    expect(JSON.stringify(out)).not.toContain('customCode');
+    expect(out.children[0]).toBe(tree.children[0]);
+    expect(out.props).toEqual({ id: 'a' });
+    expect(JSON.stringify(tree)).toContain('customCode');
+  });
+
+  it('returns a tree without the value as it is', () => {
+    const tree = { type: 'div', props: { id: 'a' }, children: [{ type: 'p' }] };
+    expect(withoutCustomCodeTree(tree)).toBe(tree);
   });
 });
