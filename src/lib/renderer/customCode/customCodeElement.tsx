@@ -124,6 +124,14 @@ function tileOf(parsed: CustomCodeParse, previewHref: string | null): React.Reac
   );
 }
 
+/**
+ * The stored tags the tile may be drawn in: plain HTML containers that may hold a
+ * `div`, a link and a badge. Any other tag (a link or a button, which would nest
+ * the tile's link inside another control; an SVG element, inside which HTML is not
+ * drawn; a paragraph or a list item of a table) draws the tile in a `div`.
+ */
+const TILE_HOST_TAGS: ReadonlySet<string> = new Set(['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'figure', 'blockquote', 'li', 'dd']);
+
 /** A block on a surface. Never a frame: the frame belongs to the published island (slice C3). */
 export function createCustomCodeElement(surface: CustomCodeSurface, input: CustomCodeElementInput): React.ReactElement {
   const parsed = parseCustomCode(input.config);
@@ -134,7 +142,11 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
   if (surface === 'editor' || surface === 'preview') {
     const style = { ...((domProps.style as React.CSSProperties | undefined) ?? {}), position: 'relative' as const };
     const label = parsed.ok ? `${CUSTOM_CODE_TILE_TEXT}: ${parsed.value.title}` : CUSTOM_CODE_TILE_TEXT;
-    return React.createElement(tag, { ...domProps, key: input.key, style, 'aria-label': label }, tileOf(parsed, input.previewHref ?? null));
+    const host = TILE_HOST_TAGS.has(tag) ? tag : 'div';
+    // A control's own attributes mean nothing on the div that replaces it.
+    if (host !== tag) for (const name of ['href', 'target', 'rel', 'download', 'type', 'disabled', 'form', 'name', 'value']) delete domProps[name];
+    // A group, so its label is allowed (ARIA 1.2 names no plain div).
+    return React.createElement(host, { ...domProps, key: input.key, style, role: 'group', 'aria-label': label }, tileOf(parsed, input.previewHref ?? null));
   }
   const trace = parsed.ok && parsed.value.kind === 'block' ? { [CUSTOM_CODE_ATTR]: customCodeTrace(parsed.value.sha256) } : {};
   return React.createElement(tag, { ...domProps, key: input.key, ...trace }, input.children);

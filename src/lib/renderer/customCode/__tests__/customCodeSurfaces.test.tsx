@@ -305,3 +305,34 @@ describe('a block inside a client island (decision D50)', () => {
     expect(islandProps(element)).not.toContain('customCode');
   });
 });
+
+describe('the tile and the stored tag', () => {
+  const tileOn = (tag: string, domProps: Record<string, unknown> = {}) => {
+    const { container } = render(
+      createCustomCodeElement('editor', { tag, domProps, config: { sha256: HASH, title: TITLE }, children: null, previewHref: '/projects/p/preview?page=x' }),
+    );
+    return container.firstElementChild as Element;
+  };
+
+  it.each(['a', 'button', 'svg', 'g', 'p', 'span', 'label', 'select', 'table', 'ul'])('draws the tile in a div when the block is stored as %s', (tag) => {
+    const host = tileOn(tag, { href: '/elsewhere', type: 'submit', id: 'keep' });
+    expect(host.tagName).toBe('DIV');
+    expect(host.namespaceURI).toBe('http://www.w3.org/1999/xhtml');
+    expect(host.getAttribute('href')).toBeNull();
+    expect(host.getAttribute('type')).toBeNull();
+    expect(host.getAttribute('id')).toBe('keep');
+    // The tile's link is the only link, and it is inside no other control.
+    expect(host.querySelectorAll('a')).toHaveLength(1);
+    expect(host.querySelector('a')!.closest('button, a:not([data-fc-custom-code-preview])')).toBeNull();
+  });
+
+  it.each(['div', 'section', 'article', 'li'])('keeps a plain container (%s) as the tile host', (tag) => {
+    expect(tileOn(tag).tagName).toBe(tag.toUpperCase());
+  });
+
+  it('is a labelled group', () => {
+    const host = tileOn('div', { role: 'button' });
+    expect(host.getAttribute('role')).toBe('group');
+    expect(host.getAttribute('aria-label')).toBe(`${CUSTOM_CODE_TILE_TEXT}: ${TITLE}`);
+  });
+});
