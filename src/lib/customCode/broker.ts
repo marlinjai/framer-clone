@@ -40,20 +40,12 @@ import type { Kit } from '@/lib/behaviour/program';
 import { stateAttribute } from '@/lib/behaviour/names';
 import { serveBlocks, type BlockHandle, type BlockState } from './registry';
 
-// The protocol's numbers, as contract.ts (BOX_LIMITS) states them; the bridge tests in the
-// browser hold each one. Local constants, not imports or exports: every name is bytes in a
-// chunk with a 2 kilobyte limit, and contract.ts would bring more than these.
-const BLOCKS_PER_PAGE = 4;
-const HELLO_MS = 5000;
-const PING_MS = 5000;
-const MISSED_PINGS = 3;
-const MESSAGE_BYTES = 64 * 1024;
-const MESSAGES_PER_SECOND = 30;
-const RESIZES_PER_SECOND = 10;
-const MAX_HEIGHT = 10_000;
-const FOCUS_THEFTS = 3;
-/** A Tab in the page this long before the frame took the keyboard explains the move. */
-const TAB_GRACE_MS = 1000;
+// The protocol's numbers, as contract.ts (BOX_LIMITS) states them, are written where they are
+// used: at most 4 blocks a page; `hello` within 5 s of `load`; a ping every 5 s, 3 missed remove
+// the frame; 64 KB and 30 messages a second; 10 resizes a second, up to 10,000 pixels; 3 thefts
+// of the keyboard; a Tab in the page within 1 s explains a move. Literals, not names: esbuild
+// keeps a module's constants as variables, and every byte counts against the 2 kilobyte limit.
+// The bridge tests in the browser hold each number.
 
 /** The only address a frame may have: the box's path for one site and one hash. */
 const BOX_SRC = /^https:\/\/[a-z0-9.-]+\/box\/[0-9a-f-]{36}\/[0-9a-f]{64}$/;
@@ -81,8 +73,8 @@ const meter = (limit: number, now: () => number) => {
 
 export const createBroker = (kit: Kit): (() => void) => {
   const doc = kit.doc;
-  const view = doc.defaultView as Window;
-  const now = () => view.performance.now();
+  // The page's own window: the runtime runs in it, so its globals are the page's.
+  const now = () => performance.now();
   const frames = new Map<Element, () => void>();
   let blocks = 0;
   let tabAt = -Infinity;
@@ -92,16 +84,16 @@ export const createBroker = (kit: Kit): (() => void) => {
   };
   // The page's window loses focus when a frame takes it; which frame holds it is known a task later.
   const onBlur = (): void => {
-    view.setTimeout(() => frames.get(doc.activeElement as Element)?.());
+    setTimeout(() => frames.get(doc.activeElement as Element)?.());
   };
-  view.addEventListener('keydown', onKey, true);
-  view.addEventListener('blur', onBlur);
+  addEventListener('keydown', onKey, true);
+  addEventListener('blur', onBlur);
 
   const serve = ({ el, block, settle }: BlockHandle): (() => void) => {
     const { title, reads, writes, emits, sizing, interactive, states } = block;
     const say = (why: string): void => console.warn(`Custom code "${title}": ${why}`);
-    if (blocks >= BLOCKS_PER_PAGE || !BOX_SRC.test(block.src)) {
-      say('over 4 blocks, or not a box address: fallback');
+    if (blocks >= 4 || !BOX_SRC.test(block.src)) {
+      say('a fifth block or not a box address: not run');
       settle(false);
       return () => {};
     }
@@ -113,10 +105,10 @@ export const createBroker = (kit: Kit): (() => void) => {
     let loads = 0;
     let missed = 0;
     let thefts = 0;
-    let timer = 0;
-    let pinger = 0;
-    const tooMany = meter(MESSAGES_PER_SECOND, now);
-    const tooOften = meter(RESIZES_PER_SECOND, now);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let pinger: ReturnType<typeof setInterval> | undefined;
+    const tooMany = meter(30, now);
+    const tooOften = meter(10, now);
     const scopeOf = (id: string) => el.closest(`[${stateAttribute(id)}]`);
     const watcher = new MutationObserver((records) => records.forEach((record) => send((record.attributeName as string).slice(9))));
     // Within one viewport of the screen, in any direction.
@@ -126,11 +118,11 @@ export const createBroker = (kit: Kit): (() => void) => {
       if (gone) return;
       gone = true;
       if (why) say(`${why}: removed`);
-      view.clearTimeout(timer);
-      view.clearInterval(pinger);
+      clearTimeout(timer);
+      clearInterval(pinger);
       near.disconnect();
       watcher.disconnect();
-      view.removeEventListener('message', onMessage);
+      removeEventListener('message', onMessage);
       port?.close();
       if (frame) {
         frames.delete(frame);
@@ -151,28 +143,28 @@ export const createBroker = (kit: Kit): (() => void) => {
 
     /** One message on the port, under every rule of the protocol. */
     const onPort = ({ data }: MessageEvent): void => {
-      if (tooMany()) return say('over 30 messages a second, dropped');
+      if (tooMany()) return say('dropped a message over 30 a second');
       let size = Infinity;
       try {
         size = new Blob([JSON.stringify(data)]).size;
       } catch {
         // Not something JSON can say: dropped below.
       }
-      if (!(size <= MESSAGE_BYTES)) return say('a message over 64 KB or not JSON, dropped');
+      if (!(size <= 65536)) return say('dropped a message over 64 KB or not JSON');
       const kind = data?.kind;
       if (kind === 'pong') missed = 0;
       else if (kind === 'setState' && writes.includes(data.id) && fits(states[data.id], data.value)) kit.write(data.id, data.value, el);
       else if (kind === 'emit' && emits.includes(data.name)) kit.emit(data.name.slice(7), el);
       else if (kind === 'resize' && sizing === 'content' && !tooOften() && typeof data.height == 'number' && data.height >= 0) {
-        (frame as HTMLIFrameElement).style.height = `${Math.min(data.height, MAX_HEIGHT)}px`;
-      } else say(kind === 'error' ? `error: ${String(data.message).slice(0, 500)}` : 'a message undeclared, of a wrong value or an unknown kind, dropped');
+        (frame as HTMLIFrameElement).style.height = `${Math.min(data.height, 10_000)}px`;
+      } else say(kind === 'error' ? `error: ${String(data.message).slice(0, 500)}` : 'dropped a message');
     };
 
     const onMessage = (event: MessageEvent): void => {
       if (!frame || event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.fc !== 1 || event.data.kind !== 'hello') return;
       if (hello) return end('a second hello');
       hello = true;
-      view.clearTimeout(timer);
+      clearTimeout(timer);
       const channel = new MessageChannel();
       port = channel.port1;
       port.onmessage = onPort;
@@ -184,11 +176,11 @@ export const createBroker = (kit: Kit): (() => void) => {
       const filter = reads.map(stateAttribute);
       new Set(reads.map(scopeOf)).forEach((scope) => scope && watcher.observe(scope, { attributeFilter: filter }));
       reads.forEach(send);
-      pinger = view.setInterval(() => {
-        if (missed >= MISSED_PINGS) return end('3 pings unanswered');
+      pinger = setInterval(() => {
+        if (missed >= 3) return end('3 pings unanswered');
         missed += 1;
         post({ kind: 'ping' });
-      }, PING_MS);
+      }, 5000);
     };
 
     const create = (): void => {
@@ -199,7 +191,7 @@ export const createBroker = (kit: Kit): (() => void) => {
       for (const [name, value] of [['sandbox', 'allow-scripts'], ['referrerpolicy', 'no-referrer'], ['loading', 'lazy'], ['allow', ''], ['title', title]]) {
         made.setAttribute(name, value);
       }
-      const minimum = parseFloat(view.getComputedStyle(el).minHeight);
+      const minimum = parseFloat(getComputedStyle(el).minHeight);
       // Hidden until hello, but laid out at the box's width, so a lazy frame still loads and the page does not widen.
       made.style.cssText = `border:0;display:block;position:absolute;visibility:hidden;width:${el.clientWidth || 300}px;height:${sizing === 'fixed' ? '100%' : `${minimum > 0 ? minimum : 150}px`}`;
       if (!interactive) {
@@ -208,12 +200,12 @@ export const createBroker = (kit: Kit): (() => void) => {
       }
       made.addEventListener('load', () => {
         if (++loads > 1) return end('loaded a second time');
-        if (!hello) timer = view.setTimeout(() => end('no hello within 5 s'), HELLO_MS);
+        if (!hello) timer = setTimeout(() => end('no hello within 5 s'), 5000);
       });
-      view.addEventListener('message', onMessage);
+      addEventListener('message', onMessage);
       frames.set(made, () => {
         if (!interactive) return end('took the keyboard');
-        if (!made.matches(':hover') && now() - tabAt > TAB_GRACE_MS && ++thefts >= FOCUS_THEFTS) end('took the keyboard 3 times');
+        if (!made.matches(':hover') && now() - tabAt > 1000 && ++thefts >= 3) end('took the keyboard 3 times');
       });
       made.src = block.src;
       el.appendChild(made);
@@ -229,7 +221,7 @@ export const createBroker = (kit: Kit): (() => void) => {
   const stop = serveBlocks(serve);
   return () => {
     stop();
-    view.removeEventListener('keydown', onKey, true);
-    view.removeEventListener('blur', onBlur);
+    removeEventListener('keydown', onKey, true);
+    removeEventListener('blur', onBlur);
   };
 };
