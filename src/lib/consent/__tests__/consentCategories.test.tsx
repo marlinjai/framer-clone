@@ -199,6 +199,42 @@ describe('a site with one purpose', () => {
     }
   });
 
+  describe('a form on the page holding input', () => {
+    /** A page with a map and a form, whose field the visitor changes before answering. */
+    function withForm(field: string) {
+      const holder = document.createElement('form');
+      holder.innerHTML = field;
+      document.body.append(holder);
+      return holder;
+    }
+    afterEach(() => document.querySelectorAll('form').forEach((f) => f.remove()));
+
+    it.each([
+      ['typed text', '<input name="a" value="">', (f: HTMLFormElement) => { (f.elements[0] as HTMLInputElement).value = 'Hello'; }],
+      ['a textarea', '<textarea name="a"></textarea>', (f: HTMLFormElement) => { (f.elements[0] as HTMLTextAreaElement).value = 'Hello'; }],
+      ['a ticked box', '<input type="checkbox" name="a">', (f: HTMLFormElement) => { (f.elements[0] as HTMLInputElement).checked = true; }],
+      ['another option', '<select name="a"><option>x</option><option>y</option></select>', (f: HTMLFormElement) => { (f.elements[0] as HTMLSelectElement).selectedIndex = 1; }],
+    ])('does not reload over %s: the yes is announced and the map offers the reload', (_name, field, change) => {
+      const reload = mockReload();
+      const form = withForm(field);
+      load(['maps']);
+      change(form);
+      click('Accept');
+      expect(reload).not.toHaveBeenCalled();
+      expect(events).toEqual([{ maps: true }]);
+      expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
+    });
+
+    it('still reloads over a form nobody changed', () => {
+      const reload = mockReload();
+      withForm('<input name="a" value="preset"><input type="hidden" name="t" value="x"><input type="checkbox" checked>');
+      load(['maps']);
+      click('Accept');
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([]);
+    });
+  });
+
   it('drops the cookie settings address before the reload, so the banner does not open again', () => {
     const reload = mockReload('#cookie-settings');
     const replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
