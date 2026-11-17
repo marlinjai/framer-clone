@@ -11,9 +11,12 @@
 //   - presses the button in Interact, where the drawer follows, and on the published page,
 //     rendered by renderPublishedPage and run by the real runtime, where it follows too.
 //
-// A native select is chosen with Playwright's selectOption in both modes, as no engine lets
-// a script open its list. An element on the canvas is picked by pointer or finger in both
-// modes: picking from the layers by keyboard is the layers panel's contract, not this one.
+// By keyboard, focus is put on the first control of a step and the spec then moves with Tab
+// (Alt+Tab in WebKit on a Mac, as in Safari) and Enter, asserting where the focus is: the
+// new value's name after Add value, the Event field when the editor opens, Add interaction
+// after a save. A native select is chosen with Playwright's selectOption in both modes, as
+// no engine lets a script open its list. An element on the canvas is picked by pointer or
+// finger in both modes: picking from the layers by keyboard is the layers panel's contract.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,12 +72,17 @@ function storedPage(json: string): ComponentNode {
   return found;
 }
 
-/** The texts in a section that are cut off: wider than their box where the box hides the rest. */
+/**
+ * The texts in a section that are cut off: wider than their box where the box hides the rest.
+ * Text kept only for screen readers (a live region in a 1 pixel box) is never shown, so it is not counted.
+ */
 const clipped = (section: Locator) =>
   section.evaluate((root) =>
     [...root.querySelectorAll('span, p, label, button, li')]
       .filter((el) => {
         const style = getComputedStyle(el);
+        const box = el.getBoundingClientRect();
+        if (box.width <= 1 && box.height <= 1) return false;
         return style.overflow !== 'visible' && el.scrollWidth > el.clientWidth + 1;
       })
       .map((el) => el.textContent ?? ''),
@@ -99,6 +107,9 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     await browser?.close();
   });
 
+  // Playwright's WebKit moves Tab between controls only with Alt held, as Safari does.
+  const TAB = engineName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
+
   describe.each(LAYOUTS)('at the %s width', (layout, options) => {
     const phone = layout === 'phone';
 
@@ -112,6 +123,29 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
         // The phone opens fitted to its own frame, the last one.
         const copies = page.locator(`[data-viewport-content-id] [data-inner-component-id="${id}"]`);
         return phone ? copies.last() : copies.first();
+      };
+
+      const isFocused = (target: Locator) => target.evaluate((el) => el === document.activeElement);
+      /** By keyboard: Tab (or Shift+Tab) until `target` has the focus, which proves it is reachable in that order. */
+      const tabTo = async (target: Locator, back = false) => {
+        for (let step = 0; step < 30; step++) {
+          if (await isFocused(target)) return;
+          await page.keyboard.press(back ? `Shift+${TAB}` : TAB);
+        }
+        throw new Error('Tab never reached the control');
+      };
+      /** A button the keyboard reaches with Tab from where the focus is, or the pointer presses. */
+      const pressNext = async (target: Locator, back = false) => {
+        if (mode === 'keyboard') {
+          await tabTo(target, back);
+          await page.keyboard.press('Enter');
+        } else if (phone) await target.tap();
+        else await target.click();
+      };
+      /** A select the keyboard reaches with Tab, then chosen. */
+      const chooseNext = async (target: Locator, value: string, back = false) => {
+        if (mode === 'keyboard') await tabTo(target, back);
+        await target.selectOption(value);
       };
 
       /** A button pressed as the mode presses it. */
@@ -154,10 +188,28 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
       // Forward: the drawer, a value on the page, renamed, and the drawer shown while it is on.
       await pick('drawer');
       await press(pageState().getByRole('button', { name: 'Add a value to the page' }));
+      // The new value's name takes the focus, so it is typed straight away.
       const name = pageState().getByLabel(/^Name of /).first();
-      await expect.poll(() => name.count()).toBe(1);
-      await typeInto(name, 'Open');
+      await expect.poll(() => isFocused(name)).toBe(true);
+      await name.selectText();
+      await page.keyboard.type('Open');
+      await page.keyboard.press('Enter');
       await expect.poll(() => pageState().getByLabel('Name of Open').count()).toBe(1);
+      // A second value, a number, for a step action: its type changes only on the button.
+      await press(pageState().getByRole('button', { name: 'Add a value to the page' }));
+      const second = pageState().getByLabel(/^Name of Value/);
+      await expect.poll(() => isFocused(second)).toBe(true);
+      await second.selectText();
+      await page.keyboard.type('Count');
+      await page.keyboard.press('Enter');
+      await chooseNext(pageState().getByLabel('Type of Count'), 'number');
+      await pressNext(pageState().getByRole('button', { name: 'Change to Number' }));
+      const countType = async () => {
+        const state = ((storedPage(await editor(page, (api) => api.projectJson())).props?.behaviour as { state?: { name: string; type: string }[] } | undefined)?.state) ?? [];
+        return state.find((entry) => entry.name === 'Count')?.type;
+      };
+      await expect.poll(countType).toBe('number');
+      expect(await pageState().getByRole('button', { name: 'Change to Number' }).count()).toBe(0);
       const showWhen = interactions().getByLabel('Show when value');
       const valueId = await showWhen.locator('option', { hasText: 'Open' }).getAttribute('value');
       expect(valueId).toMatch(/^v-[a-z0-9]{8}$/);
@@ -178,23 +230,35 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
       await pick('btn');
       await press(interactions().getByRole('button', { name: 'Add interaction' }));
       const draft = interactions().getByRole('group', { name: 'Interaction' });
+      // The editor takes the focus on its first field.
+      await expect.poll(() => isFocused(draft.getByLabel('Event', { exact: true }))).toBe(true);
       await draft.getByLabel('Event', { exact: true }).selectOption('mouseenter');
-      await draft.getByLabel('Action 1', { exact: true }).selectOption('focus');
-      await press(draft.getByRole('button', { name: 'Add this interaction' }));
+      await chooseNext(draft.getByLabel('Action 1', { exact: true }), 'focus');
+      // A step action, seen once so its Wrap around switch is checked for cut-off text, then taken out.
+      await pressNext(draft.getByRole('button', { name: 'Add action' }));
+      await chooseNext(draft.getByLabel('Action 2', { exact: true }), 'step', true);
+      expect(await draft.getByRole('switch', { name: 'Wrap around in action 2' }).count()).toBe(1);
+      expect(await clipped(interactions())).toEqual([]);
+      if (engineName === 'chromium' && mode === 'pointer') await interactions().screenshot({ path: path.join(SHOTS, `${layout}-interactions-step.png`) });
+      await pressNext(draft.getByRole('button', { name: 'Remove action 2' }));
+      await pressNext(draft.getByRole('button', { name: 'Add this interaction' }));
       const refusal = draft.getByRole('alert');
       await expect.poll(() => refusal.textContent()).toMatch(/^Not saved: .+\.$/);
       expect(await editor(page, (api) => api.propsOf('btn')?.behaviour)).toBeUndefined();
       expect(await clipped(interactions())).toEqual([]);
       if (engineName === 'chromium' && mode === 'pointer') await interactions().screenshot({ path: path.join(SHOTS, `${layout}-interactions-refused.png`) });
 
-      await draft.getByLabel('Event', { exact: true }).selectOption('click');
-      await draft.getByLabel('Action 1', { exact: true }).selectOption('toggle');
+      await chooseNext(draft.getByLabel('Event', { exact: true }), 'click', true);
+      await chooseNext(draft.getByLabel('Action 1', { exact: true }), 'toggle');
       expect(await draft.getByLabel('Value to change in action 1').inputValue()).toBe(valueId);
       // A click can stop the browser's own response; its switch is named in full and its label is not cut off.
       expect(await draft.getByRole('switch', { name: "Stop the browser's own response" }).count()).toBe(1);
       expect(await clipped(interactions())).toEqual([]);
-      await press(draft.getByRole('button', { name: 'Add this interaction' }));
+      await pressNext(draft.getByRole('button', { name: 'Add this interaction' }));
       await expect.poll(() => interactions().getByRole('button', { name: /^Edit: On click, toggle Open/ }).count()).toBe(1);
+      // The focus is back on Add interaction, and the addition is announced.
+      await expect.poll(() => isFocused(interactions().getByRole('button', { name: 'Add interaction' }))).toBe(true);
+      expect(await interactions().getByRole('status').textContent()).toBe('Added: On click, toggle Open');
       expect(await editor(page, (api) => api.propsOf('btn')?.behaviour)).toMatchObject({ on: [{ on: 'click', do: [{ toggle: valueId }] }] });
       if (engineName === 'chromium' && mode === 'pointer') await interactions().screenshot({ path: path.join(SHOTS, `${layout}-interactions-saved.png`) });
 
