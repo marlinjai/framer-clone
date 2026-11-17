@@ -270,6 +270,21 @@ describe('custom code and behaviour, never written by the review', () => {
     for (const refusal of rejected) expect(refusal.reason).toContain('custom code is never written by a generator');
   });
 
+  it('refuses a path below customCode, however it is spelled', () => {
+    const { ops, rejected } = validateReviewOps(
+      [
+        style({ property: 'customCode.sha256', value: 'x' }),
+        style({ property: 'custom_code.title', value: 'x' }),
+        { op: 'update_props', nodeId: 'h1', props: { 'customCode.sha256': 'a'.repeat(64) } },
+        { op: 'update_props', nodeId: 'h1', props: { 'CustomCode[title]': 'x' } },
+      ],
+      ctx(),
+    );
+    expect(ops).toEqual([]);
+    expect(rejected.map((r) => r.index)).toEqual([0, 1, 2, 3]);
+    for (const refusal of rejected) expect(refusal.reason).toContain('custom code is never written by a generator');
+  });
+
   it('has no operation that writes behaviour', () => {
     const { ops, rejected } = validateReviewOps(
       [style({ property: 'behaviour', value: '{}' }), { op: 'update_behaviour', nodeId: 'h1', behaviour: { on: [] } }],

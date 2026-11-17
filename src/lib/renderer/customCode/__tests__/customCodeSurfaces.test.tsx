@@ -141,6 +141,31 @@ describe('the published page', () => {
     expect(renderToStaticMarkup(<>{renderComponentNode(forged)}</>)).toBe('<div>x</div>');
   });
 
+  it('takes no customCode from a binding, so the address bar cannot choose which code runs', async () => {
+    const bound: ComponentNode = {
+      type: 'div',
+      id: 'cc',
+      props: { style: { height: '200px' } },
+      bindings: {
+        customCode: { mode: 'read', expression: '{{page.params.code}}' },
+        'customCode.sha256': { mode: 'read', expression: '{{page.params.hash}}' },
+        'customCode.title': { mode: 'read', expression: '{{page.params.title}}' },
+      },
+      children: [fallback('cc')],
+    };
+    const page = await renderPublishedPage({
+      root: { type: 'div', id: 'root', children: [bound, blockNode('stored', { sha256: HASH, title: TITLE }, {}, [fallback('stored')])] },
+      pageParams: { code: 'x', hash: OTHER_SITES_HASH, title: TITLE },
+      cmsRepo,
+    });
+    const markup = renderToStaticMarkup(<>{page.body}</>);
+    expect(markup).toContain('Fallback of cc');
+    expect(markup).not.toContain(OTHER_SITES_HASH.slice(0, 12));
+    // Only the stored block carries the mark.
+    expect(markup.match(/data-fc-custom-code=/g)).toHaveLength(1);
+    expect(markup).toContain(`data-fc-custom-code="${HASH.slice(0, 12)}"`);
+  });
+
   it('draws a void tag holding the prop as a box with its fallback', async () => {
     const markup = await publish({ type: 'img', id: 'cc', props: { customCode: { sha256: HASH, title: TITLE }, alt: 'x' }, children: [fallback('cc')] });
     expect(markup).toMatch(/<div[^>]*data-fc-custom-code="0123456789ab"[^>]*>/);

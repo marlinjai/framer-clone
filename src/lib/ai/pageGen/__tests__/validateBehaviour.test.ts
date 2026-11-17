@@ -385,6 +385,13 @@ describe('behaviour the model writes itself', () => {
     expect(warnings.filter((w) => w.includes('customCode dropped: custom code is never written by a generator'))).toHaveLength(2);
   });
 
+  it('drops a path below customCode, however it is spelled', () => {
+    const keys = ['customCode.sha256', 'custom_code.title', 'CustomCode[sha256]'];
+    const { nodes, warnings } = run(keys.map((key) => ({ type: 'div', props: { [key]: 'a'.repeat(64) } })));
+    nodes.forEach((node, i) => expect(node.props).not.toHaveProperty([keys[i]]));
+    for (const key of keys) expect(warnings).toContainEqual(expect.stringContaining(`${key} dropped: custom code is never written by a generator`));
+  });
+
   it('drops customCode in any spelling', () => {
     const spellings = ['customcode', 'CustomCode', 'CUSTOMCODE', 'custom_code', 'custom-code'];
     const { nodes, warnings } = run(spellings.map((key) => ({ type: 'div', props: { [key]: { sha256: 'a'.repeat(64), title: 'Calculator' } } })));

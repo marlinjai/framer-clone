@@ -54,13 +54,14 @@ export const CUSTOM_CODE_PROP = 'customCode';
 const CUSTOM_CODE_SPELLING = CUSTOM_CODE_PROP.toLowerCase();
 
 /**
- * Whether a key or a value names custom code however it is spelled: `customCode`,
- * `customcode`, `CustomCode`, `custom_code`, `custom-code` and ` customCode ` all do. A
- * guard that matched one spelling would hold only as long as nothing downstream ever
- * folds case or separators.
+ * Whether a key or a value names custom code, or a part of it, however it is spelled:
+ * `customCode`, `customcode`, `CustomCode`, `custom_code`, `custom-code`, ` customCode `
+ * and every path below it (`customCode.sha256`, a binding slot) all do. A guard that
+ * matched one spelling would hold only as long as nothing downstream ever folds case or
+ * separators; one that matched the whole name only would let a dotted path through.
  */
 export function namesCustomCodeProp(name: unknown): boolean {
-  return typeof name === 'string' && name.toLowerCase().replace(/[^a-z0-9]/g, '') === CUSTOM_CODE_SPELLING;
+  return typeof name === 'string' && name.toLowerCase().replace(/[^a-z0-9]/g, '').startsWith(CUSTOM_CODE_SPELLING);
 }
 
 /** Most triggers the model may write itself in one generation; the rest are dropped with a warning. */
