@@ -275,7 +275,9 @@ jobs:
             --data "{\"docker_registry_image_tag\":\"$SHA\"}" "$base/api/v1/applications/$app") || true
           code=${code:-000}
           if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
-            echo "::error::Coolify did not take the image tag $SHA (HTTP $code). The token needs the write and deploy permissions."
+            hint=""
+            if [ "$code" = "401" ] || [ "$code" = "403" ]; then hint=" The token needs the write and deploy permissions."; fi
+            echo "::error::Coolify did not take the image tag $SHA (HTTP $code).$hint"
             exit 1
           fi
           echo "The Coolify application now runs the tag $SHA once deployed."
