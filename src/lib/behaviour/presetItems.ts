@@ -76,18 +76,41 @@ function withParents(node: Record<string, unknown>, parentId: string | undefined
 }
 
 /**
+ * Every id a page uses: each node's, and every string its stored behaviour holds, which
+ * covers every id a reference names, even one whose node is gone. A new item's ids avoid
+ * all of them, so they never collide with a node outside the preset and never take over
+ * a reference that pointed at a removed item.
+ */
+export function idsInUse(roots: readonly unknown[]): Set<string> {
+  const out = new Set<string>();
+  const strings = (value: unknown): void => {
+    if (typeof value === 'string') out.add(value);
+    else if (Array.isArray(value)) value.forEach(strings);
+    else if (isRecord(value)) Object.values(value).forEach(strings);
+  };
+  const walk = (node: unknown): void => {
+    if (!isRecord(node)) return;
+    if (typeof node.id === 'string') out.add(node.id);
+    strings(propsOf(node).behaviour);
+    childrenOf(node).forEach(walk);
+  };
+  roots.forEach(walk);
+  return out;
+}
+
+/**
  * The stored subtree after one edit, or null when the edit changes nothing (the last tab,
  * an index that is not there, a preset of another kind).
  */
-export function editPresetItems(snapshot: Record<string, unknown>, edit: PresetEdit): Record<string, unknown> | null {
+export function editPresetItems(snapshot: Record<string, unknown>, edit: PresetEdit, taken?: ReadonlySet<string>): Record<string, unknown> | null {
   const items = presetItemsOf(snapshot);
   if (!items) return null;
   const root = snapshot as unknown as PresetNode;
   const n = items.items.length + 1;
   let next: PresetNode;
-  if (edit.kind === 'addTab' && items.kind === 'tabs') next = addTab(root, { title: `Tab ${n}`, body: `What tab ${n} says.` });
+  if (edit.kind === 'addTab' && items.kind === 'tabs') next = addTab(root, { title: `Tab ${n}`, body: `What tab ${n} says.` }, taken);
   else if (edit.kind === 'removeTab' && items.kind === 'tabs' && items.canRemove) next = removeTab(root, edit.index);
-  else if (edit.kind === 'addSlide' && items.kind === 'carousel') next = addSlide(root, `Slide ${n}`);
+  else if (edit.kind === 'addSlide' && items.kind === 'carousel') next = addSlide(root, `Slide ${n}`, taken);
   else return null;
   if (next === root) return null;
   return withParents(next as unknown as Record<string, unknown>, snapshot.parentId as string | undefined);

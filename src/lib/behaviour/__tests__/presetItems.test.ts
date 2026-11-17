@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { carousel } from '../presets/carousel';
 import { collectionTabs, tabs } from '../presets/tabs';
-import { editPresetItems, presetItemsOf } from '../presetItems';
+import { editPresetItems, idsInUse, presetItemsOf } from '../presetItems';
 import { readBehaviourTree, type BehaviourNode } from '../format';
 
 type Snap = Record<string, unknown> & { id: string; children?: Snap[]; props?: Record<string, unknown> };
@@ -20,6 +20,27 @@ describe('a preset tab list', () => {
 
   it('reads its tabs by title', () => {
     expect(presetItemsOf(start())).toEqual({ kind: 'tabs', items: ['First', 'Second', 'Third'], canRemove: true });
+  });
+
+  it('mints new ids past every id the page uses or names, and never reuses a removed one', () => {
+    const ids = (node: Snap): string[] => [node.id, ...(node.children ?? []).flatMap(ids)];
+    // Outside the tabs: a node holding the next panel id, and a reference naming the next tab id.
+    const page = { id: 'page', type: 'div', props: {}, children: [
+      { id: 'tabs-aaaaaaaa-panel-3', type: 'div', props: {} },
+      { id: 'jump', type: 'button', props: { behaviour: { on: [{ id: 't-1', on: 'click', do: [{ focus: 'tabs-aaaaaaaa-tab-3' }] }] } } },
+    ] };
+    const taken = idsInUse([page]);
+    expect(taken.has('tabs-aaaaaaaa-panel-3') && taken.has('tabs-aaaaaaaa-tab-3')).toBe(true);
+    const next = editPresetItems(start(), { kind: 'addTab' }, taken) as Snap;
+    const added = ids(next).filter((id) => !ids(start()).includes(id));
+    expect(added.some((id) => taken.has(id))).toBe(false);
+    // Without the page, as before: the next free number under the preset.
+    expect(ids(editPresetItems(start(), { kind: 'addTab' }) as Snap)).toContain('tabs-aaaaaaaa-tab-3');
+    // A middle tab removed, then one added: one past the highest, not the gap.
+    const removed = editPresetItems(start(), { kind: 'removeTab', index: 1 }) as Snap;
+    const again = editPresetItems(removed, { kind: 'addTab' }) as Snap;
+    expect(ids(again)).not.toContain('tabs-aaaaaaaa-tab-1');
+    expect(ids(again)).toContain('tabs-aaaaaaaa-tab-3');
   });
 
   it('gains a tab and its panel, derived again, keeping the layer name and the parents straight', () => {
