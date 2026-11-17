@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 #
 # The box: the small service that serves sandboxed custom code documents from
 # its own registrable domain (docs/plans/2026-11-02-sandboxed-custom-code.md).
@@ -9,6 +9,8 @@
 #
 # The context is cut down to the box and that one module by
 # Dockerfile.box.dockerignore.
+#
+# The build frontend named on the first line is pinned by digest, as the base image is.
 #
 # How it starts (decision D50 of the plan): tini is process 1 and starts a
 # small node program (services/box/src/launch.ts) that logs in to Infisical
@@ -24,7 +26,8 @@ ARG PNPM_VERSION=9.15.0
 # The two programs the image takes from outside, each pinned by version and by the SHA-256 of the file
 # downloaded, checked before the file is used. A bump changes the version and both checksums, copied from
 # the release's own checksum list after downloading the files and comparing them.
-# The Infisical command line client: https://github.com/Infisical/cli/releases (cli_<v>_checksums.txt).
+# The Infisical command line client: https://github.com/Infisical/cli/releases (checksums.txt, which lists
+# the Linux archives; cli_<v>_checksums.txt lists only Windows).
 ARG INFISICAL_VERSION=0.45.8
 ARG INFISICAL_SHA256_ARM64=f2e637e4d91e0075f849434a9537f301e83b46c803125dc247aefe534aa127ff
 ARG INFISICAL_SHA256_AMD64=b0ddefa3f744f66cdeb5c5beab94ce3c28c7d12a4db03de612c0eb079f6a5655
