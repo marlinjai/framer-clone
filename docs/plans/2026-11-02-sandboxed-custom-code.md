@@ -727,8 +727,9 @@ server (never from `process.env` in the client bundle, which does not have it).
 set (the same switch the report-only policy uses), or `frame-src 'none'` when neither applies. The report-only policy measures
 `frame-src 'self'`; the enforced one leaves `'self'` out because a published page holds exactly the two kinds of frame D6 names,
 and no part of a published page frames its own origin. The same header carries `object-src 'none'` (added after the second review
-of pull request #450): WebKit loads an `object` or an `embed` from another host under `frame-src` alone, and no published page uses
-either. The standalone preview and branch preview hosts send it too. What no policy refuses: an `iframe srcdoc` or an `about:blank`
+of pull request #450): that review saw WebKit load an `object` and an `embed` from another host under `frame-src` alone, while the
+render gate's WebKit build refused both as `frame-src` violations; `object-src 'none'` refuses them in every engine whichever way it
+reads them, and no published page uses either. The standalone preview and branch preview hosts send it too. What no policy refuses: an `iframe srcdoc` or an `about:blank`
 frame makes no request, so it runs in the page's own origin whatever `frame-src` says. The policy is a second line for frames and
 plugins that load from somewhere; the render gate refusing `iframe`, `object` and `embed` stays the line that holds. The report-only
 header is unchanged. **For C3:** once blocks run, the
