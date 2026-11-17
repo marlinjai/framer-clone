@@ -35,7 +35,7 @@
 import type { Action } from './format';
 import { attrOf, childrenOf, closestTo, every, hasAttr, holds, isConnected, isElement, isMatch, one, parentOf, setAttr, toggleAttr, upFrom } from './dom';
 import { GATE_GLOBAL, NODE_ATTR, ROW_ATTR, SCOPE_ATTR, VARIANT_ATTR, isBooleanAttribute, stateAttribute } from './names';
-import type { BehaviourProgram, CreateRover, CreateVerbs, Extras, Kit, PointerRead, ProgramBinding, ProgramEntry, ProgramState, ProgramTrigger, Run } from './program';
+import type { BehaviourProgram, CreateBroker, CreateRover, CreateVerbs, Extras, Kit, PointerRead, ProgramBinding, ProgramEntry, ProgramState, ProgramTrigger, Run } from './program';
 
 export interface StartBehaviourOptions {
   /** What the page is in: the document, or a preview or canvas frame. */
@@ -50,6 +50,8 @@ export interface StartBehaviourOptions {
   verbs?: CreateVerbs;
   /** What the same chunk holds for the core, when the program needs it. Without them no key fires. */
   extras?: Extras;
+  /** `createBroker` of src/lib/customCode/broker.ts, when the page holds a custom code block. */
+  broker?: CreateBroker;
 }
 
 /** What the boot script leaves on a published page (src/lib/behaviour/gate.ts). */
@@ -110,7 +112,7 @@ const NO_ENTRIES: readonly ProgramEntry[] = [];
 const hasValue = (value: unknown): boolean => value !== undefined && !Number.isNaN(value);
 const hasVerb = (action: Action, verbs: readonly string[]): boolean => verbs.some((verb) => verb in action);
 
-export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surface, rove, verbs, extras }: StartBehaviourOptions): () => void {
+export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surface, rove, verbs, extras, broker }: StartBehaviourOptions): () => void {
   const doc = (container.ownerDocument ?? container) as Document;
   const view = doc.defaultView as Window & typeof globalThis;
   const entries = new Map(Object.entries(program.nodes));
@@ -456,6 +458,9 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     settle: () => {
       if (dirty) flush();
     },
+    write,
+    // A frame's event runs as a replayed press: state verbs only (program.ts, Kit.emit).
+    emit: (name, from) => emit(name, { el: from, depth: 0, replay: true } as Run),
   };
   const rover = rove?.(kit);
   const runVerb = verbs?.(kit);
@@ -521,7 +526,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     const type = `custom:${name}`;
     for (const at of upFrom(run.el)) {
       for (const trigger of entryOf(at)?.on ?? []) {
-        if (trigger.on === type) fire(trigger, at, null, run.depth + 1);
+        if (trigger.on === type) fire(trigger, at, null, run.depth + 1, run.replay);
       }
     }
   };
@@ -751,5 +756,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   };
 
   guarded(begin)();
+  // Blocks are served once the page is adopted, so a frame's first write finds its state.
+  if (broker && !stopped) stops.push(broker(kit));
   return stop;
 }
