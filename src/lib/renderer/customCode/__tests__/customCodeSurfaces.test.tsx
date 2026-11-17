@@ -269,7 +269,7 @@ describe('createCustomCodeElement', () => {
   });
 });
 
-describe('a block inside a client island (decision D50)', () => {
+describe('a block inside a client island (decision D95)', () => {
   // An island's props are serialized into the page's script data (the React Server
   // Components payload), so the props as handed to the island are what reaches the page.
   const nested = (): ComponentNode => ({
