@@ -127,6 +127,9 @@ describe('forward', () => {
     expect(history().undoIdx).toBe(before + 2); // add, then rename
     typeAndCommit(pageState().getByLabelText('Name of Open'), 'Open');
     expect(history().undoIdx).toBe(before + 2);
+    // The field sees a change here, but the trimmed name is what is stored already.
+    typeAndCommit(pageState().getByLabelText('Name of Open'), 'Open ');
+    expect(history().undoIdx).toBe(before + 2);
     addInteraction('click');
     expect(history().undoIdx).toBe(before + 3);
     act(() => history().undo());
