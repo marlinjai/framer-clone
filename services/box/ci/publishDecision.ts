@@ -17,8 +17,14 @@ export const DATABASE_PATHS = ['prisma/migrations/', 'prisma/sql/'];
 
 export const ENVIRONMENT = 'box-production';
 
-/** What changed between two commits, as far as could be told. */
-export type Changes = { kind: 'files'; files: string[] } | { kind: 'unknown'; reason: string };
+/**
+ * A comparison of the commit running in production with this one, as GitHub's compare answers it: its
+ * status (identical, ahead, behind, diverged) says whether that commit is an ancestor, and the files are
+ * whole only below GitHub's 300.
+ */
+export type Comparison =
+  | { kind: 'compared'; status: string; files: string[]; complete: boolean }
+  | { kind: 'unknown'; reason: string };
 
 /** The commit running in production: a commit, none ever deployed, or not known. */
 export type Deployed = { kind: 'commit'; sha: string } | { kind: 'none' } | { kind: 'unknown'; reason: string };
@@ -34,10 +40,10 @@ export interface DecisionInput {
   /** A manual run's input rollback_digest: this run redeploys that image and publishes nothing. */
   rollbackDigest: string;
   deployed: Deployed;
-  /** The changes since the deployed commit, when it is known. */
-  sinceDeployed: Changes;
-  /** The changes of this push alone, used for the database check when nothing was ever deployed. */
-  thisPush: Changes;
+  /** The deployed commit compared with this one, when it is known. */
+  sinceDeployed: Comparison;
+  /** This push alone, used for the database check when nothing was ever deployed. */
+  thisPush: Comparison;
 }
 
 export interface Decision {
@@ -50,10 +56,18 @@ export interface Decision {
 const touches = (files: readonly string[], paths: readonly string[]) =>
   files.some((file) => paths.some((path) => (path.endsWith('/') ? file.startsWith(path) : file === path)));
 
+const ANCESTOR = new Set(['identical', 'ahead']);
+
 const DATABASE_NOTICE = {
   title: 'box not published: deploy the application first',
   message:
     'The database the box reads changed (prisma/migrations or prisma/sql) since the commit running in box-production. Migrations reach production only with a deploy of the application, so the box is not deployed now: deploy the application, then run the box workflow by hand on main (deploy/README.md, the box).',
+};
+
+const CUT_NOTICE = {
+  title: 'box not published: too many changes to check the database',
+  message:
+    'More files changed since the commit running in box-production than GitHub lists (300), so whether the database the box reads changed cannot be checked. If prisma/migrations or prisma/sql changed, deploy the application first; then run the box workflow by hand on main (deploy/README.md, the box).',
 };
 
 const PINNED_NOTICE = {
@@ -67,6 +81,8 @@ const PINNED_DATABASE_NOTICE = {
   message:
     'The repository variable BOX_DEPLOY_PINNED is true: a rollback holds, so nothing is published. The database the box reads (prisma/migrations or prisma/sql) has also changed since the commit running in box-production: before lifting the pin, deploy the application, then set BOX_DEPLOY_PINNED to false and run the box workflow by hand on main (deploy/README.md, the box).',
 };
+
+const BY_HAND = 'Run the box workflow by hand on main once you have checked what runs in box-production (deploy/README.md, the box).';
 
 export function decide(input: DecisionInput): Decision {
   if (input.event === 'pull_request' || input.ref !== 'refs/heads/main') return { publish: false };
@@ -84,37 +100,43 @@ export function decide(input: DecisionInput): Decision {
   if (manual && input.rollbackDigest !== '') {
     return { publish: false, notice: { title: 'box rollback', message: `This run redeploys the image ${input.rollbackDigest} and publishes nothing.` } };
   }
+  const since = input.sinceDeployed;
   // Pinned after a rollback: only a manual run that says so publishes, whatever changed.
   if (input.pinned) {
     if (manual && input.publishWhilePinned) return { publish: true };
     // The comparison is made while pinned too (on a push), so a database change is not hidden by the pin.
-    const database = input.deployed.kind === 'commit' && input.sinceDeployed.kind === 'files' && touches(input.sinceDeployed.files, DATABASE_PATHS);
+    const database = input.deployed.kind === 'commit' && since.kind === 'compared' && (!since.complete || touches(since.files, DATABASE_PATHS));
     return { publish: false, notice: database ? PINNED_DATABASE_NOTICE : PINNED_NOTICE };
   }
   // A manual run is the operator's word, given after the application's deploy: it always publishes.
   if (manual) return { publish: true };
 
   if (input.deployed.kind === 'none') {
-    // Nothing ever ran: publish, unless this push already shows a database change.
-    if (input.thisPush.kind === 'files' && touches(input.thisPush.files, DATABASE_PATHS)) return { publish: false, notice: DATABASE_NOTICE };
-    return { publish: true, notice: { title: 'box published', message: 'The box is published because nothing has been deployed to box-production yet.' } };
+    // Nothing ever reached success: publish, unless this push already shows a database change.
+    const push = input.thisPush;
+    if (push.kind === 'compared' && !push.complete) return { publish: false, notice: CUT_NOTICE };
+    if (push.kind === 'compared' && touches(push.files, DATABASE_PATHS)) return { publish: false, notice: DATABASE_NOTICE };
+    return { publish: true, notice: { title: 'box published', message: 'The box is published because no deployment to box-production has succeeded yet.' } };
   }
-  // Not knowing what runs, or what changed since, is not a reason to publish: a database change could lie
-  // in between. The step fails, and the operator re-runs it or runs the workflow by hand.
+  // Not knowing what runs, or whether it is an ancestor, is not a reason to publish: a database change could
+  // lie in between. The step fails; a re-run or a manual run is the way out.
   if (input.deployed.kind === 'unknown') {
-    return { publish: false, error: `The commit running in box-production is not known (${input.deployed.reason}). Re-run this run, or run the box workflow by hand on main once the application is deployed.` };
+    return { publish: false, error: `The commit running in box-production is not known (${input.deployed.reason}). Re-run this run, or: ${BY_HAND}` };
   }
-  if (input.sinceDeployed.kind === 'unknown') {
-    return { publish: false, error: `What changed since ${input.deployed.sha.slice(0, 12)}, the commit running in box-production, is not known (${input.sinceDeployed.reason}). Re-run this run, or run the box workflow by hand on main once the application is deployed.` };
+  const short = input.deployed.sha.slice(0, 12);
+  if (since.kind === 'unknown') return { publish: false, error: `${short}, the commit running in box-production, could not be compared with this one (${since.reason}). Re-run this run, or: ${BY_HAND}` };
+  if (!ANCESTOR.has(since.status)) {
+    return { publish: false, error: `${short}, the commit running in box-production, is ${since.status} of this one, not an ancestor. ${BY_HAND}` };
   }
-  const files = input.sinceDeployed.files;
-  if (touches(files, DATABASE_PATHS)) return { publish: false, notice: DATABASE_NOTICE };
-  if (touches(files, BOX_PATHS)) return { publish: true };
+  // A cut list cannot show the database hold: hold, and say how to go on.
+  if (!since.complete) return { publish: false, notice: CUT_NOTICE };
+  if (touches(since.files, DATABASE_PATHS)) return { publish: false, notice: DATABASE_NOTICE };
+  if (touches(since.files, BOX_PATHS)) return { publish: true };
   return {
     publish: false,
     notice: {
       title: 'box not published',
-      message: `Nothing of the box changed since ${input.deployed.sha.slice(0, 12)}, the commit running in box-production, so the image is tested and not published.`,
+      message: `Nothing of the box changed since ${short}, the commit running in box-production, so the image is tested and not published.`,
     },
   };
 }
@@ -122,84 +144,79 @@ export function decide(input: DecisionInput): Decision {
 /** A GET against the GitHub API: the status, and the parsed body when it is JSON. */
 export type GetJson = (path: string) => Promise<{ status: number; body: unknown }>;
 
-interface DeploymentRow {
-  id?: unknown;
-  sha?: unknown;
-  creator?: { login?: unknown } | null;
-}
-
-/** The workflow file and the jobs of it that deploy to box-production. */
-export const WORKFLOW = 'box.yml';
+/** The workflow file, and the jobs of it that deploy to box-production. */
+export const WORKFLOW_PATH = '.github/workflows/box.yml';
 export const DEPLOYING_JOBS = ['publish and deploy', 'roll back'];
 
 const COMMIT = /^[0-9a-f]{40}$/;
 
 /**
- * Whether a commit was deployed by this workflow: a run of box.yml on main at that commit in which the
- * publish or the rollback job succeeded. A deployment's status names no run (its log address is the
- * commit's checks page), so the runs of the commit are asked instead. Undefined when GitHub cannot say.
+ * Whether a successful deployment was made by a publish or rollback job of box.yml on main. A job with
+ * `environment:` creates its deployment itself, and every status of it names the job in its log address
+ * (`<server>/<repository>/actions/runs/<run>/job/<job>`); the job and its run are asked for the rest. A
+ * deployment made through the API (its log address is the commit's checks page) is not trusted.
  */
-export async function deployedByWorkflow(get: GetJson, repository: string, sha: string): Promise<boolean | undefined> {
-  const runs = await get(`/repos/${repository}/actions/workflows/${WORKFLOW}/runs?head_sha=${sha}&branch=main&per_page=20`);
-  const list = (runs.body as { workflow_runs?: unknown } | null)?.workflow_runs;
-  if (runs.status !== 200 || !Array.isArray(list)) return undefined;
-  for (const run of list as { id?: unknown; head_branch?: unknown; head_sha?: unknown; path?: unknown }[]) {
-    if (typeof run.id !== 'number' || run.head_branch !== 'main' || run.head_sha !== sha) continue;
-    if (typeof run.path === 'string' && !run.path.endsWith(`.github/workflows/${WORKFLOW}`)) continue;
-    const jobs = await get(`/repos/${repository}/actions/runs/${run.id}/jobs?per_page=50`);
-    const jobList = (jobs.body as { jobs?: unknown } | null)?.jobs;
-    if (jobs.status !== 200 || !Array.isArray(jobList)) return undefined;
-    if ((jobList as { name?: unknown; conclusion?: unknown }[]).some((job) => typeof job.name === 'string' && DEPLOYING_JOBS.includes(job.name) && job.conclusion === 'success')) return true;
+async function madeByThisWorkflow(get: GetJson, repository: string, serverUrl: string, sha: string, logUrl: unknown): Promise<boolean | 'unanswered'> {
+  if (typeof logUrl !== 'string') return false;
+  let url: URL;
+  try {
+    url = new URL(logUrl);
+  } catch {
+    return false;
   }
-  return false;
+  const match = new RegExp(`^/${repository.replace(/[.]/g, '\\.')}/actions/runs/(\\d+)/job/(\\d+)$`).exec(url.pathname);
+  if (url.origin !== serverUrl || !match) return false;
+  const [, runId, jobId] = match;
+  const job = await get(`/repos/${repository}/actions/jobs/${jobId}`);
+  if (job.status !== 200) return 'unanswered';
+  const j = job.body as { name?: unknown; conclusion?: unknown; head_branch?: unknown; head_sha?: unknown; run_id?: unknown } | null;
+  if (typeof j?.name !== 'string' || !DEPLOYING_JOBS.includes(j.name) || j.conclusion !== 'success' || j.head_branch !== 'main' || j.head_sha !== sha || String(j.run_id) !== runId) return false;
+  const run = await get(`/repos/${repository}/actions/runs/${runId}`);
+  if (run.status !== 200) return 'unanswered';
+  const r = run.body as { path?: unknown; head_branch?: unknown } | null;
+  return r?.path === WORKFLOW_PATH && r.head_branch === 'main';
 }
 
 /**
- * The commit of the newest deployment to box-production whose latest status is success, made by this
- * workflow. GitHub lists deployments newest first; a later success marks the earlier ones inactive, and a
- * failed or cancelled one never reaches success, so the first success found is what production runs. A
- * success this workflow did not make (by hand, or by another workflow through the API) is not trusted:
- * what runs is then not known, and the run fails loudly.
+ * The commit of the newest deployment to box-production whose latest status is success. GitHub lists
+ * deployments newest first: the publish job's own deployment, still in progress while it runs, and failed
+ * ones are passed over, and a later success marks the earlier ones inactive. No success among them means
+ * none: the first deploy. A success this workflow's deploying jobs did not make is not trusted.
  */
-export async function lastDeployed(get: GetJson, repository: string): Promise<Deployed> {
+export async function lastDeployed(get: GetJson, repository: string, serverUrl = 'https://github.com'): Promise<Deployed> {
   const list = await get(`/repos/${repository}/deployments?environment=${ENVIRONMENT}&per_page=30`);
   if (list.status !== 200 || !Array.isArray(list.body)) return { kind: 'unknown', reason: `the deployments answered HTTP ${list.status}` };
-  if (list.body.length === 0) return { kind: 'none' };
-  for (const row of list.body as DeploymentRow[]) {
+  for (const row of list.body as { id?: unknown; sha?: unknown }[]) {
     if (typeof row.id !== 'number' || typeof row.sha !== 'string' || !COMMIT.test(row.sha)) continue;
     const statuses = await get(`/repos/${repository}/deployments/${row.id}/statuses?per_page=1`);
-    if (statuses.status !== 200 || !Array.isArray(statuses.body)) {
-      return { kind: 'unknown', reason: `a deployment's statuses answered HTTP ${statuses.status}` };
-    }
-    const latest = statuses.body[0] as { state?: unknown } | undefined;
+    if (statuses.status !== 200 || !Array.isArray(statuses.body)) return { kind: 'unknown', reason: `a deployment's statuses answered HTTP ${statuses.status}` };
+    const latest = statuses.body[0] as { state?: unknown; log_url?: unknown } | undefined;
     if (latest?.state !== 'success') continue;
+    const made = await madeByThisWorkflow(get, repository, serverUrl, row.sha, latest.log_url);
     const short = row.sha.slice(0, 12);
-    if (row.creator?.login !== 'github-actions[bot]') return { kind: 'unknown', reason: `the newest successful deployment, of ${short}, was not made by GitHub Actions` };
-    const made = await deployedByWorkflow(get, repository, row.sha);
-    if (made === undefined) return { kind: 'unknown', reason: `the runs of ${short} could not be read` };
-    if (!made) return { kind: 'unknown', reason: `the newest successful deployment, of ${short}, was not made by a publish or rollback job of ${WORKFLOW} on main` };
+    if (made === 'unanswered') return { kind: 'unknown', reason: `the job of the deployment of ${short} could not be read` };
+    if (!made) return { kind: 'unknown', reason: `the newest successful deployment, of ${short}, was not made by a publish or rollback job of box.yml on main` };
     return { kind: 'commit', sha: row.sha };
   }
-  return { kind: 'unknown', reason: 'none of the last 30 deployments succeeded' };
+  return { kind: 'none' };
 }
 
-/** GitHub's compare lists at most 300 files; a longer list cannot be trusted to be whole. */
+/** GitHub's compare lists at most 300 files; a longer list is cut. */
 const COMPARE_FILE_LIMIT = 300;
 
-/** The files changed from `base` to `head`, when `base` is an ancestor of `head` and the list is whole. */
-export async function changedFiles(get: GetJson, repository: string, base: string, head: string): Promise<Changes> {
+/** The deployed commit compared with this one: whether it is an ancestor, and the files changed. */
+export async function compare(get: GetJson, repository: string, base: string, head: string): Promise<Comparison> {
   const answer = await get(`/repos/${repository}/compare/${base}...${head}?per_page=1`);
   if (answer.status !== 200) return { kind: 'unknown', reason: `the comparison answered HTTP ${answer.status}` };
-  const body = answer.body as { status?: unknown; files?: unknown };
-  if (body.status === 'identical') return { kind: 'files', files: [] };
-  if (body.status !== 'ahead') return { kind: 'unknown', reason: `the deployed commit is ${String(body.status)} of this one` };
-  if (!Array.isArray(body.files) || body.files.length >= COMPARE_FILE_LIMIT) return { kind: 'unknown', reason: 'the list of changed files is not whole' };
+  const body = answer.body as { status?: unknown; files?: unknown } | null;
+  if (typeof body?.status !== 'string') return { kind: 'unknown', reason: 'the comparison named no status' };
+  const list = Array.isArray(body.files) ? (body.files as { filename?: unknown; previous_filename?: unknown }[]) : [];
   const files: string[] = [];
-  for (const file of body.files as { filename?: unknown; previous_filename?: unknown }[]) {
+  for (const file of list) {
     if (typeof file.filename === 'string') files.push(file.filename);
     if (typeof file.previous_filename === 'string') files.push(file.previous_filename);
   }
-  return { kind: 'files', files };
+  return { kind: 'compared', status: body.status, files, complete: Array.isArray(body.files) && list.length < COMPARE_FILE_LIMIT };
 }
 
 const ZERO = /^0+$/;
@@ -217,31 +234,35 @@ export interface Guard {
 
 /**
  * Asked again at the start of the publish job, with that job's own token, because "Re-run failed jobs"
- * keeps the box job's decision and artifact from an earlier attempt: the pin is read again (unless this is
- * a manual run with publish_while_pinned), and the image is pushed only when the commit running in
- * box-production is this commit or an ancestor of it, so an older run cannot deploy over a newer one.
+ * keeps the box job's decision and artifact from an earlier attempt. It reads the pin again (unless a
+ * manual run with publish_while_pinned) and checks ancestry only: the image is pushed when the commit
+ * running in box-production is this commit or an ancestor of it, so an older run cannot deploy over a
+ * newer one. A manual run with override_guard passes after the operator has checked what runs.
  */
 export async function guard(env: Record<string, string | undefined>, get: GetJson): Promise<Guard> {
   const repository = env.GITHUB_REPOSITORY ?? '';
   const sha = env.SHA ?? '';
   if (env.REF !== 'refs/heads/main') return { ok: false, message: 'Only main publishes.' };
-  const manualOverride = env.EVENT === 'workflow_dispatch' && env.PUBLISH_WHILE_PINNED === 'true';
-  if (env.PINNED === 'true' && !manualOverride) {
-    return { ok: false, message: 'BOX_DEPLOY_PINNED is true now: a rollback holds, so this run publishes nothing (a re-run keeps an earlier decision, which is asked again here).' };
+  const manual = env.EVENT === 'workflow_dispatch';
+  if (env.PINNED === 'true' && !(manual && env.PUBLISH_WHILE_PINNED === 'true')) {
+    return {
+      ok: false,
+      message: 'BOX_DEPLOY_PINNED is true now: a rollback holds, so this run publishes nothing (a re-run keeps an earlier decision, which is asked again here). Lift the pin, or run the box workflow by hand with publish_while_pinned.',
+    };
   }
+  if (manual && env.OVERRIDE_GUARD === 'true') return { ok: true, message: 'override_guard: the operator has checked what runs in box-production.' };
   checkRun(repository, sha);
-  const deployed = await lastDeployed(get, repository);
-  if (deployed.kind === 'none') return { ok: true, message: 'Nothing has been deployed to box-production yet.' };
-  if (deployed.kind === 'unknown') return { ok: false, message: `The commit running in box-production is not known (${deployed.reason}); nothing is pushed. Run the box workflow by hand on main.` };
-  if (deployed.sha === sha) return { ok: true, message: `This commit is the one running in box-production.` };
-  const since = await changedFiles(get, repository, deployed.sha, sha);
-  if (since.kind === 'files') return { ok: true, message: `${deployed.sha.slice(0, 12)}, the commit running in box-production, is an ancestor of this one.` };
-  return {
-    ok: false,
-    message: `${deployed.sha.slice(0, 12)}, the commit running in box-production, is not this commit or an ancestor of it (${since.reason}), so this run would deploy an older box over a newer one; nothing is pushed.`,
-  };
+  const way = 'If this is meant, run the box workflow by hand on main with override_guard once you have checked what runs in box-production (deploy/README.md, the box).';
+  const deployed = await lastDeployed(get, repository, env.GITHUB_SERVER_URL ?? 'https://github.com');
+  if (deployed.kind === 'none') return { ok: true, message: 'No deployment to box-production has succeeded yet.' };
+  if (deployed.kind === 'unknown') return { ok: false, message: `The commit running in box-production is not known (${deployed.reason}); nothing is pushed. ${way}` };
+  if (deployed.sha === sha) return { ok: true, message: 'This commit is the one running in box-production.' };
+  const since = await compare(get, repository, deployed.sha, sha);
+  const short = deployed.sha.slice(0, 12);
+  if (since.kind === 'unknown') return { ok: false, message: `${short}, the commit running in box-production, could not be compared with this one (${since.reason}); nothing is pushed. ${way}` };
+  if (ANCESTOR.has(since.status)) return { ok: true, message: `${short}, the commit running in box-production, is an ancestor of this one.` };
+  return { ok: false, message: `${short}, the commit running in box-production, is ${since.status} of this one, so this run would deploy an older box over a newer one; nothing is pushed. To go back on purpose, roll back instead. ${way}` };
 }
-
 
 /** Reads the run, asks GitHub, decides. Everything it reads comes in through `env` and `get`. */
 export async function decideRun(env: Record<string, string | undefined>, get: GetJson): Promise<Decision> {
@@ -254,16 +275,16 @@ export async function decideRun(env: Record<string, string | undefined>, get: Ge
   const pinned = env.PINNED === 'true';
   const publishWhilePinned = env.PUBLISH_WHILE_PINNED === 'true';
   const rollbackDigest = env.ROLLBACK_DIGEST ?? '';
-  const unknown = (reason: string): Changes => ({ kind: 'unknown', reason });
+  const unknown = (reason: string): Comparison => ({ kind: 'unknown', reason });
   const settings = { event, ref, enabled, pinned, publishWhilePinned, rollbackDigest };
   // Only a push to main with publishing on needs GitHub at all.
   if (event !== 'push' || ref !== 'refs/heads/main' || !enabled) {
     return decide({ ...settings, deployed: { kind: 'none' }, sinceDeployed: unknown('not asked'), thisPush: unknown('not asked') });
   }
   checkRun(repository, sha);
-  const deployed = await lastDeployed(get, repository);
-  const sinceDeployed = deployed.kind === 'commit' ? await changedFiles(get, repository, deployed.sha, sha) : unknown('no deployed commit');
-  const thisPush = deployed.kind !== 'none' ? unknown('not needed') : !COMMIT.test(before) || ZERO.test(before) ? unknown('the push has no previous commit') : await changedFiles(get, repository, before, sha);
+  const deployed = await lastDeployed(get, repository, env.GITHUB_SERVER_URL ?? 'https://github.com');
+  const sinceDeployed = deployed.kind === 'commit' ? await compare(get, repository, deployed.sha, sha) : unknown('no deployed commit');
+  const thisPush = deployed.kind !== 'none' ? unknown('not needed') : !COMMIT.test(before) || ZERO.test(before) ? unknown('the push has no previous commit') : await compare(get, repository, before, sha);
   return decide({ ...settings, deployed, sinceDeployed, thisPush });
 }
 

@@ -4,12 +4,12 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { changedFiles, decide, decideRun, type GetJson, guard, lastDeployed, noticeLine } from '../ci/publishDecision';
+import { compare, decide, decideRun, type GetJson, guard, lastDeployed, noticeLine } from '../ci/publishDecision';
 
 const commit = () => randomBytes(20).toString('hex');
 const REPO = 'owner/repo';
 const MAIN = 'refs/heads/main';
-const files = (...list: string[]) => ({ kind: 'files' as const, files: list });
+const files = (...list: string[]) => ({ kind: 'compared' as const, status: 'ahead', files: list, complete: true });
 const unknown = { kind: 'unknown' as const, reason: 'test' };
 
 describe('decide', () => {
@@ -66,7 +66,7 @@ describe('decide', () => {
   it('publishes when nothing was ever deployed, and says why', () => {
     const none = decide({ ...base, deployed: { kind: 'none' }, sinceDeployed: unknown, thisPush: files('README.md') });
     expect(none.publish).toBe(true);
-    expect(none.notice?.message).toContain('nothing has been deployed');
+    expect(none.notice?.message).toContain('no deployment to box-production has succeeded yet');
     expect(none.error).toBeUndefined();
     // Not even the push's own changes known: still the first deploy.
     expect(decide({ ...base, deployed: { kind: 'none' }, sinceDeployed: unknown, thisPush: unknown }).publish).toBe(true);
@@ -82,10 +82,27 @@ describe('decide', () => {
     const notKnown = decide({ ...base, deployed: { kind: 'unknown', reason: 'HTTP 500' }, sinceDeployed: unknown, thisPush: files('services/box/src/main.ts') });
     expect(notKnown.publish).toBe(false);
     expect(notKnown.error).toContain('HTTP 500');
-    expect(notKnown.error).toContain('run the box workflow by hand');
-    const notCompared = decide({ ...base, sinceDeployed: { kind: 'unknown', reason: 'diverged' }, thisPush: files('services/box/src/main.ts') });
+    expect(notKnown.error).toContain('Run the box workflow by hand on main');
+    const notCompared = decide({ ...base, sinceDeployed: { kind: 'unknown', reason: 'HTTP 404' }, thisPush: files('services/box/src/main.ts') });
     expect(notCompared.publish).toBe(false);
-    expect(notCompared.error).toContain('diverged');
+    expect(notCompared.error).toContain('HTTP 404');
+    for (const status of ['behind', 'diverged']) {
+      const notAncestor = decide({ ...base, sinceDeployed: { ...files('services/box/src/main.ts'), status } });
+      expect(notAncestor.publish).toBe(false);
+      expect(notAncestor.error).toContain(`is ${status} of this one, not an ancestor`);
+      // Every refusal names its way out.
+      expect(notAncestor.error).toContain('Run the box workflow by hand on main');
+    }
+  });
+
+  it('holds, with a notice saying how to go on, when the list of changed files is cut at 300', () => {
+    const cut = decide({ ...base, sinceDeployed: { ...files('services/box/src/main.ts'), complete: false } });
+    expect(cut.publish).toBe(false);
+    expect(cut.error).toBeUndefined();
+    expect(cut.notice?.message).toContain('deploy the application first; then run the box workflow by hand on main');
+    expect(decide({ ...base, deployed: { kind: 'none' }, sinceDeployed: unknown, thisPush: { ...files(), complete: false } }).publish).toBe(false);
+    // Pinned, a cut list counts as a possible database change.
+    expect(decide({ ...base, pinned: true, sinceDeployed: { ...files(), complete: false } }).notice?.title).toContain('deploy the application first');
   });
 
   it('publishes nothing while pinned after a rollback, whatever changed, and says how to lift it', () => {
@@ -130,114 +147,133 @@ function api(routes: Record<string, { status: number; body: unknown }>) {
   return { get, asked };
 }
 
-const deploymentsPath = `/repos/${REPO}/deployments?environment=box-production&per_page=30`;
-const statusesPath = (id: number) => `/repos/${REPO}/deployments/${id}/statuses?per_page=1`;
+// Answers recorded read-only from this repository's GitHub API on 2026-11-17 (test/fixtures/github): the
+// plugin-mirror environment's deployment 7824580602, made by its job with `environment:` (run 43871048435,
+// job 133312005128), with all five of its statuses; a production deployment made through the API, whose
+// statuses point at the commit's checks page; and three comparisons (ahead, behind, cut at 300 files).
+const fixture = (name: string): unknown => JSON.parse(readFileSync(path.join(__dirname, 'fixtures', 'github', `${name}.json`), 'utf8'));
+type Row = { id: number; sha: string; creator: { login: string } };
+type Status = { state: string; log_url: string };
+const recordedDeployments = fixture('deployments') as Row[];
+const recordedStatuses = fixture('statuses-of-a-job-deployment') as Status[];
+const recordedApiStatuses = fixture('statuses-of-an-api-deployment') as Status[];
+const recordedJob = fixture('job') as { id: number; run_id: number; name: string; head_sha: string };
+const recordedRun = fixture('run') as { id: number; path: string };
+const RECORDED_REPO = 'marlinjai/framer-clone';
+const deployment = recordedDeployments[0] as Row;
 
-const BOT = { login: 'github-actions[bot]' };
-const runsPath = (sha: string) => `/repos/${REPO}/actions/workflows/box.yml/runs?head_sha=${sha}&branch=main&per_page=20`;
-const jobsPath = (run: number) => `/repos/${REPO}/actions/runs/${run}/jobs?per_page=50`;
+const deploymentsPath = `/repos/${RECORDED_REPO}/deployments?environment=box-production&per_page=30`;
+const statusesPath = (id: number) => `/repos/${RECORDED_REPO}/deployments/${id}/statuses?per_page=1`;
+const jobPath = `/repos/${RECORDED_REPO}/actions/jobs/${recordedJob.id}`;
+const runPath = `/repos/${RECORDED_REPO}/actions/runs/${recordedRun.id}`;
+const comparePath = (base: string, head: string) => `/repos/${RECORDED_REPO}/compare/${base}...${head}?per_page=1`;
+/** GitHub answers per_page=1 with the newest status alone. */
+const latest = (statuses: Status[]) => ({ status: 200, body: statuses.slice(0, 1) });
 
-/** The answers that show a commit was deployed by a run of box.yml on main whose given job succeeded. */
-function madeBy(sha: string, run: number, job = 'publish and deploy') {
+/**
+ * The recorded deployment as box.yml's publish job would leave it: the same records, with the job's name
+ * and the run's workflow path those of the box's deploying job. `job` and `run` change one field more.
+ */
+function recordedPublish(job: Record<string, unknown> = {}, run: Record<string, unknown> = {}) {
   return {
-    [runsPath(sha)]: { status: 200, body: { workflow_runs: [{ id: run, head_branch: 'main', head_sha: sha, path: '.github/workflows/box.yml' }] } },
-    [jobsPath(run)]: { status: 200, body: { jobs: [{ name: 'box', conclusion: 'success' }, { name: job, conclusion: 'success' }] } },
+    [deploymentsPath]: { status: 200, body: [deployment] },
+    [statusesPath(deployment.id)]: latest(recordedStatuses),
+    [jobPath]: { status: 200, body: { ...recordedJob, name: 'publish and deploy', ...job } },
+    [runPath]: { status: 200, body: { ...recordedRun, path: '.github/workflows/box.yml', ...run } },
   };
 }
 
-/** One successful deployment of a commit, made by the workflow. */
-function deployedAt(sha: string, id = 7) {
-  return {
-    [deploymentsPath]: { status: 200, body: [{ id, sha, creator: BOT }] },
-    [statusesPath(id)]: { status: 200, body: [{ state: 'success' }] },
-    ...madeBy(sha, 100 + id),
-  };
-}
+/** The publish job's own deployment while its steps run: created by the job, its latest status in_progress. */
+const ownRunningRow: Row = { ...deployment, id: deployment.id + 1, sha: commit() };
+const ownRunning = { [statusesPath(ownRunningRow.id)]: latest(recordedStatuses.slice(recordedStatuses.findIndex((status) => status.state === 'in_progress'))) };
 
-describe('lastDeployed', () => {
-  it('takes the newest deployment whose latest status is success, passing over failed, running and cancelled ones', async () => {
-    const [failed, running, good, older] = [commit(), commit(), commit(), commit()];
-    const { get } = api({
-      [deploymentsPath]: { status: 200, body: [{ id: 4, sha: failed, creator: BOT }, { id: 3, sha: running, creator: BOT }, { id: 2, sha: good, creator: BOT }, { id: 1, sha: older, creator: BOT }] },
-      [statusesPath(4)]: { status: 200, body: [{ state: 'failure' }] },
-      [statusesPath(3)]: { status: 200, body: [{ state: 'in_progress' }] },
-      [statusesPath(2)]: { status: 200, body: [{ state: 'success' }] },
-      [statusesPath(1)]: { status: 200, body: [{ state: 'inactive' }] },
-      ...madeBy(good, 20),
-    });
-    expect(await lastDeployed(get, REPO)).toEqual({ kind: 'commit', sha: good });
-  });
-
-  it('counts a rollback job as a deployment of the workflow', async () => {
-    const sha = commit();
-    const { get } = api({ [deploymentsPath]: { status: 200, body: [{ id: 1, sha, creator: BOT }] }, [statusesPath(1)]: { status: 200, body: [{ state: 'success' }] }, ...madeBy(sha, 5, 'roll back') });
-    expect(await lastDeployed(get, REPO)).toEqual({ kind: 'commit', sha });
-  });
-
-  it('says none when nothing was ever deployed, and not known when the API fails or nothing succeeded', async () => {
-    expect(await lastDeployed(api({ [deploymentsPath]: { status: 200, body: [] } }).get, REPO)).toEqual({ kind: 'none' });
-    expect(await lastDeployed(api({ [deploymentsPath]: { status: 403, body: {} } }).get, REPO)).toMatchObject({ kind: 'unknown' });
-    expect(await lastDeployed(api({ [deploymentsPath]: { status: 0, body: null } }).get, REPO)).toMatchObject({ kind: 'unknown' });
-    const failedOnly = api({ [deploymentsPath]: { status: 200, body: [{ id: 1, sha: commit(), creator: BOT }] }, [statusesPath(1)]: { status: 200, body: [{ state: 'error' }] } });
-    expect(await lastDeployed(failedOnly.get, REPO)).toMatchObject({ kind: 'unknown' });
-    const statusesFail = api({ [deploymentsPath]: { status: 200, body: [{ id: 1, sha: commit(), creator: BOT }] }, [statusesPath(1)]: { status: 500, body: null } });
-    expect(await lastDeployed(statusesFail.get, REPO)).toMatchObject({ kind: 'unknown' });
-  });
-
-  it('trusts no success this workflow did not make: by hand, by another workflow, or with no deploying job', async () => {
-    const sha = commit();
-    const success = { [deploymentsPath]: { status: 200, body: [{ id: 1, sha, creator: { login: 'someone' } }] }, [statusesPath(1)]: { status: 200, body: [{ state: 'success' }] } };
-    expect(await lastDeployed(api({ ...success, ...madeBy(sha, 3) }).get, REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('not made by GitHub Actions') });
-    const byBot = { [deploymentsPath]: { status: 200, body: [{ id: 1, sha, creator: BOT }] }, [statusesPath(1)]: { status: 200, body: [{ state: 'success' }] } };
-    // No run of box.yml on main at that commit (a branch workflow made it through the API).
-    expect(await lastDeployed(api({ ...byBot, [runsPath(sha)]: { status: 200, body: { workflow_runs: [] } } }).get, REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('was not made by a publish or rollback job') });
-    // A run of another branch or another file, or one whose deploying job did not succeed.
-    for (const run of [
-      { id: 3, head_branch: 'feature', head_sha: sha, path: '.github/workflows/box.yml' },
-      { id: 3, head_branch: 'main', head_sha: sha, path: '.github/workflows/other.yml' },
-    ]) {
-      expect(await lastDeployed(api({ ...byBot, [runsPath(sha)]: { status: 200, body: { workflow_runs: [run] } }, [jobsPath(3)]: { status: 200, body: { jobs: [{ name: 'publish and deploy', conclusion: 'success' }] } } }).get, REPO)).toMatchObject({ kind: 'unknown' });
-    }
-    const skipped = { ...byBot, ...madeBy(sha, 3), [jobsPath(3)]: { status: 200, body: { jobs: [{ name: 'publish and deploy', conclusion: 'skipped' }, { name: 'roll back', conclusion: 'failure' }] } } };
-    expect(await lastDeployed(api(skipped).get, REPO)).toMatchObject({ kind: 'unknown' });
-    expect(await lastDeployed(api({ ...byBot, [runsPath(sha)]: { status: 502, body: null } }).get, REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('could not be read') });
-  });
-
-  it('passes over a row that is not a deployment of a commit', async () => {
-    const good = commit();
-    const { get, asked } = api({
-      [deploymentsPath]: { status: 200, body: [{ id: 2, sha: 'main' }, { id: '1', sha: good }, { id: 3, sha: good, creator: BOT }] },
-      [statusesPath(3)]: { status: 200, body: [{ state: 'success' }] },
-      ...madeBy(good, 9),
-    });
-    expect(await lastDeployed(get, REPO)).toEqual({ kind: 'commit', sha: good });
-    expect(asked).toEqual([deploymentsPath, statusesPath(3), runsPath(good), jobsPath(9)]);
+describe('the recorded answers', () => {
+  it('are what the code relies on: a job deployment created by the actor, its log address naming run and job', () => {
+    expect(deployment.creator.login).not.toBe('github-actions[bot]');
+    expect(recordedStatuses.map((status) => status.state)).toEqual(['success', 'in_progress', 'queued', 'queued', 'waiting']);
+    for (const status of recordedStatuses) expect(status.log_url).toBe(`https://github.com/${RECORDED_REPO}/actions/runs/${recordedRun.id}/job/${recordedJob.id}`);
+    expect(recordedJob.run_id).toBe(recordedRun.id);
+    expect(recordedJob.head_sha).toBe(deployment.sha);
+    expect(recordedApiStatuses[0]?.log_url).toMatch(/\/commit\/[0-9a-f]{40}\/checks$/);
   });
 });
 
-describe('changedFiles', () => {
-  const [base, head] = [commit(), commit()];
-  const comparePath = `/repos/${REPO}/compare/${base}...${head}?per_page=1`;
-
-  it('lists the files of a comparison, with the old name of a renamed file', async () => {
-    const { get } = api({
-      [comparePath]: { status: 200, body: { status: 'ahead', files: [{ filename: 'a.ts' }, { filename: 'services/box/b.ts', previous_filename: 'old/b.ts' }] } },
-    });
-    expect(await changedFiles(get, REPO, base, head)).toEqual({ kind: 'files', files: ['a.ts', 'services/box/b.ts', 'old/b.ts'] });
+describe('lastDeployed', () => {
+  it('takes a success made by the publish job, passing over the running job\'s own in-progress deployment', async () => {
+    const { get, asked } = api({ ...recordedPublish(), [deploymentsPath]: { status: 200, body: [ownRunningRow, deployment] }, ...ownRunning });
+    expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.sha });
+    expect(asked).toEqual([deploymentsPath, statusesPath(ownRunningRow.id), statusesPath(deployment.id), jobPath, runPath]);
   });
 
-  it('gives no files for the same commit, and not known for a commit that is not an ancestor, a cut list or a failed call', async () => {
-    expect(await changedFiles(api({ [comparePath]: { status: 200, body: { status: 'identical', files: [] } } }).get, REPO, base, head)).toEqual({ kind: 'files', files: [] });
-    for (const status of ['behind', 'diverged']) {
-      expect(await changedFiles(api({ [comparePath]: { status: 200, body: { status, files: [] } } }).get, REPO, base, head)).toMatchObject({ kind: 'unknown' });
+  it('counts the rollback job too', async () => {
+    expect(await lastDeployed(api(recordedPublish({ name: 'roll back' })).get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.sha });
+  });
+
+  it('says none when no deployment ever reached success: the first publish, with only its own deployment listed', async () => {
+    expect(await lastDeployed(api({ [deploymentsPath]: { status: 200, body: [ownRunningRow] }, ...ownRunning }).get, RECORDED_REPO)).toEqual({ kind: 'none' });
+    expect(await lastDeployed(api({ [deploymentsPath]: { status: 200, body: [] } }).get, RECORDED_REPO)).toEqual({ kind: 'none' });
+    const failedThenRunning = api({
+      [deploymentsPath]: { status: 200, body: [ownRunningRow, deployment] },
+      ...ownRunning,
+      [statusesPath(deployment.id)]: latest([{ ...(recordedStatuses[0] as Status), state: 'failure' }]),
+    });
+    expect(await lastDeployed(failedThenRunning.get, RECORDED_REPO)).toEqual({ kind: 'none' });
+  });
+
+  it('trusts no success another job, workflow or branch made, nor one made through the API', async () => {
+    const notTrusted = { kind: 'unknown', reason: expect.stringContaining('was not made by a publish or rollback job of box.yml on main') };
+    // The recorded records as they are: another workflow's job.
+    expect(await lastDeployed(api({ ...recordedPublish(), [jobPath]: { status: 200, body: recordedJob }, [runPath]: { status: 200, body: recordedRun } }).get, RECORDED_REPO)).toMatchObject(notTrusted);
+    for (const [job, run] of [
+      [{ name: 'box' }, {}],
+      [{ head_branch: 'feature' }, {}],
+      [{ conclusion: 'failure' }, {}],
+      [{ head_sha: commit() }, {}],
+      [{ run_id: 1 }, {}],
+      [{}, { path: '.github/workflows/other.yml' }],
+      [{}, { head_branch: 'feature' }],
+    ] as const) {
+      expect(await lastDeployed(api(recordedPublish(job, run)).get, RECORDED_REPO)).toMatchObject(notTrusted);
     }
-    const many = Array.from({ length: 300 }, (_, index) => ({ filename: `f${index}` }));
-    expect(await changedFiles(api({ [comparePath]: { status: 200, body: { status: 'ahead', files: many } } }).get, REPO, base, head)).toMatchObject({ kind: 'unknown' });
-    expect(await changedFiles(api({ [comparePath]: { status: 404, body: null } }).get, REPO, base, head)).toMatchObject({ kind: 'unknown' });
+    const throughTheApi = api({ ...recordedPublish(), [statusesPath(deployment.id)]: latest(recordedApiStatuses) });
+    expect(await lastDeployed(throughTheApi.get, RECORDED_REPO)).toMatchObject(notTrusted);
+    const elsewhere = api({ ...recordedPublish(), [statusesPath(deployment.id)]: latest([{ ...(recordedStatuses[0] as Status), log_url: `https://example.test/${RECORDED_REPO}/actions/runs/${recordedRun.id}/job/${recordedJob.id}` }]) });
+    expect(await lastDeployed(elsewhere.get, RECORDED_REPO)).toMatchObject(notTrusted);
+  });
+
+  it('says not known when GitHub does not answer', async () => {
+    expect(await lastDeployed(api({ [deploymentsPath]: { status: 502, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown' });
+    expect(await lastDeployed(api({ ...recordedPublish(), [statusesPath(deployment.id)]: { status: 500, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown' });
+    expect(await lastDeployed(api({ ...recordedPublish(), [jobPath]: { status: 500, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('could not be read') });
+    expect(await lastDeployed(api({ ...recordedPublish(), [runPath]: { status: 500, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('could not be read') });
+  });
+});
+
+describe('compare', () => {
+  const [base, head] = [commit(), commit()];
+
+  it('reads the recorded comparisons: ancestry from the status, the files whole only below 300', async () => {
+    expect(await compare(api({ [comparePath(base, head)]: { status: 200, body: fixture('compare-ahead') } }).get, RECORDED_REPO, base, head)).toMatchObject({
+      kind: 'compared',
+      status: 'ahead',
+      complete: true,
+      files: expect.arrayContaining(['.github/workflows/box.yml', 'Dockerfile.box']),
+    });
+    expect(await compare(api({ [comparePath(base, head)]: { status: 200, body: fixture('compare-behind') } }).get, RECORDED_REPO, base, head)).toEqual({ kind: 'compared', status: 'behind', files: [], complete: true });
+    const cut = await compare(api({ [comparePath(base, head)]: { status: 200, body: fixture('compare-cut-at-300') } }).get, RECORDED_REPO, base, head);
+    expect(cut).toMatchObject({ kind: 'compared', status: 'ahead', complete: false });
+  });
+
+  it('keeps the old name of a renamed file, and says not known for a failed call', async () => {
+    const renamed = { status: 'ahead', files: [{ filename: 'services/box/b.ts', status: 'renamed', previous_filename: 'old/b.ts' }] };
+    expect(await compare(api({ [comparePath(base, head)]: { status: 200, body: renamed } }).get, RECORDED_REPO, base, head)).toMatchObject({ files: ['services/box/b.ts', 'old/b.ts'] });
+    expect(await compare(api({ [comparePath(base, head)]: { status: 404, body: null } }).get, RECORDED_REPO, base, head)).toMatchObject({ kind: 'unknown' });
   });
 });
 
 describe('decideRun', () => {
+  const push = (extra: Record<string, string> = {}) => ({ EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: RECORDED_REPO, BEFORE: commit(), ...extra });
+
   it('asks GitHub nothing for a pull request, another branch, a manual run, or with publishing off', async () => {
     for (const env of [
       { EVENT: 'pull_request', REF: 'refs/pull/1/merge', ENABLED: 'true' },
@@ -251,87 +287,100 @@ describe('decideRun', () => {
     }
   });
 
-  it('compares the push with the deployed commit, and asks nothing about this push alone', async () => {
-    const [deployedSha, before, sha] = [commit(), commit(), commit()];
-    const { get } = api({
-      ...deployedAt(deployedSha),
-      [`/repos/${REPO}/compare/${deployedSha}...${sha}?per_page=1`]: { status: 200, body: { status: 'ahead', files: [{ filename: 'services/box/src/x.ts' }, { filename: 'README.md' }] } },
-    });
-    const decision = await decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: REPO, SHA: sha, BEFORE: before }, get);
-    expect(decision).toEqual({ publish: true });
+  it('publishes a box change since the recorded deployment', async () => {
+    const sha = commit();
+    const { get } = api({ ...recordedPublish(), [comparePath(deployment.sha, sha)]: { status: 200, body: fixture('compare-ahead') } });
+    expect(await decideRun(push({ SHA: sha }), get)).toEqual({ publish: true });
+  });
+
+  it('holds with a notice, not an error, when the recorded comparison is cut at 300 files', async () => {
+    const sha = commit();
+    const decision = await decideRun(push({ SHA: sha }), api({ ...recordedPublish(), [comparePath(deployment.sha, sha)]: { status: 200, body: fixture('compare-cut-at-300') } }).get);
+    expect(decision.publish).toBe(false);
+    expect(decision.error).toBeUndefined();
+    expect(decision.notice?.title).toContain('too many changes');
+  });
+
+  it('publishes the first deploy while only the running job\'s own deployment is listed', async () => {
+    const decision = await decideRun(push({ SHA: commit(), BEFORE: '0'.repeat(40) }), api({ [deploymentsPath]: { status: 200, body: [ownRunningRow] }, ...ownRunning }).get);
+    expect(decision.publish).toBe(true);
   });
 
   it('still compares while pinned, and says to deploy the application first when the database changed', async () => {
-    const [deployedSha, sha] = [commit(), commit()];
-    const { get } = api({
-      ...deployedAt(deployedSha),
-      [`/repos/${REPO}/compare/${deployedSha}...${sha}?per_page=1`]: { status: 200, body: { status: 'ahead', files: [{ filename: 'prisma/migrations/2026/migration.sql' }] } },
-    });
-    const decision = await decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', PINNED: 'true', GITHUB_REPOSITORY: REPO, SHA: sha, BEFORE: commit() }, get);
-    expect(decision.publish).toBe(false);
-    expect(decision.error).toBeUndefined();
-    expect(decision.notice?.title).toContain('pinned, and deploy the application first');
-    // A GitHub that cannot be asked does not fail a pinned run: it publishes nothing anyway.
-    const failing = await decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', PINNED: 'true', GITHUB_REPOSITORY: REPO, SHA: sha, BEFORE: commit() }, api({ [deploymentsPath]: { status: 502, body: null } }).get);
+    const sha = commit();
+    const migration = { status: 'ahead', files: [{ filename: 'prisma/migrations/2026/migration.sql', status: 'added' }] };
+    const decision = await decideRun(push({ SHA: sha, PINNED: 'true' }), api({ ...recordedPublish(), [comparePath(deployment.sha, sha)]: { status: 200, body: migration } }).get);
+    expect(decision).toMatchObject({ publish: false, notice: { title: 'box not published: pinned, and deploy the application first' } });
+    const failing = await decideRun(push({ SHA: sha, PINNED: 'true' }), api({ [deploymentsPath]: { status: 502, body: null } }).get);
     expect(failing).toMatchObject({ publish: false, notice: { title: 'box not published: pinned' } });
     expect(failing.error).toBeUndefined();
   });
 
-  it('fails loudly when the deployments cannot be read', async () => {
-    const { get } = api({ [deploymentsPath]: { status: 502, body: null } });
-    const decision = await decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: REPO, SHA: commit(), BEFORE: commit() }, get);
+  it('fails loudly, naming the way out, when the deployments cannot be read', async () => {
+    const decision = await decideRun(push({ SHA: commit() }), api({ [deploymentsPath]: { status: 502, body: null } }).get);
     expect(decision.publish).toBe(false);
     expect(decision.error).toContain('HTTP 502');
+    expect(decision.error).toContain('Run the box workflow by hand on main');
   });
 
-  it('treats a push without a previous commit as not known, and refuses a malformed repository or commit', async () => {
-    const sha = commit();
-    const { get, asked } = api({ [deploymentsPath]: { status: 200, body: [] } });
-    const decision = await decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: REPO, SHA: sha, BEFORE: '0'.repeat(40) }, get);
-    expect(decision.publish).toBe(true);
-    expect(asked).toEqual([deploymentsPath]);
-    await expect(decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: 'owner/repo/../x', SHA: sha, BEFORE: '' }, get)).rejects.toThrow();
-    await expect(decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: REPO, SHA: 'main', BEFORE: '' }, get)).rejects.toThrow();
+  it('refuses a malformed repository or commit', async () => {
+    const { get } = api({});
+    await expect(decideRun(push({ GITHUB_REPOSITORY: 'owner/repo/../x', SHA: commit() }), get)).rejects.toThrow();
+    await expect(decideRun(push({ SHA: 'main' }), get)).rejects.toThrow();
   });
 });
 
 describe('guard', () => {
-  const run = (extra: Record<string, string | undefined> = {}) => ({ EVENT: 'push', REF: MAIN, GITHUB_REPOSITORY: REPO, SHA: '', ...extra });
+  const run = (extra: Record<string, string | undefined> = {}) => ({ EVENT: 'push', REF: MAIN, GITHUB_REPOSITORY: RECORDED_REPO, SHA: commit(), ...extra });
 
-  it('lets a run publish when the deployed commit is this one or an ancestor, or nothing was deployed', async () => {
-    const [deployedSha, sha] = [commit(), commit()];
-    const ahead = api({ ...deployedAt(deployedSha), [`/repos/${REPO}/compare/${deployedSha}...${sha}?per_page=1`]: { status: 200, body: { status: 'ahead', files: [] } } });
-    expect((await guard(run({ SHA: sha }), ahead.get)).ok).toBe(true);
-    expect((await guard(run({ SHA: deployedSha }), api(deployedAt(deployedSha)).get)).ok).toBe(true);
-    expect((await guard(run({ SHA: sha }), api({ [deploymentsPath]: { status: 200, body: [] } }).get)).ok).toBe(true);
+  it('passes the first publish, where only its own in-progress deployment is listed', async () => {
+    const { get } = api({ [deploymentsPath]: { status: 200, body: [ownRunningRow] }, ...ownRunning });
+    expect((await guard(run({ SHA: ownRunningRow.sha }), get)).ok).toBe(true);
   });
 
-  it('refuses a re-run of an older run once production has moved past it', async () => {
-    const [newer, older] = [commit(), commit()];
-    for (const status of ['behind', 'diverged']) {
-      const { get } = api({ ...deployedAt(newer), [`/repos/${REPO}/compare/${newer}...${older}?per_page=1`]: { status: 200, body: { status, files: [] } } });
-      const result = await guard(run({ SHA: older }), get);
+  it('passes when the recorded deployment is this commit or an ancestor, whatever the number of files', async () => {
+    const sha = commit();
+    for (const body of [fixture('compare-ahead'), fixture('compare-cut-at-300'), { status: 'identical', files: [] }]) {
+      const { get } = api({ ...recordedPublish(), [deploymentsPath]: { status: 200, body: [ownRunningRow, deployment] }, ...ownRunning, [comparePath(deployment.sha, sha)]: { status: 200, body } });
+      expect((await guard(run({ SHA: sha }), get)).ok).toBe(true);
+    }
+    expect((await guard(run({ SHA: deployment.sha }), api(recordedPublish()).get)).ok).toBe(true);
+  });
+
+  it('refuses a re-run of an older run once production has moved past it, and names the way out', async () => {
+    const older = commit();
+    for (const body of [fixture('compare-behind'), { status: 'diverged', files: [] }]) {
+      const result = await guard(run({ SHA: older }), api({ ...recordedPublish(), [comparePath(deployment.sha, older)]: { status: 200, body } }).get);
       expect(result.ok).toBe(false);
       expect(result.message).toContain('would deploy an older box over a newer one');
+      expect(result.message).toContain('override_guard');
     }
   });
 
-  it('reads the pin again: a pinned run publishes only by hand with publish_while_pinned', async () => {
-    const sha = commit();
-    const { get, asked } = api(deployedAt(sha));
-    for (const extra of [{ PINNED: 'true' }, { PINNED: 'true', EVENT: 'workflow_dispatch' }, { PINNED: 'true', PUBLISH_WHILE_PINNED: 'true' }] as Record<string, string>[]) {
-      const result = await guard(run({ SHA: sha, ...extra }), get);
+  it('refuses when what runs is not known, and a manual run with override_guard then passes', async () => {
+    const unknownRuns = api({ ...recordedPublish(), [jobPath]: { status: 200, body: recordedJob } });
+    const refused = await guard(run(), unknownRuns.get);
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toContain('override_guard');
+    expect((await guard(run({ EVENT: 'workflow_dispatch', OVERRIDE_GUARD: 'true' }), unknownRuns.get)).ok).toBe(true);
+    // The input means nothing on a push or a re-run of a push.
+    expect((await guard(run({ OVERRIDE_GUARD: 'true' }), unknownRuns.get)).ok).toBe(false);
+  });
+
+  it('reads the pin again: a pinned run publishes only by hand with publish_while_pinned, override_guard or not', async () => {
+    const { get, asked } = api(recordedPublish());
+    for (const extra of [{ PINNED: 'true' }, { PINNED: 'true', EVENT: 'workflow_dispatch' }, { PINNED: 'true', PUBLISH_WHILE_PINNED: 'true' }, { PINNED: 'true', EVENT: 'workflow_dispatch', OVERRIDE_GUARD: 'true' }]) {
+      const result = await guard(run({ SHA: deployment.sha, ...extra }), get);
       expect(result.ok).toBe(false);
       expect(result.message).toContain('BOX_DEPLOY_PINNED is true');
+      expect(result.message).toContain('Lift the pin');
     }
     expect(asked).toEqual([]);
-    expect((await guard(run({ SHA: sha, PINNED: 'true', EVENT: 'workflow_dispatch', PUBLISH_WHILE_PINNED: 'true' }), get)).ok).toBe(true);
+    expect((await guard(run({ SHA: deployment.sha, PINNED: 'true', EVENT: 'workflow_dispatch', PUBLISH_WHILE_PINNED: 'true' }), get)).ok).toBe(true);
   });
 
-  it('refuses when what runs is not known, or the run is not on main', async () => {
-    const sha = commit();
-    expect((await guard(run({ SHA: sha }), api({ [deploymentsPath]: { status: 500, body: null } }).get)).ok).toBe(false);
-    expect((await guard(run({ SHA: sha, REF: 'refs/heads/x' }), api(deployedAt(sha)).get)).ok).toBe(false);
+  it('refuses a run that is not on main', async () => {
+    expect((await guard(run({ REF: 'refs/heads/x' }), api(recordedPublish()).get)).ok).toBe(false);
   });
 });
 
