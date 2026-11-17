@@ -143,6 +143,12 @@ function ancestorsOf(component: ComponentInstance): { type?: unknown; props?: un
   return out;
 }
 
+/** What a node stands in for the HTML parser, whatever its tag: its ancestors decide. */
+function standsIn(component: ComponentInstance): ForeignContent {
+  const types = ancestorsOf(component).map((node) => node.type).filter((type): type is string => typeof type === 'string');
+  return types.reduceRight<ForeignContent>((content, type) => contentBelow(type, content), false);
+}
+
 /** What this node stands in for the HTML parser, when its tag depends on that. */
 function foreignContentOf(component: ComponentInstance): ForeignContent {
   if (!dependsOnSvgContent(String(component.type))) return false;
@@ -247,6 +253,8 @@ export function createComponentElement(
           tag={String(component.type)}
           domProps={propsWithIdentity}
           config={(component.props as Record<string, unknown>).customCode}
+          // Inside svg or math the tile needs an HTML island of its own (customCodeElement.tsx).
+          foreign={standsIn(component)}
         >
           {content}
         </CustomCodeOnEditorSurface>
