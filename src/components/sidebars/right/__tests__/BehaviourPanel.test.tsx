@@ -291,6 +291,20 @@ describe('focus and what is said', () => {
     expect(document.activeElement).toBe(pageState().getByRole('button', { name: 'Add a value to the page' }));
   });
 
+  it('an added action takes the focus, and a removed one gives it to the action before, or to Add action', () => {
+    mount();
+    select(button);
+    addPageValue('Open');
+    fireEvent.click(interactions().getByRole('button', { name: 'Add interaction' }));
+    const action = (n: number) => interactions().getByLabelText(`Action ${n}`, { exact: true });
+    fireEvent.click(interactions().getByRole('button', { name: 'Add action' }));
+    expect(document.activeElement).toBe(action(2));
+    fireEvent.click(interactions().getByRole('button', { name: 'Remove action 2' }));
+    expect(document.activeElement).toBe(action(1));
+    fireEvent.click(interactions().getByRole('button', { name: 'Remove action 1' }));
+    expect(document.activeElement).toBe(interactions().getByRole('button', { name: 'Add action' }));
+  });
+
   it('a delete that asks first puts the focus on Keep it, and Keep it gives it back to the delete button', () => {
     mount();
     select(button);

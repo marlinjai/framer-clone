@@ -357,6 +357,20 @@ function TriggerEditor({ initial, states, nodes, selfId, saveLabel, onSave, onCa
   useEffect(() => {
     eventRef.current?.focus();
   }, []);
+  // Adding or removing an action swaps the control pressed for another: the focus goes to the
+  // new action's field, or after a removal to the action before (or the one now in its place),
+  // else to Add action, so it never falls back to the page.
+  const groupRef = useRef<HTMLDivElement>(null);
+  const [focusAction, setFocusAction] = useState<number | null>(null);
+  useEffect(() => {
+    if (focusAction === null) return;
+    const group = groupRef.current;
+    const target =
+      group?.querySelector<HTMLElement>(`select[aria-label="Action ${focusAction}"]`) ??
+      group?.querySelector<HTMLElement>('[data-add-action]');
+    target?.focus();
+    setFocusAction(null);
+  }, [focusAction]);
   const change = (next: StoredRecord) => {
     setDraft(next);
     setReason(null);
@@ -381,7 +395,7 @@ function TriggerEditor({ initial, states, nodes, selfId, saveLabel, onSave, onCa
   };
 
   return (
-    <div className="flex flex-col gap-2 rounded-[6px] border border-brand/40 p-2" role="group" aria-label="Interaction">
+    <div ref={groupRef} className="flex flex-col gap-2 rounded-[6px] border border-brand/40 p-2" role="group" aria-label="Interaction">
       <label className="flex min-w-0 flex-col gap-1">
         <span className={FIELD_LABEL}>When</span>
         <select ref={eventRef} aria-label="Event" value={custom ? CUSTOM_EVENT_CHOICE : on} onChange={(event) => setEvent(event.target.value)} className={cn(FIELD_CONTROL, 'cursor-pointer')}>
@@ -455,10 +469,21 @@ function TriggerEditor({ initial, states, nodes, selfId, saveLabel, onSave, onCa
           nodes={nodes}
           selfId={selfId}
           onChange={(next) => change(putField(draft, 'do', actions.map((entry, i) => (i === index ? next : entry))))}
-          onRemove={() => change(putField(draft, 'do', actions.filter((_, i) => i !== index)))}
+          onRemove={() => {
+            change(putField(draft, 'do', actions.filter((_, i) => i !== index)));
+            setFocusAction(Math.max(index, 1));
+          }}
         />
       ))}
-      <button type="button" className={SMALL_BUTTON} onClick={() => change(putField(draft, 'do', [...actions, firstAction({ states, selfId })]))}>
+      <button
+        type="button"
+        data-add-action=""
+        className={SMALL_BUTTON}
+        onClick={() => {
+          change(putField(draft, 'do', [...actions, firstAction({ states, selfId })]));
+          setFocusAction(actions.length + 1);
+        }}
+      >
         <Plus size={12} aria-hidden className="mr-1" /> Add action
       </button>
       {reason && <p role="alert" className={REASON}>Not saved: {reason}.</p>}
