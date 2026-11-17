@@ -670,8 +670,8 @@ and its own workflow (`.github/workflows/box.yml`); nothing in this application'
 | Where | What |
 |---|---|
 | Infisical | Project `framer-clone-box`, environment `prod`, path `/`, one secret: `BOX_DATABASE_URL` (the `box_reader` connection string on the private network the box shares with this Postgres; no encryption parameter, decision D23). Nothing else in that project: a value there overrides the container's environment. A machine identity with universal auth that can read this project only (decision D12) |
-| Coolify | Application `framer-clone-box`, from the image `ghcr.io/marlinjai/framer-clone-box` (the workflow sets the tag to the commit it deploys; there is no `latest`), on this Postgres's network, port 8080, **Coolify's own health check switched off** (it would replace the image's check with a shell command, and the image has no shell, `curl` or `wget`, so every deploy would fail; the image's own `HEALTHCHECK` applies, decision D55), read-only root file system, every capability dropped, no new privileges, 0.5 CPU, 256 megabytes, process limit 64 or more (decision D11), no volume. Environment: `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` (the box's identity, not this application's), `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT=prod`, and the box's settings (`BOX_EDITOR_HOST`, `BOX_SITES_BASE_HOST`, `BOX_TRUSTED_PROXIES`, the contacts, `CUSTOM_CODE_DISABLED`). Never `BOX_DATABASE_URL`: the box refuses to start with it |
-| GitHub | A GitHub environment `box-production`, deployment branches main only, holding the secrets `COOLIFY_BOX_WEBHOOK` (the box application's deploy webhook) and `COOLIFY_TOKEN` (a Coolify token with the write and deploy permissions: the workflow sets the application's image tag, starts the deploy and reads it). Then the repository variable `BOX_DEPLOY_ENABLED=true`. Until it is set the box workflow tests and pushes and deploys nothing (decision D57) |
+| Coolify | Application `framer-clone-box`, from the image `ghcr.io/marlinjai/framer-clone-box` (the workflow points it at the digest of the image it deploys, in Coolify's `sha256-<hex>` tag form; there is no `latest`), on this Postgres's network, port 8080, **Coolify's own health check switched off** (it would replace the image's check with a shell command, and the image has no shell, `curl` or `wget`, so every deploy would fail; the image's own `HEALTHCHECK` applies, decision D55), read-only root file system, every capability dropped, no new privileges, 0.5 CPU, 256 megabytes, process limit 64 or more (decision D11), no volume. Environment: `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` (the box's identity, not this application's), `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT=prod`, and the box's settings (`BOX_EDITOR_HOST`, `BOX_SITES_BASE_HOST`, `BOX_TRUSTED_PROXIES`, the contacts, `CUSTOM_CODE_DISABLED`). Never `BOX_DATABASE_URL`: the box refuses to start with it |
+| GitHub | A GitHub environment `box-production`, deployment branches main only, holding the secrets `COOLIFY_BOX_WEBHOOK` (the box application's deploy webhook) and `COOLIFY_TOKEN` (a Coolify token with the read, write and deploy permissions, **limited to the box application alone**: the workflow sets the application's image, starts the deploy and reads it, and a team-wide token with write could change and run any application on the server). Then the repository variable `BOX_DEPLOY_ENABLED=true`; `BOX_DEPLOY_PINNED` stays unset until a rollback. Until it is set the box workflow tests and pushes and deploys nothing (decision D57) |
 
 The order, in O1 and afterwards:
 
@@ -681,23 +681,40 @@ The order, in O1 and afterwards:
    publishes while a change to `prisma/migrations` or `prisma/sql` lies between main and the commit running in
    `box-production`; it says so in a notice, and the box is then deployed by a manual run (decision D56).
 2. Set up the box as in the table above, then run the `box` workflow on main by hand. It pushes the image the tests just
-   ran to `ghcr.io/marlinjai/framer-clone-box` under the commit's tag, points the Coolify application at that tag, calls
-   the webhook, follows the deployment and waits until `https://run.lumitrausercontent.com/health/db` answers.
+   ran to `ghcr.io/marlinjai/framer-clone-box` under the commit's tag, points the Coolify application at the pushed
+   digest, calls the webhook, follows the deployment and waits until `https://run.lumitrausercontent.com/health/db`
+   answers.
 3. **Make the package readable by Coolify.** A new package on GitHub's container registry (GHCR) is private, and its
    visibility can only be changed once it exists, so this first run pushes the image and then fails when Coolify cannot
    pull it. In the package's settings on GitHub, make `framer-clone-box` public (the image holds no secret: the box's
    one secret comes from Infisical at its start), or give Coolify a registry login for GHCR. Then run the workflow by
    hand again.
-4. **Check the container reports healthy** in Coolify and in `docker inspect` (the image's own health check), and that
+4. **Check what the first deploy proves,** in its log and in Coolify: the limited token set the image (a write), started
+   the deploy (a deploy) and read the deployment until it finished (a read); Coolify took the `sha256-<hex>` tag and
+   runs `framer-clone-box@sha256:...` (its deployment log names the image); the image id held across `docker save` and
+   `docker load` on the runner. If Coolify refuses the digest form, see decision D53 of the plan.
+5. **Check the container reports healthy** in Coolify and in `docker inspect` (the image's own health check), and that
    `/health/db` answers on the public host.
 
 From then on a push to main publishes when the box's own files changed since the commit running in `box-production`
-(the last successful deployment there), so a run that was cancelled or failed is made good by the next one (decision
-D59).
+(the last successful deployment there), so a run that was cancelled or failed is made good by the next one. If GitHub
+cannot say which commit that is, the run fails instead of guessing: re-run it, or run the workflow by hand (decision
+D59). Each deploy replaces the running container without waiting for the new one, since Coolify's health check is off:
+expect a few seconds of errors per deploy while the new box logs in and fetches its secret.
 
-To roll the box back, re-run the workflow run of the commit to go back to (on main, from its run page): it points the
-application at that commit's tag and deploys it, and the next push that changes the box publishes main again. Or set
-the application's image tag in Coolify to the previous commit and redeploy there.
+**Rolling the box back** (decision D53):
+
+1. Set the repository variable `BOX_DEPLOY_PINNED=true`. While it is set nothing publishes, whatever a push changes;
+   without it the next push that runs the workflow could publish main over the rollback.
+2. Run the `box` workflow by hand on main with the input `rollback_digest` set to the digest of the image to go back to
+   (`sha256:...`: each publish run's log prints it as "Pushed ... as ...@sha256:...", and GHCR's package page lists it per
+   commit tag). The rollback job checks that the image is in the registry and deploys exactly it; nothing is rebuilt.
+3. To lift the pin once main is fixed, set `BOX_DEPLOY_PINNED` to false and run the workflow by hand on main (or, with
+   the pin still set, by hand with `publish_while_pinned`). Lifting it without that run leaves the rolled-back image
+   running: the rollback is recorded in `box-production` as main's commit, so later pushes see no box change.
+
+Re-running an older workflow run is not a rollback: GitHub allows it only for 30 days, and it rebuilds the image and
+overwrites that commit's tag instead of deploying the image that was tested.
 
 ## Operator commands (from a checkout, against a forwarded database)
 
