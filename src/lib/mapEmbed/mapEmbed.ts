@@ -332,6 +332,10 @@ export interface MapEmbedCopy {
   region: string;
   /** Shown when the box has no usable map. */
   empty: string;
+  /** Shown after a "yes" in a page whose policy refuses the map (storage blocked): a new page shows it. */
+  reloadNote: string;
+  /** The button that loads that new page. */
+  reload: string;
   privacyLink: string;
 }
 
@@ -343,6 +347,8 @@ const COPY: Record<LegalLanguage, MapEmbedCopy> = {
     title: (address) => (address ? `Karte: ${address}` : 'Karte'),
     region: 'Karte von Google Maps',
     empty: 'Hier ist noch keine Karte hinterlegt.',
+    reloadNote: 'Laden Sie die Seite neu, um die Karte anzuzeigen.',
+    reload: 'Seite neu laden',
     privacyLink: 'Datenschutzerklärung',
   },
   en: {
@@ -352,6 +358,8 @@ const COPY: Record<LegalLanguage, MapEmbedCopy> = {
     title: (address) => (address ? `Map: ${address}` : 'Map'),
     region: 'Map from Google Maps',
     empty: 'No map has been set here yet.',
+    reloadNote: 'Reload the page to show the map.',
+    reload: 'Reload page',
     privacyLink: 'Privacy policy',
   },
 };

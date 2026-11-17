@@ -13,7 +13,7 @@ import type { CmsReadRepository } from '@/server/cms';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
 import { renderComponentNode } from '@/lib/renderer/server/renderComponentNode';
 import { createMapEmbedElement } from '../mapEmbedElement';
-import MapEmbedIsland from '../MapEmbedIsland';
+import MapEmbedIsland, { MAP_FOCUS_KEY } from '../MapEmbedIsland';
 import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!5e0';
@@ -164,7 +164,7 @@ describe('the island', () => {
     expect(frame()).not.toBeNull();
   });
 
-  it('keeps the placeholder when this document was served without the maps cookie, whose policy refuses Google', () => {
+  it('draws no frame when this document was served without the maps cookie, whose policy refuses Google', () => {
     win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false };
     render(<MapEmbedIsland domProps={{}} config={config} />);
     expect(frame()).toBeNull();
@@ -172,13 +172,77 @@ describe('the island', () => {
       window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: true } }));
     });
     expect(frame()).toBeNull();
-    expect(own().getByRole('button', { name: 'Load map' })).toBeTruthy();
+    expect(own().getByRole('button', { name: 'Reload page' })).toBeTruthy();
   });
 
   it('draws the map when the runtime says this document was served with the maps cookie', () => {
     win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: true };
     render(<MapEmbedIsland domProps={{}} config={config} />);
     expect(frame()).not.toBeNull();
+  });
+
+  it('after a yes this page cannot honour, says to reload and offers the reload instead of "Load map"', () => {
+    const reload = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
+    win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false };
+    render(<MapEmbedIsland domProps={{}} config={config} />);
+    expect(frame()).toBeNull();
+    expect(own().queryByRole('button', { name: 'Load map' })).toBeNull();
+    expect(own().getByRole('status').textContent).toBe('Reload the page to show the map.');
+    fireEvent.click(own().getByRole('button', { name: 'Reload page' }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    // "Open in Google Maps" still works.
+    expect(own().getByRole('link', { name: 'Open in Google Maps' })).toBeTruthy();
+  });
+
+  it('moves focus to the reload button when the yes this box asked for cannot show the map', () => {
+    const open = vi.fn();
+    win.__lumitraConsent = { get: () => null, open, mapsAtLoad: false };
+    render(<MapEmbedIsland domProps={{}} config={config} />);
+    fireEvent.click(own().getByRole('button', { name: 'Load map' }));
+    (document.activeElement as HTMLElement | null)?.blur();
+    act(() => {
+      window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: true } }));
+    });
+    const button = own().getByRole('button', { name: 'Reload page' });
+    expect(shadowRoot()!.activeElement).toBe(button);
+  });
+
+  describe('the focus mark across the reload a yes causes', () => {
+    afterEach(() => window.sessionStorage.clear());
+    const mark = () => window.sessionStorage.getItem(MAP_FOCUS_KEY);
+
+    it('"Load map" names this box before the banner asks', () => {
+      win.__lumitraConsent = { get: () => null, open: vi.fn(), mapsAtLoad: false };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      fireEvent.click(own().getByRole('button', { name: 'Load map' }));
+      expect(JSON.parse(mark()!)).toEqual({ path: window.location.pathname, index: 0 });
+    });
+
+    it('the new page focuses this map once and removes the mark', () => {
+      window.sessionStorage.setItem(MAP_FOCUS_KEY, JSON.stringify({ path: window.location.pathname, index: 0 }));
+      win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: true };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      expect(frame()).not.toBeNull();
+      expect(shadowRoot()!.activeElement).toBe(frame());
+      expect(mark()).toBeNull();
+    });
+
+    it('a mark for another box on the page is left for that box', () => {
+      window.sessionStorage.setItem(MAP_FOCUS_KEY, JSON.stringify({ path: window.location.pathname, index: 1 }));
+      win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: true };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      expect(shadowRoot()!.activeElement).toBeNull();
+      expect(mark()).not.toBeNull();
+    });
+
+    it('a mark from another page is removed and moves nothing', () => {
+      window.sessionStorage.setItem(MAP_FOCUS_KEY, JSON.stringify({ path: '/elsewhere', index: 0 }));
+      win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: true };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      expect(shadowRoot()!.activeElement).toBeNull();
+      expect(mark()).toBeNull();
+    });
   });
 
   it('never draws a frame for an address it did not rebuild', () => {

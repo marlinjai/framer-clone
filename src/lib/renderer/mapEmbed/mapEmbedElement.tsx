@@ -114,18 +114,30 @@ export interface MapPlaceholderOptions {
   onLoad?: () => void;
   /** Whether "Open in Google Maps" is a real link (not on the canvas). */
   liveLink: boolean;
+  /**
+   * Set when the visitor said yes but this page's policy refuses the map (published,
+   * storage blocked): the placeholder asks for a reload instead of offering "Load map".
+   */
+  onReload?: () => void;
 }
 
 /**
  * The placeholder: the address, a note that loading the map sends data to Google,
  * the "Load map" button and "Open in Google Maps", a plain link that needs no consent.
  */
-export function mapPlaceholder(view: MapEmbedView, { onLoad, liveLink }: MapPlaceholderOptions): React.ReactElement {
+export function mapPlaceholder(view: MapEmbedView, { onLoad, liveLink, onReload }: MapPlaceholderOptions): React.ReactElement {
   const { copy } = view;
   return (
     <div data-fc-map-placeholder="" role="group" aria-label={copy.region} style={PLACEHOLDER_STYLE}>
       {view.address ? <p style={{ margin: 0, fontWeight: 600, fontSize: 16 }}>{view.address}</p> : null}
-      {view.src ? (
+      {view.src && onReload ? (
+        <>
+          <p data-fc-map-reload-note="" role="status" style={{ margin: 0, maxWidth: 420, fontSize: 13 }}>{copy.reloadNote}</p>
+          <button type="button" data-fc-map-reload="" onClick={onReload} style={BUTTON_STYLE}>
+            {copy.reload}
+          </button>
+        </>
+      ) : view.src ? (
         <>
           <p style={{ margin: 0, maxWidth: 420, fontSize: 13 }}>{copy.note}</p>
           {onLoad ? (
