@@ -46,6 +46,10 @@ on:
         description: 'Publish main although BOX_DEPLOY_PINNED is true.'
         type: boolean
         default: false
+      override_guard:
+        description: 'Publish although the guard cannot confirm production runs this commit or an ancestor. Only after checking what runs.'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -209,7 +213,9 @@ jobs:
   publish:
     name: publish and deploy
     needs: box
-    if: needs.box.outputs.publish == 'true'
+    # The pin is read here too: a job that is skipped never joins the deploy group, so a push decided before
+    # the pin was set cannot replace a rollback waiting there.
+    if: needs.box.outputs.publish == 'true' && (vars.BOX_DEPLOY_PINNED != 'true' || inputs.publish_while_pinned)
     runs-on: ubuntu-24.04-arm
     # The push, then at most 15 minutes following Coolify and about 4 minutes of health tries.
     timeout-minutes: 30
@@ -261,6 +267,7 @@ jobs:
           SHA: ${{ github.sha }}
           PINNED: ${{ vars.BOX_DEPLOY_PINNED }}
           PUBLISH_WHILE_PINNED: ${{ inputs.publish_while_pinned }}
+          OVERRIDE_GUARD: ${{ inputs.override_guard }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node services/box/ci/publishDecision.ts guard
 

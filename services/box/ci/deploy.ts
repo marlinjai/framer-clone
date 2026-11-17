@@ -105,7 +105,9 @@ export async function deploy(env: Record<string, string | undefined>, deps: Depl
     return fail(`${message} Putting back ${was} failed (HTTP ${back.status}): Coolify still names ${digest}. Set the tag in Coolify.`);
   };
 
-  // cancel_previous=queued: an older webhook or API deployment still waiting is cancelled, so this one is queued.
+  // cancel_previous=queued cancels older webhook or API deployments still waiting for another commit or tag.
+  // It does not help against one already queued for this application: Coolify 4.7.5 checks for that first
+  // and skips ours, which the three 404s below then catch.
   const trigger = new URL(webhook.href);
   trigger.searchParams.set('cancel_previous', 'queued');
   const started = await deps.call(trigger.href, { method: 'POST', headers });
