@@ -61,6 +61,18 @@ describe('parseCustomCode', () => {
     ['a title as a number', { sha256: HASH, title: 7 }],
     ['a title with a control character', { sha256: HASH, title: 'a\u0000b' }],
     ['a title with a line separator', { sha256: HASH, title: 'a\u2028b' }],
+    ['a title with a right-to-left override', { sha256: HASH, title: 'scene\u202egpj.exe' }],
+    ['a title with a first strong isolate', { sha256: HASH, title: 'a\u2068b\u2069' }],
+    ['a title with a left-to-right mark', { sha256: HASH, title: 'a\u200eb' }],
+    ['a title with a zero-width space', { sha256: HASH, title: 'a\u200bb' }],
+    ['a title with a zero-width joiner', { sha256: HASH, title: 'a\u200db' }],
+    ['a title with a word joiner', { sha256: HASH, title: 'a\u2060b' }],
+    ['a title with a byte order mark', { sha256: HASH, title: '\ufeffscene' }],
+    ['a title with an Arabic letter mark', { sha256: HASH, title: 'a\u061cb' }],
+    ['a title with a lone high surrogate', { sha256: HASH, title: 'a\ud83db' }],
+    ['a title ending in a lone high surrogate', { sha256: HASH, title: 'scene\ud83d' }],
+    ['a title with a lone low surrogate', { sha256: HASH, title: 'a\ude00b' }],
+    ['a proposal title with an override', { proposal: 'p1', title: '\u202dx' }],
     ['a title too long', { sha256: HASH, title: 'x'.repeat(201) }],
     ['a proposal id with a slash', { proposal: 'a/b', title: 'x' }],
     ['a proposal id with markup', { proposal: '<b>', title: 'x' }],
@@ -75,6 +87,12 @@ describe('parseCustomCode', () => {
     const parsed = parseCustomCode(value);
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.reason).toBeTruthy();
+  });
+
+  it('keeps a title in another script, a right-to-left one and a whole emoji', () => {
+    for (const title of ['Waschanlage für LKW', 'מכונת שטיפה', 'غسيل الشاحنات', 'Scene \ud83d\ude9a']) {
+      expect(parseCustomCode({ sha256: HASH, title })).toEqual({ ok: true, value: { kind: 'block', sha256: HASH, title } });
+    }
   });
 
   it('accepts an object without a prototype, and reads each field once', () => {

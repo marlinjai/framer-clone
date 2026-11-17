@@ -45,6 +45,15 @@ const PROPOSAL_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 // C0 and C1 controls, and the line and paragraph separators.
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+/**
+ * Characters that change how a title reads without being seen: the bidirectional
+ * marks, embeddings, overrides and isolates (a title could read backwards in the
+ * editor and, from slice C3, in a frame's `title`), the zero-width characters and
+ * the byte order mark. An emoji joined with a zero-width joiner is refused with them.
+ */
+const INVISIBLE_CHARACTERS = /[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/;
+/** Half of a surrogate pair without its other half: not a character at all. */
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 
 export type CustomCodeValue =
   | { kind: 'block'; sha256: string; title: string }
@@ -60,12 +69,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * The title as shown: white space runs folded to one space and trimmed. A title
- * that is not a string, is empty, is longer than CUSTOM_CODE_TITLE_MAX or holds a
- * control character is refused, never repaired further.
+ * that is not a string, is empty, is longer than CUSTOM_CODE_TITLE_MAX, or holds a
+ * control character, an invisible formatting character or a lone surrogate half is
+ * refused, never repaired further.
  */
 function readTitle(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   if (CONTROL_CHARACTERS.test(value.replace(/[\t\n\r]/g, ' '))) return null;
+  if (INVISIBLE_CHARACTERS.test(value) || LONE_SURROGATE.test(value)) return null;
   const title = value.replace(/\s+/g, ' ').trim();
   return title.length > 0 && title.length <= CUSTOM_CODE_TITLE_MAX ? title : null;
 }
