@@ -403,6 +403,19 @@ describe('the start through Infisical', () => {
     expect(Date.now() - started).toBeLessThan(40_000);
   });
 
+  it('is not steered by log or proxy variables on the container: the client logs nothing secret and still reaches Infisical', async () => {
+    // LOG_LEVEL=debug would make the client log every variable it injects, LOG_DESTINATION=stdout would send
+    // its log past the redaction, and HTTP_PROXY would send the token to a proxy that is not there.
+    const box = await runBox({ LOG_LEVEL: 'debug', LOG_DESTINATION: 'stdout', LOG_FORMAT: 'json', HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9' });
+    await ready(box);
+    const logs = (await dockerResult(['logs', box.name])).output;
+    expect(logs).not.toContain('postgres://');
+    expect(logs).not.toContain('BOX_DATABASE_URL');
+    for (const value of [fake.clientId, fake.clientSecret, fake.token]) expect(logs.includes(value)).toBe(false);
+    const environ = docker(['exec', box.name, 'node', '-e', `const fs = require('fs'); for (const pid of fs.readdirSync('/proc').filter((p) => /^\\d+$/.test(p))) { try { const cmd = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8'); if (cmd.includes('/app/box.cjs') && cmd.startsWith('/usr/local/bin/node')) process.stdout.write(fs.readFileSync('/proc/' + pid + '/environ', 'utf8').split('\\0').filter((e) => /^(LOG_|HTTPS?_PROXY)/.test(e)).join(',')); } catch {} }`]).trim();
+    expect(environ).toBe('');
+  });
+
   it('runs the box under tini with the secret from Infisical, and no credential on any command line or in the box', async () => {
     const before = fakeRequests().length;
     const box = await runBox({});

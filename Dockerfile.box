@@ -111,7 +111,9 @@ COPY --from=tools --chown=root:root /out/ /
 USER node
 EXPOSE 8080
 # Asks the address the service listens on (any address: this machine's own).
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+# The start period matches the start program's default time limit (BOX_START_TIMEOUT_SECONDS, 60 s, decision
+# D58): a box still starting is not reported unhealthy, and one that has not answered by then is stopped anyway.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
   CMD ["node", "-e", "const h=process.env.BOX_LISTEN_HOST;fetch('http://'+(!h||h==='0.0.0.0'?'127.0.0.1':h==='::'?'[::1]':h.includes(':')?'['+h+']':h)+':'+(process.env.BOX_PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 # tini is process 1: it reaps what ends and passes SIGTERM and SIGINT to its one child. The chain is
 # tini -> node launch.cjs -> infisical run -> env -u INFISICAL_TOKEN ... -> node box.cjs (env replaces itself
