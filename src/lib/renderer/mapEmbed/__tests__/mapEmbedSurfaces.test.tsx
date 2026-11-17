@@ -19,7 +19,7 @@ import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!5e0';
 const cmsRepo = { listRows: async () => ({ rows: [], total: 0 }), getRow: async () => null } as unknown as CmsReadRepository;
 
-type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void } };
+type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void; mapsAtLoad?: boolean } };
 const win = window as Win;
 
 afterEach(() => {
@@ -161,6 +161,23 @@ describe('the island', () => {
     act(() => {
       window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { analytics: false } }));
     });
+    expect(frame()).not.toBeNull();
+  });
+
+  it('keeps the placeholder when this document was served without the maps cookie, whose policy refuses Google', () => {
+    win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false };
+    render(<MapEmbedIsland domProps={{}} config={config} />);
+    expect(frame()).toBeNull();
+    act(() => {
+      window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: true } }));
+    });
+    expect(frame()).toBeNull();
+    expect(own().getByRole('button', { name: 'Load map' })).toBeTruthy();
+  });
+
+  it('draws the map when the runtime says this document was served with the maps cookie', () => {
+    win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: true };
+    render(<MapEmbedIsland domProps={{}} config={config} />);
     expect(frame()).not.toBeNull();
   });
 
