@@ -928,7 +928,8 @@ is refused before consent and loads after it.
 the site, not blocked, not on the takedown list, of a site whose switch is on, and the declaration stored with each. The switch is
 read live, never from the cached published site, so turning it off reaches every page at its next request. A preview, the kill
 switch, a missing origin or a failed read means no frames. The standalone project preview keeps the fallback in C3: it would need
-C4's read route.
+C4's read route. Only `applyCustomCode` gives a node the island's block (`customCodeRun`): one that arrives on a node is taken away on every
+page, with live code on or off, so the renderer never rests on the snapshot adapter leaving that field out.
 
 **D69. A frame is hidden until `hello`, and its fallback stays until then and for good after any failure.** The `hello` is accepted
 only from the frame's own window, with the opaque origin `null` a sandboxed frame has, once. The frame is laid out at the box's width
