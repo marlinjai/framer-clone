@@ -241,9 +241,10 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     await expect.poll(() => google()).toEqual([SHARE]);
     record('after Load map and the banner\'s Accept');
     expect(await mapsCookie()).toBe('1');
-    // The page view on which the visitor said yes was served before the choice, so its
-    // policy reports the Google frame once (src/lib/site/cspReportOnly.ts says so).
-    expect(cspReports.every((line) => line.includes('https://www.google.com'))).toBe(true);
+    // The yes reloads the page (decision D48 of docs/plans/2026-11-02-sandboxed-custom-code.md):
+    // the map is drawn only in the new document, whose policies already allow Google, so
+    // neither the page view of the choice nor the new one reports a frame.
+    expect(cspReports).toEqual([]);
 
     requests = [];
     cspReports = [];
