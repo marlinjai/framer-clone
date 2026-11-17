@@ -714,7 +714,7 @@ When a run does not publish, it says why, and each case has a way out (decisions
 | the commit running in `box-production` is not known, or is not an ancestor (the decision step fails) | Re-run it; or check in Coolify and GitHub what runs, then run the workflow by hand on main with `override_guard` (without it, the publish job's guard asks the same question and refuses again when the cause lasts) |
 | the guard refuses (in the publish job): not known, or an older run over a newer one | If meant after checking what runs, run the workflow by hand on main with `override_guard`; to go back on purpose, roll back instead |
 | pinned | Lift the pin (below), or run by hand with `publish_while_pinned` |
-| a deployment of the box is already queued or running in Coolify (nothing was changed) | Wait until it has ended in Coolify, then re-run or run the workflow by hand on main |
+| a deployment of the box is already queued or running in Coolify (nothing was changed) | Wait until it has ended in Coolify, or cancel it there if it is stuck, then re-run or run the workflow by hand on main |
 | the deploy started, then `/health/db` never answered (the error names the image Coolify now runs; the deploy line names the one it replaced) | Roll back to the replaced image (below), or fix main and publish again |
 
 A manual run waiting for a running one can be replaced by a later push run (GitHub keeps only the newest waiting run of

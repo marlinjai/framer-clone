@@ -110,7 +110,7 @@ export async function deploy(env: Record<string, string | undefined>, deps: Depl
   const recent = (listed.body as { deployments?: unknown } | null)?.deployments;
   if (!Array.isArray(recent)) return fail("Coolify listed no deployments of the application; nothing was changed.");
   if (recent.some((row) => BUSY.includes((row as { status?: unknown } | null)?.status as string))) {
-    return fail('A deployment of the box is already queued or running in Coolify, so this one would be skipped; nothing was changed. Run the workflow again once that deployment has ended.');
+    return fail('A deployment of the box is already queued or running in Coolify, so this one would be skipped; nothing was changed. Run the workflow again once that deployment has ended, or cancel it in Coolify if it is stuck.');
   }
 
   const setTag = (value: string) =>

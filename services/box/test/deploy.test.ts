@@ -156,6 +156,7 @@ describe('the deploy through Coolify', () => {
     expect(await done).toBe(1);
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`GET ${COOLIFY}/api/v1/applications/${APP}`, `GET ${RECENT}`]);
     expect(shown(lines)).toContain('A deployment of the box is already queued or running in Coolify, so this one would be skipped; nothing was changed.');
+    expect(shown(lines)).toContain('or cancel it in Coolify if it is stuck.');
   });
 
   it.each([
