@@ -793,7 +793,11 @@ and the `#cookie-settings` address is dropped first, so the banner does not open
 year at most, seven days for a cookie set by script in Safari) sets the cookie again before the tracker could start, and on a page
 with a map reloads once. When storage throws, a reload would forget the answer, so it is announced as before; the runtime exposes
 `mapsAtLoad`, and the map island keeps its placeholder rather than draw a frame the policy refuses. The visitor still has "Open in
-Google Maps". A placeholder that says "reload to show the map" was the alternative; a reload is what the visitor asked
+Google Maps". Two limits remain. A visitor whose tracker already runs (analytics granted earlier) and who then accepts maps on a page
+with a map still reloads, so that page view is counted twice; the alternative, a placeholder asking for a manual reload, costs every
+map visitor a step for a rarer double count. And `mapsAtLoad` is read from the cookie as the page starts, not from the response: a
+page restored from the browser's back-forward cache after consent given elsewhere can believe its policy allows Google when it does
+not, and then shows a refused frame until the next load. The address cleanup applies to the analytics revoke reload as well. A placeholder that says "reload to show the map" was the alternative; a reload is what the visitor asked
 for in one step. The render gate proves it in Chromium and WebKit: a page served without the cookie, the banner's yes, a second
 document with Google in `frame-src`, and the map loads.
 
@@ -814,9 +818,12 @@ by the first review of pull request #450.
 
 **D51. The tile is drawn in a plain container, as a labelled group.** On the canvas a block stored as a link, a button, an SVG
 element or any tag that cannot hold the tile (a paragraph, a list, a table part) draws the tile in a `div`, without the control's
-own attributes (`href`, `type` and the like), so the tile's link is never inside another control and SVG never hides it. Plain
-containers (`div`, `section`, `article`, `aside`, `header`, `footer`, `main`, `nav`, `figure`, `blockquote`, `li`, `dd`) keep their
-tag. The tile carries `role="group"`, which may hold its `aria-label`. Found by the first review of pull request #450.
+own attributes (`href`, `type` and the like), so the tile's link is never inside another control. Plain containers (`div`,
+`section`, `article`, `aside`, `header`, `footer`, `main`, `nav`, `figure`, `blockquote`, `li`, `dd`, `td`, `th`) keep their tag. A
+block standing inside an `svg` draws a `g` with its attributes and the tile as HTML in a `foreignObject`, because React draws an HTML
+tag under `svg` as an SVG element, which shows nothing; inside `math`, where React draws no HTML at all, the tile is its label as text
+in `mtext`. The tile carries `role="group"`, which may hold its `aria-label`. This is wider than the review asked (every tag that
+cannot hold the tile, not only controls and SVG). Found by the first review of pull request #450.
 
 ## For Marlin
 
