@@ -1,9 +1,12 @@
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { buildSync } from 'esbuild';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_INFISICAL_DOMAIN, EXIT_CONFIG, EXIT_LOGIN, isAcceptableDomain, launch, readLaunchConfig, redact } from '../src/launch';
+import { DEFAULT_INFISICAL_DOMAIN, EXIT_CONFIG, EXIT_LOGIN, healthUrlOf, isAcceptableDomain, launch, readLaunchConfig, redact, START_TIMEOUT_MS, STDERR_LINE_LIMIT } from '../src/launch';
 
 // The image's entrypoint, against a stand-in for the Infisical client and a
 // stand-in for the box, both small node scripts written to a scratch directory
@@ -26,7 +29,10 @@ if (args[0] === 'login') {
   else if (cfg.login === 'fail') {
     process.stderr.write('refused the client ' + process.env.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID + ' with ' + process.env.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET + '\\n');
     process.exit(1);
-  } else if (cfg.login === 'empty') process.exit(0);
+  } else if (cfg.login === 'empty') {
+    process.stderr.write('nothing for ' + process.env.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET + '\\n');
+    process.exit(0);
+  }
   else if (process.env.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET !== cfg.clientSecret || process.env.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID !== cfg.clientId) {
     process.stderr.write('wrong credentials\\n');
     process.exit(1);
@@ -40,6 +46,26 @@ if (args[0] === 'login') {
     process.exit(1);
   }
   if (cfg.runDies) process.kill(process.pid, cfg.runDies);
+  if (cfg.runHangs) {
+    setInterval(() => {}, 1000);
+    return;
+  }
+  if (cfg.runLongLine) {
+    // One line with no newline, past the start program's cut, with a credential straddling it: either in
+    // one write, the credential across the cut position itself, or in two writes a moment apart, the
+    // credential split between them and the first write alone longer than the cut.
+    const value = cfg.runLongLine === 'token' ? process.env.INFISICAL_TOKEN : cfg.clientSecret;
+    if (cfg.longLineShape === 'one write') {
+      process.stderr.write('x'.repeat(cfg.cutAt - 5) + value + 'y'.repeat(100));
+      process.exit(1);
+    }
+    process.stderr.write('x'.repeat(cfg.cutAt + 10) + value.slice(0, 10));
+    setTimeout(() => {
+      process.stderr.write(value.slice(10) + 'y'.repeat(100));
+      process.exit(1);
+    }, 300);
+    return;
+  }
   if (cfg.runFails) {
     process.stderr.write('could not fetch the secrets with ' + process.env.INFISICAL_TOKEN + '\\n');
     process.exit(1);
@@ -63,10 +89,22 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     process.exit(0);
   });
 }
+const record = () => fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: 'box', pid: process.pid, argv: process.argv.slice(1), execArgv: process.execArgv, env: process.env }) + '\\n');
 process.stderr.write('box: started\\n');
-fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ name: 'box', pid: process.pid, argv: process.argv.slice(1), execArgv: process.execArgv, env: process.env }) + '\\n');
-if (typeof cfg.boxExit === 'number') process.exit(cfg.boxExit);
-setInterval(() => {}, 1000);
+if (typeof cfg.boxExit === 'number') {
+  record();
+  process.exit(cfg.boxExit);
+}
+if (cfg.boxSilent) {
+  // Starts and never answers /health.
+  record();
+  setInterval(() => {}, 1000);
+} else {
+  // Answers /health where the start program asks it, as the real box does.
+  require('http')
+    .createServer((req, res) => res.end(req.url === '/health' ? 'ok' : ''))
+    .listen(Number(process.env.BOX_PORT), process.env.BOX_LISTEN_HOST, record);
+}
 `;
 
 interface Call {
@@ -84,7 +122,7 @@ let dir: string;
 let credentials: { clientId: string; clientSecret: string; token: string; databaseUrl: string };
 
 function writeConfig(extra: Record<string, unknown> = {}) {
-  writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ ...credentials, ...extra }));
+  writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ ...credentials, cutAt: STDERR_LINE_LIMIT, ...extra }));
 }
 
 function calls(): Call[] {
@@ -105,6 +143,8 @@ function baseEnv(extra: Record<string, string | undefined> = {}): Record<string,
     INFISICAL_PROJECT_ID: 'test-project',
     INFISICAL_ENVIRONMENT: 'prod',
     BOX_EDITOR_HOST: 'app.example.test',
+    BOX_LISTEN_HOST: '127.0.0.1',
+    BOX_PORT: String(port),
     CUSTOM_CODE_DISABLED: '0',
     ...extra,
   };
@@ -166,7 +206,22 @@ function expectNoCredentialIn(text: string, where: string) {
   for (const value of forbidden()) expect(text.includes(value), `${where} holds a credential`).toBe(false);
 }
 
-beforeEach(() => {
+let port: number;
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const found = typeof address === 'object' && address ? address.port : 0;
+      server.close(() => resolve(found));
+    });
+  });
+}
+
+beforeEach(async () => {
+  port = await freePort();
   dir = mkdtempSync(path.join(tmpdir(), 'box-launch-'));
   credentials = {
     clientId: `test-client-${hex()}`,
@@ -236,6 +291,25 @@ describe('the configuration it reads', { timeout: 20_000 }, () => {
     expect(readLaunchConfig(baseEnv({ INFISICAL_DOMAIN: 'https://infisical.example.test/' })).domain).toBe('https://infisical.example.test');
   });
 
+  it('waits 60 seconds for the box to start unless told otherwise, and refuses a time limit it cannot use', async () => {
+    expect(readLaunchConfig(baseEnv()).startTimeoutMs).toBe(START_TIMEOUT_MS);
+    expect(START_TIMEOUT_MS).toBe(60_000);
+    expect(readLaunchConfig(baseEnv({ BOX_START_TIMEOUT_SECONDS: '120' })).startTimeoutMs).toBe(120_000);
+    for (const value of ['0', '601', '1.5', '-3', 'soon']) {
+      const run = start(baseEnv({ BOX_START_TIMEOUT_SECONDS: value }));
+      expect(await run.done, value).toBe(EXIT_CONFIG);
+      expect(run.lines).toEqual(['box-launch: BOX_START_TIMEOUT_SECONDS must be a whole number of seconds from 1 to 600']);
+    }
+  });
+
+  it('asks /health where the box listens, as the image health check does', () => {
+    expect(healthUrlOf({})).toBe('http://127.0.0.1:8080/health');
+    expect(healthUrlOf({ BOX_LISTEN_HOST: '0.0.0.0', BOX_PORT: '9000' })).toBe('http://127.0.0.1:9000/health');
+    expect(healthUrlOf({ BOX_LISTEN_HOST: '::' })).toBe('http://[::1]:8080/health');
+    expect(healthUrlOf({ BOX_LISTEN_HOST: 'fd00::5' })).toBe('http://[fd00::5]:8080/health');
+    expect(healthUrlOf({ BOX_LISTEN_HOST: '10.0.0.5' })).toBe('http://10.0.0.5:8080/health');
+  });
+
   it('accepts plain http only for a host without a dot', () => {
     expect(isAcceptableDomain('http://fake-infisical:8081')).toBe(true);
     expect(isAcceptableDomain('http://fake-infisical.example.test')).toBe(false);
@@ -267,7 +341,8 @@ describe('the login', { timeout: 20_000 }, () => {
     writeConfig({ login: 'empty' });
     const run = start(baseEnv());
     expect(await run.done).toBe(EXIT_LOGIN);
-    expect(run.lines).toEqual(['box-launch: the Infisical login gave no usable token']);
+    // With what the client said, and no credential in it.
+    expect(run.lines).toEqual(['box-launch: the Infisical login gave no usable token: nothing for [redacted]']);
     expect(calls().map((call) => call.name)).toEqual(['login']);
   });
 
@@ -342,6 +417,66 @@ describe('the box, run inside infisical run', { timeout: 20_000 }, () => {
     expectNoCredentialIn(run.lines.join('\n'), 'the log');
     // What the box writes to standard error is passed on.
     expect(run.stderr.join('')).toBe('box: started\n');
+  });
+
+  it.each([
+    ['client secret', 'one write', STDERR_LINE_LIMIT - 5],
+    ['token', 'one write', STDERR_LINE_LIMIT - 5],
+    ['client secret', 'two writes', STDERR_LINE_LIMIT + 10],
+    ['token', 'two writes', STDERR_LINE_LIMIT + 10],
+  ] as const)('takes a %s out of a long line without a newline that straddles the cut (%s)', async (which, shape, before) => {
+    writeConfig({ runLongLine: which === 'token' ? 'token' : 'secret', longLineShape: shape });
+    const run = start(baseEnv());
+    expect(await within(run.done)).toBe(1);
+    const text = run.stderr.join('');
+    // The line as written, the credential replaced whole, nothing lost or doubled.
+    expect(text).toBe(`${'x'.repeat(before)}[redacted]${'y'.repeat(100)}`);
+    expectNoCredentialIn(text, 'standard error');
+  });
+
+  it('stops infisical run when the box has not answered /health within the time limit, for a fetch that never ends', async () => {
+    writeConfig({ runHangs: true });
+    const run = start(baseEnv({ BOX_START_TIMEOUT_SECONDS: '2' }));
+    expect(await within(run.done, 12_000)).toBe(EXIT_LOGIN);
+    expect(run.lines).toEqual([`box-launch: the box did not answer http://127.0.0.1:${port}/health within 2 s; infisical run is stopped`]);
+    expect(calls().map((call) => call.name)).toEqual(['login', 'run']);
+    const runPid = calls()[1]?.pid ?? 0;
+    expect(() => process.kill(runPid, 0)).toThrow();
+  });
+
+  it('stops infisical run, and so the box, when the box runs but never answers /health', async () => {
+    writeConfig({ boxSilent: true });
+    const run = start(baseEnv({ BOX_START_TIMEOUT_SECONDS: '2' }));
+    expect(await within(run.done, 12_000)).toBe(EXIT_LOGIN);
+    expect(run.lines[0]).toMatch(/^box-launch: the box did not answer .* within 2 s; infisical run is stopped$/);
+    expect(calls().filter((call) => call.name === 'box-signal')).toEqual([{ name: 'box-signal', signal: 'SIGTERM' }]);
+  });
+
+  it('does not stop a box that answered /health in time', async () => {
+    const run = start(baseEnv({ BOX_START_TIMEOUT_SECONDS: '2' }));
+    await until(() => calls().some((call) => call.name === 'box'), 'the box to start');
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(calls().filter((call) => call.name === 'box-signal')).toEqual([]);
+    run.signal('SIGTERM');
+    expect(await within(run.done)).toBe(0);
+    expect(run.lines).toEqual([]);
+  });
+
+  it('ends with the run status in a process of its own, where nothing else keeps it alive', () => {
+    // In this test runner something always keeps the event loop going; in the container nothing does. The
+    // start program is bundled and run on its own, as the image runs it, so a wait that does not hold the
+    // process open (it once ended with 0 before reading the status) fails here.
+    writeConfig({ boxExit: 3 });
+    buildSync({ entryPoints: [path.join(__dirname, '../src/launch.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: path.join(dir, 'launch.cjs'), logLevel: 'silent' });
+    const driver = `const { launch } = require('./launch.cjs');
+launch({ env: process.env, paths: { infisical: ${JSON.stringify(path.join(dir, 'infisical'))}, env: '/usr/bin/env', node: process.execPath, box: ${JSON.stringify(path.join(dir, 'box.cjs'))} },
+  log: (l) => process.stderr.write(l + '\\n'), stderr: (t) => process.stderr.write(t), onSignal: () => {}, isRoot: false }).then((status) => process.exit(status));`;
+    writeFileSync(path.join(dir, 'driver.cjs'), driver);
+    const env = Object.fromEntries(Object.entries(baseEnv()).filter((entry): entry is [string, string] => entry[1] !== undefined));
+    const result = spawnSync(process.execPath, [path.join(dir, 'driver.cjs')], { env, encoding: 'utf8', timeout: 15_000 });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain('box-launch: infisical run ended with status 3');
+    expectNoCredentialIn(result.stderr, 'standard error');
   });
 
   it('passes on what infisical run says when it cannot fetch the secrets, without the token, and ends with its status', async () => {

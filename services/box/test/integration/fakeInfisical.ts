@@ -10,7 +10,7 @@
 //
 // The configuration comes in the environment variable FAKE_INFISICAL_CONFIG:
 // the client id and secret it accepts, the token it hands out, and the
-// secrets of each project id. It records the method and path of every
+// secrets of each project id; the project id `box-hang` is never answered. It records the method and path of every
 // request (never a body or a header) and answers `GET /__requests` with them.
 
 export interface FakeInfisicalConfig {
@@ -46,6 +46,8 @@ http.createServer((req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/v4/secrets') {
       if (!authorized) return send(res, 401, { statusCode: 401, message: 'Invalid token', error: 'UnauthorizedError' });
+      // A fetch Infisical accepts and never answers, for the start program's time limit.
+      if (url.searchParams.get('projectId') === 'box-hang') return;
       const project = cfg.projects[url.searchParams.get('projectId')];
       if (!project || url.searchParams.get('environment') !== 'prod') return send(res, 404, { statusCode: 404, message: 'Not found', error: 'NotFound' });
       const secrets = Object.entries(project).map(([key, value], i) => ({

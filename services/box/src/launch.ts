@@ -35,6 +35,17 @@ export const DEFAULT_INFISICAL_DOMAIN = 'https://infisical.lumitra.co';
 /** How long a login may take before it is given up on. */
 export const LOGIN_TIMEOUT_MS = 30_000;
 
+/**
+ * How long the box may take to answer /health after `infisical run` was started, unless
+ * BOX_START_TIMEOUT_SECONDS says otherwise. The client sets no time limit of its own on its HTTP calls (its
+ * resty client has none), so a fetch of the secrets that Infisical accepts and never answers would
+ * otherwise leave a container with no box in it, for good (decision D56).
+ */
+export const START_TIMEOUT_MS = 60_000;
+
+/** The longest line of standard error passed on without a newline. */
+export const STDERR_LINE_LIMIT = 16_384;
+
 type Env = Readonly<Record<string, string | undefined>>;
 
 export interface LaunchPaths {
@@ -61,6 +72,8 @@ export interface LaunchDeps {
   isRoot: boolean;
   spawn?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
   loginTimeoutMs?: number;
+  /** How often the box's /health is asked while it starts. */
+  probeIntervalMs?: number;
 }
 
 export interface LaunchConfig {
@@ -69,6 +82,9 @@ export interface LaunchConfig {
   projectId: string;
   environment: string;
   domain: string;
+  /** Where the box's /health answers, inside the container. */
+  healthUrl: string;
+  startTimeoutMs: number;
 }
 
 export class LaunchConfigError extends Error {}
@@ -101,6 +117,27 @@ export function isAcceptableDomain(value: string): boolean {
   return url.protocol === 'http:' && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(url.hostname);
 }
 
+/**
+ * The box's /health inside the container, as the image's HEALTHCHECK asks it: the listen address (any
+ * address means this machine's own) and the port. The box checks both values itself when it starts; a
+ * value it refuses ends it, and so the wait, before the time limit.
+ */
+export function healthUrlOf(env: Env): string {
+  const host = env.BOX_LISTEN_HOST;
+  const address = !host || host === '0.0.0.0' ? '127.0.0.1' : host === '::' ? '[::1]' : host.includes(':') ? `[${host}]` : host;
+  return `http://${address}:${env.BOX_PORT ?? '8080'}/health`;
+}
+
+async function answers(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+    await response.arrayBuffer();
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function readLaunchConfig(env: Env): LaunchConfig {
   const clientId = required(env, 'INFISICAL_UNIVERSAL_AUTH_CLIENT_ID');
   const clientSecret = required(env, 'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET');
@@ -114,7 +151,13 @@ export function readLaunchConfig(env: Env): LaunchConfig {
   // The one secret comes from Infisical only (decision D12). A copy in the container's own environment
   // would be a second place to rotate it, and the one that is forgotten.
   if (env.BOX_DATABASE_URL !== undefined) throw new LaunchConfigError('BOX_DATABASE_URL must not be set on the container: it comes from Infisical');
-  return { clientId, clientSecret, projectId, environment, domain: domain.replace(/\/+$/, '') };
+  const timeoutText = env.BOX_START_TIMEOUT_SECONDS;
+  let startTimeoutMs = START_TIMEOUT_MS;
+  if (timeoutText !== undefined && timeoutText !== '') {
+    if (!/^[1-9][0-9]{0,2}$/.test(timeoutText) || Number(timeoutText) > 600) throw new LaunchConfigError('BOX_START_TIMEOUT_SECONDS must be a whole number of seconds from 1 to 600');
+    startTimeoutMs = Number(timeoutText) * 1000;
+  }
+  return { clientId, clientSecret, projectId, environment, domain: domain.replace(/\/+$/, ''), healthUrl: healthUrlOf(env), startTimeoutMs };
 }
 
 /** The environment of every Infisical call: no telemetry, a bounded number of threads, and nothing from the container that could steer it. */
@@ -227,7 +270,7 @@ export async function launch(deps: LaunchDeps): Promise<number> {
     return EXIT_LOGIN;
   }
   if (outBytes > 65_536 || !TOKEN_PATTERN.test(token)) {
-    log('the Infisical login gave no usable token');
+    log(`the Infisical login gave no usable token${said ? `: ${said.slice(0, 2_000)}` : ''}`);
     return EXIT_LOGIN;
   }
 
@@ -268,36 +311,75 @@ export async function launch(deps: LaunchDeps): Promise<number> {
   ];
   // Standard output (the box's request log) goes straight on. Standard error is passed on a line at a time
   // with every credential taken out: the client holds the token while it runs, and what it says when a fetch
-  // fails is not ours to trust. A line is cut at 16 kilobytes so nothing can be held back without end.
+  // fails is not ours to trust. A line without a newline is passed on once it is longer than 16 kilobytes,
+  // so nothing can be held back without end; it is redacted as a whole first and its last (longest
+  // credential - 1) characters are kept back, so a credential that straddles the cut is still found whole.
   const run = spawn(deps.paths.infisical, runArgs, { env: runEnv, stdio: ['ignore', 'inherit', 'pipe'] });
   current = run;
   const scrub = [...secrets, token];
+  const overlap = Math.max(...scrub.map((value) => value.length)) - 1;
   let pending = '';
   run.stderr?.setEncoding('utf8');
   run.stderr?.on('data', (chunk: string) => {
     pending += chunk;
     let newline = pending.indexOf('\n');
-    while (newline !== -1 || pending.length > 16_384) {
-      const end = newline === -1 ? 16_384 : newline + 1;
-      deps.stderr(redact(pending.slice(0, end), scrub));
-      pending = pending.slice(end);
+    while (newline !== -1) {
+      deps.stderr(redact(pending.slice(0, newline + 1), scrub));
+      pending = pending.slice(newline + 1);
       newline = pending.indexOf('\n');
     }
+    if (pending.length > STDERR_LINE_LIMIT) {
+      pending = redact(pending, scrub);
+      const cut = pending.length - overlap;
+      if (cut > 0) {
+        deps.stderr(pending.slice(0, cut));
+        pending = pending.slice(cut);
+      }
+    }
   });
+
+  // The box must answer /health within the time limit, or `infisical run` is stopped (decision D56).
+  let started = false;
+  let gaveUp = false;
+  let ended = false;
+  const startWatch = (async () => {
+    const deadline = Date.now() + config.startTimeoutMs;
+    while (!ended && Date.now() < deadline) {
+      if (await answers(config.healthUrl)) {
+        started = true;
+        return;
+      }
+      // Not unref'd: these waits are what keeps this process alive until it has an answer to give. An
+      // unref'd timer let it end with status 0 once infisical run had ended, before the status was read.
+      await new Promise((resolve) => setTimeout(resolve, deps.probeIntervalMs ?? 500));
+    }
+    if (ended || started) return;
+    gaveUp = true;
+    log(`the box did not answer ${config.healthUrl} within ${Math.round(config.startTimeoutMs / 1000)} s; infisical run is stopped`);
+    run.kill('SIGTERM');
+    setTimeout(() => {
+      if (run.exitCode === null && run.signalCode === null) run.kill('SIGKILL');
+    }, 5_000).unref();
+  })();
   const closed = new Promise<void>((resolve) => run.on('close', () => resolve()));
   const runResult = await new Promise<{ code: number | null; signal: NodeJS.Signals | null; error?: Error }>((resolve) => {
     run.on('error', (error) => resolve({ code: null, signal: null, error }));
     run.on('exit', (code, signal) => resolve({ code, signal }));
   });
+  ended = true;
+  await startWatch;
   // The rest of standard error, for a moment: a child left behind could hold the pipe open, and must not
   // keep this process (and so the container) alive after `infisical run` has ended.
-  await Promise.race([closed, new Promise((resolve) => setTimeout(resolve, 1_000).unref())]);
+  let closeTimer: NodeJS.Timeout | undefined;
+  await Promise.race([closed, new Promise((resolve) => (closeTimer = setTimeout(resolve, 1_000)))]);
+  clearTimeout(closeTimer);
   if (pending !== '') deps.stderr(redact(pending, scrub));
   current = null;
   if (runResult.error) {
     log(`the Infisical client could not be started (${(runResult.error as NodeJS.ErrnoException).code ?? 'error'})`);
     return EXIT_LOGIN;
   }
+  if (gaveUp) return EXIT_LOGIN;
   const status = statusOf(runResult.code, runResult.signal);
   // `infisical run` ends with 1 both when it could not fetch the secrets and when the box failed; the lines
   // above (the client's or the box's) say which.

@@ -393,6 +393,16 @@ describe('the start through Infisical', () => {
     expect(fakeRequests().slice(before).map((request) => `${request.path} ${request.authorized}`)).toEqual(['/api/v1/auth/universal-auth/login false', '/api/v4/secrets true']);
   });
 
+  it('stops when the fetch of the secrets never ends, once the box has not answered within the time limit', async () => {
+    const started = Date.now();
+    const { code, logs } = await exited(await runBox({ INFISICAL_PROJECT_ID: 'box-hang', BOX_START_TIMEOUT_SECONDS: '5' }));
+    expect(code).toBe('69');
+    expect(logs).toContain('box-launch: the box did not answer http://127.0.0.1:8080/health within 5 s; infisical run is stopped');
+    expect(logs).not.toContain('"event":"listening"');
+    for (const value of [fake.clientId, fake.clientSecret, fake.token]) expect(logs.includes(value)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(40_000);
+  });
+
   it('runs the box under tini with the secret from Infisical, and no credential on any command line or in the box', async () => {
     const before = fakeRequests().length;
     const box = await runBox({});
