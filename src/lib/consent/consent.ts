@@ -244,12 +244,17 @@ export interface ConsentRuntimeConfig {
  * tracker stored and reloads the page so nothing keeps running. Every other answer
  * is announced as a `lumitra:consent` event whose detail names the category
  * (`{maps:true}`), which the map islands listen to: a "no" removes a loaded map.
- * A maps "yes" in a document served without the maps cookie reloads the page
- * instead: the middleware writes that cookie into the document's enforced
+ * A maps "yes" on a page with a map, served without the maps cookie, reloads the
+ * page instead: the middleware writes that cookie into the document's enforced
  * `frame-src`, which cannot widen after load, so the map needs a new document
- * (decision D48 of docs/plans/2026-11-02-sandboxed-custom-code.md). A stored
- * "yes" whose cookie expired sets it again and reloads once. When storage throws,
- * the "yes" would not survive a reload, so it is announced as before.
+ * (decision D48 of docs/plans/2026-11-02-sandboxed-custom-code.md). The reload is
+ * decided first: the document it replaces starts no tracker and announces nothing,
+ * and the `#cookie-settings` address is dropped so the banner does not open again.
+ * A stored "yes" whose cookie expired sets it again, and on a page with a map
+ * reloads once before anything starts. A page without a map only sets the cookie.
+ * When storage throws, the "yes" would not survive a reload, so it is announced as
+ * before; `mapsAtLoad` on the API tells a map island that this document's policy
+ * refuses Google, so it keeps its placeholder.
  * Storage that throws (sandboxed frames, some private modes) keeps the choice for
  * this page view only.
  *
@@ -313,6 +318,14 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     'var mapsAtLoad=mapsAllowed();' +
     // Whether a "yes" survives a new document: storage that throws keeps it for this view only.
     "function kept(c){var r=stored();return !!r&&r[c]===true;}" +
+    // Whether a maps "yes" needs a new document: this page has a map (it asks about
+    // maps by itself only then), was served without the cookie, the cookie is set now,
+    // and the answer survives the reload. A page without a map only sets the cookie:
+    // the next document's policy allows Google.
+    "function mapsReload(){return asks('maps')&&!mapsAtLoad&&mapsAllowed()&&kept('maps');}" +
+    // Reloads without the #cookie-settings address, which would open the banner again.
+    "function reload(){try{if(w.location.hash===C.hash&&w.history&&w.history.replaceState)w.history.replaceState(null,'',w.location.pathname+w.location.search);}catch(e){}" +
+    "try{w.location.reload();}catch(e){}}" +
     "function emit(c,yes){var x={};x[c]=yes;try{w.dispatchEvent(new CustomEvent('lumitra:consent',{detail:x}));}catch(e){}}" +
     // Load the tracker. It is an ES module that only exports init() and
     // enableTracking() (analytics-platform packages/tracker), so a classic
@@ -366,13 +379,15 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     "function hide(){if(!el)return;el.hidden=true;mode='auto';focusCat=null;var o=opener;opener=null;if(o&&o.focus&&d.contains(o)){try{o.focus();}catch(e){}}}" +
     // Answers some categories: yes loads, no forgets (a page that ran the tracker reloads).
     "function answer(list,yes){var before=state('analytics'),p={},i,n=0;for(i=0;i<list.length;i++)if(known(list[i])){p[list[i]]=yes;n++;}if(!n)return;write(p);" +
-    "var stop=false;for(i=0;i<list.length;i++){if(!known(list[i]))continue;if(list[i]==='analytics'){if(yes)load();else{forget();if(before==='granted'||loaded)stop=true;}}else if(list[i]==='maps'&&yes&&!mapsAtLoad&&mapsAllowed()&&kept('maps'))stop=true;else emit(list[i],yes);}" +
-    "if(stop){try{w.location.reload();}catch(e){}}" +
+    // Decided before anything loads: a document about to be replaced starts no tracker
+    // (the next one does, from the stored answer) and announces nothing.
+    "var stop=yes&&p.maps===true&&mapsReload();if(!stop)for(i=0;i<list.length;i++){if(!known(list[i]))continue;if(list[i]==='analytics'){if(yes)load();else{forget();if(before==='granted'||loaded)stop=true;}}else emit(list[i],yes);}" +
+    "if(stop)reload();" +
     "if(mode!=='user'&&!openShown())hide();else layout();}" +
     "function nameOf(t,attr){var v=t.getAttribute(attr);return v&&known(v)?[v]:shown();}" +
     "function open(c){guard();var a=d.activeElement;opener=a&&a!==d.body&&!(el&&el.contains(a))?a:null;" +
     "if(c&&known(c)&&C.site.indexOf(c)!==-1){if(mode!=='user')mode='focus';focusCat=c;}else{mode='user';focusCat=null;}show(true);}" +
-    "w.__lumitraConsent={open:open,accept:function(){answer(shown(),true);},decline:function(){answer(shown(),false);},get:function(c){return state(c||'analytics');},categories:C.cats.slice(),version:C.v};" +
+    "w.__lumitraConsent={open:open,accept:function(){answer(shown(),true);},decline:function(){answer(shown(),false);},get:function(c){return state(c||'analytics');},mapsAtLoad:mapsAtLoad,categories:C.cats.slice(),version:C.v};" +
     "d.addEventListener('pointerdown',function(ev){if(el&&ev.target&&el.contains(ev.target))downs++;},true);" +
     "d.addEventListener('click',function(ev){var t=ev.target;while(t&&t.nodeType===1){" +
     // Only the banner's own buttons answer: a choice nobody made is not consent.
@@ -383,11 +398,12 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     "if(h&&h.slice(-C.hash.length)===C.hash){ev.preventDefault();open();opener=t;return;}" +
     't=t.parentNode;}});' +
     "d.addEventListener('keydown',function(ev){if((ev.key==='Escape'||ev.key==='Esc')&&el&&!el.hidden&&!openShown()&&!pending()){hide();}});" +
-    "if(state('analytics')==='granted')load();if(pending())show(false);" +
-    // A stored maps "yes" whose cookie is gone (it lasts a year, the record longer):
-    // set it again and load a document whose policy allows the map, once.
-    "if(state('maps')==='granted'&&!mapsAtLoad){mapsCookie(true);if(mapsAllowed()){try{w.location.reload();}catch(e){}}}" +
-    "if(w.location&&w.location.hash===C.hash){mode='user';guard();show(true);}" +
+    // A stored maps "yes" whose cookie is gone (a year at most, seven days for a cookie
+    // set by script in Safari): set it again first. On a page with a map, load a
+    // document whose policy allows it, once, and start nothing in this one.
+    "var again=false;if(state('maps')==='granted'&&!mapsAtLoad){mapsCookie(true);again=mapsReload();}" +
+    "if(again)reload();else{if(state('analytics')==='granted')load();if(pending())show(false);" +
+    "if(w.location&&w.location.hash===C.hash){mode='user';guard();show(true);}}" +
     '})();'
   );
 }
