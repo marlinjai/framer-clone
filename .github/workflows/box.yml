@@ -6,22 +6,26 @@ name: box
 # Every run, pull requests included: type check, lint, unit tests, the image
 # built and tested against a scratch Postgres and a stand-in for Infisical.
 #
-# Publishing and deploying (plan, decisions D53, D54, D56 and D57) happen
+# Publishing and deploying (plan, decisions D53, D54, D56, D57 and D59) happen
 # only on main, only once the operator step O1 has set the repository variable
-# BOX_DEPLOY_ENABLED to true, and only when the box's own files changed (or on
-# a manual run on main): the image the tests just ran, checked by its id, is
-# pushed to ghcr.io/<owner>/framer-clone-box (tags: the commit and latest), the
-# box's Coolify deploy webhook is called, and the deploy is followed until the
-# box answers /health/db on its public host. The webhook and the Coolify token
-# are secrets of the GitHub environment box-production, which only main may
-# deploy to; nothing else in this workflow can read them. A pull request never
-# pushes and never deploys.
+# BOX_DEPLOY_ENABLED to true, and only when the box's own files changed since
+# the commit running in box-production (the last successful deployment there),
+# or on a manual run on main. services/box/ci/publishDecision.ts decides it.
+# The image the tests just ran, checked by its id, is pushed to
+# ghcr.io/<owner>/framer-clone-box under the commit's tag, the box's Coolify
+# application is pointed at that tag, its deploy is started and followed, and
+# the run waits until the box answers /health/db on its public host. The
+# webhook and the Coolify token are secrets of the GitHub environment
+# box-production, which only main may deploy to; nothing else in this workflow
+# can read them. A pull request never pushes and never deploys.
 #
 # Path-filtered: it runs when the box, the contract module it bundles, its
-# Dockerfile, this file, or the database it reads changes (the migrations and
-# the role files, which its integration suite applies), and never otherwise.
-# A change to the database files alone is tested, never published: the
-# application's deploy applies migrations, and the box is deployed after it.
+# Dockerfile, this file, the Node version, or the database it reads changes
+# (the migrations and the role files, which its integration suite applies),
+# and never otherwise. A database change since the deployed commit is tested,
+# never published: migrations reach production with the application's deploy,
+# which is started by hand, so the run says to deploy the application and
+# then run this workflow by hand (decision D56).
 #
 # Every action is pinned by commit, with its version in a comment.
 
@@ -36,6 +40,7 @@ on:
       - Dockerfile.box
       - Dockerfile.box.dockerignore
       - .github/workflows/box.yml
+      - .nvmrc
       - prisma/migrations/**
       - prisma/sql/**
       # The three root files that leave services/ out of the application's checks: a change to
@@ -51,6 +56,7 @@ on:
       - Dockerfile.box
       - Dockerfile.box.dockerignore
       - .github/workflows/box.yml
+      - .nvmrc
       - prisma/migrations/**
       - prisma/sql/**
       - tsconfig.json
@@ -64,7 +70,8 @@ concurrency:
   group: box-${{ github.ref }}
   # A newer push cancels an older run of the same pull request. On main a running run is not cancelled, so
   # a deploy that has started is finished and verified; a newer run waits, and of several waiting only the
-  # newest is kept (GitHub replaces a pending run with a newer one), which deploys the newest main.
+  # newest is kept (GitHub replaces a pending run with a newer one). A cancelled run loses nothing: the
+  # newest run compares with the commit running in box-production, not with its own push.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -73,6 +80,10 @@ jobs:
     # The shared server is aarch64, so the image is built and tested on the same architecture.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
+    permissions:
+      contents: read
+      # Read only: which commit the last successful box-production deployment ran.
+      deployments: read
     outputs:
       publish: ${{ steps.publish.outputs.publish }}
       image_id: ${{ steps.build.outputs.image_id }}
@@ -99,8 +110,8 @@ jobs:
           cache-dependency-path: services/box/pnpm-lock.yaml
 
       # Whether this run publishes: main, not a pull request, O1 done (the variable), and either a manual
-      # run or a push that changed the box's own files. A push that changed only the database files or the
-      # root config is tested and not published (decision D56).
+      # run or a change to the box's own files since the commit running in box-production. A database
+      # change since then holds publishing back until the application is deployed (decisions D56, D59).
       - name: Does this run publish
         id: publish
         working-directory: .
@@ -110,23 +121,8 @@ jobs:
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
           ENABLED: ${{ vars.BOX_DEPLOY_ENABLED }}
-        run: |
-          publish=false
-          if [ "$EVENT" != "pull_request" ] && [ "$REF" = "refs/heads/main" ]; then
-            if [ "$ENABLED" != "true" ]; then
-              echo "::notice title=box not published::The repository variable BOX_DEPLOY_ENABLED is not true, so nothing is pushed or deployed. It is set in the operator step O1 (deploy/README.md)."
-            elif [ "$EVENT" = "workflow_dispatch" ]; then
-              publish=true
-            elif [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git fetch --no-tags --depth=1 origin "$BEFORE"; then
-              echo "::notice title=box published::The previous commit of this push is not known, so the box is published."
-              publish=true
-            elif git diff --name-only "$BEFORE" "$SHA" -- services/box src/lib/customCode/contract.ts Dockerfile.box Dockerfile.box.dockerignore .github/workflows/box.yml | grep -q .; then
-              publish=true
-            else
-              echo "::notice title=box not published::This push changed none of the box's own files (only the database or the root configuration), so the image is tested and not published."
-            fi
-          fi
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node services/box/ci/publishDecision.ts
 
       - name: Install
         run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
@@ -159,7 +155,8 @@ jobs:
         run: pnpm test:integration
 
       # The image the suite just tested is the one that is pushed, byte for byte, never a rebuild. It goes to
-      # the publish job as an artifact because only that job may write packages and read the deploy secrets.
+      # the publish job as an artifact because only that job asks to write packages and can read the deploy
+      # secrets.
       - name: Keep the tested image
         if: steps.publish.outputs.publish == 'true'
         working-directory: .
@@ -236,8 +233,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The commit's tag is the rollback point: to go back, point the Coolify application at the previous
-      # commit's tag. latest moves before the deploy is verified, so after a failed deploy it names the bad image.
+      # Only the commit's tag, no latest: the Coolify application is pointed at this exact tag below, so what
+      # production runs is set by this job alone, and the previous commit's tag is the rollback point.
       - name: Push the tested image
         env:
           OWNER: ${{ github.repository_owner }}
@@ -246,52 +243,89 @@ jobs:
           set -euo pipefail
           image="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/framer-clone-box"
           docker tag framer-clone-box:ci "$image:$SHA"
-          docker tag framer-clone-box:ci "$image:latest"
           docker push "$image:$SHA"
-          docker push "$image:latest"
 
-      # Calls the deploy webhook and follows the deployment in Coolify. Nothing Coolify answers is printed,
-      # and the Coolify address (it is part of the webhook secret) is masked in the log.
+      # Points the box's Coolify application at this commit's tag, calls the deploy webhook and follows the
+      # deployment until it finishes. Every way it can go wrong fails the run: a refused token, no deployment
+      # named, a failed, cancelled or skipped deployment, or no end within 15 minutes. Nothing Coolify
+      # answers is printed beyond the status names below, and the Coolify address and the application's id
+      # (both part of the webhook secret) are masked in the log.
       - name: Deploy through Coolify
         env:
           COOLIFY_BOX_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          SHA: ${{ github.sha }}
         run: |
           set -uo pipefail
-          base=$(printf '%s' "$COOLIFY_BOX_WEBHOOK" | sed -E 's#^(https?://[^/]+).*#\1#')
+          base=$(printf '%s' "$COOLIFY_BOX_WEBHOOK" | sed -E 's#^(https?://[^/?]+).*#\1#')
+          host=${base#*://}
+          app=$(printf '%s' "$COOLIFY_BOX_WEBHOOK" | sed -nE 's#.*[?&]uuid=([A-Za-z0-9_-]+).*#\1#p')
           echo "::add-mask::$base"
-          echo "::add-mask::${base#*://}"
+          echo "::add-mask::$host"
+          echo "::add-mask::${host%%:*}"
+          if [ -z "$app" ]; then
+            echo "::error::COOLIFY_BOX_WEBHOOK names no application (it has no uuid= parameter)."
+            exit 1
+          fi
+          echo "::add-mask::$app"
+
+          # curl prints 000 itself when it gets no answer; the fallback only covers an empty result.
+          code=$(curl -sS -X PATCH --max-time 30 -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" -H 'Content-Type: application/json' \
+            --data "{\"docker_registry_image_tag\":\"$SHA\"}" "$base/api/v1/applications/$app") || true
+          code=${code:-000}
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::error::Coolify did not take the image tag $SHA (HTTP $code). The token needs the write and deploy permissions."
+            exit 1
+          fi
+          echo "The Coolify application now runs the tag $SHA once deployed."
+
           code=$(curl -sS -X POST --max-time 30 -o "$RUNNER_TEMP/coolify.json" -w '%{http_code}' \
-            -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_BOX_WEBHOOK" || echo "000")
+            -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_BOX_WEBHOOK") || true
+          code=${code:-000}
           if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
             echo "::error::The Coolify deploy webhook answered HTTP $code."
             exit 1
           fi
           deployment=$(jq -r '.deployments[0].deployment_uuid // empty' "$RUNNER_TEMP/coolify.json" 2>/dev/null || true)
           rm -f "$RUNNER_TEMP/coolify.json"
-          if [ -z "$deployment" ]; then
-            echo "::warning::Coolify named no deployment; only the health check below follows the deploy."
-            exit 0
+          if ! printf '%s' "$deployment" | grep -Eq '^[A-Za-z0-9_-]+$'; then
+            echo "::error::Coolify named no deployment, so the deploy cannot be followed. Its log is in Coolify."
+            exit 1
           fi
+
           started=$(date +%s)
           while true; do
             probe=$(curl -sS --max-time 15 -o "$RUNNER_TEMP/deployment.json" -w '%{http_code}' \
-              -H "Authorization: Bearer $COOLIFY_TOKEN" "$base/api/v1/deployments/$deployment" || echo "000")
+              -H "Authorization: Bearer $COOLIFY_TOKEN" "$base/api/v1/deployments/$deployment") || true
+            probe=${probe:-000}
             if [ "$probe" = "401" ] || [ "$probe" = "403" ]; then
-              echo "::warning::The Coolify token cannot read deployments (HTTP $probe); only the health check below follows the deploy."
-              exit 0
+              echo "::error::The Coolify token cannot read deployments (HTTP $probe), so the deploy cannot be followed."
+              exit 1
             fi
-            status=$(jq -r '.status // "unknown"' "$RUNNER_TEMP/deployment.json" 2>/dev/null || echo "unknown")
+            status=unanswered
+            if [ "$probe" = "200" ]; then
+              status=$(jq -r '.status // "unknown"' "$RUNNER_TEMP/deployment.json" 2>/dev/null || echo "unknown")
+            fi
+            rm -f "$RUNNER_TEMP/deployment.json"
             elapsed=$(( $(date +%s) - started ))
-            echo "Deployment status: $status (${elapsed}s)"
+            # Coolify's statuses: queued, in_progress, finished, failed, cancelled-by-user, skipped.
             case "$status" in
-              finished) exit 0 ;;
-              failed|error|cancelled-by-force)
+              finished)
+                echo "The Coolify deployment finished (${elapsed}s)."
+                exit 0 ;;
+              failed|cancelled-by-user|skipped)
                 echo "::error::The Coolify deployment ended with status $status. Its log is in Coolify."
                 exit 1 ;;
+              queued|in_progress)
+                echo "Deployment status: $status (${elapsed}s)" ;;
+              unanswered)
+                echo "Deployment status: no answer (HTTP $probe, ${elapsed}s)" ;;
+              *)
+                echo "Deployment status: not one Coolify is known to give (${elapsed}s)" ;;
             esac
             if [ "$elapsed" -ge 900 ]; then
-              echo "::error::The Coolify deployment did not end within 900 seconds (last status: $status)."
+              echo "::error::The Coolify deployment did not end within 900 seconds."
               exit 1
             fi
             sleep 10
