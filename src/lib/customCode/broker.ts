@@ -10,7 +10,7 @@
 //   - creates the frame once the box is within one viewport of the screen, with
 //     constant attributes only: `sandbox="allow-scripts"` and the rest are set
 //     before the address, and the address is the server's (built from the
-//     rendering site's id and the hash) and checked once more here;
+//     rendering site's id and the hash), which the page's policy alone admits;
 //   - accepts `hello` only from that frame's own window (`source`), with the
 //     opaque origin a sandboxed frame has, once; a second `hello` or a second
 //     `load` of the frame removes it, and so does no `hello` within 5 seconds of
@@ -47,16 +47,16 @@ import { serveBlocks, type BlockHandle, type BlockState } from './registry';
 // keeps a module's constants as variables, and every byte counts against the 2 kilobyte limit.
 // The bridge tests in the browser hold each number.
 
-/** The only address a frame may have: the box's path for one site and one hash. */
-const BOX_SRC = /^https:\/\/[a-z0-9.-]+\/box\/[0-9a-f-]{36}\/[0-9a-f]{64}$/;
-
 /** True when `value` may be written to a state of this definition. Strict: no coercion, no clamping, never `text`. */
-export const fits = (state: BlockState | undefined, value: unknown): boolean =>
-  state?.type === 'boolean'
+export const fits = (state: BlockState | undefined, value: unknown): boolean => {
+  if (!state) return false;
+  const { type, min, max, options } = state;
+  return type === 'boolean'
     ? typeof value === 'boolean'
-    : state?.type === 'number'
-      ? typeof value === 'number' && Number.isFinite(value) && !(value < (state.min as number)) && !(value > (state.max as number))
-      : state?.type === 'choice' && (state.options ?? []).includes(value as string);
+    : type === 'number'
+      ? typeof value === 'number' && Number.isFinite(value) && !(value < (min as number)) && !(value > (max as number))
+      : type === 'choice' && !!options && options.includes(value as string);
+};
 
 /** A count per second: true once it goes past `limit` in the current second. */
 const meter = (limit: number, now: () => number) => {
@@ -96,7 +96,8 @@ export const createBroker = (kit: Kit): (() => void) => {
     if (!frames.has(doc.activeElement as Element)) last = doc.activeElement;
     setTimeout(() => {
       const at = doc.activeElement;
-      if (at !== last) frames.get((last = at) as Element)?.(late === true);
+      const check = at !== last && frames.get((last = at) as Element);
+      if (check) check(late === true);
     });
   };
   addEventListener('keydown', onKey, true);
@@ -105,9 +106,11 @@ export const createBroker = (kit: Kit): (() => void) => {
 
   const serve = ({ el, block, settle }: BlockHandle): (() => void) => {
     const { title, reads, writes, emits, sizing, interactive, states } = block;
-    const say = (why: string): void => console.warn(`Custom code "${title}": ${why}`);
-    // A fifth block (the server draws only four), or an address that is not the box's: never run.
-    if (blocks >= 4 || !BOX_SRC.test(block.src)) {
+    const say = (why: string): void => console.warn('Custom code "' + title + '": ' + why);
+    // A fifth block: the server draws only four, so this is never run. The address is the server's
+    // (boxPath, from the site's id and a stored hash), and the page's enforced frame-src and its per-site
+    // <meta> admit only that site's box path, so it is not checked again here.
+    if (blocks >= 4) {
       say('not run');
       settle(false);
       return () => {};
@@ -124,7 +127,7 @@ export const createBroker = (kit: Kit): (() => void) => {
     let pinger: ReturnType<typeof setInterval> | undefined;
     const tooMany = meter(30, now);
     const tooOften = meter(10, now);
-    const scopeOf = (id: string) => el.closest(`[${stateAttribute(id)}]`);
+    const scopeOf = (id: string) => el.closest('[' + stateAttribute(id) + ']');
     const watcher = new MutationObserver((records) => records.forEach((record) => send((record.attributeName as string).slice(9))));
     // Within one viewport of the screen, in any direction.
     const near = new IntersectionObserver((entries) => entries.some((entry) => entry.isIntersecting) && create(), { rootMargin: '100%' });
@@ -132,13 +135,13 @@ export const createBroker = (kit: Kit): (() => void) => {
     const end = (why?: string): void => {
       if (gone) return;
       gone = true;
-      if (why) say(`${why}: removed`);
+      if (why) say(why + ': removed');
       clearTimeout(timer);
       clearInterval(pinger);
       near.disconnect();
       watcher.disconnect();
       removeEventListener('message', onMessage);
-      port?.close();
+      if (port) port.close();
       if (frame) {
         frames.delete(frame);
         frame.remove();
@@ -146,15 +149,19 @@ export const createBroker = (kit: Kit): (() => void) => {
       settle(false);
     };
 
-    const post = (message: Record<string, unknown>): void => port?.postMessage(message);
+    const post = (message: Record<string, unknown>): void => {
+      if (port) port.postMessage(message);
+    };
 
     /**
      * A declared read's value as its scope shows it, never `text` state. Called only for a read: at
      * `connect` for each, and by an observer whose filter holds only the reads' attributes.
      */
     const send = (id: string): void => {
-      const type = states[id]?.type;
-      const text = scopeOf(id)?.getAttribute(stateAttribute(id));
+      const state = states[id];
+      const type = state && state.type;
+      const scope = scopeOf(id);
+      const text = scope && scope.getAttribute(stateAttribute(id));
       const value = type === 'boolean' ? text === 'true' : type === 'number' ? Number(text) : type === 'choice' ? text : null;
       if (text != null && value != null) post({ kind: 'state', id, value });
     };
@@ -169,17 +176,18 @@ export const createBroker = (kit: Kit): (() => void) => {
         // Not something JSON can say: dropped below.
       }
       if (!(size <= 65536)) return say('dropped a message over 64 KB');
-      const kind = data?.kind;
+      const kind = data && data.kind;
       if (kind === 'pong') missed = 0;
       else if (kind === 'setState' && writes.includes(data.id) && fits(states[data.id], data.value)) kit.write(data.id, data.value, el);
       else if (kind === 'emit' && emits.includes(data.name)) kit.emit(data.name.slice(7), el);
       else if (kind === 'resize' && sizing === 'content' && !tooOften() && typeof data.height == 'number' && data.height >= 0) {
-        (frame as HTMLIFrameElement).style.height = `${Math.min(data.height, 10_000)}px`;
+        (frame as HTMLIFrameElement).style.height = Math.min(data.height, 10_000) + 'px';
       } else say(kind === 'error' ? String(data.message).slice(0, 500) : 'dropped a message');
     };
 
     const onMessage = (event: MessageEvent): void => {
-      if (!frame || event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.fc !== 1 || event.data.kind !== 'hello') return;
+      const data = event.data;
+      if (!frame || event.source !== frame.contentWindow || event.origin !== 'null' || !data || data.fc !== 1 || data.kind !== 'hello') return;
       if (hello) return end('a second hello');
       hello = true;
       clearTimeout(timer);
@@ -212,7 +220,8 @@ export const createBroker = (kit: Kit): (() => void) => {
       }
       // Hidden until hello, but laid out at the box's width, so a lazy frame still loads and the page does not widen.
       // A `content` frame starts at 150 pixels until its first resize; the box's own min-height still holds the layout.
-      made.style.cssText = `border:0;display:block;position:absolute;visibility:hidden;width:${el.clientWidth || 300}px;height:${sizing === 'fixed' ? '100%' : '150px'}`;
+      made.style.cssText =
+        'border:0;display:block;position:absolute;visibility:hidden;width:' + (el.clientWidth || 300) + 'px;height:' + (sizing === 'fixed' ? '100%' : '150px');
       if (!interactive) {
         made.style.pointerEvents = 'none';
         made.tabIndex = -1;

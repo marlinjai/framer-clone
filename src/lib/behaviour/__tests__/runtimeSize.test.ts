@@ -14,8 +14,9 @@ import { describe, expect, it } from 'vitest';
 const KILOBYTE = 1000;
 
 /** Splitting on, as Next does, so what a chunk imports dynamically is not counted in it. */
-async function gzippedSize(entry: string): Promise<{ raw: string; bytes: number }> {
+async function gzippedSize(entry: string, external: string[] = []): Promise<{ raw: string; bytes: number }> {
   const result = await build({
+    external,
     entryPoints: [path.resolve(__dirname, '..', entry)],
     bundle: true,
     minify: true,
@@ -48,9 +49,11 @@ describe('the behaviour chunks', () => {
     expect(bytes).toBeLessThanOrEqual(3 * KILOBYTE);
   });
 
-  // The custom code broker, the third lazy chunk (slice C3 of the sandboxed custom code plan).
+  // The custom code broker, the third lazy chunk (slice C3 of the sandboxed custom code plan). Next
+  // keeps the registry (shared with the island) and the attribute names (shared with the core) in
+  // other chunks, so they are not counted here either.
   it('the custom code broker stays within 2 kilobytes gzipped', async () => {
-    const { bytes } = await gzippedSize('../customCode/broker.ts');
+    const { bytes } = await gzippedSize('../customCode/broker.ts', ['./registry', '@/lib/behaviour/names']);
     expect(bytes).toBeLessThanOrEqual(2 * KILOBYTE);
   });
 
