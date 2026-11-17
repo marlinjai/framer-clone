@@ -269,7 +269,16 @@ jobs:
           PUBLISH_WHILE_PINNED: ${{ inputs.publish_while_pinned }}
           OVERRIDE_GUARD: ${{ inputs.override_guard }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: node services/box/ci/publishDecision.ts guard
+        # Passes only on the script's verdict line: a script that ran but checked nothing fails the step.
+        run: |
+          status=0
+          answer="$(node services/box/ci/publishDecision.ts guard)" || status=$?
+          printf '%s\n' "$answer"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          case "$answer" in
+            'May publish: '*) ;;
+            *) echo '::error::The guard printed no verdict, so nothing was checked; the box is not published.'; exit 1 ;;
+          esac
 
       - name: Download the tested image
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

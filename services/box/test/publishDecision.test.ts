@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { compare, decide, decideRun, type GetJson, guard, lastDeployed, noticeLine } from '../ci/publishDecision';
+import { compare, decide, decideRun, DEPLOYMENT_PAGE, DEPLOYMENT_PAGES, type GetJson, guard, lastDeployed, noticeLine, VERDICT } from '../ci/publishDecision';
 
 const commit = () => randomBytes(20).toString('hex');
 const REPO = 'owner/repo';
@@ -82,7 +82,7 @@ describe('decide', () => {
     const notKnown = decide({ ...base, deployed: { kind: 'unknown', reason: 'HTTP 500' }, sinceDeployed: unknown, thisPush: files('services/box/src/main.ts') });
     expect(notKnown.publish).toBe(false);
     expect(notKnown.error).toContain('HTTP 500');
-    expect(notKnown.error).toContain('Run the box workflow by hand on main');
+    expect(notKnown.error).toContain('Run the box workflow by hand on main with override_guard');
     const notCompared = decide({ ...base, sinceDeployed: { kind: 'unknown', reason: 'HTTP 404' }, thisPush: files('services/box/src/main.ts') });
     expect(notCompared.publish).toBe(false);
     expect(notCompared.error).toContain('HTTP 404');
@@ -91,7 +91,7 @@ describe('decide', () => {
       expect(notAncestor.publish).toBe(false);
       expect(notAncestor.error).toContain(`is ${status} of this one, not an ancestor`);
       // Every refusal names its way out.
-      expect(notAncestor.error).toContain('Run the box workflow by hand on main');
+      expect(notAncestor.error).toContain('Run the box workflow by hand on main with override_guard');
     }
   });
 
@@ -162,7 +162,8 @@ const recordedRun = fixture('run') as { id: number; path: string };
 const RECORDED_REPO = 'marlinjai/framer-clone';
 const deployment = recordedDeployments[0] as Row;
 
-const deploymentsPath = `/repos/${RECORDED_REPO}/deployments?environment=box-production&per_page=30`;
+const deploymentsPage = (page: number) => `/repos/${RECORDED_REPO}/deployments?environment=box-production&per_page=100&page=${page}`;
+const deploymentsPath = deploymentsPage(1);
 const statusesPath = (id: number) => `/repos/${RECORDED_REPO}/deployments/${id}/statuses?per_page=1`;
 const jobPath = `/repos/${RECORDED_REPO}/actions/jobs/${recordedJob.id}`;
 const runPath = `/repos/${RECORDED_REPO}/actions/runs/${recordedRun.id}`;
@@ -218,6 +219,53 @@ describe('lastDeployed', () => {
       [statusesPath(deployment.id)]: latest([{ ...(recordedStatuses[0] as Status), state: 'failure' }]),
     });
     expect(await lastDeployed(failedThenRunning.get, RECORDED_REPO)).toEqual({ kind: 'none' });
+  });
+
+  describe('reads page after page while no deployment succeeded', () => {
+    const failed = latest([{ ...(recordedStatuses[0] as Status), state: 'failure' }]);
+    /** `count` failed deployments, newest first, from id `from` down, with their statuses. */
+    const failedRows = (from: number, count: number) => {
+      const rows = Array.from({ length: count }, (_unused, index): Row => ({ ...deployment, id: from - index, sha: commit() }));
+      return { rows, statuses: Object.fromEntries(rows.map((row) => [statusesPath(row.id), failed])) };
+    };
+
+    it('finds the success behind a full page of failures', async () => {
+      const first = failedRows(deployment.id + 500, DEPLOYMENT_PAGE);
+      const second = failedRows(deployment.id + 100, 35);
+      const { get, asked } = api({
+        ...recordedPublish(),
+        ...first.statuses,
+        ...second.statuses,
+        [deploymentsPage(1)]: { status: 200, body: first.rows },
+        [deploymentsPage(2)]: { status: 200, body: [...second.rows, deployment] },
+      });
+      expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.sha });
+      expect(asked).toContain(deploymentsPage(2));
+    });
+
+    it('says none only at the end of the list: a full last page is followed by an empty one', async () => {
+      const first = failedRows(deployment.id + 500, DEPLOYMENT_PAGE);
+      const { get, asked } = api({ ...first.statuses, [deploymentsPage(1)]: { status: 200, body: first.rows }, [deploymentsPage(2)]: { status: 200, body: [] } });
+      expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'none' });
+      expect(asked.filter((route) => route.includes('/deployments?'))).toEqual([deploymentsPage(1), deploymentsPage(2)]);
+    });
+
+    it('says not known, never none, when every page it may read is full of failures', async () => {
+      const routes: Record<string, { status: number; body: unknown }> = {};
+      for (let page = 1; page <= DEPLOYMENT_PAGES + 1; page += 1) {
+        const rows = failedRows(deployment.id + 10_000 - page * 1000, DEPLOYMENT_PAGE);
+        Object.assign(routes, rows.statuses, { [deploymentsPage(page)]: { status: 200, body: rows.rows } });
+      }
+      const { get, asked } = api(routes);
+      expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'unknown', reason: `none of the newest ${DEPLOYMENT_PAGE * DEPLOYMENT_PAGES} deployments succeeded` });
+      expect(asked).not.toContain(deploymentsPage(DEPLOYMENT_PAGES + 1));
+    });
+
+    it('says not known when a later page does not answer', async () => {
+      const first = failedRows(deployment.id + 500, DEPLOYMENT_PAGE);
+      const { get } = api({ ...first.statuses, [deploymentsPage(1)]: { status: 200, body: first.rows }, [deploymentsPage(2)]: { status: 502, body: null } });
+      expect(await lastDeployed(get, RECORDED_REPO)).toMatchObject({ kind: 'unknown' });
+    });
   });
 
   it('trusts no success another job, workflow or branch made, nor one made through the API', async () => {
@@ -320,7 +368,7 @@ describe('decideRun', () => {
     const decision = await decideRun(push({ SHA: commit() }), api({ [deploymentsPath]: { status: 502, body: null } }).get);
     expect(decision.publish).toBe(false);
     expect(decision.error).toContain('HTTP 502');
-    expect(decision.error).toContain('Run the box workflow by hand on main');
+    expect(decision.error).toContain('Run the box workflow by hand on main with override_guard');
   });
 
   it('refuses a malformed repository or commit', async () => {
@@ -362,9 +410,20 @@ describe('guard', () => {
     const refused = await guard(run(), unknownRuns.get);
     expect(refused.ok).toBe(false);
     expect(refused.message).toContain('override_guard');
-    expect((await guard(run({ EVENT: 'workflow_dispatch', OVERRIDE_GUARD: 'true' }), unknownRuns.get)).ok).toBe(true);
+    expect((await guard(run({ EVENT: 'workflow_dispatch', OVERRIDE_GUARD: 'true', GITHUB_RUN_ATTEMPT: '1' }), unknownRuns.get)).ok).toBe(true);
     // The input means nothing on a push or a re-run of a push.
-    expect((await guard(run({ OVERRIDE_GUARD: 'true' }), unknownRuns.get)).ok).toBe(false);
+    expect((await guard(run({ OVERRIDE_GUARD: 'true', GITHUB_RUN_ATTEMPT: '1' }), unknownRuns.get)).ok).toBe(false);
+  });
+
+  it('holds override_guard for the first attempt only: a re-run of the override run is refused, asking GitHub nothing', async () => {
+    const { get, asked } = api(recordedPublish());
+    for (const attempt of ['2', '7', undefined]) {
+      const result = await guard(run({ EVENT: 'workflow_dispatch', OVERRIDE_GUARD: 'true', GITHUB_RUN_ATTEMPT: attempt }), get);
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain('first attempt of a run only');
+      expect(result.message).toContain('new manual run');
+    }
+    expect(asked).toEqual([]);
   });
 
   it('reads the pin again: a pinned run publishes only by hand with publish_while_pinned, override_guard or not', async () => {
@@ -424,6 +483,75 @@ describe('the script as the workflow runs it', () => {
     });
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/^::error::BOX_DEPLOY_PINNED is true now/);
+  });
+
+  it('as the guard, prints the verdict the workflow step looks for, also when started through a symlinked path', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'publish-decision-'));
+    try {
+      const linked = path.join(dir, 'publishDecision.ts');
+      symlinkSync(path.join(__dirname, '..', 'ci', 'publishDecision.ts'), linked);
+      // An override run passes before asking GitHub anything; a pinned push is refused the same way.
+      const answer = spawnSync(process.execPath, [linked, 'guard'], {
+        env: { PATH: process.env.PATH, EVENT: 'workflow_dispatch', REF: MAIN, OVERRIDE_GUARD: 'true', GITHUB_RUN_ATTEMPT: '1', GITHUB_REPOSITORY: REPO, SHA: commit(), GITHUB_API_URL: 'http://127.0.0.1:9' },
+        encoding: 'utf8',
+      });
+      expect(answer.status).toBe(0);
+      expect(answer.stdout).toBe(`${VERDICT}override_guard: the operator has checked what runs in box-production.\n`);
+      const refused = spawnSync(process.execPath, [linked, 'guard'], {
+        env: { PATH: process.env.PATH, EVENT: 'push', REF: MAIN, PINNED: 'true', GITHUB_REPOSITORY: REPO, SHA: commit(), GITHUB_API_URL: 'http://127.0.0.1:9' },
+        encoding: 'utf8',
+      });
+      expect(refused.status).toBe(1);
+      expect(refused.stdout).toMatch(/^::error::BOX_DEPLOY_PINNED is true now/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  describe("box.yml's guard step", () => {
+    const ROOT = path.join(__dirname, '..', '..', '..');
+    /** The step's run block as written in the workflow, without its indentation. */
+    const stepBody = () => {
+      const workflow = readFileSync(path.join(ROOT, '.github', 'workflows', 'box.yml'), 'utf8');
+      const start = workflow.indexOf('run: |', workflow.indexOf('- name: May this run still publish'));
+      const lines = workflow.slice(start).split('\n').slice(1);
+      const body = lines.slice(0, lines.findIndex((line) => line.trim() !== '' && !line.startsWith('          ')));
+      return body.map((line) => line.slice(10)).join('\n');
+    };
+    /** Runs the step as GitHub does (bash -e -o pipefail), with `node` replaced by `fakeNode` when given. */
+    const step = (env: Record<string, string>, fakeNode?: string) => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'guard-step-'));
+      try {
+        if (fakeNode !== undefined) {
+          writeFileSync(path.join(dir, 'node'), `#!/bin/sh\n${fakeNode}\n`);
+          chmodSync(path.join(dir, 'node'), 0o755);
+        }
+        const PATH = fakeNode === undefined ? `${path.dirname(process.execPath)}:${process.env.PATH}` : `${dir}:${process.env.PATH}`;
+        return spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', stepBody()], { cwd: ROOT, env: { PATH, ...env }, encoding: 'utf8' });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+
+    it('passes on the real guard\'s verdict', () => {
+      const result = step({ EVENT: 'workflow_dispatch', REF: MAIN, OVERRIDE_GUARD: 'true', GITHUB_RUN_ATTEMPT: '1', GITHUB_REPOSITORY: REPO, SHA: commit(), GITHUB_API_URL: 'http://127.0.0.1:9' });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(VERDICT);
+    });
+
+    it('fails, showing the error, when the guard refuses', () => {
+      const result = step({ EVENT: 'push', REF: MAIN, PINNED: 'true', GITHUB_REPOSITORY: REPO, SHA: commit(), GITHUB_API_URL: 'http://127.0.0.1:9' });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toMatch(/^::error::BOX_DEPLOY_PINNED is true now/);
+    });
+
+    it('fails when the script exits 0 without a verdict, as one that checked nothing would', () => {
+      for (const fakeNode of ['exit 0', "echo 'something else'"]) {
+        const result = step({}, fakeNode);
+        expect(result.status).toBe(1);
+        expect(result.stdout).toContain('::error::The guard printed no verdict');
+      }
+    });
   });
 
   it('escapes what GitHub would read as a command', () => {

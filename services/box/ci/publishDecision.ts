@@ -1,5 +1,15 @@
-import { appendFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { appendFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/** Whether this file is the program node was started with, by real path, so a symlinked path still runs it. */
+export function isEntry(argv1: string | undefined, moduleUrl: string): boolean {
+  if (argv1 === undefined) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
 
 // Whether a run of the box workflow publishes and deploys the image (decisions D53, D56 and D59 of
 // docs/plans/2026-11-02-sandboxed-custom-code.md). Run by the workflow as `node ci/publishDecision.ts`
@@ -82,7 +92,8 @@ const PINNED_DATABASE_NOTICE = {
     'The repository variable BOX_DEPLOY_PINNED is true: a rollback holds, so nothing is published. The database the box reads (prisma/migrations or prisma/sql) has also changed since the commit running in box-production: before lifting the pin, deploy the application, then set BOX_DEPLOY_PINNED to false and run the box workflow by hand on main (deploy/README.md, the box).',
 };
 
-const BY_HAND = 'Run the box workflow by hand on main once you have checked what runs in box-production (deploy/README.md, the box).';
+const BY_HAND =
+  'Run the box workflow by hand on main with override_guard once you have checked what runs in box-production: without it, the publish job\'s guard asks the same question and refuses again (deploy/README.md, the box).';
 
 export function decide(input: DecisionInput): Decision {
   if (input.event === 'pull_request' || input.ref !== 'refs/heads/main') return { publish: false };
@@ -177,16 +188,38 @@ async function madeByThisWorkflow(get: GetJson, repository: string, serverUrl: s
   return r?.path === WORKFLOW_PATH && r.head_branch === 'main';
 }
 
+/** What the guard prints before its message when this run may publish; the workflow step looks for it. */
+export const VERDICT = 'May publish: ';
+
+/**
+ * Deployments are read a page of 100 (GitHub's most) at a time, at most two pages: each row costs a call for
+ * its statuses, and the token's calls are counted per hour. Past that, what runs is not known.
+ */
+export const DEPLOYMENT_PAGE = 100;
+export const DEPLOYMENT_PAGES = 2;
+
 /**
  * The commit of the newest deployment to box-production whose latest status is success. GitHub lists
  * deployments newest first: the publish job's own deployment, still in progress while it runs, and failed
- * ones are passed over, and a later success marks the earlier ones inactive. No success among them means
- * none: the first deploy. A success this workflow's deploying jobs did not make is not trusted.
+ * ones are passed over, page after page. Only the end of the list without a success means none (the first
+ * deploy); running past the page limit without one means not known. A success this workflow's deploying
+ * jobs did not make is not trusted.
  */
 export async function lastDeployed(get: GetJson, repository: string, serverUrl = 'https://github.com'): Promise<Deployed> {
-  const list = await get(`/repos/${repository}/deployments?environment=${ENVIRONMENT}&per_page=30`);
-  if (list.status !== 200 || !Array.isArray(list.body)) return { kind: 'unknown', reason: `the deployments answered HTTP ${list.status}` };
-  for (const row of list.body as { id?: unknown; sha?: unknown }[]) {
+  for (let page = 1; page <= DEPLOYMENT_PAGES; page += 1) {
+    const list = await get(`/repos/${repository}/deployments?environment=${ENVIRONMENT}&per_page=${DEPLOYMENT_PAGE}&page=${page}`);
+    if (list.status !== 200 || !Array.isArray(list.body)) return { kind: 'unknown', reason: `the deployments answered HTTP ${list.status}` };
+    const found = await firstSuccess(get, repository, serverUrl, list.body as { id?: unknown; sha?: unknown }[]);
+    if (found !== undefined) return found;
+    // A page shorter than asked for is the end of the list.
+    if (list.body.length < DEPLOYMENT_PAGE) return { kind: 'none' };
+  }
+  return { kind: 'unknown', reason: `none of the newest ${DEPLOYMENT_PAGE * DEPLOYMENT_PAGES} deployments succeeded` };
+}
+
+/** The verdict of the first successful deployment among `rows`, or undefined when none of them succeeded. */
+async function firstSuccess(get: GetJson, repository: string, serverUrl: string, rows: { id?: unknown; sha?: unknown }[]): Promise<Deployed | undefined> {
+  for (const row of rows) {
     if (typeof row.id !== 'number' || typeof row.sha !== 'string' || !COMMIT.test(row.sha)) continue;
     const statuses = await get(`/repos/${repository}/deployments/${row.id}/statuses?per_page=1`);
     if (statuses.status !== 200 || !Array.isArray(statuses.body)) return { kind: 'unknown', reason: `a deployment's statuses answered HTTP ${statuses.status}` };
@@ -198,7 +231,7 @@ export async function lastDeployed(get: GetJson, repository: string, serverUrl =
     if (!made) return { kind: 'unknown', reason: `the newest successful deployment, of ${short}, was not made by a publish or rollback job of box.yml on main` };
     return { kind: 'commit', sha: row.sha };
   }
-  return { kind: 'none' };
+  return undefined;
 }
 
 /** GitHub's compare lists at most 300 files; a longer list is cut. */
@@ -250,7 +283,11 @@ export async function guard(env: Record<string, string | undefined>, get: GetJso
       message: 'BOX_DEPLOY_PINNED is true now: a rollback holds, so this run publishes nothing (a re-run keeps an earlier decision, which is asked again here). Lift the pin, or run the box workflow by hand with publish_while_pinned.',
     };
   }
-  if (manual && env.OVERRIDE_GUARD === 'true') return { ok: true, message: 'override_guard: the operator has checked what runs in box-production.' };
+  if (manual && env.OVERRIDE_GUARD === 'true') {
+    // Only the first attempt: a re-run, days later, must not carry the override over a newer production.
+    if (env.GITHUB_RUN_ATTEMPT !== '1') return { ok: false, message: 'override_guard holds for the first attempt of a run only, not a re-run. Start a new manual run on main once you have checked what runs in box-production.' };
+    return { ok: true, message: 'override_guard: the operator has checked what runs in box-production.' };
+  }
   checkRun(repository, sha);
   const way = 'If this is meant, run the box workflow by hand on main with override_guard once you have checked what runs in box-production (deploy/README.md, the box).';
   const deployed = await lastDeployed(get, repository, env.GITHUB_SERVER_URL ?? 'https://github.com');
@@ -322,7 +359,8 @@ async function main(): Promise<void> {
   const get = githubGet(env.GITHUB_API_URL ?? 'https://api.github.com', env.GITHUB_TOKEN ?? '');
   if (process.argv[2] === 'guard') {
     const result = await guard(env, get);
-    process.stdout.write(result.ok ? `${result.message}\n` : `::error::${result.message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}\n`);
+    // The workflow step fails unless a line starts with VERDICT, so a script that checked nothing cannot pass.
+    process.stdout.write(result.ok ? `${VERDICT}${result.message}\n` : `::error::${result.message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}\n`);
     if (!result.ok) process.exitCode = 1;
     return;
   }
@@ -337,7 +375,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntry(process.argv[1], import.meta.url)) {
   main().catch((error: unknown) => {
     process.stderr.write(`publishDecision: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
