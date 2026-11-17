@@ -75,25 +75,40 @@ export const createBroker = (kit: Kit): (() => void) => {
   const doc = kit.doc;
   // The page's own window: the runtime runs in it, so its globals are the page's.
   const now = () => performance.now();
-  const frames = new Map<Element, () => void>();
+  const frames = new Map<Element, (late: boolean) => void>();
   let blocks = 0;
   let tabAt = -Infinity;
 
-  const onKey = (event: KeyboardEvent): void => {
-    if (event.key === 'Tab') tabAt = now();
+  /** A person's move: a Tab in the page, or the pointer entering a frame. */
+  const onKey = (event: Event): void => {
+    if (event.type[0] == 'p' || (event as KeyboardEvent).key === 'Tab') tabAt = now();
   };
-  // The page's window loses focus when a frame takes it; which frame holds it is known a task later.
-  const onBlur = (): void => {
-    setTimeout(() => frames.get(doc.activeElement as Element)?.());
+  // Where the keyboard went is read a task after any focus or blur in the page, the window's own
+  // included (caught in the capture phase): Chromium blurs the window when a frame takes the keyboard,
+  // Firefox only blurs the element that had it (both measured in the bridge tests). Each arrival in a
+  // frame counts once. The page holding the keyboard is noted at once, in the event: a frame running in
+  // the page's process (Firefox) can take it back before that task runs, and that arrival must count.
+  // An engine may also hold the event back until the page's next focus change (Firefox as Playwright runs
+  // it), so every ping looks as well: a theft no event announces is still seen within 5 seconds. Seen
+  // that late, a person's own move needs as long to explain it (see the frame's check below).
+  let last: Element | null = null;
+  const onFocus = (late: unknown): void => {
+    if (!frames.has(doc.activeElement as Element)) last = doc.activeElement;
+    setTimeout(() => {
+      const at = doc.activeElement;
+      if (at !== last) frames.get((last = at) as Element)?.(late === true);
+    });
   };
   addEventListener('keydown', onKey, true);
-  addEventListener('blur', onBlur);
+  addEventListener('focus', onFocus, true);
+  addEventListener('blur', onFocus, true);
 
   const serve = ({ el, block, settle }: BlockHandle): (() => void) => {
     const { title, reads, writes, emits, sizing, interactive, states } = block;
     const say = (why: string): void => console.warn(`Custom code "${title}": ${why}`);
+    // A fifth block (the server draws only four), or an address that is not the box's: never run.
     if (blocks >= 4 || !BOX_SRC.test(block.src)) {
-      say('a fifth block or not a box address: not run');
+      say('not run');
       settle(false);
       return () => {};
     }
@@ -133,12 +148,15 @@ export const createBroker = (kit: Kit): (() => void) => {
 
     const post = (message: Record<string, unknown>): void => port?.postMessage(message);
 
-    /** A declared read's value as its scope shows it. Nothing for any other state, `text` above all. */
+    /**
+     * A declared read's value as its scope shows it, never `text` state. Called only for a read: at
+     * `connect` for each, and by an observer whose filter holds only the reads' attributes.
+     */
     const send = (id: string): void => {
       const type = states[id]?.type;
       const text = scopeOf(id)?.getAttribute(stateAttribute(id));
       const value = type === 'boolean' ? text === 'true' : type === 'number' ? Number(text) : type === 'choice' ? text : null;
-      if (reads.includes(id) && text != null && value != null) post({ kind: 'state', id, value });
+      if (text != null && value != null) post({ kind: 'state', id, value });
     };
 
     /** One message on the port, under every rule of the protocol. */
@@ -150,14 +168,14 @@ export const createBroker = (kit: Kit): (() => void) => {
       } catch {
         // Not something JSON can say: dropped below.
       }
-      if (!(size <= 65536)) return say('dropped a message over 64 KB or not JSON');
+      if (!(size <= 65536)) return say('dropped a message over 64 KB');
       const kind = data?.kind;
       if (kind === 'pong') missed = 0;
       else if (kind === 'setState' && writes.includes(data.id) && fits(states[data.id], data.value)) kit.write(data.id, data.value, el);
       else if (kind === 'emit' && emits.includes(data.name)) kit.emit(data.name.slice(7), el);
       else if (kind === 'resize' && sizing === 'content' && !tooOften() && typeof data.height == 'number' && data.height >= 0) {
         (frame as HTMLIFrameElement).style.height = `${Math.min(data.height, 10_000)}px`;
-      } else say(kind === 'error' ? `error: ${String(data.message).slice(0, 500)}` : 'dropped a message');
+      } else say(kind === 'error' ? String(data.message).slice(0, 500) : 'dropped a message');
     };
 
     const onMessage = (event: MessageEvent): void => {
@@ -177,6 +195,7 @@ export const createBroker = (kit: Kit): (() => void) => {
       new Set(reads.map(scopeOf)).forEach((scope) => scope && watcher.observe(scope, { attributeFilter: filter }));
       reads.forEach(send);
       pinger = setInterval(() => {
+        onFocus(true);
         if (missed >= 3) return end('3 pings unanswered');
         missed += 1;
         post({ kind: 'ping' });
@@ -191,21 +210,25 @@ export const createBroker = (kit: Kit): (() => void) => {
       for (const [name, value] of [['sandbox', 'allow-scripts'], ['referrerpolicy', 'no-referrer'], ['loading', 'lazy'], ['allow', ''], ['title', title]]) {
         made.setAttribute(name, value);
       }
-      const minimum = parseFloat(getComputedStyle(el).minHeight);
       // Hidden until hello, but laid out at the box's width, so a lazy frame still loads and the page does not widen.
-      made.style.cssText = `border:0;display:block;position:absolute;visibility:hidden;width:${el.clientWidth || 300}px;height:${sizing === 'fixed' ? '100%' : `${minimum > 0 ? minimum : 150}px`}`;
+      // A `content` frame starts at 150 pixels until its first resize; the box's own min-height still holds the layout.
+      made.style.cssText = `border:0;display:block;position:absolute;visibility:hidden;width:${el.clientWidth || 300}px;height:${sizing === 'fixed' ? '100%' : '150px'}`;
       if (!interactive) {
         made.style.pointerEvents = 'none';
         made.tabIndex = -1;
       }
       made.addEventListener('load', () => {
-        if (++loads > 1) return end('loaded a second time');
+        if (++loads > 1) return end('loaded twice');
         if (!hello) timer = setTimeout(() => end('no hello within 5 s'), 5000);
       });
       addEventListener('message', onMessage);
-      frames.set(made, () => {
+      // A person's move explains the frame having the keyboard: the pointer over it now, or the pointer
+      // entering a frame or a Tab in the page within the last second, or within 6 seconds when only a ping
+      // saw the move.
+      made.addEventListener('pointerover', onKey);
+      frames.set(made, (late) => {
         if (!interactive) return end('took the keyboard');
-        if (!made.matches(':hover') && now() - tabAt > 1000 && ++thefts >= 3) end('took the keyboard 3 times');
+        if (!made.matches(':hover') && now() - tabAt > (late ? 6000 : 1000) && ++thefts >= 3) end('took the keyboard 3 times');
       });
       made.src = block.src;
       el.appendChild(made);
@@ -222,6 +245,7 @@ export const createBroker = (kit: Kit): (() => void) => {
   return () => {
     stop();
     removeEventListener('keydown', onKey, true);
-    removeEventListener('blur', onBlur);
+    removeEventListener('focus', onFocus, true);
+    removeEventListener('blur', onFocus, true);
   };
 };
