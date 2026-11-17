@@ -290,8 +290,15 @@ describe('lastDeployed', () => {
     expect(await lastDeployed(api({ [deploymentsPath]: { status: 502, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown' });
     // GraphQL answers a refused or malformed query with 200 and errors instead of data.
     const refused = { status: 200, body: { data: null, errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible by integration' }] } };
-    expect(await lastDeployed(api({ [deploymentsPath]: refused }).get, RECORDED_REPO)).toEqual({ kind: 'unknown', reason: 'the deployments answered HTTP 200 without a list' });
+    expect(await lastDeployed(api({ [deploymentsPath]: refused }).get, RECORDED_REPO)).toEqual({ kind: 'unknown', reason: 'the deployments answered with errors' });
+    expect(await lastDeployed(api({ [deploymentsPath]: { status: 200, body: { data: { repository: null } } } }).get, RECORDED_REPO)).toEqual({ kind: 'unknown', reason: 'the deployments answered HTTP 200 without a list' });
     expect(await lastDeployed(api({ ...recordedPublish(), [jobPath]: { status: 500, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('could not be read') });
+  });
+
+  it('says not known, never none, when errors come with partial data: a status that failed to load leaves the row null', async () => {
+    const partial = listed([{ ...deployment, latestStatus: null }]);
+    const body = { ...partial.body, errors: [{ path: ['repository', 'deployments', 'nodes', 0, 'latestStatus'], message: 'Something went wrong' }] };
+    expect(await lastDeployed(api({ [deploymentsPath]: { status: 200, body } }).get, RECORDED_REPO)).toEqual({ kind: 'unknown', reason: 'the deployments answered with errors' });
     expect(await lastDeployed(api({ ...recordedPublish(), [runPath]: { status: 500, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('could not be read') });
   });
 });

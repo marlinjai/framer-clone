@@ -152,7 +152,6 @@ export function decide(input: DecisionInput): Decision {
   };
 }
 
-/** A GET against the GitHub API: the status, and the parsed body when it is JSON. */
 /** A call to GitHub's API: a GET, or a POST of `body` (a GraphQL query) when one is given. */
 export type GetJson = (path: string, body?: Record<string, unknown>) => Promise<{ status: number; body: unknown }>;
 
@@ -223,7 +222,10 @@ export async function lastDeployed(get: GetJson, repository: string, serverUrl =
   let after: string | null = null;
   for (let page = 1; page <= DEPLOYMENT_PAGES; page += 1) {
     const answer = await get('/graphql', { query: DEPLOYMENTS_QUERY, variables: { owner, name, environment: ENVIRONMENT, first: DEPLOYMENT_PAGE, after } });
-    const list = (answer.body as { data?: { repository?: { deployments?: DeploymentPage } | null } } | null)?.data?.repository?.deployments;
+    const graph = answer.body as { data?: { repository?: { deployments?: DeploymentPage } | null } | null; errors?: unknown } | null;
+    // Errors next to partial data can leave a latest status null on every row, which would read as none.
+    if (Array.isArray(graph?.errors) && graph.errors.length > 0) return { kind: 'unknown', reason: 'the deployments answered with errors' };
+    const list = graph?.data?.repository?.deployments;
     if (answer.status !== 200 || !Array.isArray(list?.nodes) || typeof list.pageInfo?.hasNextPage !== 'boolean') {
       return { kind: 'unknown', reason: `the deployments answered HTTP ${answer.status}${answer.status === 200 ? ' without a list' : ''}` };
     }
