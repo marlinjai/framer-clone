@@ -209,13 +209,21 @@ const warnOnce = (problems: readonly BehaviourProblem[]): void => {
   console.warn(`applyBehaviour: left out ${problems.length} stored behaviour entr${problems.length === 1 ? 'y' : 'ies'}`, problems.slice(0, 10));
 };
 
-export function applyBehaviour(root: ComponentNode, report: (problems: readonly BehaviourProblem[]) => void = warnOnce): BehaviourResult {
+export interface ApplyBehaviourOptions {
+  /**
+   * Something besides a trigger changes state: a sandboxed custom code block declaring a write
+   * (applyCustomCode). The page then runs like one with a trigger, so the runtime holds the state.
+   */
+  changeable?: boolean;
+}
+
+export function applyBehaviour(root: ComponentNode, report: (problems: readonly BehaviourProblem[]) => void = warnOnce, options: ApplyBehaviourOptions = {}): BehaviourResult {
   if (!holdsBehaviour(root)) return { root: suffixCloneIds(root), program: null, hasGate: false };
 
   const tree = readBehaviourTree(root);
   const problems: BehaviourProblem[] = tree.refused.map(({ nodeId, reason }) => ({ node: nodeId ?? 'unnamed', reason }));
   const behaviours = [...tree.behaviours.values()];
-  const hasGate = behaviours.some((behaviour) => (behaviour.on?.length ?? 0) > 0);
+  const hasGate = options.changeable === true || behaviours.some((behaviour) => (behaviour.on?.length ?? 0) > 0);
   const targets = referencedKeys(behaviours);
   const entries = new Map<string, { signature: string; entry: ProgramEntry }[]>();
   const readLists = new Map<string, ReadRules>();

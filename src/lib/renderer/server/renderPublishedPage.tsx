@@ -26,6 +26,8 @@ import { applyResponsiveStyles } from './applyResponsiveStyles';
 import { applyEffects } from './applyEffects';
 import { applyFx } from './applyFx';
 import { applyBehaviour } from './applyBehaviour';
+import { applyCustomCode, type LiveCustomCode } from './applyCustomCode';
+import { ALLOWED_FRAME_ORIGIN } from '@/lib/site/cspReportOnly';
 import type { BehaviourProgram } from '@/lib/behaviour/program';
 import { behaviourBootScript } from '@/lib/behaviour/gate';
 import BehaviourIsland from './BehaviourIsland';
@@ -110,6 +112,11 @@ export interface RenderPublishedPageInput {
   /** The site's page base (src/lib/site/pageBase.ts): `reset` unless the site chose otherwise. */
   pageBase?: PageBase;
   /**
+   * What the page's sandboxed custom code blocks may run with, read by the caller for this request
+   * (src/server/customCode/liveBlocks.ts), or null: then every block shows its fallback.
+   */
+  customCode?: LiveCustomCode | null;
+  /**
    * How the consent banner and the map placeholders speak and look: the site
    * language, the site's look and its privacy policy path. The banner is only
    * rendered when something on the page needs consent (analytics, a map).
@@ -184,7 +191,7 @@ function resolveTracker(analytics: ResolvedAnalytics | undefined): TrackerPayloa
 export async function renderPublishedPage(
   input: RenderPublishedPageInput,
 ): Promise<RenderedPage> {
-  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, unavailable = null, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent, theme } = input;
+  const { root, budget, pageParams, cmsRepo, commerceRepo, analytics, unavailable = null, productPagePath = null, breakpoints = [], smoothScroll = false, pageBase = DEFAULT_PAGE_BASE, consent, theme, customCode = null } = input;
   const tracker = resolveTracker(analytics);
 
   const hydratedTree = await hydrateBindings(root, pageParams, { cmsRepo, commerceRepo }, productPagePath, budget);
@@ -212,9 +219,19 @@ export async function renderPublishedPage(
     ...(maps.hasMap || consent?.siteHasMap ? (['maps'] as const) : []),
   ];
 
+  // Sandboxed custom code (src/lib/customCode): which blocks get a frame, checked against
+  // the live blobs the caller read and the state on each block's path. Before the
+  // behaviour pass, which keeps the mark, and which a block declaring a write makes run.
+  const code = applyCustomCode(hydrated, customCode);
+  if (code.problems.length > 0) {
+    console.warn(`renderPublishedPage: ${code.problems.length} custom code block(s) show their fallback`, code.problems.slice(0, 10));
+  }
+
   // Stored behaviour becomes attributes, rules and a program, after the rows and
   // the bar are in their final place and before anything reads the rules it adds.
-  const behaviour = applyBehaviour(hydrated);
+  const behaviour = applyBehaviour(code.root, undefined, { changeable: code.writes });
+  // A page with a block runs the broker, the runtime's third chunk, trigger or not.
+  const program: BehaviourProgram | null = code.blocks > 0 ? { ...(behaviour.program ?? { nodes: {} }), broker: true } : behaviour.program;
 
   // Responsive styles leave the inline style for a per-page stylesheet of
   // max-width media queries (desktop-first, the editor's cascade). Done on the
@@ -259,6 +276,12 @@ export async function renderPublishedPage(
           // Nothing needs consent: a footer "Cookie settings" link would do nothing.
           <style data-fc-consent-none="" dangerouslySetInnerHTML={{ __html: HIDE_COOKIE_LINKS_CSS }} />
         )}
+        {code.blocks > 0 && customCode ? (
+          // Tightens the header's enforced `frame-src` (the box's whole path) to this site's
+          // blocks (D6, D46). A policy in a meta element can only narrow the header's, so
+          // Google stays allowed exactly when the header allows it. React hoists it into head.
+          <meta httpEquiv="Content-Security-Policy" content={`frame-src ${customCode.origin}/box/${customCode.siteId}/${maps.hasMap ? ` ${ALLOWED_FRAME_ORIGIN}` : ''}`} />
+        ) : null}
         {fonts}
         {images.preloadUrl ? <HeroPreload url={images.preloadUrl} /> : null}
         {/* Constant text, after the site sheet, whose layers it needs. */}
@@ -295,7 +318,7 @@ export async function renderPublishedPage(
         {effects.needsRuntime || smoothScroll ? (
           <EffectsIsland effects={effects.needsRuntime} smoothScroll={smoothScroll} />
         ) : null}
-        {behaviour.program ? <BehaviourIsland program={behaviour.program} /> : null}
+        {program ? <BehaviourIsland program={program} /> : null}
         {fx.program.length > 0 ? (
           // Only on a page with a scene to draw. The engine is a chunk of its
           // own, fetched by the island when the scene starts.
@@ -306,6 +329,6 @@ export async function renderPublishedPage(
     analyticsGated: tracker !== null,
     consentCategories,
     siteConsentCategories,
-    behaviour: behaviour.program,
+    behaviour: program,
   };
 }

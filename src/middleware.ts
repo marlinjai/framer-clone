@@ -179,10 +179,12 @@ function mapsConsented(request: NextRequest): boolean {
  * Google after maps consent. Nothing else may be framed.
  */
 function framePolicy(request: NextRequest): string {
-  return enforcedFramePolicy(
-    mapsConsented(request),
-    boxFrameSource({ CUSTOM_CODE_DISABLED: process.env.CUSTOM_CODE_DISABLED, SANDBOX_ORIGIN: process.env.SANDBOX_ORIGIN }),
-  );
+  return enforcedFramePolicy(mapsConsented(request), currentBoxSource());
+}
+
+/** The box's `frame-src` source on this server, or null (kill switch on, no origin configured). */
+function currentBoxSource(): string | null {
+  return boxFrameSource({ CUSTOM_CODE_DISABLED: process.env.CUSTOM_CODE_DISABLED, SANDBOX_ORIGIN: process.env.SANDBOX_ORIGIN });
 }
 
 /**
@@ -203,7 +205,7 @@ function setMapsPolicyTiming(request: NextRequest, response: NextResponse): void
  * for a visitor whose maps consent the cookie records.
  */
 function withPublishedPolicies(request: NextRequest, response: NextResponse): NextResponse {
-  response.headers.set(CSP_REPORT_ONLY_HEADER, reportOnlyPolicy(mapsConsented(request)));
+  response.headers.set(CSP_REPORT_ONLY_HEADER, reportOnlyPolicy(mapsConsented(request), currentBoxSource()));
   response.headers.set(CSP_ENFORCED_HEADER, framePolicy(request));
   setMapsPolicyTiming(request, response);
   return response;
