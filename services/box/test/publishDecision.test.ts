@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { compare, decide, decideRun, DEPLOYMENT_PAGE, DEPLOYMENT_PAGES, type GetJson, guard, lastDeployed, noticeLine, VERDICT } from '../ci/publishDecision';
+import { compare, decide, decideRun, DEPLOYMENT_PAGE, DEPLOYMENT_PAGES, DEPLOYMENTS_QUERY, type GetJson, guard, lastDeployed, noticeLine, VERDICT } from '../ci/publishDecision';
 
 const commit = () => randomBytes(20).toString('hex');
 const REPO = 'owner/repo';
@@ -140,36 +140,44 @@ describe('decide', () => {
 /** A stand-in for the GitHub API: answers by path, records every path asked. */
 function api(routes: Record<string, { status: number; body: unknown }>) {
   const asked: string[] = [];
-  const get: GetJson = async (route) => {
+  const bodies: unknown[] = [];
+  const get: GetJson = async (path, body) => {
+    // A GraphQL query is told apart by the cursor it asks after.
+    const route = body === undefined ? path : `POST ${path} after=${String((body.variables as { after?: unknown }).after)}`;
     asked.push(route);
+    if (body !== undefined) bodies.push(body);
     return routes[route] ?? { status: 404, body: { message: 'Not Found' } };
   };
-  return { get, asked };
+  return { get, asked, bodies };
 }
 
 // Answers recorded read-only from this repository's GitHub API on 2026-11-17 (test/fixtures/github): the
-// plugin-mirror environment's deployment 7824580602, made by its job with `environment:` (run 43871048435,
-// job 133312005128), with all five of its statuses; a production deployment made through the API, whose
-// statuses point at the commit's checks page; and three comparisons (ahead, behind, cut at 300 files).
+// plugin-mirror environment's three newest deployments through GraphQL, the newest made by its job with
+// `environment:` (run 43871048435, job 133312005128), that job and run; the newest production deployment
+// through GraphQL, made through the REST API, whose status points at the commit's checks page; and three
+// comparisons (ahead, behind, cut at 300 files).
 const fixture = (name: string): unknown => JSON.parse(readFileSync(path.join(__dirname, 'fixtures', 'github', `${name}.json`), 'utf8'));
-type Row = { id: number; sha: string; creator: { login: string } };
-type Status = { state: string; log_url: string };
-const recordedDeployments = fixture('deployments') as Row[];
-const recordedStatuses = fixture('statuses-of-a-job-deployment') as Status[];
-const recordedApiStatuses = fixture('statuses-of-an-api-deployment') as Status[];
+type Node = { commitOid: string; latestStatus: { state: string; logUrl: string } | null };
+type Page = { data: { repository: { deployments: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: Node[] } } } };
+const recordedPage = fixture('graphql-deployments') as Page;
+const recordedApiPage = fixture('graphql-deployments-api') as Page;
 const recordedJob = fixture('job') as { id: number; run_id: number; name: string; head_sha: string };
 const recordedRun = fixture('run') as { id: number; path: string };
 const RECORDED_REPO = 'marlinjai/framer-clone';
-const deployment = recordedDeployments[0] as Row;
+const deployment = recordedPage.data.repository.deployments.nodes[0] as Node;
+const withState = (node: Node, state: string): Node => ({ ...node, latestStatus: { ...(node.latestStatus as { logUrl: string }), state } });
 
-const deploymentsPage = (page: number) => `/repos/${RECORDED_REPO}/deployments?environment=box-production&per_page=100&page=${page}`;
-const deploymentsPath = deploymentsPage(1);
-const statusesPath = (id: number) => `/repos/${RECORDED_REPO}/deployments/${id}/statuses?per_page=1`;
+/** The route of a page of deployments, by the cursor it asks after (null for the first page). */
+const deploymentsAfter = (after: string | null) => `POST /graphql after=${after}`;
+const deploymentsPath = deploymentsAfter(null);
+/** A page of deployments as GitHub's GraphQL answers it; `next` is the cursor of a following page. */
+const listed = (nodes: Node[], next?: string) => ({
+  status: 200,
+  body: { data: { repository: { deployments: { pageInfo: { hasNextPage: next !== undefined, endCursor: next ?? null }, nodes } } } },
+});
 const jobPath = `/repos/${RECORDED_REPO}/actions/jobs/${recordedJob.id}`;
 const runPath = `/repos/${RECORDED_REPO}/actions/runs/${recordedRun.id}`;
 const comparePath = (base: string, head: string) => `/repos/${RECORDED_REPO}/compare/${base}...${head}?per_page=1`;
-/** GitHub answers per_page=1 with the newest status alone. */
-const latest = (statuses: Status[]) => ({ status: 200, body: statuses.slice(0, 1) });
 
 /**
  * The recorded deployment as box.yml's publish job would leave it: the same records, with the job's name
@@ -177,93 +185,82 @@ const latest = (statuses: Status[]) => ({ status: 200, body: statuses.slice(0, 1
  */
 function recordedPublish(job: Record<string, unknown> = {}, run: Record<string, unknown> = {}) {
   return {
-    [deploymentsPath]: { status: 200, body: [deployment] },
-    [statusesPath(deployment.id)]: latest(recordedStatuses),
+    [deploymentsPath]: listed([deployment]),
     [jobPath]: { status: 200, body: { ...recordedJob, name: 'publish and deploy', ...job } },
     [runPath]: { status: 200, body: { ...recordedRun, path: '.github/workflows/box.yml', ...run } },
   };
 }
 
-/** The publish job's own deployment while its steps run: created by the job, its latest status in_progress. */
-const ownRunningRow: Row = { ...deployment, id: deployment.id + 1, sha: commit() };
-const ownRunning = { [statusesPath(ownRunningRow.id)]: latest(recordedStatuses.slice(recordedStatuses.findIndex((status) => status.state === 'in_progress'))) };
+/** The publish job's own deployment while its steps run: its latest status IN_PROGRESS (a state of GitHub's schema). */
+const ownRunningRow: Node = { ...withState(deployment, 'IN_PROGRESS'), commitOid: commit() };
 
 describe('the recorded answers', () => {
-  it('are what the code relies on: a job deployment created by the actor, its log address naming run and job', () => {
-    expect(deployment.creator.login).not.toBe('github-actions[bot]');
-    expect(recordedStatuses.map((status) => status.state)).toEqual(['success', 'in_progress', 'queued', 'queued', 'waiting']);
-    for (const status of recordedStatuses) expect(status.log_url).toBe(`https://github.com/${RECORDED_REPO}/actions/runs/${recordedRun.id}/job/${recordedJob.id}`);
+  it('are what the code relies on: newest first, the latest status naming run and job, an API deployment its checks page', () => {
+    const nodes = recordedPage.data.repository.deployments.nodes;
+    expect(nodes.map((node) => node.latestStatus?.state)).toEqual(['SUCCESS', 'SUCCESS', 'SUCCESS']);
+    expect(recordedPage.data.repository.deployments.pageInfo.hasNextPage).toBe(true);
+    expect(deployment.latestStatus?.logUrl).toBe(`https://github.com/${RECORDED_REPO}/actions/runs/${recordedRun.id}/job/${recordedJob.id}`);
     expect(recordedJob.run_id).toBe(recordedRun.id);
-    expect(recordedJob.head_sha).toBe(deployment.sha);
-    expect(recordedApiStatuses[0]?.log_url).toMatch(/\/commit\/[0-9a-f]{40}\/checks$/);
+    expect(recordedJob.head_sha).toBe(deployment.commitOid);
+    expect(recordedApiPage.data.repository.deployments.nodes[0]?.latestStatus?.logUrl).toMatch(/\/commit\/[0-9a-f]{40}\/checks$/);
   });
 });
 
 describe('lastDeployed', () => {
-  it('takes a success made by the publish job, passing over the running job\'s own in-progress deployment', async () => {
-    const { get, asked } = api({ ...recordedPublish(), [deploymentsPath]: { status: 200, body: [ownRunningRow, deployment] }, ...ownRunning });
-    expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.sha });
-    expect(asked).toEqual([deploymentsPath, statusesPath(ownRunningRow.id), statusesPath(deployment.id), jobPath, runPath]);
+  it('takes a success made by the publish job in one query, passing over the running job\'s own deployment', async () => {
+    const { get, asked, bodies } = api({ ...recordedPublish(), [deploymentsPath]: listed([ownRunningRow, deployment]) });
+    expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.commitOid });
+    expect(asked).toEqual([deploymentsPath, jobPath, runPath]);
+    expect(bodies[0]).toEqual({ query: DEPLOYMENTS_QUERY, variables: { owner: 'marlinjai', name: 'framer-clone', environment: 'box-production', first: DEPLOYMENT_PAGE, after: null } });
+  });
+
+  it('takes the recorded page as GitHub answered it, with a following page not asked', async () => {
+    const { get, asked } = api({ ...recordedPublish(), [deploymentsPath]: { status: 200, body: recordedPage } });
+    expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.commitOid });
+    expect(asked).toEqual([deploymentsPath, jobPath, runPath]);
   });
 
   it('counts the rollback job too', async () => {
-    expect(await lastDeployed(api(recordedPublish({ name: 'roll back' })).get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.sha });
+    expect(await lastDeployed(api(recordedPublish({ name: 'roll back' })).get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.commitOid });
   });
 
   it('says none when no deployment ever reached success: the first publish, with only its own deployment listed', async () => {
-    expect(await lastDeployed(api({ [deploymentsPath]: { status: 200, body: [ownRunningRow] }, ...ownRunning }).get, RECORDED_REPO)).toEqual({ kind: 'none' });
-    expect(await lastDeployed(api({ [deploymentsPath]: { status: 200, body: [] } }).get, RECORDED_REPO)).toEqual({ kind: 'none' });
-    const failedThenRunning = api({
-      [deploymentsPath]: { status: 200, body: [ownRunningRow, deployment] },
-      ...ownRunning,
-      [statusesPath(deployment.id)]: latest([{ ...(recordedStatuses[0] as Status), state: 'failure' }]),
-    });
-    expect(await lastDeployed(failedThenRunning.get, RECORDED_REPO)).toEqual({ kind: 'none' });
+    expect(await lastDeployed(api({ [deploymentsPath]: listed([ownRunningRow]) }).get, RECORDED_REPO)).toEqual({ kind: 'none' });
+    expect(await lastDeployed(api({ [deploymentsPath]: listed([]) }).get, RECORDED_REPO)).toEqual({ kind: 'none' });
+    expect(await lastDeployed(api({ [deploymentsPath]: listed([ownRunningRow, withState(deployment, 'FAILURE'), { ...deployment, latestStatus: null }]) }).get, RECORDED_REPO)).toEqual({ kind: 'none' });
   });
 
   describe('reads page after page while no deployment succeeded', () => {
-    const failed = latest([{ ...(recordedStatuses[0] as Status), state: 'failure' }]);
-    /** `count` failed deployments, newest first, from id `from` down, with their statuses. */
-    const failedRows = (from: number, count: number) => {
-      const rows = Array.from({ length: count }, (_unused, index): Row => ({ ...deployment, id: from - index, sha: commit() }));
-      return { rows, statuses: Object.fromEntries(rows.map((row) => [statusesPath(row.id), failed])) };
-    };
+    const failedRows = (count: number) => Array.from({ length: count }, (): Node => ({ ...withState(deployment, 'FAILURE'), commitOid: commit() }));
 
     it('finds the success behind a full page of failures', async () => {
-      const first = failedRows(deployment.id + 500, DEPLOYMENT_PAGE);
-      const second = failedRows(deployment.id + 100, 35);
       const { get, asked } = api({
         ...recordedPublish(),
-        ...first.statuses,
-        ...second.statuses,
-        [deploymentsPage(1)]: { status: 200, body: first.rows },
-        [deploymentsPage(2)]: { status: 200, body: [...second.rows, deployment] },
+        [deploymentsAfter(null)]: listed(failedRows(DEPLOYMENT_PAGE), 'cursor-1'),
+        [deploymentsAfter('cursor-1')]: listed([...failedRows(35), deployment]),
       });
-      expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.sha });
-      expect(asked).toContain(deploymentsPage(2));
+      expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'commit', sha: deployment.commitOid });
+      expect(asked).toEqual([deploymentsAfter(null), deploymentsAfter('cursor-1'), jobPath, runPath]);
     });
 
-    it('says none only at the end of the list: a full last page is followed by an empty one', async () => {
-      const first = failedRows(deployment.id + 500, DEPLOYMENT_PAGE);
-      const { get, asked } = api({ ...first.statuses, [deploymentsPage(1)]: { status: 200, body: first.rows }, [deploymentsPage(2)]: { status: 200, body: [] } });
+    it('says none only at the end of the list', async () => {
+      const { get, asked } = api({ [deploymentsAfter(null)]: listed(failedRows(DEPLOYMENT_PAGE), 'cursor-1'), [deploymentsAfter('cursor-1')]: listed([]) });
       expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'none' });
-      expect(asked.filter((route) => route.includes('/deployments?'))).toEqual([deploymentsPage(1), deploymentsPage(2)]);
+      expect(asked).toEqual([deploymentsAfter(null), deploymentsAfter('cursor-1')]);
     });
 
     it('says not known, never none, when every page it may read is full of failures', async () => {
       const routes: Record<string, { status: number; body: unknown }> = {};
       for (let page = 1; page <= DEPLOYMENT_PAGES + 1; page += 1) {
-        const rows = failedRows(deployment.id + 10_000 - page * 1000, DEPLOYMENT_PAGE);
-        Object.assign(routes, rows.statuses, { [deploymentsPage(page)]: { status: 200, body: rows.rows } });
+        routes[deploymentsAfter(page === 1 ? null : `cursor-${page - 1}`)] = listed(failedRows(DEPLOYMENT_PAGE), `cursor-${page}`);
       }
       const { get, asked } = api(routes);
       expect(await lastDeployed(get, RECORDED_REPO)).toEqual({ kind: 'unknown', reason: `none of the newest ${DEPLOYMENT_PAGE * DEPLOYMENT_PAGES} deployments succeeded` });
-      expect(asked).not.toContain(deploymentsPage(DEPLOYMENT_PAGES + 1));
+      expect(asked).toHaveLength(DEPLOYMENT_PAGES);
     });
 
     it('says not known when a later page does not answer', async () => {
-      const first = failedRows(deployment.id + 500, DEPLOYMENT_PAGE);
-      const { get } = api({ ...first.statuses, [deploymentsPage(1)]: { status: 200, body: first.rows }, [deploymentsPage(2)]: { status: 502, body: null } });
+      const { get } = api({ [deploymentsAfter(null)]: listed(failedRows(DEPLOYMENT_PAGE), 'cursor-1'), [deploymentsAfter('cursor-1')]: { status: 502, body: null } });
       expect(await lastDeployed(get, RECORDED_REPO)).toMatchObject({ kind: 'unknown' });
     });
   });
@@ -283,15 +280,17 @@ describe('lastDeployed', () => {
     ] as const) {
       expect(await lastDeployed(api(recordedPublish(job, run)).get, RECORDED_REPO)).toMatchObject(notTrusted);
     }
-    const throughTheApi = api({ ...recordedPublish(), [statusesPath(deployment.id)]: latest(recordedApiStatuses) });
+    const throughTheApi = api({ ...recordedPublish(), [deploymentsPath]: { status: 200, body: recordedApiPage } });
     expect(await lastDeployed(throughTheApi.get, RECORDED_REPO)).toMatchObject(notTrusted);
-    const elsewhere = api({ ...recordedPublish(), [statusesPath(deployment.id)]: latest([{ ...(recordedStatuses[0] as Status), log_url: `https://example.test/${RECORDED_REPO}/actions/runs/${recordedRun.id}/job/${recordedJob.id}` }]) });
-    expect(await lastDeployed(elsewhere.get, RECORDED_REPO)).toMatchObject(notTrusted);
+    const elsewhere = { ...deployment, latestStatus: { state: 'SUCCESS', logUrl: `https://example.test/${RECORDED_REPO}/actions/runs/${recordedRun.id}/job/${recordedJob.id}` } };
+    expect(await lastDeployed(api({ ...recordedPublish(), [deploymentsPath]: listed([elsewhere]) }).get, RECORDED_REPO)).toMatchObject(notTrusted);
   });
 
-  it('says not known when GitHub does not answer', async () => {
+  it('says not known when GitHub does not answer, or answers without a list', async () => {
     expect(await lastDeployed(api({ [deploymentsPath]: { status: 502, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown' });
-    expect(await lastDeployed(api({ ...recordedPublish(), [statusesPath(deployment.id)]: { status: 500, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown' });
+    // GraphQL answers a refused or malformed query with 200 and errors instead of data.
+    const refused = { status: 200, body: { data: null, errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible by integration' }] } };
+    expect(await lastDeployed(api({ [deploymentsPath]: refused }).get, RECORDED_REPO)).toEqual({ kind: 'unknown', reason: 'the deployments answered HTTP 200 without a list' });
     expect(await lastDeployed(api({ ...recordedPublish(), [jobPath]: { status: 500, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('could not be read') });
     expect(await lastDeployed(api({ ...recordedPublish(), [runPath]: { status: 500, body: null } }).get, RECORDED_REPO)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('could not be read') });
   });
@@ -337,27 +336,27 @@ describe('decideRun', () => {
 
   it('publishes a box change since the recorded deployment', async () => {
     const sha = commit();
-    const { get } = api({ ...recordedPublish(), [comparePath(deployment.sha, sha)]: { status: 200, body: fixture('compare-ahead') } });
+    const { get } = api({ ...recordedPublish(), [comparePath(deployment.commitOid, sha)]: { status: 200, body: fixture('compare-ahead') } });
     expect(await decideRun(push({ SHA: sha }), get)).toEqual({ publish: true });
   });
 
   it('holds with a notice, not an error, when the recorded comparison is cut at 300 files', async () => {
     const sha = commit();
-    const decision = await decideRun(push({ SHA: sha }), api({ ...recordedPublish(), [comparePath(deployment.sha, sha)]: { status: 200, body: fixture('compare-cut-at-300') } }).get);
+    const decision = await decideRun(push({ SHA: sha }), api({ ...recordedPublish(), [comparePath(deployment.commitOid, sha)]: { status: 200, body: fixture('compare-cut-at-300') } }).get);
     expect(decision.publish).toBe(false);
     expect(decision.error).toBeUndefined();
     expect(decision.notice?.title).toContain('too many changes');
   });
 
   it('publishes the first deploy while only the running job\'s own deployment is listed', async () => {
-    const decision = await decideRun(push({ SHA: commit(), BEFORE: '0'.repeat(40) }), api({ [deploymentsPath]: { status: 200, body: [ownRunningRow] }, ...ownRunning }).get);
+    const decision = await decideRun(push({ SHA: commit(), BEFORE: '0'.repeat(40) }), api({ [deploymentsPath]: listed([ownRunningRow]) }).get);
     expect(decision.publish).toBe(true);
   });
 
   it('still compares while pinned, and says to deploy the application first when the database changed', async () => {
     const sha = commit();
     const migration = { status: 'ahead', files: [{ filename: 'prisma/migrations/2026/migration.sql', status: 'added' }] };
-    const decision = await decideRun(push({ SHA: sha, PINNED: 'true' }), api({ ...recordedPublish(), [comparePath(deployment.sha, sha)]: { status: 200, body: migration } }).get);
+    const decision = await decideRun(push({ SHA: sha, PINNED: 'true' }), api({ ...recordedPublish(), [comparePath(deployment.commitOid, sha)]: { status: 200, body: migration } }).get);
     expect(decision).toMatchObject({ publish: false, notice: { title: 'box not published: pinned, and deploy the application first' } });
     const failing = await decideRun(push({ SHA: sha, PINNED: 'true' }), api({ [deploymentsPath]: { status: 502, body: null } }).get);
     expect(failing).toMatchObject({ publish: false, notice: { title: 'box not published: pinned' } });
@@ -382,23 +381,23 @@ describe('guard', () => {
   const run = (extra: Record<string, string | undefined> = {}) => ({ EVENT: 'push', REF: MAIN, GITHUB_REPOSITORY: RECORDED_REPO, SHA: commit(), ...extra });
 
   it('passes the first publish, where only its own in-progress deployment is listed', async () => {
-    const { get } = api({ [deploymentsPath]: { status: 200, body: [ownRunningRow] }, ...ownRunning });
-    expect((await guard(run({ SHA: ownRunningRow.sha }), get)).ok).toBe(true);
+    const { get } = api({ [deploymentsPath]: listed([ownRunningRow]) });
+    expect((await guard(run({ SHA: ownRunningRow.commitOid }), get)).ok).toBe(true);
   });
 
   it('passes when the recorded deployment is this commit or an ancestor, whatever the number of files', async () => {
     const sha = commit();
     for (const body of [fixture('compare-ahead'), fixture('compare-cut-at-300'), { status: 'identical', files: [] }]) {
-      const { get } = api({ ...recordedPublish(), [deploymentsPath]: { status: 200, body: [ownRunningRow, deployment] }, ...ownRunning, [comparePath(deployment.sha, sha)]: { status: 200, body } });
+      const { get } = api({ ...recordedPublish(), [deploymentsPath]: listed([ownRunningRow, deployment]), [comparePath(deployment.commitOid, sha)]: { status: 200, body } });
       expect((await guard(run({ SHA: sha }), get)).ok).toBe(true);
     }
-    expect((await guard(run({ SHA: deployment.sha }), api(recordedPublish()).get)).ok).toBe(true);
+    expect((await guard(run({ SHA: deployment.commitOid }), api(recordedPublish()).get)).ok).toBe(true);
   });
 
   it('refuses a re-run of an older run once production has moved past it, and names the way out', async () => {
     const older = commit();
     for (const body of [fixture('compare-behind'), { status: 'diverged', files: [] }]) {
-      const result = await guard(run({ SHA: older }), api({ ...recordedPublish(), [comparePath(deployment.sha, older)]: { status: 200, body } }).get);
+      const result = await guard(run({ SHA: older }), api({ ...recordedPublish(), [comparePath(deployment.commitOid, older)]: { status: 200, body } }).get);
       expect(result.ok).toBe(false);
       expect(result.message).toContain('would deploy an older box over a newer one');
       expect(result.message).toContain('override_guard');
@@ -429,13 +428,13 @@ describe('guard', () => {
   it('reads the pin again: a pinned run publishes only by hand with publish_while_pinned, override_guard or not', async () => {
     const { get, asked } = api(recordedPublish());
     for (const extra of [{ PINNED: 'true' }, { PINNED: 'true', EVENT: 'workflow_dispatch' }, { PINNED: 'true', PUBLISH_WHILE_PINNED: 'true' }, { PINNED: 'true', EVENT: 'workflow_dispatch', OVERRIDE_GUARD: 'true' }]) {
-      const result = await guard(run({ SHA: deployment.sha, ...extra }), get);
+      const result = await guard(run({ SHA: deployment.commitOid, ...extra }), get);
       expect(result.ok).toBe(false);
       expect(result.message).toContain('BOX_DEPLOY_PINNED is true');
       expect(result.message).toContain('Lift the pin');
     }
     expect(asked).toEqual([]);
-    expect((await guard(run({ SHA: deployment.sha, PINNED: 'true', EVENT: 'workflow_dispatch', PUBLISH_WHILE_PINNED: 'true' }), get)).ok).toBe(true);
+    expect((await guard(run({ SHA: deployment.commitOid, PINNED: 'true', EVENT: 'workflow_dispatch', PUBLISH_WHILE_PINNED: 'true' }), get)).ok).toBe(true);
   });
 
   it('refuses a run that is not on main', async () => {

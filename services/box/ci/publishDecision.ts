@@ -153,7 +153,8 @@ export function decide(input: DecisionInput): Decision {
 }
 
 /** A GET against the GitHub API: the status, and the parsed body when it is JSON. */
-export type GetJson = (path: string) => Promise<{ status: number; body: unknown }>;
+/** A call to GitHub's API: a GET, or a POST of `body` (a GraphQL query) when one is given. */
+export type GetJson = (path: string, body?: Record<string, unknown>) => Promise<{ status: number; body: unknown }>;
 
 /** The workflow file, and the jobs of it that deploy to box-production. */
 export const WORKFLOW_PATH = '.github/workflows/box.yml';
@@ -191,12 +192,24 @@ async function madeByThisWorkflow(get: GetJson, repository: string, serverUrl: s
 /** What the guard prints before its message when this run may publish; the workflow step looks for it. */
 export const VERDICT = 'May publish: ';
 
-/**
- * Deployments are read a page of 100 (GitHub's most) at a time, at most two pages: each row costs a call for
- * its statuses, and the token's calls are counted per hour. Past that, what runs is not known.
- */
+/** Deployments are read a page of 100 (GitHub's most) at a time, at most two pages; past that, what runs is not known. */
 export const DEPLOYMENT_PAGE = 100;
 export const DEPLOYMENT_PAGES = 2;
+
+/** One call per page: the deployments to an environment, newest first, each with its latest status. */
+export const DEPLOYMENTS_QUERY = `query ($owner: String!, $name: String!, $environment: String!, $first: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    deployments(environments: [$environment], first: $first, after: $after, orderBy: { field: CREATED_AT, direction: DESC }) {
+      pageInfo { hasNextPage endCursor }
+      nodes { commitOid latestStatus { state logUrl } }
+    }
+  }
+}`;
+
+interface DeploymentPage {
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  nodes: { commitOid?: unknown; latestStatus?: { state?: unknown; logUrl?: unknown } | null }[];
+}
 
 /**
  * The commit of the newest deployment to box-production whose latest status is success. GitHub lists
@@ -206,32 +219,27 @@ export const DEPLOYMENT_PAGES = 2;
  * jobs did not make is not trusted.
  */
 export async function lastDeployed(get: GetJson, repository: string, serverUrl = 'https://github.com'): Promise<Deployed> {
+  const [owner, name] = repository.split('/');
+  let after: string | null = null;
   for (let page = 1; page <= DEPLOYMENT_PAGES; page += 1) {
-    const list = await get(`/repos/${repository}/deployments?environment=${ENVIRONMENT}&per_page=${DEPLOYMENT_PAGE}&page=${page}`);
-    if (list.status !== 200 || !Array.isArray(list.body)) return { kind: 'unknown', reason: `the deployments answered HTTP ${list.status}` };
-    const found = await firstSuccess(get, repository, serverUrl, list.body as { id?: unknown; sha?: unknown }[]);
-    if (found !== undefined) return found;
-    // A page shorter than asked for is the end of the list.
-    if (list.body.length < DEPLOYMENT_PAGE) return { kind: 'none' };
+    const answer = await get('/graphql', { query: DEPLOYMENTS_QUERY, variables: { owner, name, environment: ENVIRONMENT, first: DEPLOYMENT_PAGE, after } });
+    const list = (answer.body as { data?: { repository?: { deployments?: DeploymentPage } | null } } | null)?.data?.repository?.deployments;
+    if (answer.status !== 200 || !Array.isArray(list?.nodes) || typeof list.pageInfo?.hasNextPage !== 'boolean') {
+      return { kind: 'unknown', reason: `the deployments answered HTTP ${answer.status}${answer.status === 200 ? ' without a list' : ''}` };
+    }
+    for (const node of list.nodes) {
+      const sha = node.commitOid;
+      if (typeof sha !== 'string' || !COMMIT.test(sha) || node.latestStatus?.state !== 'SUCCESS') continue;
+      const made = await madeByThisWorkflow(get, repository, serverUrl, sha, node.latestStatus.logUrl);
+      const short = sha.slice(0, 12);
+      if (made === 'unanswered') return { kind: 'unknown', reason: `the job of the deployment of ${short} could not be read` };
+      if (!made) return { kind: 'unknown', reason: `the newest successful deployment, of ${short}, was not made by a publish or rollback job of box.yml on main` };
+      return { kind: 'commit', sha };
+    }
+    if (!list.pageInfo.hasNextPage) return { kind: 'none' };
+    after = list.pageInfo.endCursor;
   }
   return { kind: 'unknown', reason: `none of the newest ${DEPLOYMENT_PAGE * DEPLOYMENT_PAGES} deployments succeeded` };
-}
-
-/** The verdict of the first successful deployment among `rows`, or undefined when none of them succeeded. */
-async function firstSuccess(get: GetJson, repository: string, serverUrl: string, rows: { id?: unknown; sha?: unknown }[]): Promise<Deployed | undefined> {
-  for (const row of rows) {
-    if (typeof row.id !== 'number' || typeof row.sha !== 'string' || !COMMIT.test(row.sha)) continue;
-    const statuses = await get(`/repos/${repository}/deployments/${row.id}/statuses?per_page=1`);
-    if (statuses.status !== 200 || !Array.isArray(statuses.body)) return { kind: 'unknown', reason: `a deployment's statuses answered HTTP ${statuses.status}` };
-    const latest = statuses.body[0] as { state?: unknown; log_url?: unknown } | undefined;
-    if (latest?.state !== 'success') continue;
-    const made = await madeByThisWorkflow(get, repository, serverUrl, row.sha, latest.log_url);
-    const short = row.sha.slice(0, 12);
-    if (made === 'unanswered') return { kind: 'unknown', reason: `the job of the deployment of ${short} could not be read` };
-    if (!made) return { kind: 'unknown', reason: `the newest successful deployment, of ${short}, was not made by a publish or rollback job of box.yml on main` };
-    return { kind: 'commit', sha: row.sha };
-  }
-  return undefined;
 }
 
 /** GitHub's compare lists at most 300 files; a longer list is cut. */
@@ -325,12 +333,14 @@ export async function decideRun(env: Record<string, string | undefined>, get: Ge
   return decide({ ...settings, deployed, sinceDeployed, thisPush });
 }
 
-/** A GET with the run's token, a time limit, and nothing of the answer printed. */
+/** A GET (or a GraphQL POST) with the run's token, a time limit, and nothing of the answer printed. */
 function githubGet(apiUrl: string, token: string): GetJson {
-  return async (path) => {
+  return async (path, query) => {
     try {
       const response = await fetch(`${apiUrl}${path}`, {
+        method: query === undefined ? 'GET' : 'POST',
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+        body: query === undefined ? undefined : JSON.stringify(query),
         signal: AbortSignal.timeout(15_000),
       });
       const text = await response.text();

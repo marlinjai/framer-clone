@@ -1,0 +1,35 @@
+{
+    "data": {
+        "repository": {
+            "deployments": {
+                "pageInfo": {
+                    "hasNextPage": true,
+                    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMS0xNFQxMTozNzowMFrPAAAAAdAj6zs="
+                },
+                "nodes": [
+                    {
+                        "commitOid": "8b6fc89b520fa2d00d05827db3208cd828922752",
+                        "latestStatus": {
+                            "state": "SUCCESS",
+                            "logUrl": "https://github.com/marlinjai/framer-clone/actions/runs/43871048435/job/133312005128"
+                        }
+                    },
+                    {
+                        "commitOid": "7dd53fc65c402925d4cab81d56c7bb70820e41b0",
+                        "latestStatus": {
+                            "state": "SUCCESS",
+                            "logUrl": "https://github.com/marlinjai/framer-clone/actions/runs/43711914104/job/132805113036"
+                        }
+                    },
+                    {
+                        "commitOid": "a8a4dd8dda726d0342b3663938388a61cf366a54",
+                        "latestStatus": {
+                            "state": "SUCCESS",
+                            "logUrl": "https://github.com/marlinjai/framer-clone/actions/runs/43590876147/job/132435109646"
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}
