@@ -12,14 +12,15 @@
 // runtime it runs in already has as a global (Web Crypto, TextEncoder).
 //
 // From slice C2 the application reads the hash's shape and the host name rule
-// from here (src/lib/customCode/customCode.ts); nothing in the application
-// serves or frames a block yet.
+// from here (src/lib/customCode/customCode.ts). From slice C3 the shell below
+// carries the bridge client the author's code calls, and the broker in the page
+// (src/lib/customCode/broker.ts) speaks protocol version 1 with it.
 
 /** The version of the postMessage protocol between the page and a frame. */
 export const BOX_PROTOCOL_VERSION = 1;
 
 /** The version of the shell, sent in `hello`. The shell is in no hash, so it can change with a deploy. */
-export const BOX_SHELL_VERSION = 1;
+export const BOX_SHELL_VERSION = 2;
 
 /** Present in every served document: what the canary monitor looks for. */
 export const BOX_SHELL_MARKER = 'fc-box-shell';
@@ -262,9 +263,27 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
 // ---------------------------------------------------------------------------
 
 /**
- * The script that runs first in every document. Version 1 removes the WebRTC
- * constructors and says `hello` to the page; the bridge client (`lumitra.read`
- * and the rest) joins it in slice C3.
+ * The script that runs first in every document. It removes the WebRTC
+ * constructors, says `hello` to the page, and gives the author's code the
+ * bridge client, `window.lumitra` (slice C3, decision D60 onward of the plan):
+ *
+ *   lumitra.read(id)            the last value of a declared read, or undefined
+ *   lumitra.onState(id, fn)     calls fn with every new value of a declared read
+ *                               (at once with the value it already has); returns
+ *                               a function that stops it
+ *   lumitra.setState(id, value) asks the page to set a declared write
+ *   lumitra.emit(name)          fires a declared `custom:<name>` event (`name` or
+ *                               `custom:name`)
+ *   lumitra.resize(height)      asks for a height in pixels (sizing `content`)
+ *   lumitra.ready()             a promise, resolved once the page has connected
+ *                               and sent every declared read its first value
+ *
+ * Until the page connects, what the client sends waits in a short queue (the
+ * first 30 messages), so code that runs at once loses nothing. Nothing here is a
+ * boundary for the page: the author's code shares this realm and can post
+ * anything on the port, and the broker in the page checks every message
+ * (src/lib/customCode/broker.ts). An uncaught error or rejection in the frame is
+ * reported to the page as an `error` message, shortened.
  *
  * Removing the constructors is a mitigation, not a boundary (behaviour plan,
  * "The frame"): a script can reach a fresh set through a new realm, such as an
@@ -278,14 +297,47 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
  * The text must never hold the character sequence that closes a script
  * element; a test holds that.
  */
-export const BOX_SHELL_SCRIPT =
-  `/*${BOX_SHELL_MARKER} v${BOX_SHELL_VERSION}*/(function(){'use strict';` +
-  "var w=window,n=['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel','RTCIceTransport','RTCSessionDescription','RTCIceCandidate'];" +
-  'for(var i=0;i<n.length;i++){' +
-  'try{Object.defineProperty(w,n[i],{value:undefined,writable:false,configurable:false,enumerable:false});}' +
-  'catch(e){try{delete w[n[i]];}catch(f){}}}' +
-  `try{w.parent.postMessage({fc:${BOX_PROTOCOL_VERSION},kind:'hello',shell:${BOX_SHELL_VERSION}},'*');}catch(e){}` +
-  '})();';
+export const BOX_SHELL_SCRIPT = [
+  `/*${BOX_SHELL_MARKER} v${BOX_SHELL_VERSION}*/(function(){'use strict';`,
+  "var w=window,n=['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel','RTCIceTransport','RTCSessionDescription','RTCIceCandidate'];",
+  'for(var i=0;i<n.length;i++){',
+  'try{Object.defineProperty(w,n[i],{value:undefined,writable:false,configurable:false,enumerable:false});}',
+  'catch(e){try{delete w[n[i]];}catch(f){}}}',
+  `try{w.parent.postMessage({fc:${BOX_PROTOCOL_VERSION},kind:'hello',shell:${BOX_SHELL_VERSION}},'*');}catch(e){}`,
+  // The bridge client. Everything below is the author's convenience; the broker trusts none of it.
+  'try{',
+  'var port=null,queue=[],values={},subs={},wait=[],reads=null,done=false,own=Object.prototype.hasOwnProperty;',
+  'var send=function(m){if(port){try{port.postMessage(m);}catch(e){}}else if(queue.length<30){queue.push(m);}};',
+  'var settle=function(){if(done||!reads)return;for(var j=0;j<reads.length;j++){if(!own.call(values,reads[j]))return;}',
+  'done=true;for(var k=0;k<wait.length;k++){try{wait[k]();}catch(e){}}wait=[];};',
+  'var onPort=function(e){var d=e.data;if(!d||typeof d!=="object")return;',
+  'if(d.kind==="ping"){send({kind:"pong"});return;}',
+  'if(d.kind==="state"&&typeof d.id==="string"){values[d.id]=d.value;var l=own.call(subs,d.id)?subs[d.id].slice():[];',
+  'for(var j=0;j<l.length;j++){try{l[j](d.value);}catch(x){report(x);}}settle();}};',
+  'var report=function(x){var m;try{m=x&&x.message!==undefined?String(x.message):String(x);}catch(e){m="error";}',
+  'send({kind:"error",message:m.slice(0,500)});};',
+  'w.addEventListener("message",function(e){var d=e.data;',
+  'if(port||e.source!==w.parent||!d||d.fc!==1||d.kind!=="connect"||!e.ports||!e.ports[0])return;',
+  'port=e.ports[0];port.onmessage=onPort;',
+  'var r=d.declaration&&d.declaration.reads;reads=Object.prototype.toString.call(r)==="[object Array]"?r.slice():[];',
+  'for(var j=0;j<queue.length;j++){send(queue[j]);}queue=[];settle();});',
+  'w.addEventListener("error",function(e){report(e.error!==undefined&&e.error!==null?e.error:e.message);});',
+  'w.addEventListener("unhandledrejection",function(e){report(e.reason);});',
+  'var api={',
+  'read:function(id){return own.call(values,id)?values[id]:undefined;},',
+  'onState:function(id,fn){if(typeof fn!=="function")return function(){};id=String(id);',
+  '(own.call(subs,id)?subs[id]:(subs[id]=[])).push(fn);',
+  'if(own.call(values,id)){try{fn(values[id]);}catch(x){report(x);}}',
+  'return function(){var l=own.call(subs,id)?subs[id]:[];var at=l.indexOf(fn);if(at>=0)l.splice(at,1);};},',
+  'setState:function(id,value){send({kind:"setState",id:String(id),value:value});},',
+  'emit:function(name){name=String(name);send({kind:"emit",name:name.indexOf("custom:")===0?name:"custom:"+name});},',
+  'resize:function(height){send({kind:"resize",height:Number(height)});},',
+  'ready:function(){return new Promise(function(resolve){if(done)resolve();else wait.push(resolve);});}',
+  '};',
+  'Object.defineProperty(w,"lumitra",{value:Object.freeze(api),writable:false,configurable:false,enumerable:false});',
+  '}catch(e){}',
+  '})();',
+].join('');
 
 /** What stands before the author's document in every answer. */
 export const BOX_DOCUMENT_PREFIX = `<!doctype html><meta charset="utf-8"><script>${BOX_SHELL_SCRIPT}</script>`;
