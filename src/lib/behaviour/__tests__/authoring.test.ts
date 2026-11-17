@@ -151,6 +151,15 @@ describe('what a person entered goes through the parser', () => {
     expect(roots).toHaveLength(1);
   });
 
+  it('counts a refusal twice when it is there twice: a second copy of one already refused is new', () => {
+    // Two identical triggers: the second is refused as a repeated id. A retype that breaks the
+    // first refuses it too, with the same stored text, and that refusal is new.
+    const trigger = { id: 't1', on: 'click', do: [{ toggle: 'menu' }] };
+    const tree = withBehaviourAt(page(), 'button', { on: [trigger, trigger] })!;
+    const menu = { id: 'menu', name: 'Menu open', type: 'number', initial: 0 };
+    expect(refusalAt([tree], 'root', { state: [menu] }, menu, () => '"Go"')).toMatch(/^it would stop "Go" working: /);
+  });
+
   it('names the elements whose behaviour reads a value, not the one declaring it', () => {
     const shown = withBehaviourAt(page(), 'drawer', { showWhen: { state: 'menu', eq: true } })!;
     const tree = withBehaviourAt(shown, 'button', { on: [{ id: 't1', on: 'click', do: [{ toggle: 'menu' }] }] })!;
