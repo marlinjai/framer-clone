@@ -524,7 +524,7 @@ C1 to C6 can be built now: nothing is served on the real domain until O1, and no
 | C1a | `sandbox-service`, the service and the contract. **Built 2026-11-12,** see "Decided in slice C1a" | `services/box/` (server, cache, rate limit, shell, tests, a fixture that states the view's columns), `src/lib/customCode/contract.ts`, `Dockerfile.box`, `Dockerfile.box.dockerignore`, `.github/workflows/box.yml` (build and test only) | none | 1 session | Every box test above passes against the built image and a real Postgres holding the fixture; `box_reader` reads only the view; the image runs read-only as non-root with every capability dropped; `contract.ts` imports nothing; nothing in the application imports it; no image is pushed and nothing is deployed |
 | C1b | `sandbox-schema`. **Built 2026-11-15** on `feat/sandbox-box-schema` after Marlin's yes to the migration by name that day, see "Decided in slice C1b" | Prisma migration `20261115000000_custom_code` (`custom_code_blobs`, `custom_code_audit`, `custom_code_proposals`, `sites.custom_code_enabled`, the function `box_document` of D18 instead of the view), the grant of EXECUTE on it in `prisma/sql/box-reader.sql` (no password in it, applied by the operator in O1), the `deploy/README.md` section, and the box's integration suite pointed at the real migration instead of the fixture | C1a, #394 merged, **Marlin's yes to the migration** | 1 session | The box's integration suite passes against the migrated schema; `box_reader` may call only `box_document`, reads no table and never gets the code of a blob that is not live; the migration is additive and applies on a database without `box_reader` |
 | O1 | `sandbox-domain-and-host` (operator, not a worker). **Repository half built 2026-11-17 on `feat/sandbox-box-deploy`,** see "Decided in step O1 (repository half)"; the operator half (infra repository, Coolify, Infisical, DNS, monitors) is open | Infra repo: Cloudflare zone and records in Terraform, Infisical project `framer-clone-box` and its machine identity, Coolify application, `box_reader` applied, five Kuma monitors. In this repository: the Infisical client and login entrypoint in `Dockerfile.box`, and the push, webhook and health poll steps in `box.yml` | C1a, C1b, **M2 bought** | Half a day | `curl` with and without fetch metadata headers gives 200 and 403 on `run.<domain>`; certificates valid; no `Set-Cookie`; all monitors green; abuse page answers |
-| C2 | `sandbox-element`. **Built 2026-11-16 on `feat/sandbox-element`,** see "Decided in slice C2" | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `HeadlessComponentRenderer.tsx`, `componentRegistry.ts`, `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), the tile | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
+| C2 | `sandbox-element`. **Built 2026-11-16 on `feat/sandbox-element`,** see "Decided in slice C2" | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `blockedNodes.ts`, `renderVocabulary.ts`, `previewSafe.ts`, `src/components/CustomCodeSurface.tsx` with `EditorApp.tsx` and `PreviewMount.tsx` (the surface context), `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), `src/lib/consent/consent.ts` and `MapEmbedIsland.tsx` (D48), `PreviewShell.tsx` (D49); no registry entry (D43), `HeadlessComponentRenderer.tsx` unchanged | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
 | C3 | `sandbox-bridge` | `src/lib/customCode/broker.ts`, `CustomCodeIsland.tsx`, the shell client in `contract.ts`, `runtime.ts` (third lazy chunk), size test (broker at most 2 kilobytes gzipped, as the behaviour plan holds) | C2, B4 | 3 sessions | Bridge tests above in three engines; a page without blocks loads no broker byte; the focus watch proven or replaced with the proof attached |
 | C4 | `sandbox-authoring` | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
 | C5 | `sandbox-lifecycle` | `src/server/sites/repository.ts` (blob pruning with revisions), `src/server/sites/erase.ts` (D9), publish dialog listing, `publishCheck.ts` warnings, proposals (D7): `propose_custom_code` in the site operations, the importer's "Propose as custom code", the panel's Accept, `POST /api/internal/custom-code/block` | C4 | 2 sessions | Rollback to a revision whose blob was blocked shows the fallback; an erase inside code rewrites the hash in every kept revision in one transaction; a proposal never reaches the box; an agent key cannot write a hash |
@@ -756,8 +756,11 @@ reaches a page only as stored data. The generator and the review already refuse 
 `ai/review/ops.ts`, both tested), as D7 requires.
 
 **D44. A branch preview link shows the fallback, unchanged from D13.** D13 named C2 as its revisit point. Nothing is widened: a
-preview host keeps its `frame-ancestors 'none'` and gets no frame policy, and `previewSafeTree` takes `customCode` off every node, so
-a block on a preview link renders as its fallback with no mark an island could act on. Letting preview links run blocks stays
+preview host keeps its `frame-ancestors 'none'` and now also gets `frame-src 'none'` (changed after the first review of pull request
+#450): a preview draws no frame at all (a map shows a notice, a block its fallback), so this refuses only a frame a stored page could
+sneak past the render gate, the backstop the published plane has. Nothing frames a preview host, which already refuses being framed.
+`previewSafeTree` takes `customCode` off every node, so a block on a preview link renders as its fallback with no mark an island could
+act on. Letting preview links run blocks stays
 Marlin's decision, with the design D13 asks for.
 
 **D45. What the published page marks, and what it cannot know.** The server renders the node's own tag (a void tag becomes a
@@ -782,11 +785,15 @@ attributes.
 **D48. A maps "yes" given on a page already loaded reloads the page.** The middleware reads the maps consent cookie into the
 document's enforced `frame-src`, and a policy cannot widen after the document loaded. Before C2 the map island drew the map in the
 same document on the banner's "yes"; under the enforced header that frame would be refused. The consent runtime
-(`src/lib/consent/consent.ts`) now remembers whether the document was served with the cookie: a "yes" in a document served
-without it, once stored, reloads the page instead of announcing it, and the new document allows the map. A stored "yes" whose
-cookie has expired (the cookie lasts a year, the record longer) sets the cookie again and reloads once. When storage throws, a
-reload would forget the answer, so it is announced as before and the map stays refused in that page view; the visitor still has
-"Open in Google Maps". A placeholder that says "reload to show the map" was the alternative; a reload is what the visitor asked
+(`src/lib/consent/consent.ts`) now remembers whether the document was served with the cookie: a "yes" on a page with a map, in a
+document served without it, once stored, reloads the page instead of announcing it, and the new document allows the map. A page
+without a map only sets the cookie, and the next document's policy allows Google. The reload is decided before anything loads, so
+the document it replaces starts no tracker and a visit is not counted twice (changed after the first review of pull request #450),
+and the `#cookie-settings` address is dropped first, so the banner does not open again. A stored "yes" whose cookie has expired (a
+year at most, seven days for a cookie set by script in Safari) sets the cookie again before the tracker could start, and on a page
+with a map reloads once. When storage throws, a reload would forget the answer, so it is announced as before; the runtime exposes
+`mapsAtLoad`, and the map island keeps its placeholder rather than draw a frame the policy refuses. The visitor still has "Open in
+Google Maps". A placeholder that says "reload to show the map" was the alternative; a reload is what the visitor asked
 for in one step. The render gate proves it in Chromium and WebKit: a page served without the cookie, the banner's yes, a second
 document with Google in `frame-src`, and the map loads.
 
@@ -797,6 +804,19 @@ preview now load a new document (`src/components/preview/leavePreview.ts`). The 
 opens a new tab, and no other client-side link leads to the route. The demo preview at `/preview` stays client-side, because its
 project lives only in the tab's memory, and it never carries the policy. The checkout draws no frame (no payment script runs on
 the page), so nothing else on the policed documents is affected.
+
+**D50. A block inside a form or a shop control shows its fallback, with no stored value in the page's script data.** Form and shop
+controls are client islands that receive their whole stored node, and an island's props are serialized into the page (the React
+Server Components payload). `withoutCustomCodeTree` (`src/lib/customCode/customCode.ts`) takes `customCode` off such a node and
+every descendant before it crosses, so nothing of a block's value reaches the page, as D36 and D45 say; inside one the block renders
+as its fallback, without the trace mark. Running a block inside a form or a shop control is left to C3 if it is ever wanted. Found
+by the first review of pull request #450.
+
+**D51. The tile is drawn in a plain container, as a labelled group.** On the canvas a block stored as a link, a button, an SVG
+element or any tag that cannot hold the tile (a paragraph, a list, a table part) draws the tile in a `div`, without the control's
+own attributes (`href`, `type` and the like), so the tile's link is never inside another control and SVG never hides it. Plain
+containers (`div`, `section`, `article`, `aside`, `header`, `footer`, `main`, `nav`, `figure`, `blockquote`, `li`, `dd`) keep their
+tag. The tile carries `role="group"`, which may hold its `aria-label`. Found by the first review of pull request #450.
 
 ## For Marlin
 
