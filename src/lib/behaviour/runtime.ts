@@ -184,8 +184,8 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   // ---- nodes -------------------------------------------------------------
 
-  const entriesOf = (el: Element): readonly ProgramEntry[] => entries.get(attrOf(el, nodeAttr) ?? '') ?? NO_ENTRIES;
-  const entryOf = (el: Element): ProgramEntry | undefined => entriesOf(el)[Number(attrOf(el, VARIANT_ATTR) ?? 0)];
+  const entriesOf = (el: Element): readonly ProgramEntry[] => entries.get(attrOf(el, nodeAttr) || '') || NO_ENTRIES;
+  const entryOf = (el: Element): ProgramEntry | undefined => entriesOf(el)[Number(attrOf(el, VARIANT_ATTR) || 0)];
 
   /** The nearest node holding `key`, scope by scope, so a row finds its own. The page is the last scope. */
   const find = (key: string, from: Element): Element | null => {
@@ -348,7 +348,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
       return;
     }
     const number = Number(value);
-    if (Number.isFinite(number)) (el as HTMLElement).style.setProperty(binding.cssVar, `${number}${binding.unit ?? ''}`);
+    if (Number.isFinite(number)) (el as HTMLElement).style.setProperty(binding.cssVar, `${number}${binding.unit || ''}`);
   };
 
   const flush = guarded((): void => {
@@ -356,7 +356,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     charge(bound.size);
     for (const el of bound) {
       if (!isConnected(el)) bound.delete(el);
-      else for (const binding of entryOf(el)?.bind ?? []) applyBinding(el, binding);
+      else for (const binding of entryOf(el)?.bind || []) applyBinding(el, binding);
     }
     // A change of state can hide the item holding a group's Tab stop.
     if (rover) groups.forEach((group) => rover.sync(group));
@@ -525,7 +525,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     }
     const type = `custom:${name}`;
     for (const at of upFrom(run.el)) {
-      for (const trigger of entryOf(at)?.on ?? []) {
+      for (const trigger of entryOf(at)?.on || []) {
         if (trigger.on === type) fire(trigger, at, null, run.depth + 1, run.replay);
       }
     }
@@ -569,7 +569,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   };
 
   const fireOn = (el: Element, type: string, event: Event | null, replay = false): void => {
-    for (const trigger of entryOf(el)?.on ?? []) {
+    for (const trigger of entryOf(el)?.on || []) {
       if (trigger.on === type && trigger.scope !== 'document') fire(trigger, el, event, 0, replay);
     }
   };
@@ -600,7 +600,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
 
   const deliverPageWide = (event: Event): void => {
     if (!isOurs(event)) return;
-    for (const [key, trigger] of pageWide.get(event.type) ?? []) {
+    for (const [key, trigger] of pageWide.get(event.type) || []) {
       for (const el of every(top, `[${nodeAttr}="${key}"]`)) {
         if (entryOf(el)?.on?.includes(trigger)) fire(trigger, el, event, 0);
       }
@@ -679,7 +679,7 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     if (entry.bind) bound.add(el);
     if (entry.group) groups.add(el);
     if (entry.on?.some(({ on }) => on.startsWith('view-'))) watch(el);
-    for (const trigger of entry.on ?? []) {
+    for (const trigger of entry.on || []) {
       if (trigger.on === 'every') startEvery(el, trigger);
       if (trigger.on === 'toggle') opening.push([el, trigger]);
     }
@@ -711,12 +711,12 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
   const begin = (): void => {
     for (const [key, list] of entries) {
       for (const entry of list) {
-        for (const trigger of entry.on ?? []) {
-          if (trigger.scope === 'document') pageWide.set(trigger.on, [...(pageWide.get(trigger.on) ?? []), [key, trigger]]);
+        for (const trigger of entry.on || []) {
+          if (trigger.scope === 'document') pageWide.set(trigger.on, [...(pageWide.get(trigger.on) || []), [key, trigger]]);
         }
       }
     }
-    const triggers = [...entries.values()].flatMap((list) => list.flatMap((entry) => entry.on ?? []));
+    const triggers = [...entries.values()].flatMap((list) => list.flatMap((entry) => entry.on || []));
     if (triggers.some(({ on }) => SELF_CAUSED.test(on))) {
       const person = () => {
         prompts += 1;
@@ -753,10 +753,10 @@ export function startBehaviour({ container, program, nodeAttr = NODE_ATTR, surfa
     if (page) replay(page.queue);
     catchUp();
     for (const el of every(top, `[${nodeAttr}]`)) fireOn(el, 'page-ready', null);
+    // Blocks are served once the page is adopted, so a frame's first write finds its state.
+    if (broker) stops.push(broker(kit));
   };
 
   guarded(begin)();
-  // Blocks are served once the page is adopted, so a frame's first write finds its state.
-  if (broker && !stopped) stops.push(broker(kit));
   return stop;
 }
