@@ -37,6 +37,8 @@ interface ConsentApi {
   open?: (category?: string) => void;
   /** False when this document was served without the maps cookie: its frame-src refuses Google. */
   mapsAtLoad?: boolean;
+  /** Whether the maps cookie is set now. False after a yes means the browser blocks cookies. */
+  mapsAllowed?: () => boolean;
 }
 
 /**
@@ -57,6 +59,16 @@ function frameAllowed(): boolean {
   return consentApi()?.mapsAtLoad !== false;
 }
 
+/**
+ * Whether a reload would bring the map: the maps cookie the yes wrote is set. When the
+ * browser blocks cookies it never is, the next document would be served without it
+ * again, so nothing but "Open in Google Maps" helps.
+ */
+function cookieKept(): boolean {
+  const read = consentApi()?.mapsAllowed;
+  return typeof read === 'function' ? read() === true : true;
+}
+
 function consentApi(): ConsentApi | undefined {
   return (window as unknown as { __lumitraConsent?: ConsentApi }).__lumitraConsent;
 }
@@ -64,8 +76,10 @@ function consentApi(): ConsentApi | undefined {
 /**
  * The session key naming the map box whose "Load map" asked, kept across the reload a
  * yes may cause (decision D48 of docs/plans/2026-11-02-sandboxed-custom-code.md): the
- * new page focuses that map's frame once, as the same page would have. One shot: the
- * first page load on the same path reads it and removes it.
+ * new page focuses that map's frame once, as the same page would have. Written only on
+ * that reload (the runtime's `lumitra:maps-reload`, or this box's own reload button), so
+ * a banner closed without a yes leaves nothing behind. One shot: the first page load on
+ * the same path reads it and removes it.
  */
 export const MAP_FOCUS_KEY = 'fc-map-focus';
 
@@ -100,6 +114,9 @@ function readFocusMark(): MapFocusMark | null {
     return null;
   }
 }
+
+/** The box whose "Load map" opened the banner last: the one a maps reload focuses. */
+let lastAsker: HTMLElement | null = null;
 
 export interface MapEmbedIslandProps {
   /** The box's DOM props, through the render gate and without the map settings. */
@@ -141,12 +158,23 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
     return () => window.removeEventListener('lumitra:consent', onConsent);
   }, []);
 
+  // A yes that reloads the page: the map whose "Load map" opened the banner leaves the
+  // mark that focuses it on the new page (MAP_FOCUS_KEY). The last box to ask is the one.
+  useEffect(() => {
+    const onReload = (event: Event) => {
+      const detail = (event as CustomEvent<{ fromMap?: unknown } | null>).detail;
+      if (detail?.fromMap !== true || lastAsker !== host.current || !host.current) return;
+      writeFocusMark({ path: window.location.pathname, index: boxIndex(host.current) });
+    };
+    window.addEventListener('lumitra:maps-reload', onReload);
+    return () => window.removeEventListener('lumitra:maps-reload', onReload);
+  }, []);
+
   const load = useCallback(() => {
     const api = consentApi();
     if (api && typeof api.open === 'function') {
       asked.current = true;
-      // A yes may reload the page; the new one focuses this map (MAP_FOCUS_KEY).
-      writeFocusMark({ path: window.location.pathname, index: boxIndex(host.current) });
+      lastAsker = host.current;
       api.open('maps');
       return;
     }
@@ -184,7 +212,17 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
   const show = granted && allowed && isRebuiltMapSrc(src);
   // A yes this page's policy cannot honour (storage blocked, so no reload carried it):
   // the placeholder says so and offers the reload, which the cookie already allows.
-  const needsReload = granted && !allowed && isRebuiltMapSrc(src);
+  // Unless the cookie did not stick (the browser blocks cookies): then no reload helps,
+  // and the placeholder says the map cannot be shown here, with only the Google link.
+  const refused = granted && !allowed && isRebuiltMapSrc(src);
+  const kept = refused ? cookieKept() : true;
+  const needsReload = refused && kept;
+  const cookiesBlocked = refused && !kept;
+  const reloadHere = useCallback(() => {
+    // This box's own reload: the new page focuses it, as after the runtime's.
+    if (host.current) writeFocusMark({ path: window.location.pathname, index: boxIndex(host.current) });
+    reloadPage();
+  }, []);
 
   // After this box asked, focus goes where the answer leads: the map, or the reload
   // button, never lost with the "Load map" button. A mark from before a reload does the same.
@@ -199,7 +237,8 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
     if (active && active !== document.body && !fromMark) return;
     if (show) frame.current?.focus();
     else if (needsReload) (shadow?.querySelector('[data-fc-map-reload]') as HTMLElement | null)?.focus();
-  }, [granted, show, needsReload, shadow]);
+    else if (cookiesBlocked) (shadow?.querySelector('[data-fc-map-open]') as HTMLElement | null)?.focus();
+  }, [granted, show, needsReload, cookiesBlocked, shadow]);
   const own = show ? (
     <iframe
       ref={frame}
@@ -218,7 +257,7 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
       style={MAP_FRAME_STYLE}
     />
   ) : (
-    mapPlaceholder(view, { onLoad: load, liveLink: true, onReload: needsReload ? reloadPage : undefined })
+    mapPlaceholder(view, { onLoad: load, liveLink: true, onReload: needsReload ? reloadHere : undefined, cookiesBlocked })
   );
   return React.createElement(
     'div',

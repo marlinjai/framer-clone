@@ -32,6 +32,7 @@ interface Api {
   decline(): void;
   get(category?: string): string | null;
   mapsAtLoad?: boolean;
+  mapsAllowed?: () => boolean;
   categories: string[];
   grant?: unknown;
 }
@@ -139,6 +140,63 @@ describe('a site with one purpose', () => {
     cleanup();
     document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
     expect(load(['maps']).mapsAtLoad).toBe(true);
+  });
+
+  it('says whether the maps cookie is set now, so a map can tell a browser that blocks cookies', () => {
+    mockReload();
+    const api = load(['maps']);
+    expect(api.mapsAllowed?.()).toBe(false);
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
+    expect(api.mapsAllowed?.()).toBe(true);
+  });
+
+  it('a yes where the cookie does not stick neither reloads nor stays silent: the map hears it and explains', () => {
+    const reload = mockReload();
+    // A browser that blocks cookies: every write is dropped.
+    // Defined by hand: two spies on one accessor restore each other's mock.
+    const jar = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')!;
+    Object.defineProperty(Document.prototype, 'cookie', { configurable: true, get: () => '', set: () => {} });
+    try {
+      const api = load(['maps']);
+      click('Accept');
+      expect(api.mapsAllowed?.()).toBe(false);
+      expect(reload).not.toHaveBeenCalled();
+      expect(events).toEqual([{ maps: true }]);
+    } finally {
+      Object.defineProperty(Document.prototype, 'cookie', jar);
+    }
+  });
+
+  it('announces a maps reload first, saying whether a map\'s "Load map" opened the banner', () => {
+    const reload = mockReload();
+    const reloads: unknown[] = [];
+    const onReload = (event: Event) => reloads.push((event as CustomEvent).detail);
+    window.addEventListener('lumitra:maps-reload', onReload);
+    try {
+      const api = load(['maps']);
+      api.open('maps');
+      click('Accept');
+      expect(reloads).toEqual([{ fromMap: true }]);
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('lumitra:maps-reload', onReload);
+    }
+  });
+
+  it('a maps reload from "Cookie settings", which no map opened, says so', () => {
+    mockReload();
+    const reloads: unknown[] = [];
+    const onReload = (event: Event) => reloads.push((event as CustomEvent).detail);
+    window.addEventListener('lumitra:maps-reload', onReload);
+    try {
+      store({ maps: false });
+      load(['maps']);
+      cookieSettings();
+      click('Accept');
+      expect(reloads).toEqual([{ fromMap: false }]);
+    } finally {
+      window.removeEventListener('lumitra:maps-reload', onReload);
+    }
   });
 
   it('drops the cookie settings address before the reload, so the banner does not open again', () => {

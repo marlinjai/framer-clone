@@ -19,7 +19,7 @@ import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!5e0';
 const cmsRepo = { listRows: async () => ({ rows: [], total: 0 }), getRow: async () => null } as unknown as CmsReadRepository;
 
-type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void; mapsAtLoad?: boolean } };
+type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void; mapsAtLoad?: boolean; mapsAllowed?: () => boolean } };
 const win = window as Win;
 
 afterEach(() => {
@@ -195,6 +195,32 @@ describe('the island', () => {
     expect(own().getByRole('link', { name: 'Open in Google Maps' })).toBeTruthy();
   });
 
+  describe('a yes where the browser blocks cookies', () => {
+    it('says the map cannot be shown here and offers only Google Maps, never a reload that cannot help', () => {
+      const reload = vi.fn();
+      vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
+      win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => false };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      expect(frame()).toBeNull();
+      expect(own().getByRole('status').textContent).toBe('The map cannot be shown while this browser blocks cookies. Open it in Google Maps instead.');
+      expect(own().queryByRole('button', { name: 'Reload page' })).toBeNull();
+      expect(own().queryByRole('button', { name: 'Load map' })).toBeNull();
+      expect(own().getByRole('link', { name: 'Open in Google Maps' })).toBeTruthy();
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('moves focus to "Open in Google Maps" after the yes this box asked for', () => {
+      win.__lumitraConsent = { get: () => null, open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => false };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      fireEvent.click(own().getByRole('button', { name: 'Load map' }));
+      (document.activeElement as HTMLElement | null)?.blur();
+      act(() => {
+        window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: true } }));
+      });
+      expect(shadowRoot()!.activeElement).toBe(own().getByRole('link', { name: 'Open in Google Maps' }));
+    });
+  });
+
   it('moves focus to the reload button when the yes this box asked for cannot show the map', () => {
     const open = vi.fn();
     win.__lumitraConsent = { get: () => null, open, mapsAtLoad: false };
@@ -212,11 +238,62 @@ describe('the island', () => {
     afterEach(() => window.sessionStorage.clear());
     const mark = () => window.sessionStorage.getItem(MAP_FOCUS_KEY);
 
-    it('"Load map" names this box before the banner asks', () => {
+    const mapsReload = (fromMap: boolean) =>
+      act(() => {
+        window.dispatchEvent(new CustomEvent('lumitra:maps-reload', { detail: { fromMap } }));
+      });
+
+    it('"Load map" leaves no mark: only the reload its yes causes names this box', () => {
       win.__lumitraConsent = { get: () => null, open: vi.fn(), mapsAtLoad: false };
       render(<MapEmbedIsland domProps={{}} config={config} />);
       fireEvent.click(own().getByRole('button', { name: 'Load map' }));
+      expect(mark()).toBeNull();
+      mapsReload(true);
       expect(JSON.parse(mark()!)).toEqual({ path: window.location.pathname, index: 0 });
+    });
+
+    it('a decline, or a banner closed without a yes, leaves no mark for a later visit', () => {
+      win.__lumitraConsent = { get: () => null, open: vi.fn(), mapsAtLoad: false };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      fireEvent.click(own().getByRole('button', { name: 'Load map' }));
+      act(() => {
+        window.dispatchEvent(new CustomEvent('lumitra:consent', { detail: { maps: false } }));
+      });
+      expect(mark()).toBeNull();
+      // A later yes from "Cookie settings", which no map opened, reloads without a mark.
+      mapsReload(false);
+      expect(mark()).toBeNull();
+      // Back on this page later: no mark, so nothing takes focus or scrolls.
+      cleanup();
+      win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: true };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      expect(frame()).not.toBeNull();
+      expect(shadowRoot()!.activeElement).toBeNull();
+    });
+
+    it('a reload asked by another map on the page leaves this one unmarked', () => {
+      win.__lumitraConsent = { get: () => null, open: vi.fn(), mapsAtLoad: false };
+      render(
+        <>
+          <MapEmbedIsland domProps={{ id: 'first' }} config={config} />
+          <MapEmbedIsland domProps={{ id: 'second' }} config={config} />
+        </>,
+      );
+      const first = document.getElementById('first')!.shadowRoot!;
+      fireEvent.click(within(first as unknown as HTMLElement).getByRole('button', { name: 'Load map' }));
+      mapsReload(true);
+      // The second box hears the same reload and writes nothing over the first's mark.
+      expect(JSON.parse(mark()!)).toEqual({ path: window.location.pathname, index: 0 });
+    });
+
+    it('this box\'s own reload button names it for the new page', () => {
+      const reload = vi.fn();
+      vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
+      win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => true };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      fireEvent.click(own().getByRole('button', { name: 'Reload page' }));
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(mark()!)).toMatchObject({ index: 0 });
     });
 
     it('the new page focuses this map once and removes the mark', () => {
