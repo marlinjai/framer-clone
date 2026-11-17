@@ -254,7 +254,11 @@ export interface ConsentRuntimeConfig {
  * reloads once before anything starts. A page without a map only sets the cookie.
  * When storage throws, the "yes" would not survive a reload, so it is announced as
  * before; `mapsAtLoad` on the API tells a map island that this document's policy
- * refuses Google, so it keeps its placeholder.
+ * refuses Google, so it keeps its placeholder, and `mapsAllowed()` whether the cookie
+ * is set now: when it is not (the browser blocks cookies), no reload can help, and the
+ * island says so instead of offering one. A maps reload is announced first as a
+ * `lumitra:maps-reload` event, so the map whose "Load map" asked can leave a focus
+ * mark for the new page.
  * Storage that throws (sandboxed frames, some private modes) keeps the choice for
  * this page view only.
  *
@@ -324,7 +328,11 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     // the next document's policy allows Google.
     "function mapsReload(){return asks('maps')&&!mapsAtLoad&&mapsAllowed()&&kept('maps');}" +
     // Reloads without the #cookie-settings address, which would open the banner again.
-    "function reload(){try{if(w.location.hash===C.hash&&w.history&&w.history.replaceState)w.history.replaceState(null,'',w.location.pathname+w.location.search);}catch(e){}" +
+    // A maps reload is announced first, synchronously, as `lumitra:maps-reload`: its
+    // detail says whether a map's own "Load map" opened this banner, so that map (and
+    // only on this path) leaves the mark that focuses it on the new page.
+    "function reload(m){if(m){try{w.dispatchEvent(new CustomEvent('lumitra:maps-reload',{detail:{fromMap:focusCat==='maps'}}));}catch(e){}}" +
+    "try{if(w.location.hash===C.hash&&w.history&&w.history.replaceState)w.history.replaceState(null,'',w.location.pathname+w.location.search);}catch(e){}" +
     "try{w.location.reload();}catch(e){}}" +
     "function emit(c,yes){var x={};x[c]=yes;try{w.dispatchEvent(new CustomEvent('lumitra:consent',{detail:x}));}catch(e){}}" +
     // Load the tracker. It is an ES module that only exports init() and
@@ -381,13 +389,13 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     "function answer(list,yes){var before=state('analytics'),p={},i,n=0;for(i=0;i<list.length;i++)if(known(list[i])){p[list[i]]=yes;n++;}if(!n)return;write(p);" +
     // Decided before anything loads: a document about to be replaced starts no tracker
     // (the next one does, from the stored answer) and announces nothing.
-    "var stop=yes&&p.maps===true&&mapsReload();if(!stop)for(i=0;i<list.length;i++){if(!known(list[i]))continue;if(list[i]==='analytics'){if(yes)load();else{forget();if(before==='granted'||loaded)stop=true;}}else emit(list[i],yes);}" +
-    "if(stop)reload();" +
+    "var mr=yes&&p.maps===true&&mapsReload(),stop=mr;if(!stop)for(i=0;i<list.length;i++){if(!known(list[i]))continue;if(list[i]==='analytics'){if(yes)load();else{forget();if(before==='granted'||loaded)stop=true;}}else emit(list[i],yes);}" +
+    "if(stop)reload(mr);" +
     "if(mode!=='user'&&!openShown())hide();else layout();}" +
     "function nameOf(t,attr){var v=t.getAttribute(attr);return v&&known(v)?[v]:shown();}" +
     "function open(c){guard();var a=d.activeElement;opener=a&&a!==d.body&&!(el&&el.contains(a))?a:null;" +
     "if(c&&known(c)&&C.site.indexOf(c)!==-1){if(mode!=='user')mode='focus';focusCat=c;}else{mode='user';focusCat=null;}show(true);}" +
-    "w.__lumitraConsent={open:open,accept:function(){answer(shown(),true);},decline:function(){answer(shown(),false);},get:function(c){return state(c||'analytics');},mapsAtLoad:mapsAtLoad,categories:C.cats.slice(),version:C.v};" +
+    "w.__lumitraConsent={open:open,accept:function(){answer(shown(),true);},decline:function(){answer(shown(),false);},get:function(c){return state(c||'analytics');},mapsAtLoad:mapsAtLoad,mapsAllowed:mapsAllowed,categories:C.cats.slice(),version:C.v};" +
     "d.addEventListener('pointerdown',function(ev){if(el&&ev.target&&el.contains(ev.target))downs++;},true);" +
     "d.addEventListener('click',function(ev){var t=ev.target;while(t&&t.nodeType===1){" +
     // Only the banner's own buttons answer: a choice nobody made is not consent.
