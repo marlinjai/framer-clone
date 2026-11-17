@@ -14,7 +14,7 @@ const unknown = { kind: 'unknown' as const, reason: 'test' };
 
 describe('decide', () => {
   const deployed = { kind: 'commit' as const, sha: commit() };
-  const base = { event: 'push', ref: MAIN, enabled: true, deployed, sinceDeployed: files(), thisPush: files() };
+  const base = { event: 'push', ref: MAIN, enabled: true, pinned: false, publishWhilePinned: false, rollbackDigest: '', deployed, sinceDeployed: files(), thisPush: files() };
 
   it('never publishes a pull request or another branch, and says nothing about it', () => {
     expect(decide({ ...base, event: 'pull_request', sinceDeployed: files('services/box/src/main.ts') })).toEqual({ publish: false });
@@ -63,22 +63,60 @@ describe('decide', () => {
     expect(decision.notice?.message).toContain('deploy the application, then run the box workflow by hand');
   });
 
-  it('publishes when nothing was ever deployed or what runs is not known, and says why', () => {
+  it('publishes when nothing was ever deployed, and says why', () => {
     const none = decide({ ...base, deployed: { kind: 'none' }, sinceDeployed: unknown, thisPush: files('README.md') });
     expect(none.publish).toBe(true);
     expect(none.notice?.message).toContain('nothing has been deployed');
-    const notKnown = decide({ ...base, deployed: { kind: 'unknown', reason: 'HTTP 500' }, sinceDeployed: unknown, thisPush: unknown });
-    expect(notKnown.publish).toBe(true);
-    expect(notKnown.notice?.message).toContain('HTTP 500');
-    const notCompared = decide({ ...base, sinceDeployed: { kind: 'unknown', reason: 'diverged' }, thisPush: unknown });
-    expect(notCompared.publish).toBe(true);
-    expect(notCompared.notice?.message).toContain('diverged');
+    expect(none.error).toBeUndefined();
+    // Not even the push's own changes known: still the first deploy.
+    expect(decide({ ...base, deployed: { kind: 'none' }, sinceDeployed: unknown, thisPush: unknown }).publish).toBe(true);
   });
 
-  it('still holds a database change back when what runs is not known but this push shows it', () => {
-    const decision = decide({ ...base, deployed: { kind: 'unknown', reason: 'x' }, sinceDeployed: unknown, thisPush: files('prisma/sql/box-reader.sql') });
+  it('holds a database change back on the first deploy when this push shows it', () => {
+    const decision = decide({ ...base, deployed: { kind: 'none' }, sinceDeployed: unknown, thisPush: files('prisma/sql/box-reader.sql') });
     expect(decision.publish).toBe(false);
     expect(decision.notice?.title).toContain('deploy the application first');
+  });
+
+  it('fails loudly, publishing nothing, when what runs or what changed since is not known', () => {
+    const notKnown = decide({ ...base, deployed: { kind: 'unknown', reason: 'HTTP 500' }, sinceDeployed: unknown, thisPush: files('services/box/src/main.ts') });
+    expect(notKnown.publish).toBe(false);
+    expect(notKnown.error).toContain('HTTP 500');
+    expect(notKnown.error).toContain('run the box workflow by hand');
+    const notCompared = decide({ ...base, sinceDeployed: { kind: 'unknown', reason: 'diverged' }, thisPush: files('services/box/src/main.ts') });
+    expect(notCompared.publish).toBe(false);
+    expect(notCompared.error).toContain('diverged');
+  });
+
+  it('publishes nothing while pinned after a rollback, whatever changed, and says how to lift it', () => {
+    const pinned = { ...base, pinned: true };
+    for (const decision of [
+      decide({ ...pinned, sinceDeployed: files('services/box/src/main.ts') }),
+      decide({ ...pinned, sinceDeployed: files('.nvmrc', 'services/box/src/main.ts') }),
+      decide({ ...pinned, deployed: { kind: 'none' }, sinceDeployed: unknown, thisPush: unknown }),
+      decide({ ...pinned, deployed: { kind: 'unknown', reason: 'x' }, sinceDeployed: unknown }),
+      decide({ ...pinned, event: 'workflow_dispatch' }),
+      // The input means nothing on a push.
+      decide({ ...pinned, publishWhilePinned: true, sinceDeployed: files('services/box/src/main.ts') }),
+    ]) {
+      expect(decision.publish).toBe(false);
+      expect(decision.error).toBeUndefined();
+      expect(decision.notice?.message).toContain('BOX_DEPLOY_PINNED');
+      expect(decision.notice?.message).toContain('set BOX_DEPLOY_PINNED to false');
+    }
+  });
+
+  it('publishes while pinned only on a manual run that says so', () => {
+    expect(decide({ ...base, pinned: true, event: 'workflow_dispatch', publishWhilePinned: true })).toEqual({ publish: true });
+  });
+
+  it('publishes nothing on a manual rollback run: the rollback job redeploys the named image', () => {
+    const image = `sha256:${'a'.repeat(64)}`;
+    for (const pinned of [false, true]) {
+      const decision = decide({ ...base, pinned, event: 'workflow_dispatch', publishWhilePinned: true, rollbackDigest: image, sinceDeployed: files('services/box/src/main.ts') });
+      expect(decision.publish).toBe(false);
+      expect(decision.notice?.message).toContain(image);
+    }
   });
 });
 
@@ -158,6 +196,7 @@ describe('decideRun', () => {
       { EVENT: 'push', REF: 'refs/heads/x', ENABLED: 'true' },
       { EVENT: 'push', REF: MAIN, ENABLED: 'false' },
       { EVENT: 'workflow_dispatch', REF: MAIN, ENABLED: 'true' },
+      { EVENT: 'push', REF: MAIN, ENABLED: 'true', PINNED: 'true' },
     ]) {
       const { get, asked } = api({});
       await decideRun({ ...env, GITHUB_REPOSITORY: REPO, SHA: commit(), BEFORE: commit() }, get);
@@ -165,17 +204,23 @@ describe('decideRun', () => {
     }
   });
 
-  it('compares the push with the deployed commit, and this push alone too', async () => {
+  it('compares the push with the deployed commit, and asks nothing about this push alone', async () => {
     const [deployedSha, before, sha] = [commit(), commit(), commit()];
     const { get, asked } = api({
       [deploymentsPath]: { status: 200, body: [{ id: 7, sha: deployedSha }] },
       [statusesPath(7)]: { status: 200, body: [{ state: 'success' }] },
       [`/repos/${REPO}/compare/${deployedSha}...${sha}?per_page=1`]: { status: 200, body: { status: 'ahead', files: [{ filename: 'services/box/src/x.ts' }, { filename: 'README.md' }] } },
-      [`/repos/${REPO}/compare/${before}...${sha}?per_page=1`]: { status: 200, body: { status: 'ahead', files: [{ filename: 'README.md' }] } },
     });
     const decision = await decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: REPO, SHA: sha, BEFORE: before }, get);
     expect(decision).toEqual({ publish: true });
-    expect(asked).toHaveLength(4);
+    expect(asked).toHaveLength(3);
+  });
+
+  it('fails loudly when the deployments cannot be read', async () => {
+    const { get } = api({ [deploymentsPath]: { status: 502, body: null } });
+    const decision = await decideRun({ EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: REPO, SHA: commit(), BEFORE: commit() }, get);
+    expect(decision.publish).toBe(false);
+    expect(decision.error).toContain('HTTP 502');
   });
 
   it('treats a push without a previous commit as not known, and refuses a malformed repository or commit', async () => {
@@ -201,6 +246,22 @@ describe('the script as the workflow runs it', () => {
       expect(result.status).toBe(0);
       expect(readFileSync(output, 'utf8')).toBe('publish=false\n');
       expect(result.stdout).toMatch(/^::notice title=box not published::The repository variable BOX_DEPLOY_ENABLED/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails the step with publish=false and an error when GitHub cannot be asked', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'publish-decision-'));
+    try {
+      const output = path.join(dir, 'output');
+      const result = spawnSync(process.execPath, [path.join(__dirname, '..', 'ci', 'publishDecision.ts')], {
+        env: { PATH: process.env.PATH, EVENT: 'push', REF: MAIN, ENABLED: 'true', GITHUB_REPOSITORY: REPO, SHA: commit(), BEFORE: commit(), GITHUB_OUTPUT: output, GITHUB_API_URL: 'http://127.0.0.1:9', GITHUB_TOKEN: 'test' },
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(readFileSync(output, 'utf8')).toBe('publish=false\n');
+      expect(result.stdout).toMatch(/^::error::The commit running in box-production is not known \(the deployments answered HTTP 0\)/m);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

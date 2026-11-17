@@ -27,16 +27,24 @@ export interface DecisionInput {
   event: string;
   ref: string;
   enabled: boolean;
+  /** BOX_DEPLOY_PINNED: a rollback holds; nothing is published unless a manual run says so. */
+  pinned: boolean;
+  /** A manual run's input publish_while_pinned: publish main although the box is pinned. */
+  publishWhilePinned: boolean;
+  /** A manual run's input rollback_digest: this run redeploys that image and publishes nothing. */
+  rollbackDigest: string;
   deployed: Deployed;
   /** The changes since the deployed commit, when it is known. */
   sinceDeployed: Changes;
-  /** The changes of this push alone, used for the database check when the deployed commit is not known. */
+  /** The changes of this push alone, used for the database check when nothing was ever deployed. */
   thisPush: Changes;
 }
 
 export interface Decision {
   publish: boolean;
   notice?: { title: string; message: string };
+  /** Set when the run cannot decide: the step fails, and the operator re-runs it or runs the workflow by hand. */
+  error?: string;
 }
 
 const touches = (files: readonly string[], paths: readonly string[]) =>
@@ -46,6 +54,12 @@ const DATABASE_NOTICE = {
   title: 'box not published: deploy the application first',
   message:
     'The database the box reads changed (prisma/migrations or prisma/sql) since the commit running in box-production. Migrations reach production only with a deploy of the application, so the box is not deployed now: deploy the application, then run the box workflow by hand on main (deploy/README.md, the box).',
+};
+
+const PINNED_NOTICE = {
+  title: 'box not published: pinned',
+  message:
+    'The repository variable BOX_DEPLOY_PINNED is true: a rollback holds, so nothing is published. To publish main anyway, run the box workflow by hand with publish_while_pinned; to lift the pin, set BOX_DEPLOY_PINNED to false and run the workflow by hand on main (deploy/README.md, the box).',
 };
 
 export function decide(input: DecisionInput): Decision {
@@ -59,32 +73,39 @@ export function decide(input: DecisionInput): Decision {
       },
     };
   }
-  // A manual run is the operator's word, given after the application's deploy: it always publishes.
-  if (input.event === 'workflow_dispatch') return { publish: true };
-
-  if (input.deployed.kind === 'commit' && input.sinceDeployed.kind === 'files') {
-    const files = input.sinceDeployed.files;
-    if (touches(files, DATABASE_PATHS)) return { publish: false, notice: DATABASE_NOTICE };
-    if (touches(files, BOX_PATHS)) return { publish: true };
-    return {
-      publish: false,
-      notice: {
-        title: 'box not published',
-        message: `Nothing of the box changed since ${input.deployed.sha.slice(0, 12)}, the commit running in box-production, so the image is tested and not published.`,
-      },
-    };
+  const manual = input.event === 'workflow_dispatch';
+  // A rollback redeploys an image that exists; the rollback job does it, and nothing is built into production.
+  if (manual && input.rollbackDigest !== '') {
+    return { publish: false, notice: { title: 'box rollback', message: `This run redeploys the image ${input.rollbackDigest} and publishes nothing.` } };
   }
+  // Pinned after a rollback: only a manual run that says so publishes, whatever changed.
+  if (input.pinned) return manual && input.publishWhilePinned ? { publish: true } : { publish: false, notice: PINNED_NOTICE };
+  // A manual run is the operator's word, given after the application's deploy: it always publishes.
+  if (manual) return { publish: true };
 
-  // What runs in production is not known, or nothing ever ran: publish, unless this push alone already
-  // shows a database change.
-  if (input.thisPush.kind === 'files' && touches(input.thisPush.files, DATABASE_PATHS)) return { publish: false, notice: DATABASE_NOTICE };
-  const why =
-    input.deployed.kind === 'none'
-      ? 'nothing has been deployed to box-production yet'
-      : input.deployed.kind === 'unknown'
-        ? `the commit running in box-production is not known (${input.deployed.reason})`
-        : `the changes since it are not known (${input.sinceDeployed.kind === 'unknown' ? input.sinceDeployed.reason : ''})`;
-  return { publish: true, notice: { title: 'box published', message: `The box is published because ${why}.` } };
+  if (input.deployed.kind === 'none') {
+    // Nothing ever ran: publish, unless this push already shows a database change.
+    if (input.thisPush.kind === 'files' && touches(input.thisPush.files, DATABASE_PATHS)) return { publish: false, notice: DATABASE_NOTICE };
+    return { publish: true, notice: { title: 'box published', message: 'The box is published because nothing has been deployed to box-production yet.' } };
+  }
+  // Not knowing what runs, or what changed since, is not a reason to publish: a database change could lie
+  // in between. The step fails, and the operator re-runs it or runs the workflow by hand.
+  if (input.deployed.kind === 'unknown') {
+    return { publish: false, error: `The commit running in box-production is not known (${input.deployed.reason}). Re-run this run, or run the box workflow by hand on main once the application is deployed.` };
+  }
+  if (input.sinceDeployed.kind === 'unknown') {
+    return { publish: false, error: `What changed since ${input.deployed.sha.slice(0, 12)}, the commit running in box-production, is not known (${input.sinceDeployed.reason}). Re-run this run, or run the box workflow by hand on main once the application is deployed.` };
+  }
+  const files = input.sinceDeployed.files;
+  if (touches(files, DATABASE_PATHS)) return { publish: false, notice: DATABASE_NOTICE };
+  if (touches(files, BOX_PATHS)) return { publish: true };
+  return {
+    publish: false,
+    notice: {
+      title: 'box not published',
+      message: `Nothing of the box changed since ${input.deployed.sha.slice(0, 12)}, the commit running in box-production, so the image is tested and not published.`,
+    },
+  };
 }
 
 /** A GET against the GitHub API: the status, and the parsed body when it is JSON. */
@@ -148,18 +169,22 @@ export async function decideRun(env: Record<string, string | undefined>, get: Ge
   const repository = env.GITHUB_REPOSITORY ?? '';
   const sha = env.SHA ?? '';
   const before = env.BEFORE ?? '';
+  const pinned = env.PINNED === 'true';
+  const publishWhilePinned = env.PUBLISH_WHILE_PINNED === 'true';
+  const rollbackDigest = env.ROLLBACK_DIGEST ?? '';
   const unknown = (reason: string): Changes => ({ kind: 'unknown', reason });
-  // Only a push to main with publishing on needs GitHub at all.
-  if (event !== 'push' || ref !== 'refs/heads/main' || !enabled) {
-    return decide({ event, ref, enabled, deployed: { kind: 'none' }, sinceDeployed: unknown('not asked'), thisPush: unknown('not asked') });
+  const settings = { event, ref, enabled, pinned, publishWhilePinned, rollbackDigest };
+  // Only a push to main with publishing on and no pin needs GitHub at all.
+  if (event !== 'push' || ref !== 'refs/heads/main' || !enabled || pinned) {
+    return decide({ ...settings, deployed: { kind: 'none' }, sinceDeployed: unknown('not asked'), thisPush: unknown('not asked') });
   }
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !COMMIT.test(sha)) {
     throw new Error('GITHUB_REPOSITORY or SHA is not what a push to main gives');
   }
   const deployed = await lastDeployed(get, repository);
   const sinceDeployed = deployed.kind === 'commit' ? await changedFiles(get, repository, deployed.sha, sha) : unknown('no deployed commit');
-  const thisPush = !COMMIT.test(before) || ZERO.test(before) ? unknown('the push has no previous commit') : await changedFiles(get, repository, before, sha);
-  return decide({ event, ref, enabled, deployed, sinceDeployed, thisPush });
+  const thisPush = deployed.kind !== 'none' ? unknown('not needed') : !COMMIT.test(before) || ZERO.test(before) ? unknown('the push has no previous commit') : await changedFiles(get, repository, before, sha);
+  return decide({ ...settings, deployed, sinceDeployed, thisPush });
 }
 
 /** A GET with the run's token, a time limit, and nothing of the answer printed. */
@@ -198,6 +223,10 @@ async function main(): Promise<void> {
   const output = env.GITHUB_OUTPUT;
   if (!output) throw new Error('GITHUB_OUTPUT is not set');
   appendFileSync(output, `publish=${decision.publish}\n`);
+  if (decision.error !== undefined) {
+    process.stdout.write(`::error::${decision.error.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}\n`);
+    process.exitCode = 1;
+  }
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
