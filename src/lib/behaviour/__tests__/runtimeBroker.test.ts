@@ -91,6 +91,14 @@ describe('the kit a broker gets', () => {
     expect(scope().getAttribute('data-fcs-open')).toBe('true');
   });
 
+  it('starts the broker on a page whose program holds nothing but blocks', () => {
+    // What the server sends for a page with a block and no behaviour: { nodes: {}, broker: true }.
+    const kit = start({});
+    expect(kit.write('open', true, box())).toBe(false);
+    kit.emit('go', box());
+    expect(scope().getAttribute('data-fcs-open')).toBe('false');
+  });
+
   it('stops the broker with the runtime', () => {
     start({ page: { state: [{ id: 'open', type: 'boolean', initial: false }] } });
     stops.forEach((stop) => stop());
