@@ -188,7 +188,7 @@ describe('withoutCustomCodeTree', () => {
   });
 
   it('returns a tree without the value as it is', () => {
-    const tree = { type: 'div', props: { id: 'a' }, children: [{ type: 'p' }] };
+    const tree = { type: 'div', props: { id: 'a' }, children: [{ type: 'p', props: { children: 'x' } }] };
     expect(withoutCustomCodeTree(tree)).toBe(tree);
   });
 });

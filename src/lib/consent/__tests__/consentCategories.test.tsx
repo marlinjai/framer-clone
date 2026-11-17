@@ -31,6 +31,7 @@ interface Api {
   accept(): void;
   decline(): void;
   get(category?: string): string | null;
+  mapsAtLoad?: boolean;
   categories: string[];
   grant?: unknown;
 }
