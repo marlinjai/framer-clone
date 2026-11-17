@@ -6,19 +6,24 @@ name: box
 # Every run, pull requests included: type check, lint, unit tests, the image
 # built and tested against a scratch Postgres and a stand-in for Infisical.
 #
-# Only on main (a push that touches the paths below, or a manual run on
-# main), and only once the operator step O1 has set the repository secrets
-# COOLIFY_BOX_WEBHOOK and COOLIFY_TOKEN: the image the tests just ran is pushed
-# to ghcr.io/<owner>/framer-clone-box (tags: the commit and latest), the
-# box's Coolify deploy webhook is called, and the deploy is polled until the
-# box answers /health/db on its public host (plan, decisions D53 and D54).
-# Until both secrets exist the publish job says so in a notice and pushes and
-# deploys nothing, so main stays green before the box's infrastructure exists.
-# A pull request never pushes and never deploys.
+# Publishing and deploying (plan, decisions D53, D54, D56 and D57) happen
+# only on main, only once the operator step O1 has set the repository variable
+# BOX_DEPLOY_ENABLED to true, and only when the box's own files changed (or on
+# a manual run on main): the image the tests just ran, checked by its id, is
+# pushed to ghcr.io/<owner>/framer-clone-box (tags: the commit and latest), the
+# box's Coolify deploy webhook is called, and the deploy is followed until the
+# box answers /health/db on its public host. The webhook and the Coolify token
+# are secrets of the GitHub environment box-production, which only main may
+# deploy to; nothing else in this workflow can read them. A pull request never
+# pushes and never deploys.
 #
 # Path-filtered: it runs when the box, the contract module it bundles, its
 # Dockerfile, this file, or the database it reads changes (the migrations and
 # the role files, which its integration suite applies), and never otherwise.
+# A change to the database files alone is tested, never published: the
+# application's deploy applies migrations, and the box is deployed after it.
+#
+# Every action is pinned by commit, with its version in a comment.
 
 on:
   # A manual run on main publishes and deploys the current main, for the first deploy after O1.
@@ -57,8 +62,9 @@ permissions:
 
 concurrency:
   group: box-${{ github.ref }}
-  # A newer push cancels an older run of the same pull request. On main a run is never cancelled midway,
-  # so a deploy that has started is finished and verified; the next run waits for it.
+  # A newer push cancels an older run of the same pull request. On main a running run is not cancelled, so
+  # a deploy that has started is finished and verified; a newer run waits, and of several waiting only the
+  # newest is kept (GitHub replaces a pending run with a newer one), which deploys the newest main.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -67,30 +73,60 @@ jobs:
     # The shared server is aarch64, so the image is built and tested on the same architecture.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
-    env:
-      # Whether the operator step O1 has set both deploy secrets: a yes or no, never a value.
-      BOX_DEPLOY_CONFIGURED: ${{ secrets.COOLIFY_BOX_WEBHOOK != '' && secrets.COOLIFY_TOKEN != '' }}
+    outputs:
+      publish: ${{ steps.publish.outputs.publish }}
+      image_id: ${{ steps.build.outputs.image_id }}
     defaults:
       run:
         working-directory: services/box
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       # Reads the pnpm version from services/box/package.json "packageManager".
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           package_json_file: services/box/package.json
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
           cache-dependency-path: services/box/pnpm-lock.yaml
+
+      # Whether this run publishes: main, not a pull request, O1 done (the variable), and either a manual
+      # run or a push that changed the box's own files. A push that changed only the database files or the
+      # root config is tested and not published (decision D56).
+      - name: Does this run publish
+        id: publish
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          ENABLED: ${{ vars.BOX_DEPLOY_ENABLED }}
+        run: |
+          publish=false
+          if [ "$EVENT" != "pull_request" ] && [ "$REF" = "refs/heads/main" ]; then
+            if [ "$ENABLED" != "true" ]; then
+              echo "::notice title=box not published::The repository variable BOX_DEPLOY_ENABLED is not true, so nothing is pushed or deployed. It is set in the operator step O1 (deploy/README.md)."
+            elif [ "$EVENT" = "workflow_dispatch" ]; then
+              publish=true
+            elif [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git fetch --no-tags --depth=1 origin "$BEFORE"; then
+              echo "::notice title=box published::The previous commit of this push is not known, so the box is published."
+              publish=true
+            elif git diff --name-only "$BEFORE" "$SHA" -- services/box src/lib/customCode/contract.ts Dockerfile.box Dockerfile.box.dockerignore .github/workflows/box.yml | grep -q .; then
+              publish=true
+            else
+              echo "::notice title=box not published::This push changed none of the box's own files (only the database or the root configuration), so the image is tested and not published."
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
       - name: Install
         run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
@@ -106,9 +142,14 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      # The image's id is recorded here, and checked again before it is saved and after it is loaded for
+      # the push, so the image pushed is the one built here, whatever ran in between (decision D57).
       - name: Build the image
+        id: build
         working-directory: .
-        run: docker build -f Dockerfile.box -t framer-clone-box:ci .
+        run: |
+          docker build -f Dockerfile.box -t framer-clone-box:ci .
+          echo "image_id=$(docker image inspect --format '{{.Id}}' framer-clone-box:ci)" >> "$GITHUB_OUTPUT"
 
       # The built image and the store against a scratch Postgres, on a private
       # docker network, published on 127.0.0.1 only.
@@ -118,16 +159,23 @@ jobs:
         run: pnpm test:integration
 
       # The image the suite just tested is the one that is pushed, byte for byte, never a rebuild. It goes to
-      # the publish job as an artifact because only that job may write packages. Kept only when it will be
-      # published: on main, with both deploy secrets set.
+      # the publish job as an artifact because only that job may write packages and read the deploy secrets.
       - name: Keep the tested image
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && env.BOX_DEPLOY_CONFIGURED == 'true'
+        if: steps.publish.outputs.publish == 'true'
         working-directory: .
-        run: docker save framer-clone-box:ci | gzip -1 > "$RUNNER_TEMP/box-image.tar.gz"
+        env:
+          IMAGE_ID: ${{ steps.build.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          if [ "$(docker image inspect --format '{{.Id}}' framer-clone-box:ci)" != "$IMAGE_ID" ]; then
+            echo "::error::framer-clone-box:ci is no longer the image this job built; nothing is kept or pushed."
+            exit 1
+          fi
+          docker save framer-clone-box:ci | gzip -1 > "$RUNNER_TEMP/box-image.tar.gz"
 
       - name: Upload the tested image
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && env.BOX_DEPLOY_CONFIGURED == 'true'
-        uses: actions/upload-artifact@v4
+        if: steps.publish.outputs.publish == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: box-image
           path: ${{ runner.temp }}/box-image.tar.gz
@@ -135,74 +183,130 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  # Push and deploy in one job, the only one in the environment box-production: its secrets (the box's
+  # deploy webhook and the Coolify token) reach no other job, and the environment admits main only. The
+  # stack's shared deploy workflow cannot be used here, because a called workflow cannot read the secrets
+  # of an environment it does not name itself (decision D57).
   publish:
-    name: publish
+    name: publish and deploy
     needs: box
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: needs.box.outputs.publish == 'true'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
-    outputs:
-      deploy: ${{ steps.gate.outputs.deploy }}
+    environment:
+      name: box-production
+      url: https://run.lumitrausercontent.com/health/db
+    env:
+      HEALTH_URL: https://run.lumitrausercontent.com/health/db
     steps:
-      # A secret cannot be read in a job condition, so this step turns "both are set" into an output.
       - name: Are the deploy secrets set
-        id: gate
         env:
           HAS_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK != '' }}
           HAS_TOKEN: ${{ secrets.COOLIFY_TOKEN != '' }}
         run: |
-          if [ "$HAS_WEBHOOK" = "true" ] && [ "$HAS_TOKEN" = "true" ]; then
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice title=box not published::COOLIFY_BOX_WEBHOOK or COOLIFY_TOKEN is not set, so no image is pushed and nothing is deployed. They are set in the operator step O1 (deploy/README.md)."
-            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_WEBHOOK" != "true" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::BOX_DEPLOY_ENABLED is true, but the environment box-production lacks COOLIFY_BOX_WEBHOOK or COOLIFY_TOKEN (deploy/README.md, the box)."
+            exit 1
           fi
 
       - name: Download the tested image
-        if: steps.gate.outputs.deploy == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: box-image
           path: ${{ runner.temp }}
 
+      - name: Load the tested image and check it is the one built
+        env:
+          IMAGE_ID: ${{ needs.box.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          gunzip -c "$RUNNER_TEMP/box-image.tar.gz" | docker load
+          if [ -z "$IMAGE_ID" ] || [ "$(docker image inspect --format '{{.Id}}' framer-clone-box:ci)" != "$IMAGE_ID" ]; then
+            echo "::error::The loaded image is not the one the box job built and tested; nothing is pushed."
+            exit 1
+          fi
+
       - name: Log in to GHCR
-        if: steps.gate.outputs.deploy == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The commit's tag is the rollback point: to go back, point the Coolify application at the previous
+      # commit's tag. latest moves before the deploy is verified, so after a failed deploy it names the bad image.
       - name: Push the tested image
-        if: steps.gate.outputs.deploy == 'true'
         env:
           OWNER: ${{ github.repository_owner }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           image="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/framer-clone-box"
-          gunzip -c "$RUNNER_TEMP/box-image.tar.gz" | docker load
           docker tag framer-clone-box:ci "$image:$SHA"
           docker tag framer-clone-box:ci "$image:latest"
           docker push "$image:$SHA"
           docker push "$image:latest"
 
-  deploy:
-    name: deploy
-    needs: publish
-    if: needs.publish.outputs.deploy == 'true'
-    permissions:
-      contents: read
-      deployments: write
-    uses: marlinjai/actions-shared/.github/workflows/coolify-deploy-verify.yml@v1
-    with:
+      # Calls the deploy webhook and follows the deployment in Coolify. Nothing Coolify answers is printed,
+      # and the Coolify address (it is part of the webhook secret) is masked in the log.
+      - name: Deploy through Coolify
+        env:
+          COOLIFY_BOX_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          set -uo pipefail
+          base=$(printf '%s' "$COOLIFY_BOX_WEBHOOK" | sed -E 's#^(https?://[^/]+).*#\1#')
+          echo "::add-mask::$base"
+          echo "::add-mask::${base#*://}"
+          code=$(curl -sS -X POST --max-time 30 -o "$RUNNER_TEMP/coolify.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_BOX_WEBHOOK" || echo "000")
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::error::The Coolify deploy webhook answered HTTP $code."
+            exit 1
+          fi
+          deployment=$(jq -r '.deployments[0].deployment_uuid // empty' "$RUNNER_TEMP/coolify.json" 2>/dev/null || true)
+          rm -f "$RUNNER_TEMP/coolify.json"
+          if [ -z "$deployment" ]; then
+            echo "::warning::Coolify named no deployment; only the health check below follows the deploy."
+            exit 0
+          fi
+          started=$(date +%s)
+          while true; do
+            probe=$(curl -sS --max-time 15 -o "$RUNNER_TEMP/deployment.json" -w '%{http_code}' \
+              -H "Authorization: Bearer $COOLIFY_TOKEN" "$base/api/v1/deployments/$deployment" || echo "000")
+            if [ "$probe" = "401" ] || [ "$probe" = "403" ]; then
+              echo "::warning::The Coolify token cannot read deployments (HTTP $probe); only the health check below follows the deploy."
+              exit 0
+            fi
+            status=$(jq -r '.status // "unknown"' "$RUNNER_TEMP/deployment.json" 2>/dev/null || echo "unknown")
+            elapsed=$(( $(date +%s) - started ))
+            echo "Deployment status: $status (${elapsed}s)"
+            case "$status" in
+              finished) exit 0 ;;
+              failed|error|cancelled-by-force)
+                echo "::error::The Coolify deployment ended with status $status. Its log is in Coolify."
+                exit 1 ;;
+            esac
+            if [ "$elapsed" -ge 900 ]; then
+              echo "::error::The Coolify deployment did not end within 900 seconds (last status: $status)."
+              exit 1
+            fi
+            sleep 10
+          done
+
       # Readiness, not liveness: /health/db calls the box's one database function as box_reader, so a box
       # that cannot read (no role, no function, no network to the database) fails the deploy loudly.
-      health_url: https://run.lumitrausercontent.com/health/db
-      environment: box-production
-    secrets:
-      coolify_webhook: ${{ secrets.COOLIFY_BOX_WEBHOOK }}
-      coolify_token: ${{ secrets.COOLIFY_TOKEN }}
+      - name: Wait for the box to answer /health/db
+        run: |
+          for attempt in $(seq 1 24); do
+            if curl --fail --silent --show-error --max-time 10 -o /dev/null "$HEALTH_URL"; then
+              echo "The box answers /health/db (attempt $attempt)."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::The box did not answer $HEALTH_URL within two minutes."
+          exit 1
