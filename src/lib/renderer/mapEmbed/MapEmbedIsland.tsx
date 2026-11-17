@@ -179,7 +179,8 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
   }, []);
 
   const src = view.src;
-  const allowed = frameAllowed();
+  // Read only once granted, which happens in an effect: the server render has no window.
+  const allowed = granted ? frameAllowed() : true;
   const show = granted && allowed && isRebuiltMapSrc(src);
   // A yes this page's policy cannot honour (storage blocked, so no reload carried it):
   // the placeholder says so and offers the reload, which the cookie already allows.
