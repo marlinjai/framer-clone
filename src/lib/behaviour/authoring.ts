@@ -227,28 +227,66 @@ export function stateRefusal(candidate: unknown): string | null {
   return read.refused[0]?.reason ?? null;
 }
 
-/** What a check aims at on the node: one trigger by id, the show-when, or the no-JavaScript setting. */
-export type CheckedEntry = { entry: 'on'; id: string } | { entry: 'showWhen' } | { entry: 'noScript' } | { entry: 'state'; id: string };
+/** A refusal's identity across two reads of one page: a whole behaviour by its node, an entry by its node, kind and stored value. */
+function refusalKey(refusal: RefusedOnNode): string {
+  if (refusal.entry === 'behaviour') return `${refusal.nodeId}|behaviour`;
+  let value: string;
+  try {
+    value = JSON.stringify(refusal.value) ?? String(refusal.value);
+  } catch {
+    value = String(refusal.value);
+  }
+  return `${refusal.nodeId}|${refusal.entry}|${value}`;
+}
+
+const sameJson = (a: unknown, b: unknown): boolean => {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+};
 
 /**
- * Why the parser would refuse one entry of `behaviour` written on this node of this tree,
- * or null when it would take it. Read against the whole tree, so a reference to a node or
- * to state out of reach, an event a verb may not run from, and the node's own kind all count.
+ * Why the parser would refuse writing `behaviour` on this node, or null when it takes it.
+ * The page is read whole before and after the write, and the write is refused when it
+ * makes the parser refuse anything it took before, anywhere on the page: the entry
+ * written, another entry on the node, or another element's behaviour (a value its
+ * readers need, the page's size and trigger caps, which refuse whole behaviours).
+ * `written` is the entry being written, refused also when it was refused already, so
+ * saving an entry unchanged never writes one that does not run. Refusals are matched by
+ * what they refuse, never by an id, so two entries with one id cannot stand in for each other.
  */
-export function refusalAt(roots: readonly BehaviourNode[], nodeId: string, behaviour: StoredRecord, aimed: CheckedEntry): string | null {
+export function refusalAt(
+  roots: readonly BehaviourNode[],
+  nodeId: string,
+  behaviour: StoredRecord,
+  written?: unknown,
+  nameOf: (id: string) => string = (id) => id,
+): string | null {
   const found = pathTo(roots, nodeId);
   if (!found) return 'this element is no longer on the page';
   const tree = withBehaviourAt(found.root, nodeId, behaviour);
   if (!tree) return 'this element is no longer on the page';
-  const refused = readBehaviourTree(tree).refused.filter((entry) => entry.nodeId === nodeId);
-  const whole = refused.find((entry) => entry.entry === 'behaviour' && entry.value === behaviour);
-  if (whole) return whole.reason;
-  const hit = refused.find((entry) => {
-    if (entry.entry !== aimed.entry) return false;
-    if (aimed.entry === 'on' || aimed.entry === 'state') return isRecord(entry.value) && entry.value.id === aimed.id;
-    return true;
-  });
-  return hit?.reason ?? null;
+  const before = new Map<string, number>();
+  for (const refusal of readBehaviourTree(found.root).refused) {
+    const key = refusalKey(refusal);
+    before.set(key, (before.get(key) ?? 0) + 1);
+  }
+  const after = readBehaviourTree(tree).refused;
+  const fresh: RefusedOnNode[] = [];
+  for (const refusal of after) {
+    const key = refusalKey(refusal);
+    const left = before.get(key) ?? 0;
+    if (left > 0) before.set(key, left - 1);
+    else fresh.push(refusal);
+  }
+  // What was written is refused on its own node, whether new or not.
+  const own = after.find((refusal) => refusal.nodeId === nodeId && written !== undefined && refusal.entry !== 'behaviour' && sameJson(refusal.value, written));
+  const hit = fresh.find((refusal) => refusal.nodeId === nodeId) ?? own ?? fresh[0];
+  if (!hit) return null;
+  if (hit.nodeId === nodeId) return hit.reason;
+  return `it would stop ${hit.nodeId ? nameOf(hit.nodeId) : 'another element'} working: ${hit.reason}`;
 }
 
 // --- writing -----------------------------------------------------------------------

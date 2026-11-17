@@ -87,12 +87,67 @@ describe('what a person entered goes through the parser', () => {
   it('refuses a trigger against the whole page: an action out of reach, a verb on the wrong event', () => {
     const roots = [page()];
     const toggleTab = { on: [{ id: 't1', on: 'click', do: [{ toggle: 'tab' }] }] };
-    expect(refusalAt(roots, 'drawer', toggleTab, { entry: 'on', id: 't1' })).toMatch(/tab/);
+    expect(refusalAt(roots, 'drawer', toggleTab)).toMatch(/tab/);
     const focusOnHover = { on: [{ id: 't1', on: 'mouseenter', do: [{ focus: 'button' }] }] };
-    expect(refusalAt(roots, 'drawer', focusOnHover, { entry: 'on', id: 't1' })).toMatch(/focus|press|click/i);
+    expect(refusalAt(roots, 'drawer', focusOnHover)).toMatch(/focus|press|click/i);
     const fine = { on: [{ id: 't1', on: 'click', do: [{ toggle: 'menu' }] }] };
-    expect(refusalAt(roots, 'button', fine, { entry: 'on', id: 't1' })).toBeNull();
-    expect(refusalAt(roots, 'gone', fine, { entry: 'on', id: 't1' })).toMatch(/no longer on the page/);
+    expect(refusalAt(roots, 'button', fine)).toBeNull();
+    expect(refusalAt(roots, 'gone', fine)).toMatch(/no longer on the page/);
+  });
+
+  it('refuses a write that makes the parser refuse anything it took before, anywhere on the page', () => {
+    // The page's 64 KB cap refuses whole behaviours, later nodes first. Text values of 4,096 characters fill it: 14 of them are under it.
+    const text = (n: number) => ({ id: `v-${String(n).padStart(8, '0')}`, name: `T${n}`, type: 'text', initial: 'x'.repeat(4096) });
+    const near = () =>
+      node('root', 'div', {},
+        node('a', 'div', {}),
+        ...Array.from({ length: 7 }, (_, i) => node(`n${i}`, 'div', { behaviour: { state: [text(i * 10), text(i * 10 + 1)] } })),
+        node('n7', 'button', { type: 'button' }));
+    const roots = [near()];
+    const twenty = { state: [text(90), text(91), text(92), text(93)] };
+    // On the node itself: the whole behaviour of n7 would be refused.
+    expect(refusalAt(roots, 'n7', twenty, twenty.state[3])).toMatch(/at most 65536 bytes/);
+    // On an earlier node: n7 is fine, but a later node loses its behaviour, so it is refused and named.
+    const reason = refusalAt(roots, 'a', twenty, twenty.state[3], (id) => `the element ${id}`);
+    expect(reason).toMatch(/^it would stop the element n\d working: a page holds at most 65536 bytes/);
+    // A small write that changes nothing else passes.
+    expect(refusalAt(roots, 'n7', { on: [{ id: 't-ok', on: 'click', do: [{ emit: 'go' }] }] })).toBeNull();
+  });
+
+  it('refuses a value whose size takes the page root over the cap, which would cut its readers off', () => {
+    const value = (n: number) => ({ id: `v-${String(n).padStart(8, '0')}`, name: `Text ${n}`, type: 'text', initial: 'y'.repeat(4096) });
+    const tree = node('root', 'div', { behaviour: { state: [{ id: 'menu', name: 'Menu', type: 'boolean', initial: false }, ...Array.from({ length: 14 }, (_, i) => value(i))] } },
+      node('button', 'button', { type: 'button', behaviour: { on: [{ id: 't1', on: 'click', do: [{ toggle: 'menu' }] }] } }),
+      node('drawer', 'nav', { behaviour: { showWhen: { state: 'menu', eq: true } } }));
+    const stored = (tree.props as { behaviour: { state: unknown[] } }).behaviour;
+    // Each value alone is fine: the per-value check never saw the page.
+    expect(stateRefusal(value(20))).toBeNull();
+    const more = { ...stored, state: [...stored.state, value(20), value(21)] };
+    expect(refusalAt([tree], 'root', more, value(21))).toMatch(/65536 bytes/);
+  });
+
+  it('refuses a value edit that breaks what reads it on another element, and names that element', () => {
+    const read = withBehaviourAt(page(), 'drawer', { showWhen: { state: 'menu', eq: true } })!;
+    const roots = [withBehaviourAt(read, 'button', { on: [{ id: 't1', on: 'click', do: [{ toggle: 'menu' }] }] })!];
+    const menu = { id: 'menu', name: 'Menu open', type: 'number', initial: 0 };
+    const root = roots[0].props as { behaviour: Record<string, unknown> };
+    const retyped = { ...root.behaviour, state: [menu] };
+    expect(refusalAt(roots, 'root', retyped, menu, (id) => `the element ${id}`)).toMatch(/^it would stop the element (button|drawer) working: /);
+    // A rename changes nothing a reader needs.
+    const renamed = { ...root.behaviour, state: [{ id: 'menu', name: 'Menu', type: 'boolean', initial: false }] };
+    expect(refusalAt(roots, 'root', renamed, renamed.state[0])).toBeNull();
+  });
+
+  it('matches by what is refused, not by id: a duplicate id does not lend its refusal, and an unchanged refused entry is not saved again', () => {
+    const roots = [page()];
+    const good = { id: 't1', on: 'click', do: [{ toggle: 'menu' }] };
+    const bad = { id: 't1', on: 'click', do: [{ toggle: 'tab' }] };
+    const tree = withBehaviourAt(page(), 'drawer', { on: [good, bad] })!;
+    // Saving the first again, unchanged: the second's refusal (same id) is old and not the first's.
+    expect(refusalAt([tree], 'drawer', { on: [good, bad] }, good)).toBeNull();
+    // Saving the refused one unchanged is still refused.
+    expect(refusalAt([tree], 'drawer', { on: [good, bad] }, bad)).toMatch(/tab/);
+    expect(roots).toHaveLength(1);
   });
 
   it('reads a refusal already stored, by node', () => {

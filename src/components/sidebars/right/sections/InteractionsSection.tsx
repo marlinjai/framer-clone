@@ -115,7 +115,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
   /** Checks a trigger on this node against the whole page, and writes it when the parser takes it. */
   const save = (trigger: StoredRecord, index?: number): string | null => {
     const next = putEntry(stored, 'on', trigger, index);
-    const reason = refusalAt(roots, component.id, next, { entry: 'on', id: String(trigger.id) });
+    const reason = refusalAt(roots, component.id, next, trigger, names.node);
     if (reason) return reason;
     writeBehaviour(component, next);
     return null;
@@ -590,7 +590,7 @@ function ShowWhen({ component, stored, states, roots, names, reason }: ShowWhenP
   const key = rawText(condition);
   const write = (next: unknown) => {
     const behaviour = putField(stored, 'showWhen', next);
-    const refusal = next === undefined ? null : refusalAt(roots, component.id, behaviour, { entry: 'showWhen' });
+    const refusal = next === undefined ? null : refusalAt(roots, component.id, behaviour, next, names.node);
     if (refusal) {
       setError({ reason: refusal, for: key });
       return;
