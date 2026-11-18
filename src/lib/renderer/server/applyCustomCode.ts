@@ -26,7 +26,8 @@
 // (the snapshot adapter maps five fields and this is not one, but the renderer must not
 // rest on that) loses it here, on every page, with live code on or off.
 //
-// PURE: no React, no server-only. The blob read is the caller's (src/server/customCode).
+// PURE: renders nothing, no server-only. It reads the box's tag from customCodeBoxTag, the
+// renderer's own rule, so the two cannot disagree. The blob read is the caller's (src/server/customCode).
 
 import { INTERACTIVE_COMMERCE_KINDS, type ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { contentBelow, isBlockedTag, type ForeignContent } from '@/lib/renderer/blockedNodes';
@@ -37,6 +38,7 @@ import { formKindOf } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
+import { customCodeBoxTag } from '@/lib/renderer/customCode/customCodeElement';
 import { readBehaviourTree, type StateValue } from '@/lib/behaviour/format';
 import { BOX_LIMITS, boxPath, type CustomCodeDeclaration } from '@/lib/customCode/contract';
 import { hasCustomCode, parseCustomCode } from '@/lib/customCode/customCode';
@@ -184,27 +186,30 @@ export function applyCustomCode(root: ComponentNode, live: LiveCustomCode | null
   };
 
   /**
-   * `foreign` is what the node stands in for the HTML parser, as the renderer threads it;
+   * `foreign` and `parentTag` are what the node stands in, as the renderer threads them;
    * `outside` says why the node's subtree is not drawn by the ordinary walk (an ancestor's
    * reason), or null.
    */
-  const visit = (node: ComponentNode, outer: ReadonlyMap<string, StateValue>, foreign: ForeignContent, outside: string | null): ComponentNode => {
+  const visit = (node: ComponentNode, outer: ReadonlyMap<string, StateValue>, foreign: ForeignContent, parentTag: string | null, outside: string | null): ComponentNode => {
     const own = behaviours?.get(node)?.state;
     // A node's own state counts, as the runtime's lookup starts at the element itself.
     const states = own ? new Map([...outer, ...own.map((state): [string, StateValue] => [state.id, state])]) : outer;
     const self = outside ?? (running ? drawnApart(node, foreign) : null);
     const isBlock = hasCustomCode(node.props);
     const tag = tagOf(node) ?? 'div';
+    // A void-tag block under a table part, a select or an option has no box at all (D96).
+    const boxTag = isBlock ? customCodeBoxTag(tag, foreign, parentTag) : tag;
     // A box that is itself `svg` or `math` holds its frame in foreign content as much as one inside them.
     const ownContent = contentBelow(tag, false);
     const where = self
       ? `${outside ? 'inside' : 'on'} ${self}`
-      : foreign !== false ? `inside ${foreign}` : isBlock && ownContent !== false ? `on ${ownContent}` : null;
+      : foreign !== false ? `inside ${foreign}` : isBlock && ownContent !== false ? `on ${ownContent}`
+      : boxTag === null ? `under a ${parentTag}, where a void tag gets no box` : null;
     const run = running && isBlock ? accept(node, states, running, where) : null;
     // The custom code branch draws a block's children in its box; any other node as its kind says.
-    const below = self ?? (running && !isBlock ? childrenApart(node) : null);
-    // A void block's box (customCodeBoxTag) stands in what its own tag would: neither is svg or math.
-    const children = node.children?.map((child) => visit(child, states, contentBelow(tag, foreign), below));
+    const below = self ?? (boxTag === null ? 'a block drawn as nothing' : running && !isBlock ? childrenApart(node) : null);
+    // A void block's box stands in what its own tag would: neither is svg or math. Its children stand in the box.
+    const children = node.children?.map((child) => visit(child, states, contentBelow(tag, foreign), isBlock ? boxTag : tagOf(node), below));
     const same = !children || children.every((child, index) => child === node.children?.[index]);
     if (!run && node.customCodeRun === undefined && same) return node;
     const next: ComponentNode = { ...node, ...(children ? { children } : {}) };
@@ -213,5 +218,5 @@ export function applyCustomCode(root: ComponentNode, live: LiveCustomCode | null
     return next;
   };
 
-  return { root: visit(root, new Map(), false, null), blocks, writes, problems };
+  return { root: visit(root, new Map(), false, null, null), blocks, writes, problems };
 }
