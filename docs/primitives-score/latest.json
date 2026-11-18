@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-16T23:34:11.021Z",
+  "generatedAt": "2026-11-18T11:11:23.569Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 759,
+  "durationSeconds": 762,
   "matrix": {
     "surfaces": {
       "format": {
@@ -7075,7 +7075,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.0006378084483479716,
             "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
@@ -7121,7 +7121,7 @@
         "pass": false,
         "checks": {
           "screenshot": {
-            "pass": 3,
+            "pass": 4,
             "total": 4
           },
           "computed-styles": {
@@ -7138,14 +7138,6 @@
           }
         },
         "failures": [
-          {
-            "fixture": "busbasis-search",
-            "viewport": "Desktop",
-            "state": "initial",
-            "check": "screenshot",
-            "gap": "published-base",
-            "detail": "0.11 percent of pixels differ"
-          },
           {
             "fixture": "busbasis-search",
             "viewport": "all",
@@ -7197,7 +7189,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0010986428718582613,
+            "ratio": 0.0007142949114132674,
             "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
@@ -8423,14 +8415,6 @@
           "busbasis-home"
         ],
         "needs": 1,
-        "styleDifferences": 0
-      },
-      {
-        "id": "published-base",
-        "pages": [
-          "busbasis-search"
-        ],
-        "needs": 0,
         "styleDifferences": 0
       }
     ],
@@ -9684,18 +9668,6 @@
       "matrixCells": 1,
       "corpusChecks": 0,
       "fixtures": [],
-      "onlyGapOf": [],
-      "roundTripCases": 0,
-      "cost": 1
-    },
-    {
-      "id": "published-base",
-      "description": "The published route ships the root layout's sheet to every visitor (Tailwind's reset, the theme, the base layer), and the page base of a site takes that out again. A check here fails with that sheet in place and passes on a page without it, so the page base left something behind. Measured, not guessed: the same replica matches its original on a page without the base.",
-      "matrixCells": 0,
-      "corpusChecks": 1,
-      "fixtures": [
-        "busbasis-search"
-      ],
       "onlyGapOf": [],
       "roundTripCases": 0,
       "cost": 1
