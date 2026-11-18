@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 #
 # The box: the small service that serves sandboxed custom code documents from
 # its own registrable domain (docs/plans/2026-11-02-sandboxed-custom-code.md).
@@ -10,14 +10,67 @@
 # The context is cut down to the box and that one module by
 # Dockerfile.box.dockerignore.
 #
-# What this image deliberately does not hold yet: the Infisical client and the
-# login entrypoint. They belong to the operator step O1, which also creates the
-# Coolify application. Until then the image is built and tested only, never
-# pushed. It takes its configuration from the environment (services/box/README.md).
+# The build frontend named on the first line is pinned by digest, as the base image is.
+#
+# How it starts (decision D50 of the plan): tini is process 1 and starts a
+# small node program (services/box/src/launch.ts) that logs in to Infisical
+# with the box's own machine identity and runs the box inside `infisical run`,
+# which puts the one secret, BOX_DATABASE_URL, into the box's environment. The
+# container's own environment holds the client id and secret, the project id,
+# the environment slug and the box's settings (services/box/README.md). The
+# image holds no secret and is safe to push to a public registry.
 
 # The same image, pinned by digest, as the application's Dockerfile.
 ARG NODE_IMAGE=node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
 ARG PNPM_VERSION=9.15.0
+# The two programs the image takes from outside, each pinned by version and by the SHA-256 of the file
+# downloaded, checked before the file is used. A bump changes the version and both checksums, copied from
+# the release's own checksum list after downloading the files and comparing them.
+# The Infisical command line client: https://github.com/Infisical/cli/releases (checksums.txt, which lists
+# the Linux archives; cli_<v>_checksums.txt lists only Windows).
+ARG INFISICAL_VERSION=0.45.8
+ARG INFISICAL_SHA256_ARM64=f2e637e4d91e0075f849434a9537f301e83b46c803125dc247aefe534aa127ff
+ARG INFISICAL_SHA256_AMD64=b0ddefa3f744f66cdeb5c5beab94ce3c28c7d12a4db03de612c0eb079f6a5655
+# tini, statically linked: https://github.com/krallin/tini/releases (tini-static-<arch>.sha256sum).
+ARG TINI_VERSION=0.19.0
+ARG TINI_SHA256_ARM64=eae1d3aa50c48fb23b8cbdf4e369d0910dfc538566bfd09df89a774aa84a48b9
+ARG TINI_SHA256_AMD64=c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee
+
+FROM ${NODE_IMAGE} AS tools
+# Set by BuildKit to the platform being built (arm64 on the shared server and in CI).
+ARG TARGETARCH
+ARG INFISICAL_VERSION
+ARG INFISICAL_SHA256_ARM64
+ARG INFISICAL_SHA256_AMD64
+ARG TINI_VERSION
+ARG TINI_SHA256_ARM64
+ARG TINI_SHA256_AMD64
+WORKDIR /tools
+# The certificate authorities come from Debian's package (apt checks its signature): the base image has
+# none, and the client speaks https to Infisical. The box itself speaks to nothing over TLS. From the
+# client's archive only the one statically linked Go program is taken.
+RUN set -eu \
+  && case "${TARGETARCH}" in \
+       arm64) infisical_sha="${INFISICAL_SHA256_ARM64}"; tini_sha="${TINI_SHA256_ARM64}" ;; \
+       amd64) infisical_sha="${INFISICAL_SHA256_AMD64}"; tini_sha="${TINI_SHA256_AMD64}" ;; \
+       *) echo "no pinned checksum for the architecture '${TARGETARCH}'" >&2; exit 1 ;; \
+     esac \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && rm -rf /var/lib/apt/lists/* \
+  && test -s /etc/ssl/certs/ca-certificates.crt \
+  && curl -fsSL --proto '=https' -o infisical.tar.gz \
+       "https://github.com/Infisical/cli/releases/download/v${INFISICAL_VERSION}/cli_${INFISICAL_VERSION}_linux_${TARGETARCH}.tar.gz" \
+  && echo "${infisical_sha}  infisical.tar.gz" | sha256sum -c - \
+  && curl -fsSL --proto '=https' -o tini \
+       "https://github.com/krallin/tini/releases/download/v${TINI_VERSION}/tini-static-${TARGETARCH}" \
+  && echo "${tini_sha}  tini" | sha256sum -c - \
+  && tar -xzf infisical.tar.gz infisical \
+  && rm infisical.tar.gz \
+  && ./infisical --version | grep -qx "infisical version ${INFISICAL_VERSION}" \
+  && install -D -m 0555 infisical /out/usr/local/bin/infisical \
+  && install -D -m 0555 tini /out/usr/bin/tini \
+  && install -D -m 0444 /etc/ssl/certs/ca-certificates.crt /out/etc/ssl/certs/ca-certificates.crt
 
 FROM ${NODE_IMAGE} AS build
 ARG PNPM_VERSION
@@ -30,10 +83,13 @@ COPY services/box/tsconfig.json ./
 COPY services/box/src ./src
 COPY src/lib/customCode/contract.ts /repo/src/lib/customCode/contract.ts
 # One file, the database driver included: the runtime stage holds no node_modules.
-RUN pnpm exec esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist/box.cjs
+RUN pnpm exec esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist/box.cjs \
+  && pnpm exec esbuild src/launchMain.ts --bundle --platform=node --target=node22 --format=cjs --log-level=warning --outfile=dist/launch.cjs \
+  && install -D -m 0444 dist/launch.cjs /out/opt/box/launch.cjs
 
 FROM ${NODE_IMAGE} AS runtime
-# The service runs one file with node and nothing else. So what a fault in it could otherwise reach for is
+# The image runs four programs: tini, node (the start program and the service, one file each), the Infisical
+# client and `env`. So what a fault in one could otherwise reach for is
 # taken out of the image: the package managers (npm, yarn, corepack, apt, dpkg) and every shell. This narrows
 # what is at hand; it is not a boundary. The boundary is the read-only file system, the dropped capabilities
 # and the unprivileged user the container is run with.
@@ -45,12 +101,25 @@ RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /us
 ENV NODE_ENV=production TZ=UTC
 WORKDIR /app
 COPY --from=build --chown=root:root --chmod=0444 /repo/services/box/dist/box.cjs ./box.cjs
-# The image's own unprivileged user. The service also refuses to start as root.
+# The start program (outside /app, so the service's directory holds the service and nothing else), the
+# Infisical client, tini and the certificate authorities. Each is laid out with its mode by `install` in its
+# stage and copied as a tree: COPY --chmod would give the same mode to every directory it creates, and a
+# directory of mode 0444 cannot be entered (node then cannot read /etc/ssl and does not start).
+COPY --from=build --chown=root:root /out/ /
+COPY --from=tools --chown=root:root /out/ /
+# The image's own unprivileged user. The start program and the service also refuse to start as root.
 USER node
 EXPOSE 8080
 # Asks the address the service listens on (any address: this machine's own).
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+# The start period matches the start program's default time limit (BOX_START_TIMEOUT_SECONDS, 60 s, decision
+# D58): a box still starting is not reported unhealthy, and one that has not answered by then is stopped anyway.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
   CMD ["node", "-e", "const h=process.env.BOX_LISTEN_HOST;fetch('http://'+(!h||h==='0.0.0.0'?'127.0.0.1':h==='::'?'[::1]':h.includes(':')?'['+h+']':h)+':'+(process.env.BOX_PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
-# node is process 1 and handles SIGTERM itself; it starts no child, so there is nothing to reap.
-# No code is ever built from a string at run time, in the service or in its one dependency.
-ENTRYPOINT ["node", "--disallow-code-generation-from-strings", "box.cjs"]
+# tini is process 1: it reaps what ends and passes SIGTERM and SIGINT to its one child. The chain is
+# tini -> node launch.cjs -> infisical run -> env -u INFISICAL_TOKEN ... -> node box.cjs (env replaces itself
+# with node). Each link passes the signal on and waits for its child, and the box answers SIGTERM by
+# closing its listener and its database connection, so `docker stop` ends it cleanly within the grace
+# period. The Infisical client writes nothing (checked by the image test on a read-only root file system
+# with no writable home). No code is ever built from a string at run time, in the start program, the
+# service or its one dependency.
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "--disallow-code-generation-from-strings", "/opt/box/launch.cjs"]
