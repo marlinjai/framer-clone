@@ -151,6 +151,12 @@ function insideControl(component: ComponentInstance): boolean {
   return ancestorsOf(component).some((node) => typeof node.type === 'string' && CONTROL_HOSTS.has(node.type.toLowerCase()));
 }
 
+/** The tag of the element a node stands in: its nearest ancestor with a tag. */
+function parentTagOf(component: ComponentInstance): string | null {
+  const parent = ancestorsOf(component).find((node) => typeof node.type === 'string');
+  return parent ? (parent.type as string) : null;
+}
+
 /** What a node stands in for the HTML parser, whatever its tag: its ancestors decide. */
 function standsIn(component: ComponentInstance): ForeignContent {
   const types = ancestorsOf(component).map((node) => node.type).filter((type): type is string => typeof type === 'string');
@@ -263,6 +269,7 @@ export function createComponentElement(
           config={(component.props as Record<string, unknown>).customCode}
           // Inside svg or math the tile needs an HTML island of its own (customCodeElement.tsx).
           foreign={standsIn(component)}
+          parentTag={parentTagOf(component)}
           insideControl={options?.runLinksAllowed === false || insideControl(component)}
         >
           {content}

@@ -156,25 +156,27 @@ function rawTextChild(node: ComponentNode, inLink: boolean): React.ReactNode {
 /**
  * What goes inside a node's element: its own text, then its child nodes in
  * order. Exported for the form island, which renders its own wrapper. `inLink`
- * says the node sits inside a link or a button, its own tag included.
+ * says the node sits inside a link or a button, its own tag included; `parentTag`
+ * is the element the children stand in (the node's own tag unless drawn as another).
  */
 export function renderNodeChildren(
   node: ComponentNode,
   scope: BindingScope,
   foreign: ForeignContent = false,
   inLink = !runLinksAllowedIn(node.type),
+  parentTag: string | null = resolveHtmlTag(node.type),
 ): React.ReactNode {
   const rendered = (node.children ?? []).map((child, index) =>
-    renderComponentNode(child, scope, child.id ?? index, foreign, inLink),
+    renderComponentNode(child, scope, child.id ?? index, foreign, inLink, parentTag),
   );
   return ownTextThenChildren((node.props as any)?.children, rendered, createRunElement, !inLink) as React.ReactNode;
 }
 
 /** A node's child nodes without its own text (a shop part draws its text itself). */
-function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreign: ForeignContent, inLink: boolean): React.ReactNode {
+function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreign: ForeignContent, inLink: boolean, parentTag: string | null): React.ReactNode {
   const children = node.children ?? [];
   if (children.length === 0) return undefined;
-  return children.map((child, index) => renderComponentNode(child, scope, child.id ?? index, foreign, inLink));
+  return children.map((child, index) => renderComponentNode(child, scope, child.id ?? index, foreign, inLink, parentTag));
 }
 
 /**
@@ -188,6 +190,8 @@ export function renderComponentNode(
   key: React.Key = node.id ?? 0,
   foreign: ForeignContent = false,
   inLink = false,
+  /** The tag of the element this node stands in, when known (a void-tag custom code block's box needs it). */
+  parentTag: string | null = null,
 ): React.ReactNode {
   // No element at all, so nothing below (a tag, an island, a marker) applies.
   if (isTextNodeType(node.type)) return rawTextChild(node, inLink);
@@ -229,13 +233,17 @@ export function renderComponentNode(
   // is the island's (slice C3); a proposal or an invalid value is the fallback for good.
   if (hasCustomCode(node.props)) {
     const tag = resolveHtmlTag(node.type) ?? 'div';
-    const boxTag = customCodeBoxTag(tag, foreign);
+    // Null under a parent that holds only its own kinds of children: no box (D96).
+    const boxTag = customCodeBoxTag(tag, foreign, parentTag);
+    if (boxTag === null) return null;
     return createCustomCodeElement('published', {
-      tag: boxTag,
+      // The stored tag: the element swaps a void one for boxTag and keeps only global attributes.
+      tag,
       foreign,
+      parentTag,
       domProps: nodeDomProps(node),
       config: (node.props as Record<string, unknown>).customCode,
-      children: renderNodeChildren(node, scope, contentBelow(boxTag, foreign), inLink || !runLinksAllowedIn(boxTag)),
+      children: renderNodeChildren(node, scope, contentBelow(boxTag, foreign), inLink || !runLinksAllowedIn(boxTag), boxTag),
       key,
     });
   }
@@ -255,7 +263,7 @@ export function renderComponentNode(
         tag={partTag}
         domProps={nodeDomProps(node)}
         storedText={partText}
-        content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign), inLink || !runLinksAllowedIn(partTag))}
+        content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign), inLink || !runLinksAllowedIn(partTag), partTag)}
         surface="preview"
         linksAllowed={!inLink}
       />
