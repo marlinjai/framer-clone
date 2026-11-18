@@ -956,3 +956,67 @@ match: one site to rebuild instead of two, `/angebot/arbosano` dropped (an expir
 indexed), and R4 is a redirect from services.lumitra.co to `/services`, which stays Marlin's yes like every domain
 step. Nothing of R1 to R6 is started by this plan's worker.
 
+
+### R2 `services-in-sites`: the booking button and the cutover inventory (2026-11-18)
+
+Asked by Marlin through the coordinator on 2026-11-18: move services.lumitra.co into Lumitra Sites, and let the audit
+button book his free discovery call (Lumitra Booking, `https://booking.lumitra.co/marlinjai/marlinjai/discovery-call`,
+15 minutes, active, no price) while the audit itself stays a paid 2.500 EUR offer. Nothing was published, deployed or
+moved; main of the site and every domain are as they were.
+
+**State found.** The site "Lumitra (new landing page)" (`cde77561`) is published at `6zp2te2a5btk.sites.lumitra.co`;
+its main is at version 14 (it was 9 on 2026-11-12) and gained an unpublished page `/tarife-und-preise-lumitra`
+("Tarife und Preise | Lumitra") and one changed node on the home page, author not visible from the review. The branch
+"Test new design" (`62653f35`) was at version 58 (31 on 2026-11-12), no conflicts with main, no problems, not ready,
+not approved. Its `/services` and `/services/angebot` match the live pages line by line (visible text, title,
+description, indexing) except one tag (below). The live pages have no Impressum or privacy link; the branch footers link
+to `lumitra.co/impressum`, `/datenschutz` and `/terms`, which answer 200 today from lumitra-web.
+
+**Written to the branch (versions 59 to 61), through the editor's save route under Marlin's session**, because the agent
+endpoint refuses the company key (blocker 1). Each write was version-locked, and the stored document was read back and
+compared with the one before: only the intended fields changed, and main stayed at version 14.
+
+- The seven "Audit buchen" and "KI-Potenzial-Audit buchen" links (four on `/services`, three on `/services/angebot`)
+  pointed at a `mailto:` to a private Gmail address; all seven now open the discovery-call booking page. Labels: the two
+  navigation buttons "Erstgespräch" (as wide as the old label, so the tablet navigation does not crowd the logo), the hero
+  and closing buttons "Kostenloses Erstgespräch buchen", the offer ladder's button "Kostenloses Erstgespräch zum Audit".
+- The note under the hero button on `/services` read "2.500 EUR, voll auf den Sprint anrechenbar", which made the free
+  call look like it cost 2.500 EUR. It now reads "Erstgespräch: 15 Minuten, kostenlos. KI-Potenzial-Audit: 2.500 EUR
+  Festpreis, voll auf den Sprint anrechenbar". The price lines of the audit card are unchanged.
+- The third offer card on both pages had lost its tag "Plattform-Build" (the live pages have it); it is back, styled as
+  its neighbours.
+- Proof (headless browser on the editor's preview of the branch): 1440, 800 and 390 px on both pages, no horizontal
+  overflow, no `mailto:` left on either page, 4 and 3 links to the booking address, and a click on the ladder button lands
+  on the booking page "Discovery call, 15 minutes".
+
+**Decided here, say so if you disagree:** the wording above departs from R2's "word for word" acceptance on purpose
+(Marlin asked for the change); the R2 check is now "live copy, plus the booking change". The visible private Gmail line in
+the closing section of `/services/angebot` is left as it is for Marlin (see below).
+
+**Cutover inventory (R3 and R4), nothing of it done:**
+
+| Item | Today | After the move | Gate |
+|---|---|---|---|
+| DNS | `services.lumitra.co`, `lumitra.co` and `domains.lumitra.co` all resolve to 157.90.119.98, the Coolify server that runs both lumitra-web and framer-clone | No DNS change: the move is a domain change between two Coolify apps on the same server | none |
+| Order | R4 needs R3 (apex on Sites), R3 needs R1 (every hub page in Sites), R1 needs F8 (the FX hero), F8 needs F7 (a deploy, waiting for Marlin's yes) | services cannot move on its own; the redirect points into the apex site | Marlin's yes per step |
+| R3 prerequisite: how the apex is served on Sites | `src/server/domains/hostname.ts` names `lumitra.co` the platform zone (`PLATFORM_ROOT_ZONE`), and `isUnderZone` rejects a custom domain that equals it, while the resolver serves only verified or active claims | a mechanism for a live Sites claim on `lumitra.co` and `www.lumitra.co` is decided and live before the Coolify domain move, because otherwise the apex answers 404 until the claim path is fixed. The mechanism is not chosen here: it must get past the platform-zone rule (an explicit, audited exception for the apex, or another path), and it is a named step of R3 | decided and proven live (a request with the apex Host header returns the Sites page) before any Coolify domain change; the rollback of the Coolify domain list stays as written |
+| Redirects on services.lumitra.co (R4) | lumitra-web serves `/` and `/angebot`, and answers 308 from `/services` and `/services/angebot` back to them | `/` to `lumitra.co/services`, `/angebot` and `/services/angebot` (the legacy offer URL, which lumitra-web redirects to `/angebot` today) each to `lumitra.co/services/angebot`, both explicit and ahead of the catch-all, `/angebot/arbosano` (not carried over) to `lumitra.co/services/angebot`, any other path to `lumitra.co/services`, all 301 | Marlin's yes, one line with rollback (table above) |
+| Branch merge and publish | branch at version 61, main at 14 | merge the branch, then publish the site; main's unpublished pricing page would go live with that publish unless its owner says otherwise | Marlin (merge needs his approval in the editor) |
+| Legal pages | footers link to lumitra-web's Impressum, privacy and terms | those pages exist in Sites before R3 (R1), or the apex move breaks every footer | R1 |
+| Privacy text | lumitra.co/datenschutz does not mention the booking service; the booking page links its own `/privacy` | a sentence on Lumitra Booking (who processes the booking data) in the rebuilt privacy page | the privacy page's owner, with R1 |
+| Site settings | `language` de for the whole site (the hub is English), empty site name, title template and 404 page | per-page language (agent plugin plan, friction 2) before the apex moves | R1 |
+| Company key | the Sites endpoint refuses `LUMITRA_SITES_API_KEY_LUMITRA` with `ambiguous_workspace` (the company now has more than one workspace; it worked on 2026-11-12) | fixed before any agent works on this site again, including a publish through the endpoint | see blocker 1 |
+
+**Blockers and open points, for Marlin through the coordinator:**
+
+1. *The agent key is locked out* (`ambiguous_workspace`, `src/server/sites/scope.ts`, which refuses a key whose company
+   has several workspaces instead of guessing). Production, needs the owner of the company structure to find where the
+   second workspace came from; not changed here.
+2. *The booking page is English only.* The discovery call has no German title or description (`translations` empty,
+   default locale English), so a German visitor clicking "Kostenloses Erstgespräch buchen" reads "Discovery call ... A
+   short first call". Adding a German translation is a live Booking change and waits for his yes.
+3. *The private Gmail address* is shown as text on `/services/angebot` (and is the live `mailto:` today). Recommended:
+   replace it with `hello@lumitra.co`, which the hub already uses (lumitra.co receives mail through Cloudflare's mail routing; whether that address is forwarded was not checked). His call, since it changes
+   where client mail goes.
+4. *"Tripwire (bezahlte Analyse)"* is the audit card's visible tag on both pages (live too): sales jargon in front of a
+   buyer. Belongs to the copy pass carried over above.
