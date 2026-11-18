@@ -110,9 +110,12 @@ export interface CustomCodeElementInput {
   /**
    * What the block stands in for the HTML parser (blockedNodes.ts): inside `svg` an
    * HTML element is drawn as SVG and shows nothing, so the tile gets a foreignObject
-   * there; inside `math` it is its label as text. The editor surfaces only.
+   * there; inside `math` it is its label as text. On the published page and the
+   * standalone preview it picks the box of a void tag (customCodeBoxTag).
    */
   foreign?: ForeignContent;
+  /** The tag of the element the block stands in, when known: it decides the box of a void tag (customCodeBoxTag). */
+  parentTag?: string | null;
   /**
    * Set when the block sits inside a link, a button, a label or a summary: the tile then
    * leaves its link out, since a link inside another control does not follow in every
@@ -147,23 +150,52 @@ function tileOf(parsed: CustomCodeParse, previewHref: string | null): React.Reac
 const TILE_HOST_TAGS: ReadonlySet<string> = new Set(['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'figure', 'blockquote', 'li', 'dd', 'td', 'th']);
 
 /**
- * The tag a block's box is drawn in on the published page and the standalone preview:
- * its own, unless that is a void tag, which cannot hold the fallback. Then a container
- * of the content it stands in: a `div` in HTML, a `g` inside `svg` and an `mrow` inside
- * `math`, since a `div` there would break out of the SVG or MathML when the browser
- * parses the page (and no longer match what hydration draws).
+ * Parents whose content is phrasing (or transparent, so possibly inside a paragraph): a
+ * `div` there closes an open `p` when the browser parses the page, so the box is a `span`.
  */
-export function customCodeBoxTag(tag: string, foreign: ForeignContent = false): string {
+const PHRASING_PARENTS: ReadonlySet<string> = new Set(
+  'p h1 h2 h3 h4 h5 h6 span a em strong b i u s small mark abbr cite code dfn kbd q samp sub sup time var bdi bdo data label button legend summary dt pre output ruby rt rp del ins object canvas audio video map'.split(' '),
+);
+
+/**
+ * Parents that hold only their own kinds of children (a table's structure, a select,
+ * an option group, an option): the browser's parser moves any box out of them or drops
+ * it, so a void-tag block there is not drawn at all.
+ */
+const NO_BOX_PARENTS: ReadonlySet<string> = new Set(['table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup', 'select', 'optgroup', 'option', 'datalist', 'html', 'head', 'frameset']);
+
+/**
+ * The tag a block's box is drawn in on the published page and the standalone preview
+ * (decision D96): its own, unless that is a void tag, which cannot hold the fallback.
+ * Then a container the parser leaves where it stands: a `g` inside `svg`, an `mrow`
+ * inside `math`, a `span` under a phrasing parent, a `div` elsewhere; null (draw
+ * nothing) under a parent that holds only its own kinds of children. A `div` in the
+ * wrong place would be moved by the browser when it parses the page, and the page
+ * would no longer match what hydration draws.
+ */
+export function customCodeBoxTag(tag: string, foreign: ForeignContent = false, parentTag: string | null = null): string | null {
   if (!isVoidTag(tag)) return tag;
   if (foreign === 'svg') return 'g';
   if (foreign === 'math') return 'mrow';
+  const parent = parentTag?.toLowerCase() ?? null;
+  if (parent && NO_BOX_PARENTS.has(parent)) return null;
+  if (parent && PHRASING_PARENTS.has(parent)) return 'span';
   return 'div';
 }
 
+/** Attributes any element may carry; the rest belonged to the stored tag a box replaces. */
+const GLOBAL_PROPS: ReadonlySet<string> = new Set(['id', 'className', 'style', 'title', 'lang', 'dir', 'role', 'hidden', 'tabIndex', 'translate', 'inert']);
+
+/** A replaced tag's props without what only that tag understood (an `img`'s `fetchPriority`, an `input`'s `type`). */
+function globalPropsOnly(props: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(props).filter(([name]) => GLOBAL_PROPS.has(name) || name.startsWith('data-') || name.startsWith('aria-')));
+}
+
 /** A block on a surface. Never a frame: the frame belongs to the published island (slice C3). */
-export function createCustomCodeElement(surface: CustomCodeSurface, input: CustomCodeElementInput): React.ReactElement {
+export function createCustomCodeElement(surface: CustomCodeSurface, input: CustomCodeElementInput): React.ReactElement | null {
   const parsed = parseCustomCode(input.config);
-  const tag = customCodeBoxTag(input.tag, input.foreign);
+  const boxTag = customCodeBoxTag(input.tag, input.foreign, input.parentTag);
+  const tag = boxTag ?? 'div';
   // A copy: the caller's object is never changed.
   const domProps: Record<string, unknown> = { ...withoutCustomCodeProp(input.domProps) };
   delete domProps.children;
@@ -188,8 +220,11 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
     // A group, so its label is allowed (ARIA 1.2 names no plain div).
     return React.createElement(host, { ...domProps, key: input.key, style, role: 'group', 'aria-label': label }, tileOf(parsed, input.insideControl ? null : input.previewHref ?? null));
   }
+  // A void tag under a parent that holds only its own kinds of children: no box at all.
+  if (boxTag === null) return null;
   const trace = parsed.ok && parsed.value.kind === 'block' ? { [CUSTOM_CODE_ATTR]: customCodeTrace(parsed.value.sha256) } : {};
-  return React.createElement(tag, { ...domProps, key: input.key, ...trace }, input.children);
+  const own = tag === input.tag ? domProps : globalPropsOnly(domProps);
+  return React.createElement(tag, { ...own, key: input.key, ...trace }, input.children);
 }
 
 /**
@@ -197,7 +232,7 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
  * is always the tile; the preview is the tile too, unless the standalone preview
  * route says otherwise through CustomCodeSurfaceContext.
  */
-export function CustomCodeOnEditorSurface({ mode, ...input }: CustomCodeElementInput & { mode: 'editor' | 'preview' }): React.ReactElement {
+export function CustomCodeOnEditorSurface({ mode, ...input }: CustomCodeElementInput & { mode: 'editor' | 'preview' }): React.ReactElement | null {
   const info = React.useContext(CustomCodeSurfaceContext);
   const surface: CustomCodeSurface = mode === 'editor' ? 'editor' : info.standalone ? 'standalone' : 'preview';
   return createCustomCodeElement(surface, { ...input, previewHref: info.previewHref });
