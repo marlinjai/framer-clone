@@ -253,12 +253,13 @@ export interface ConsentRuntimeConfig {
  * A stored "yes" whose cookie expired sets it again, and on a page with a map
  * reloads once before anything starts. A page without a map only sets the cookie.
  * When storage throws, the "yes" would not survive a reload, so it is announced as
- * before, and so it is while a form field on the page holds input the visitor typed,
- * which a reload would lose: the map then offers the reload itself. `mapsAtLoad` on
- * the API tells a map island that this document's policy refuses Google, so it keeps
- * its placeholder, and `mapsAllowed()` whether the cookie
- * is set now: when it is not (the browser blocks cookies), no reload can help, and the
- * island says so instead of offering one. A maps reload is announced first as a
+ * before, and so it is once the visitor has edited a field on the page (an input or
+ * change event of their own), which a reload would lose: the map then offers the
+ * reload itself. `mapsAtLoad` on the API tells a map island that this document's
+ * policy refuses Google, so it keeps its placeholder; `mapsAllowed()` says whether the
+ * cookie is set now: when it is not (the browser blocks cookies), no reload can help,
+ * and the island says so instead of offering one; `reload()` is the runtime's own
+ * reload, which drops the `#cookie-settings` address first, for the map's button. A maps reload is announced first as a
  * `lumitra:maps-reload` event, so the map whose "Load map" asked can leave a focus
  * mark for the new page.
  * Storage that throws (sandboxed frames, some private modes) keeps the choice for
@@ -324,17 +325,21 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     'var mapsAtLoad=mapsAllowed();' +
     // Whether a "yes" survives a new document: storage that throws keeps it for this view only.
     "function kept(c){var r=stored();return !!r&&r[c]===true;}" +
-    // Whether a form field on the page holds something the visitor changed: a reload
-    // would lose it, so a maps "yes" is announced instead and the map offers the reload.
-    "function typed(){var f=[];try{f=d.querySelectorAll('input,textarea,select');}catch(e){}for(var i=0;i<f.length;i++){var x=f[i],t=(x.type||'').toLowerCase(),o,j;" +
-    "if(x.tagName==='SELECT'){o=x.options||[];for(j=0;j<o.length;j++)if(o[j].selected!==o[j].defaultSelected)return true;continue;}" +
-    "if(t==='checkbox'||t==='radio'){if(x.checked!==x.defaultChecked)return true;continue;}" +
-    "if(t==='hidden'||t==='submit'||t==='button'||t==='reset'||t==='image')continue;if(x.value!==x.defaultValue)return true;}return false;}" +
+    // Whether the visitor has edited a field on this page (typed, ticked, chose): a
+    // reload would lose it, so a maps "yes" is announced instead and the map offers the
+    // reload. Recorded from the visitor's own input and change events, in the capture
+    // phase: comparing a field with its default misses React-controlled fields, whose
+    // default follows every keystroke. Events a script dispatched do not count, nor
+    // edits inside the banner.
+    "var dirty=false;function edited(ev){if(dirty||!ev||ev.isTrusted!==true)return;var t=ev.target;if(!t||t.nodeType!==1)return;if(el&&el.contains(t))return;" +
+    "var n=t.tagName;if(n==='INPUT'||n==='TEXTAREA'||n==='SELECT'||t.isContentEditable===true)dirty=true;" +
+    "else{try{if(t.closest('[contenteditable]:not([contenteditable=\"false\"])'))dirty=true;}catch(e){}}}" +
+    "d.addEventListener('input',edited,true);d.addEventListener('change',edited,true);" +
     // Whether a maps "yes" needs a new document: this page has a map (it asks about
     // maps by itself only then), was served without the cookie, the cookie is set now,
     // and the answer survives the reload. A page without a map only sets the cookie:
-    // the next document's policy allows Google. Not while a form holds input.
-    "function mapsReload(){return asks('maps')&&!mapsAtLoad&&mapsAllowed()&&kept('maps')&&!typed();}" +
+    // the next document's policy allows Google. Not after the visitor edited a field.
+    "function mapsReload(){return asks('maps')&&!mapsAtLoad&&mapsAllowed()&&kept('maps')&&!dirty;}" +
     // Reloads without the #cookie-settings address, which would open the banner again.
     // A maps reload is announced first, synchronously, as `lumitra:maps-reload`: its
     // detail says whether a map's own "Load map" opened this banner, so that map (and
@@ -403,7 +408,7 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     "function nameOf(t,attr){var v=t.getAttribute(attr);return v&&known(v)?[v]:shown();}" +
     "function open(c){guard();var a=d.activeElement;opener=a&&a!==d.body&&!(el&&el.contains(a))?a:null;" +
     "if(c&&known(c)&&C.site.indexOf(c)!==-1){if(mode!=='user')mode='focus';focusCat=c;}else{mode='user';focusCat=null;}show(true);}" +
-    "w.__lumitraConsent={open:open,accept:function(){answer(shown(),true);},decline:function(){answer(shown(),false);},get:function(c){return state(c||'analytics');},mapsAtLoad:mapsAtLoad,mapsAllowed:mapsAllowed,categories:C.cats.slice(),version:C.v};" +
+    "w.__lumitraConsent={open:open,accept:function(){answer(shown(),true);},decline:function(){answer(shown(),false);},get:function(c){return state(c||'analytics');},mapsAtLoad:mapsAtLoad,mapsAllowed:mapsAllowed,reload:function(){reload(false);},categories:C.cats.slice(),version:C.v};" +
     "d.addEventListener('pointerdown',function(ev){if(el&&ev.target&&el.contains(ev.target))downs++;},true);" +
     "d.addEventListener('click',function(ev){var t=ev.target;while(t&&t.nodeType===1){" +
     // Only the banner's own buttons answer: a choice nobody made is not consent.

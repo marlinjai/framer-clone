@@ -19,6 +19,9 @@ import {
 } from '../consent';
 import type { TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
 import { DEFAULT_LOOK } from '@/lib/site/notFoundDefault';
+import FormIsland from '@/lib/renderer/forms/FormIsland';
+import { FORM_KIND_ATTR } from '@/lib/forms/definition';
+import { createScope } from '@/lib/bindings/resolver/scope';
 
 const tracker: TrackerPayload = {
   variants: {},
@@ -33,6 +36,7 @@ interface Api {
   get(category?: string): string | null;
   mapsAtLoad?: boolean;
   mapsAllowed?: () => boolean;
+  reload?: () => void;
   categories: string[];
   grant?: unknown;
 }
@@ -199,40 +203,147 @@ describe('a site with one purpose', () => {
     }
   });
 
-  describe('a form on the page holding input', () => {
-    /** A page with a map and a form, whose field the visitor changes before answering. */
-    function withForm(field: string) {
-      const holder = document.createElement('form');
-      holder.innerHTML = field;
-      document.body.append(holder);
-      return holder;
-    }
-    afterEach(() => document.querySelectorAll('form').forEach((f) => f.remove()));
+  describe('a visitor who edited a field on the page', () => {
+    /**
+     * jsdom marks every event a test dispatches as untrusted, and the runtime counts only
+     * the visitor's own. While on, each input and change event reaches the runtime's own
+     * capture listeners once more, reading as trusted: what a browser hands it when the
+     * visitor types. Everything else about the event is the real one.
+     */
+    let visitor = false;
+    const asVisitor = (event: Event) => {
+      if (!visitor || event.isTrusted) return;
+      const trusted = new Proxy(event, {
+        get: (target, key) => {
+          if (key === 'isTrusted') return true;
+          const value = Reflect.get(target, key, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      for (const [type, listener] of added) {
+        if (type !== event.type) continue;
+        if (typeof listener === 'function') listener.call(document, trusted);
+        else listener.handleEvent(trusted);
+      }
+    };
+    beforeEach(() => {
+      visitor = true;
+      window.addEventListener('input', asVisitor, true);
+      window.addEventListener('change', asVisitor, true);
+    });
+    afterEach(() => {
+      visitor = false;
+      window.removeEventListener('input', asVisitor, true);
+      window.removeEventListener('change', asVisitor, true);
+      document.querySelectorAll('[data-test-field]').forEach((f) => f.remove());
+    });
 
-    it.each([
-      ['typed text', '<input name="a" value="">', (f: HTMLFormElement) => { (f.elements[0] as HTMLInputElement).value = 'Hello'; }],
-      ['a textarea', '<textarea name="a"></textarea>', (f: HTMLFormElement) => { (f.elements[0] as HTMLTextAreaElement).value = 'Hello'; }],
-      ['a ticked box', '<input type="checkbox" name="a">', (f: HTMLFormElement) => { (f.elements[0] as HTMLInputElement).checked = true; }],
-      ['another option', '<select name="a"><option>x</option><option>y</option></select>', (f: HTMLFormElement) => { (f.elements[0] as HTMLSelectElement).selectedIndex = 1; }],
-    ])('does not reload over %s: the yes is announced and the map offers the reload', (_name, field, change) => {
+    /** The platform's published contact form, a React island with controlled fields. */
+    const contactForm = () =>
+      render(
+        <FormIsland
+          node={{
+            id: 'form-1',
+            type: 'div',
+            props: { [FORM_KIND_ATTR]: 'form', formName: 'Contact', successMessage: 'Thanks.' },
+            children: [
+              { id: 'f-name', type: 'div', props: { [FORM_KIND_ATTR]: 'form-field', fieldType: 'text', name: 'name', label: 'Name' } },
+              { id: 'f-message', type: 'div', props: { [FORM_KIND_ATTR]: 'form-field', fieldType: 'textarea', name: 'message', label: 'Message' } },
+            ],
+          }}
+          scope={createScope()}
+          renderedAt={1_700_000_000_000}
+        />,
+      );
+
+    it('does not reload over text typed into the published contact form: the yes is announced and the map offers the reload', () => {
       const reload = mockReload();
-      const form = withForm(field);
+      contactForm();
       load(['maps']);
-      change(form);
+      const message = screen.getByLabelText(/^Message/) as HTMLTextAreaElement;
+      fireEvent.change(message, { target: { value: 'Please call me back on Monday.' } });
+      // React keeps a controlled field's default in step with its value: comparing the two
+      // cannot tell typed text from none.
+      expect(message.defaultValue).toBe(message.value);
       click('Accept');
       expect(reload).not.toHaveBeenCalled();
       expect(events).toEqual([{ maps: true }]);
       expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
+      expect(message.value).toBe('Please call me back on Monday.');
     });
 
-    it('still reloads over a form nobody changed', () => {
+    it('holds for a name typed into the contact form too', () => {
       const reload = mockReload();
-      withForm('<input name="a" value="preset"><input type="hidden" name="t" value="x"><input type="checkbox" checked>');
+      contactForm();
+      load(['maps']);
+      fireEvent.input(screen.getByLabelText(/^Name/), { target: { value: 'Ana' } });
+      click('Accept');
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a ticked box', '<input type="checkbox" data-test-field>', (f: Element) => fireEvent.click(f)],
+      ['another option', '<select data-test-field><option>x</option><option>y</option></select>', (f: Element) => fireEvent.change(f, { target: { selectedIndex: 1 } })],
+      ['an edited note', '<div contenteditable="true" data-test-field><p>Note</p></div>', (f: Element) => fireEvent.input(f.firstElementChild!)],
+    ])('does not reload over %s', (_name, markup, edit) => {
+      const reload = mockReload();
+      document.body.insertAdjacentHTML('beforeend', markup);
+      load(['maps']);
+      edit(document.querySelector('[data-test-field]')!);
+      click('Accept');
+      expect(reload).not.toHaveBeenCalled();
+      expect(events).toEqual([{ maps: true }]);
+    });
+
+    it('reloads over fields nobody touched, a select without a chosen option, a range and a colour among them', () => {
+      const reload = mockReload();
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        '<div data-test-field><select><option>x</option><option>y</option></select><input type="range"><input type="color"><input value="preset"><input type="checkbox" checked></div>',
+      );
+      contactForm();
       load(['maps']);
       click('Accept');
       expect(reload).toHaveBeenCalledTimes(1);
       expect(events).toEqual([]);
     });
+
+    it('does not count an event a script dispatched', () => {
+      visitor = false;
+      const reload = mockReload();
+      document.body.insertAdjacentHTML('beforeend', '<input data-test-field>');
+      load(['maps']);
+      fireEvent.input(document.querySelector('[data-test-field]')!, { target: { value: 'x' } });
+      click('Accept');
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not count an edit inside the banner', () => {
+      const reload = mockReload();
+      load(['maps']);
+      const inside = document.createElement('input');
+      banner().append(inside);
+      fireEvent.input(inside, { target: { value: 'x' } });
+      click('Accept');
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('offers its reload to the map, which drops the cookie settings address and announces no maps reload', () => {
+    const reload = mockReload('#cookie-settings');
+    const replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+    const reloads: unknown[] = [];
+    const onReload = (event: Event) => reloads.push((event as CustomEvent).detail);
+    window.addEventListener('lumitra:maps-reload', onReload);
+    try {
+      const api = load(['maps']);
+      api.reload?.();
+      expect(replaceState).toHaveBeenCalledWith(null, '', '/contact?a=1');
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(reloads).toEqual([]);
+    } finally {
+      window.removeEventListener('lumitra:maps-reload', onReload);
+    }
   });
 
   it('drops the cookie settings address before the reload, so the banner does not open again', () => {
