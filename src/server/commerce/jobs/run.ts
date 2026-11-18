@@ -9,6 +9,8 @@ import 'server-only';
 import type { Kysely } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
+import { deliverFormNotification } from '@/server/forms/notify';
+import { purgeSiteSubmissions } from '@/server/forms/purge';
 import { deliverShopMail, type OutboxDeps } from '../mail/outbox';
 import { outboxDeps } from '../mail/runtime';
 import { paymentDeps } from '../payment/deps';
@@ -22,6 +24,7 @@ import {
   type CommerceJob,
   type CompanyContext,
   type JobKind,
+  type JobForms,
   type JobKindRegistry,
   type JobMail,
   type JobPayments,
@@ -88,7 +91,19 @@ function jobPayments(
 /** The buyer's letters for one job: bound to its company, on the worker's clock. */
 function jobMail(group: JobTenantGroup, tenantId: string, now: () => Date, wiring: NonNullable<JobRunOptions['mailDeps']>): JobMail {
   const deps = { ...wiring(group), now };
-  return { deliver: (orderId, kind) => deliverShopMail(deps, tenantId, orderId, kind) };
+  return {
+    deliver: (orderId, kind) => deliverShopMail(deps, tenantId, orderId, kind),
+    deliverFormNotification: (submissionId) => deliverFormNotification(deps, tenantId, submissionId),
+  };
+}
+
+/** A deleted project's form submissions, in the job's tenant group (src/server/forms/purge.ts). */
+function jobForms(group: JobTenantGroup, jobTenantId: string): JobForms {
+  return {
+    async purgeSite(siteId, workspaceId) {
+      await purgeSiteSubmissions(group, jobTenantId, siteId, workspaceId);
+    },
+  };
 }
 
 /** The handler's end, before it is written. */
@@ -138,6 +153,7 @@ async function invoke(
       signal,
       payments: jobPayments(group, job.tenant_id, kind, now, wiring),
       mail: jobMail(group, job.tenant_id, now, mailWiring),
+      forms: jobForms(group, job.tenant_id),
     });
     if (!answer) return { type: 'done' };
     if (answer.payload === undefined) return { type: 'rerun', rerunAt: answer.rerunAt };

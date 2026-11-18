@@ -45,6 +45,7 @@ export const ERASURE_TIMEOUTS: OwnerTimeouts = { lockTimeoutMs: 10_000, statemen
 export const ERASURE_COVERAGE: Readonly<Record<string, string>> = {
   form_submission: 'group id plus the company workspaces or sites (tenant_id is the GROUP here)',
   fulfillment_location_default: 'the company workspaces',
+  form_notification: 'cascade from form_submission',
   shop_mail: 'company',
   shop_mail_connection: 'company',
   commerce_job: 'company',

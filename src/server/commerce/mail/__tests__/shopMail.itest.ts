@@ -235,7 +235,7 @@ describe('connecting the shop to Lumitra Mail', () => {
     const row = await env.ownerDb.selectFrom('shop_mail_connection').selectAll().where('tenant_id', '=', shop.company).executeTakeFirstOrThrow();
     expect(row.api_key_sealed).not.toContain('fake-send-key');
     expect(unseal(SEAL_KEY, row.api_key_sealed)).toBe('fake-send-key-1');
-    expect(row.template_ids).toEqual({ order_confirmation: 'tpl-confirmation', late_refund: 'tpl-refund' });
+    expect(row.template_ids).toEqual({ order_confirmation: 'tpl-confirmation', late_refund: 'tpl-refund', form_notification: 'tpl-form' });
     expect(row.connected_by).toBe(OWNER);
   });
 

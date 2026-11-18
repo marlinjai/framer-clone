@@ -82,6 +82,8 @@ const COLUMN_OVERRIDES: Record<string, string> = {
   'shop_mail.status': "Generated<'pending' | 'sent' | 'blocked' | 'failed'>",
   // Nullable JSONB, written through toJsonb (or null) and read parsed.
   'shop_mail.letter': 'ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>',
+  // 031_form_notification: the letter as built at its first attempt, emptied once settled (src/server/forms/notify.ts).
+  'form_notification.letter': 'ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>',
   // 025_commerce_job: a TEXT column with a CHECK vocabulary (no enum type). `kind` stays a string: it has no CHECK.
   'commerce_job.status': "Generated<'pending' | 'running' | 'done' | 'dead'>",
 };
@@ -188,6 +190,8 @@ const TABLE_DOCS: Record<string, string> = {
     '013_books_assets: an uploaded logo (PNG or JPEG bytes), one per company and\nSHA-256, append-only (no updated_at).',
   form_submission:
     '017_form_submissions: one accepted submission of a form on a published site.\nDeleted for real (owner, project delete, company erasure); `read_at` is the only\ncolumn that changes. No IP address is stored.',
+  form_notification:
+    '031_form_notification: the outbox of the email that tells the site owner about a submission, one row per submission (its primary key), deleted with it (ON DELETE CASCADE). `letter` is emptied once settled.',
   shop_mail_connection:
     "023_shop_mail: the company's Lumitra Mail workspace for the receipt email (the send key sealed).",
   shop_mail: '023_shop_mail: the outbox, one row per order and kind of mail.',

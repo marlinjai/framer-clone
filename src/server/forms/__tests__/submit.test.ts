@@ -230,6 +230,54 @@ describe('JSON (the island)', () => {
   });
 });
 
+describe('the owner notification', () => {
+  const COMPANY = '018f9c10-0000-7000-8000-0000000000c1';
+  const withCompany = (formProps: Record<string, unknown>, contactEmail = ''): PublishedSite =>
+    ({ ...site(formProps), companyId: COMPANY, siteSettings: { business: { email: contactEmail } } }) as unknown as PublishedSite;
+
+  it("goes to the form's own address, decided from the published form, with the company and the time", async () => {
+    const h = harness({ site: withCompany({ notifyEmail: 'owner@bakery.example' }, 'contact@bakery.example') });
+    expect((await handleFormSubmit(jsonPost(body()), h.deps)).status).toBe(200);
+    expect(h.stored[0].notification).toEqual({ companyId: COMPANY, recipient: 'owner@bakery.example', at: new Date(NOW) });
+  });
+
+  it("falls back to the site's contact email, and an unusable form address counts as none", async () => {
+    const h = harness({ site: withCompany({ notifyEmail: 'not an address' }, 'contact@bakery.example') });
+    await handleFormSubmit(jsonPost(body()), h.deps);
+    expect(h.stored[0].notification?.recipient).toBe('contact@bakery.example');
+  });
+
+  it('is still written, with no recipient, when neither names an address (the owner is told why)', async () => {
+    const h = harness({ site: withCompany({}) });
+    await handleFormSubmit(jsonPost(body()), h.deps);
+    expect(h.stored[0].notification).toMatchObject({ companyId: COMPANY, recipient: null });
+  });
+
+  it('never comes from the request: a posted address is ignored', async () => {
+    const h = harness({ site: withCompany({}, 'contact@bakery.example') });
+    await handleFormSubmit(jsonPost(body({ values: { ...VALID, notifyEmail: 'evil@example.com' } })), h.deps);
+    expect(h.stored[0].notification?.recipient).toBe('contact@bakery.example');
+    expect(JSON.stringify(h.stored[0].fields)).not.toContain('evil@example.com');
+  });
+
+  it('a failure to find the company costs the notice, never the submission', async () => {
+    const h = harness({ site: { ...withCompany({}, 'contact@bakery.example'), companyId: null } as unknown as PublishedSite });
+    const res = await handleFormSubmit(jsonPost(body()), h.deps);
+    expect(res.status).toBe(200);
+    expect(h.stored).toHaveLength(1);
+    // The lookup itself failed (the fake database answers nothing): no notice, logged. A site that simply has no
+    // company gets a row saying so (formNotify.itest.ts).
+    expect(h.stored[0].notification).toBeUndefined();
+    expect(h.logs.join('\n')).toMatch(/company/);
+  });
+
+  it('a spam post (honeypot) writes no notification', async () => {
+    const h = harness({ site: withCompany({}, 'contact@bakery.example') });
+    await handleFormSubmit(jsonPost(body({ website: 'http://spam.example' })), h.deps);
+    expect(h.stored).toHaveLength(0);
+  });
+});
+
 describe('a plain HTML form post (no JavaScript)', () => {
   const fields = (extra: Record<string, string> = {}) => ({
     _form: 'form-1',

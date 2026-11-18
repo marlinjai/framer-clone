@@ -10,7 +10,7 @@ import { MailApiError, MailNetworkError, MailTimeoutError, type MailClient } fro
 vi.mock('server-only', () => ({}));
 
 import { MailRefused, MailRetryLater, lumitraMailOver, toMailError, type Letter } from '../lumitraMail';
-import { SHOP_MAIL_KINDS, templateName } from '../templates';
+import { MAIL_TEMPLATE_KINDS, templateName } from '../templates';
 
 const LETTER: Letter = {
   key: 'shop:t:o:order_confirmation:w',
@@ -128,14 +128,18 @@ describe('connecting', () => {
     expect(updates).toEqual([{ settings: { locales: ['de', 'en'] } }]);
   });
 
-  it('installs both templates: creates a missing one, updates an existing one, and declares the inputs of both', async () => {
+  it('installs every template: creates a missing one, updates an existing one, and declares the inputs of both', async () => {
     const calls: Calls = [];
     const existing = { id: 'tpl-existing', name: templateName('late_refund'), archived_at: null };
     const ids = await mailWith(keyClient(calls, { templates: [existing] })).installTemplates('key');
-    expect(ids).toEqual({ order_confirmation: `new-${templateName('order_confirmation')}`, late_refund: 'tpl-existing' });
-    expect(calls.filter((c) => c.op === 'templates.create')).toHaveLength(1);
+    expect(ids).toEqual({
+      order_confirmation: `new-${templateName('order_confirmation')}`,
+      late_refund: 'tpl-existing',
+      form_notification: `new-${templateName('form_notification')}`,
+    });
+    expect(calls.filter((c) => c.op === 'templates.create')).toHaveLength(2);
     expect(calls.find((c) => c.op === 'templates.update')?.args[0]).toBe('tpl-existing');
-    expect(calls.filter((c) => c.op === 'templates.declareInputs')).toHaveLength(SHOP_MAIL_KINDS.length);
+    expect(calls.filter((c) => c.op === 'templates.declareInputs')).toHaveLength(MAIL_TEMPLATE_KINDS.length);
   });
 
   it('takes the live template over an archived one of the same name, and brings back an archived one when none is live', async () => {
@@ -145,8 +149,12 @@ describe('connecting', () => {
       { id: 'live', name: templateName('order_confirmation'), archived_at: null },
       { id: 'archived-only', name: templateName('late_refund'), archived_at: '2026-10-01T00:00:00.000Z' },
     ];
-    expect(await mailWith(keyClient(calls, { templates: listed })).installTemplates('key')).toEqual({ order_confirmation: 'live', late_refund: 'archived-only' });
-    expect(calls.filter((c) => c.op === 'templates.create')).toHaveLength(0);
+    expect(await mailWith(keyClient(calls, { templates: listed })).installTemplates('key')).toEqual({
+      order_confirmation: 'live',
+      late_refund: 'archived-only',
+      form_notification: `new-${templateName('form_notification')}`,
+    });
+    expect(calls.filter((c) => c.op === 'templates.create')).toHaveLength(1);
   });
 
   it('refuses a workspace holding two live templates of one name', async () => {

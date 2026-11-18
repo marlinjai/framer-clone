@@ -17,7 +17,7 @@ vi.mock('server-only', () => ({}));
 import { seal, unseal } from '../seal';
 import { readReceiptToken, receiptToken } from '../receiptLink';
 import { receiptLinkBase, receiptLinkKey, shopMailConfig } from '../config';
-import { MAIL_INPUTS, SHOP_MAIL_KINDS, TEMPLATE_LOCALES, templateCreate, templatesVersion } from '../templates';
+import { MAIL_INPUTS, MAIL_TEMPLATE_KINDS, TEMPLATE_LOCALES, templateCreate, templatesVersion } from '../templates';
 import { backoffMs } from '../../jobs/run';
 import { shopMailKind } from '../mailJob';
 import { callKey } from './support';
@@ -85,9 +85,9 @@ describe('the configuration', () => {
   });
 });
 
-describe('the two templates', () => {
+describe('the templates (the buyer letters and the owner notice)', () => {
   it('are templates Lumitra Mail accepts, German first with a ready English version', () => {
-    for (const kind of SHOP_MAIL_KINDS) {
+    for (const kind of MAIL_TEMPLATE_KINDS) {
       const create = templateCreate(kind);
       const parsed = TemplateCreate.safeParse(create);
       expect(parsed.success, `${kind}: ${parsed.success ? '' : JSON.stringify(parsed.error.issues).slice(0, 400)}`).toBe(true);
@@ -97,7 +97,7 @@ describe('the two templates', () => {
   });
 
   it('declare inputs Lumitra Mail accepts, and read no value they do not declare', () => {
-    for (const kind of SHOP_MAIL_KINDS) {
+    for (const kind of MAIL_TEMPLATE_KINDS) {
       const declaration = TemplateInputsDeclaration.safeParse({ app: 'Lumitra Sites', app_version: 'test', inputs: MAIL_INPUTS[kind] });
       expect(declaration.success, kind).toBe(true);
       const create = templateCreate(kind);

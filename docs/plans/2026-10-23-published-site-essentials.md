@@ -72,9 +72,9 @@ Decided while building, each reversible:
   an exception.
 - **The server reads the form from the published snapshot**, never from the request, and validates with
   the same module the island uses (`src/lib/forms/validation.ts`).
-- **No mail.** The repository has no mail transport (no Lumitra Mail client, Resend or SMTP), so
-  submissions are stored only and read in the editor's Form submissions view; the Form section says so.
-  The notification email field was left out rather than shipped as a control that does nothing.
+- **No mail (as built 2026-10-24; superseded 2026-11-12).** The repository had no mail transport then, so
+  submissions were stored only. The shop's Lumitra Mail pipeline arrived on 2026-10-27, and the notification
+  email is built on it, see "Form notification emails (2026-11-12)".
 - **No IP stored**, not even hashed (an IPv4 hash is reversible by enumeration). Rate limits are in
   memory per IP and per form.
 - **Without JavaScript** the form posts normally: a thank-you page answers 303, an inline success or an
@@ -256,7 +256,7 @@ while building, each reversible:
     nodes, and drops a bar without a label or a safe link (the preset's placeholder link is never
     used for a generated bar).
 
-Not built here: form notification emails (decision 4) stay open on their own roadmap line.
+Form notification emails (decision 4) were built later, see "Form notification emails (2026-11-12)" at the end.
 
 ## Uploaded favicon and sharing image (2026-11-02)
 
@@ -303,3 +303,76 @@ address. Built beside the address field, which stays. Revised the same day after
    process-local, like the form limiter: framer-clone runs as one container.
 7. **The catalogue and Books logo uploads get the same per-user limit** (separate commit), since they read the same
    kind of body behind the same kind of session.
+
+## Form notification emails (2026-11-12)
+
+Decision 4 said submissions are "notified by email (Lumitra Mail)"; the roadmap line carried the rest. Built on the
+shop's pipeline of [the receipt email plan](2026-10-27-shop-receipt-email.md), not beside it. Decided while building,
+each reversible (say so if you disagree):
+
+1. **The company's own Lumitra Mail connection sends it**, the one the owner makes once on the payments page ("Receipt
+   email"). A platform-wide sender would need a new secret and would send one company's visitors' words from another's
+   name. A company with no shop reaches the same card (it does not need Stripe). Not connected: the submission is stored,
+   the notification row says `skipped: not_connected`, and the inbox says so with the way forward.
+2. **The notice is a third template of that connection** (`form_notification`, German and English, kept out of the
+   buyer letters' kind list on purpose). A connection made before it existed installs it itself at the first notice, with
+   the company's own send key (what connecting does), and stores the ids.
+3. **Who is emailed:** the form's own address (form settings, "Email me at"), else the site's contact email (Site settings,
+   business data), decided at submit time from the PUBLISHED form and site and frozen on the row; a posted value is never
+   read. The form's address is a private prop: the server strips it from the node a client island receives, so visitors
+   never get it (test `notifyEmailPrivate.test.tsx` fails without the strip). Neither set: the row says `no_recipient`.
+4. **Written in the submission's own transaction** (`031_form_notification`, primary key and foreign key = the submission
+   id, `ON DELETE CASCADE`), with a `form_mail` job (the shop job engine, retries 1, 5, 15, 60 minutes, then every 6 hours for
+   three days). The job payload is the submission id only. A repeated post of the same submission id writes nothing more.
+   A failed email never loses the submission: it is stored first, and the notice is a row of its own.
+5. **The letter holds a one-line summary** ("label: value | ...", each value 300 and the whole 1800 characters, Lumitra Mail
+   escapes merge values) and a link to the editor, not the full message. It is frozen at its first attempt and emptied once
+   settled (it carries the visitor's words). Deleting a submission, the project, or a company erasure deletes the notice
+   through the foreign key (erasure coverage: "cascade from form_submission").
+6. **Recovery:** the inbox shows each submission's email (sent, being sent, blocked, failed with the reason, skipped with
+   why) and a "Send email again" for failed ones and for "not connected" ones once connected. A new round gets a new job and
+   a new Lumitra Mail idempotency key; a blocked address and "no recipient" are not resendable.
+   **Fence against a duplicate letter:** an attempt, the call to Lumitra Mail included, runs in one transaction that holds the
+   notification row's lock, and "send again" takes the same lock (it waits five seconds, then says "busy"). So a late success of an
+   old round beside a new round cannot happen: the resend sees `sent` and refuses, or sees the failure the attempt wrote and only then
+   starts the next round; a second attempt (a reclaimed job) waits and finds the letter sent; a worker that dies mid-send drops its
+   lock and the next attempt sends the same frozen letter under the same key (the letter is committed in its own first
+   transaction, before the send transaction, so a rolled-back send cannot change its body on the retry); a delete of the submission waits
+   five seconds for a send in flight, then answers "busy"; which Lumitra Mail replays (its idempotency ledger is
+   per workspace: same key and body replays, another body is refused, a request still running answers `conflict`).
+7. **Escaping, from Lumitra Mail's real source** (email-editor `apps/service/src/worker/merge.ts`, which calls the contract's
+   `personalizeHtml`, `personalizeText`, `resolveValue`): body values are HTML-escaped (`& < > " '`) and filled once (a value that
+   reads `{{x}}` is printed, never filled again); the subject and preheader are plain text with control characters turned into spaces,
+   so no header can be added. Checked with that same code in `formMailEscaping.test.ts` against markup, quote, script, javascript:
+   link, merge-token and CRLF attacks.
+8. **Deleting a project never leaves visitor data behind.** The site row (Prisma) and its submissions (the tenant schema) are two
+   connections, so no transaction covers both. The delete route therefore writes a durable `form_purge` job BEFORE the site row is
+   deleted (after authorization and the body checks; if it cannot be written nothing is deleted), due ten minutes later, payload
+   the site and workspace ids. The job purges only once the site row is really gone (a refused or never-committed delete, or a crash
+   right after the intent, ends as a no-op), deletes only rows of its own tenant group, site and workspace, retries on any failure
+   and a busy email row without ever giving up, and a project recreated afterwards is a new site id it never touches. The immediate
+   cleanup after the delete stays (filtered by the same workspace as the job), and waits briefly for an email in flight. What the owner is told is exact: removed now (a plain
+   success), removal pending (a success that says the submissions are still being removed with no guaranteed time and nothing more is
+   needed, naming the one next step for an owner who needs them gone by a date: support, quoting the project id; only when the
+   job's existence is confirmed. The job is first due ten minutes after the delete began and then retries 1, 5, 15 and 60 minutes and
+   every six hours with no end, so no time is promised), or, only when no job could be arranged, "deleted, but its form submissions could not be removed,
+   contact support". A delete whose job could not be written is refused before anything changes ("nothing was deleted, try again").
+   A purge that keeps failing never dies, so the watchdog counts it (`purgesStuck`, five failures or more).
+   **Operator-alert limitation (recorded 2026-11-12):** the watchdog route reports `purgesStuck` and `purges: "stuck"` but stays HTTP 200 for
+   it, and the three existing Uptime Kuma monitors (non-2xx, dead jobs, receipts) do not read either field. Nothing notifies a person of a
+   stuck purge until a fourth keyword monitor on `$.purges == "ok"` is created (a live change, not done; see deploy/README.md). The owner
+   messages also name "support" with no address, because the app has no support channel to point at (checked 2026-11-12: the
+   application's only convention is the bare words "contact support", as in the shop-suspended refusal in `companyCommerce.ts`; no support
+   address, link or setting exists in the code, `.env.example`, `deploy/` or the docs, and the one `support@lumitra.co` found in the suite is a
+   test fixture of another repository, not a convention). Both are open for Marlin. **Why the existing non-2xx monitor cannot carry it
+   (assessed, not implemented):** the route's contract is that persistent conditions stay HTTP 200 as counts with keyword monitors of
+   their own, because a persistent 500 keeps monitor 39 and the host timer's `curl --fail-with-body` unit red for as long as the cause lasts
+   and hides the next real failure (a failed pass, a job more than ten minutes late) on the same route. A stuck purge is exactly that kind of
+   condition (it never dies and stays until fixed), so turning the route non-2xx would break that contract and make monitor 39 ambiguous;
+   the fourth keyword monitor is the consistent fix.
+9. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then
+   connected plus resend, refusal then resend, blocked, an old connection installing the template, a failing install,
+   reconnect to another workspace, Lumitra Mail down then back with the letter unchanged, three days of failures, a deleted
+   submission mid-retry, and a second company of the same tenant group; `formPurge.itest.ts` covers the purge in both race directions,
+   scope, restart and eight failures in a row. Not yet done: a live letter to Marlin's own address
+   (needs the deploy and his yes).

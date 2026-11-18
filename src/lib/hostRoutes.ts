@@ -129,6 +129,7 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/projects/[projectId]/erasures/search', why: 'authoring' },
   { route: '/api/projects/[projectId]/forms/submissions', why: 'authoring' },
   { route: '/api/projects/[projectId]/forms/submissions/[submissionId]', why: 'authoring' },
+  { route: '/api/projects/[projectId]/forms/submissions/[submissionId]/resend', why: 'authoring' },
   { route: '/api/projects/[projectId]/forms/submissions/export', why: 'authoring' },
   { route: '/api/projects/[projectId]/images', why: 'authoring' },
   { route: '/api/projects/[projectId]/images/[sha256]', why: 'authoring' },

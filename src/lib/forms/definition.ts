@@ -87,6 +87,34 @@ export const TRANSPORT_FIELDS = {
   renderedAt: '_rendered',
 } as const;
 
+/**
+ * The form container's prop holding the address that is emailed about each submission. It is the owner's
+ * private setting: the published page hands the form node to a client island, so the server strips it
+ * first (`withoutPrivateFormProps`) and visitors never receive it.
+ */
+export const NOTIFY_EMAIL_PROP = 'notifyEmail';
+
+/**
+ * The node and EVERYTHING below it without the owner's private settings, safe to send to the browser. Deep on purpose: a
+ * client island (a form, a commerce island) receives its whole subtree, so a form nested in another form or in an island
+ * would otherwise carry its address into the page payload. Returns the same object where nothing changed.
+ */
+export function withoutPrivateFormProps<T extends { props?: Record<string, unknown> | null; children?: readonly unknown[] | null }>(node: T): T {
+  let next = node;
+  if (node.props && NOTIFY_EMAIL_PROP in node.props) {
+    const props = { ...node.props };
+    delete props[NOTIFY_EMAIL_PROP];
+    next = { ...next, props };
+  }
+  if (Array.isArray(node.children) && node.children.length > 0) {
+    const children = node.children.map((child) =>
+      child && typeof child === 'object' ? withoutPrivateFormProps(child as typeof node) : child,
+    );
+    if (children.some((child, i) => child !== node.children![i])) next = { ...next, children };
+  }
+  return next;
+}
+
 /** The non-DOM props of each kind: renderers strip these before emitting an element. */
 export const FORM_CONFIG_PROPS: ReadonlySet<string> = new Set([
   FORM_KIND_ATTR,
@@ -94,6 +122,7 @@ export const FORM_CONFIG_PROPS: ReadonlySet<string> = new Set([
   'successBehavior',
   'successMessage',
   'redirectPageId',
+  NOTIFY_EMAIL_PROP,
   'fieldType',
   'label',
   'name',
@@ -152,6 +181,19 @@ export interface FormSettings {
   successMessage: string;
   /** The page a `redirect` form sends the visitor to (resolved to a path by the server). */
   redirectPageId: string | null;
+  /**
+   * Where the owner is emailed about a submission: a valid address, or '' for the site's contact email
+   * (decision 4, form notification emails). Never reaches the browser.
+   */
+  notifyEmail: string;
+}
+
+const NOTIFY_EMAIL = /^[^\s@<>",;]{1,64}@[^\s@<>",;]{1,190}\.[^\s@<>",;]{2,}$/;
+
+/** A usable notification address, or '' (so an unusable one falls back to the site's contact email). */
+export function cleanNotifyEmail(value: unknown): string {
+  const email = text(value, 254);
+  return NOTIFY_EMAIL.test(email) ? email : '';
 }
 
 export interface FieldSpec {
@@ -196,6 +238,11 @@ export function fieldTypeOf(value: unknown): FieldType {
   return typeof value === 'string' && (FIELD_TYPES as readonly string[]).includes(value) ? (value as FieldType) : 'text';
 }
 
+/** Who is emailed about a form's submissions: the form's own address, else the site's contact email, else nobody. */
+export function chooseNotifyRecipient(formAddress: string, siteContactEmail: string): string | null {
+  return formAddress || cleanNotifyEmail(siteContactEmail) || null;
+}
+
 /** The form container's settings, with every value bounded and defaulted. */
 export function readFormSettings(props: Record<string, unknown> | null | undefined): FormSettings {
   const p = props ?? {};
@@ -205,6 +252,7 @@ export function readFormSettings(props: Record<string, unknown> | null | undefin
     successBehavior: p.successBehavior === 'redirect' && redirectPageId ? 'redirect' : 'message',
     successMessage: text(p.successMessage, FORM_LIMITS.maxSuccessMessageChars) || DEFAULT_SUCCESS_MESSAGE,
     redirectPageId,
+    notifyEmail: cleanNotifyEmail(p.notifyEmail),
   };
 }
 

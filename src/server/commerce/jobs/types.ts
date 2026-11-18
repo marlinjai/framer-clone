@@ -165,6 +165,14 @@ export interface JobPayments {
  */
 export interface JobMail {
   deliver(orderId: string, kind: ShopMailKind): Promise<'sent' | 'blocked' | 'none'>;
+  /** The site owner's notice about a form submission (src/server/forms/notify.ts). */
+  deliverFormNotification(submissionId: string): Promise<'sent' | 'blocked' | 'none'>;
+}
+
+/** What a handler may do to a deleted project's form submissions, bound to the job's tenant group (src/server/forms/purgeJob.ts). */
+export interface JobForms {
+  /** Delete every submission of the site once its row is gone; throws `JobRetryLater` while that cannot be done yet. */
+  purgeSite(siteId: string, workspaceId: string): Promise<void>;
 }
 
 export interface JobContext<P> {
@@ -177,6 +185,8 @@ export interface JobContext<P> {
   readonly payments: JobPayments;
   /** The buyer's letters, bound to this job's company. */
   readonly mail: JobMail;
+  /** The form submissions of a deleted project, in this job's tenant group. */
+  readonly forms: JobForms;
 }
 
 export interface JobKind<P = unknown> {

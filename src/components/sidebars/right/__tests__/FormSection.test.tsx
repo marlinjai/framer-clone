@@ -106,6 +106,18 @@ describe('the Form section', () => {
     expect(screen.getByText(/Stored as/).textContent).toContain('full_name');
   });
 
+  it('the notification address is stored on the form, and one that is not an address says the site contact email is used', () => {
+    const { form } = setup();
+    render(<FormSection component={form} />);
+    const field = screen.getByLabelText('Email me at') as HTMLInputElement;
+    expect(field.placeholder).toBe('hello@example.com');
+    fireEvent.change(field, { target: { value: 'owner@bakery.example' } });
+    expect((form.props as Record<string, unknown>).notifyEmail).toBe('owner@bakery.example');
+    expect(screen.queryByText(/is not an email address/)).toBeNull();
+    fireEvent.change(field, { target: { value: 'owner' } });
+    expect(screen.getByRole('alert').textContent).toMatch(/contact email in Site settings is used instead/);
+  });
+
   it('a redirect form picks one of the site pages, or creates a thank-you page and points at it', () => {
     const { project, form } = setup();
     render(<FormSection component={form} />);
@@ -130,7 +142,7 @@ describe('the Form section', () => {
     render(<FormSection component={form} />);
     expect(screen.getByText(/consent checkbox/)).toBeTruthy();
     expect(screen.getByText(/no submit button/)).toBeTruthy();
-    expect(screen.getByText(/Email notifications are not available yet/)).toBeTruthy();
+    expect(screen.getByText(/emailed to the address above/)).toBeTruthy();
   });
 
   it('edits the submit button sending label; its own label lives in the Text section', () => {

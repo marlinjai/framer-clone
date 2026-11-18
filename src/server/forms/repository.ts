@@ -21,13 +21,14 @@ import 'server-only';
 import type { PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
 
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { z } from 'zod';
 
 import type { CommerceDB } from '@/server/commerce/db-types';
 import { toJsonb } from '@/server/books/snapshots';
 import type { StoredField } from '@/lib/forms/validation';
 import { FIELD_TYPES } from '@/lib/forms/definition';
+import { isLockTimeout, writeFormNotification, type NewFormNotification } from './notify';
 
 export interface NewFormSubmission {
   id: string;
@@ -39,6 +40,8 @@ export interface NewFormSubmission {
   formId: string;
   formName: string;
   fields: StoredField[];
+  /** The owner's notification email, written in the same transaction; absent when the company is unknown. */
+  notification?: NewFormNotification;
 }
 
 export interface FormSubmission {
@@ -51,6 +54,15 @@ export interface FormSubmission {
   fields: StoredField[];
   readAt: Date | null;
   createdAt: Date;
+  /** The owner's email about it (src/server/forms/notify.ts); null for a submission that has none (an older one). */
+  notification: FormNotificationView | null;
+}
+
+export interface FormNotificationView {
+  status: 'pending' | 'sent' | 'blocked' | 'failed' | 'skipped';
+  /** Why it failed, or why it was skipped (`not_connected`, `no_recipient`); null otherwise. */
+  reason: string | null;
+  recipient: string | null;
 }
 
 const storedFieldSchema = z.object({
@@ -94,7 +106,25 @@ function toSubmission(row: Row): FormSubmission {
     fields: parseFields(row.fields),
     readAt: row.read_at,
     createdAt: row.created_at,
+    notification: null,
   };
+}
+
+/** The emails of these submissions, one query, the same tenant group. */
+async function withNotifications(db: Kysely<CommerceDB>, tenantId: string, submissions: FormSubmission[]): Promise<FormSubmission[]> {
+  if (submissions.length === 0) return submissions;
+  const rows = await db
+    .selectFrom('form_notification')
+    .select(['submission_id', 'status', 'last_error', 'recipient'])
+    .where('tenant_id', '=', tenantId)
+    .where('submission_id', 'in', submissions.map((s) => s.id))
+    .execute();
+  const byId = new Map(rows.map((r) => [r.submission_id, r]));
+  return submissions.map((s) => {
+    const n = byId.get(s.id);
+    return n ? { ...s, // The column is TEXT with a CHECK on exactly these values (031_form_notification), so the generated type is a plain string.
+      notification: { status: n.status as FormNotificationView['status'], reason: n.last_error, recipient: n.recipient } } : s;
+  });
 }
 
 const COLUMNS = ['id', 'site_id', 'page_id', 'page_path', 'form_id', 'form_name', 'fields', 'read_at', 'created_at'] as const;
@@ -135,7 +165,21 @@ export async function insertFormSubmission(
       })
       .onConflict((oc) => oc.column('id').doNothing())
       .executeTakeFirst();
-    return Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
+    const inserted = Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
+    // Only for a row this call wrote: the island's repeat of a lost answer must not write a second notice.
+    if (inserted && row.notification) {
+      // In a savepoint of its own: whatever goes wrong writing the notice (a schema that has not yet received
+      // migration 031, a rejected job row) costs the notice, never the submission this transaction stores.
+      await sql`SAVEPOINT notice_sp`.execute(tx);
+      try {
+        await writeFormNotification(tx, row.tenantId, row.id, row.notification);
+        await sql`RELEASE SAVEPOINT notice_sp`.execute(tx);
+      } catch (err) {
+        await sql`ROLLBACK TO SAVEPOINT notice_sp`.execute(tx);
+        console.error(`[forms] site ${row.siteId}: the notification email of submission ${row.id} could not be written, the submission is stored without it:`, err);
+      }
+    }
+    return inserted;
   });
 }
 
@@ -176,7 +220,8 @@ export async function listFormSubmissions(
     .orderBy('id', 'desc')
     .limit(limit + 1)
     .execute()) as Row[];
-  return { submissions: rows.slice(0, limit).map(toSubmission), hasMore: rows.length > limit };
+  const submissions = await withNotifications(db, ref.tenantId, rows.slice(0, limit).map(toSubmission));
+  return { submissions, hasMore: rows.length > limit };
 }
 
 /** Every submission of a site (optionally one form), newest first, for the CSV export. Bounded. */
@@ -243,24 +288,54 @@ export async function setFormSubmissionRead(
   return Number(result.numUpdatedRows) > 0;
 }
 
-/** Delete one submission for good. Returns false when the site has no such row. */
+/** A delete had to wait for an email that is being sent right now (its row is locked) and gave up waiting. */
+export class FormBusyError extends Error {
+  constructor() {
+    super('A notification email for this submission is being sent right now');
+    this.name = 'FormBusyError';
+  }
+}
+
+/** How long a delete waits for an email being sent (src/server/forms/notify.ts holds the row for the whole send). */
+const DELETE_LOCK_WAIT_MS = 5_000;
+
+/**
+ * A delete of submissions, which cascades to their notification rows: those are locked while their email is sent, so the
+ * delete waits briefly for that and then fails as busy, never hanging the request for the length of a send.
+ */
+async function deleteWithinLockWait<T>(db: Kysely<CommerceDB>, work: (tx: Transaction<CommerceDB>) => Promise<T>): Promise<T> {
+  try {
+    return await db.transaction().execute(async (tx) => {
+      await sql`SELECT set_config('lock_timeout', ${`${DELETE_LOCK_WAIT_MS}ms`}, true)`.execute(tx);
+      return work(tx);
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) throw new FormBusyError();
+    throw err;
+  }
+}
+
+/** Delete one submission for good. Returns false when the site has no such row. Throws FormBusyError while its email is being sent. */
 export async function deleteFormSubmission(db: Kysely<CommerceDB>, ref: SiteRef, id: string): Promise<boolean> {
-  const result = await db
-    .deleteFrom('form_submission')
-    .where('tenant_id', '=', ref.tenantId)
-    .where('site_id', '=', ref.siteId)
-    .where('id', '=', id)
-    .executeTakeFirst();
+  const result = await deleteWithinLockWait(db, (tx) =>
+    tx
+      .deleteFrom('form_submission')
+      .where('tenant_id', '=', ref.tenantId)
+      .where('site_id', '=', ref.siteId)
+      .where('id', '=', id)
+      .executeTakeFirst(),
+  );
   return Number(result.numDeletedRows) > 0;
 }
 
 /** Delete every submission of a site (the project delete). Returns how many rows went. */
-export async function deleteSiteSubmissions(db: Kysely<CommerceDB>, ref: SiteRef): Promise<number> {
-  const result = await db
-    .deleteFrom('form_submission')
-    .where('tenant_id', '=', ref.tenantId)
-    .where('site_id', '=', ref.siteId)
-    .executeTakeFirst();
+export async function deleteSiteSubmissions(db: Kysely<CommerceDB>, ref: SiteRef & { workspaceId?: string }): Promise<number> {
+  const result = await deleteWithinLockWait(db, (tx) => {
+    let query = tx.deleteFrom('form_submission').where('tenant_id', '=', ref.tenantId).where('site_id', '=', ref.siteId);
+    // The purge job also names the workspace the delete was made from: another workspace's rows are never its to remove.
+    if (ref.workspaceId !== undefined) query = query.where('workspace_id', '=', ref.workspaceId);
+    return query.executeTakeFirst();
+  });
   return Number(result.numDeletedRows);
 }
 
