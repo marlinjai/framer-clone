@@ -292,7 +292,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
           </div>
         </div>
       )}
-      {preset && <p className={HINT}>Made by a preset, which writes it again when the preset changes. Its name and first value are yours; the rest is the preset's.</p>}
+      {preset && <p className={HINT}>{"Made by a preset, which writes it again when the preset changes. Its name and first value are yours; the rest is the preset's."}</p>}
       <div className="grid grid-cols-2 gap-1.5">
         <label className="flex min-w-0 flex-col gap-1">
           <span className={FIELD_LABEL}>Type</span>

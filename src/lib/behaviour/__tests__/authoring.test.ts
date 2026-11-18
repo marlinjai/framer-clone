@@ -192,7 +192,7 @@ describe('a subtree replaced whole', () => {
     box('p1', 'p2'));
 
   it('splices the subtree in by its id', () => {
-    expect(withSubtreeAt(tree(), box('p1'))?.children?.[1]).toEqual(box('p1'));
+    expect((withSubtreeAt(tree(), box('p1'))?.children as BehaviourNode[] | undefined)?.[1]).toEqual(box('p1'));
     expect(withSubtreeAt(tree(), node('nowhere', 'div'))).toBeNull();
   });
 
