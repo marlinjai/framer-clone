@@ -21,7 +21,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import { useStore } from '@/hooks/useStore';
 import { isSafeHref } from '@/lib/links/safeHref';
 import { getSnapshot } from 'mobx-state-tree';
-import { leavesSite, type StateValue } from '@/lib/behaviour/format';
+import { leavesSite, type BehaviourNode, type StateValue } from '@/lib/behaviour/format';
 import { editPresetItems, idsInUse, presetItemsOf, type PresetEdit } from '@/lib/behaviour/presetItems';
 import { fitsState } from '@/lib/behaviour/surfaceBehaviour';
 import {
@@ -47,9 +47,11 @@ import {
   putEntry,
   putField,
   refusalAt,
+  refusalText,
   refusalsOn,
   removeEntry,
   statesInReach,
+  subtreeRefusals,
   storedBehaviourOf,
   storedList,
   verbOf,
@@ -236,12 +238,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
       )}
       {states.length === 0 && <p className={HINT}>To show, hide or switch something, add a value in Page state first.</p>}
       <ShowWhen component={component} stored={stored} states={states} roots={roots} names={names} reason={refused.find((r) => r.entry === 'showWhen')?.reason} />
-      <SwitchRow
-        label="Hide without JavaScript"
-        hint="For a control that only works with scripts on."
-        checked={stored.noScript === 'hide'}
-        onCheckedChange={(checked) => writeBehaviour(component, putField(stored, 'noScript', checked ? 'hide' : undefined))}
-      />
+      <NoScriptSwitch component={component} stored={stored} roots={roots} names={names} />
       <Bindings component={component} stored={stored} names={names} refused={refused} />
     </Shell>
   );
@@ -254,17 +251,44 @@ InteractionsSection.displayName = 'InteractionsSection';
  * New ids avoid every id the page uses or names. Taking a tab out is two steps, a pick and
  * a press, so a key moving through the list (which fires a change in some browsers)
  * never takes one out. A preview the preset's values can no longer hold is dropped.
+ *
+ * The edited subtree goes through the parser on the whole page first, as every other
+ * write here does (`subtreeRefusals`). An edit the parser would refuse elsewhere (a new
+ * tab past the page's size cap) is not made, and says why. A removal that leaves an
+ * entry naming a node it takes away (a trigger focusing that tab's panel) asks first,
+ * naming the elements that would stop working.
  */
 const PresetItemControls = observer(({ component, page }: { component: ComponentInstance; page: BehaviourPage }) => {
   const { editorUI } = useStore();
   const [picked, setPicked] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // A removal waiting for its confirmation, tied to the subtree it was asked on: an undo or
+  // another edit underneath closes the question rather than answer it for something else.
+  const [confirm, setConfirm] = useState<{ index: number; base: string; readers: string[] } | null>(null);
+  const removeRef = useRef<HTMLButtonElement>(null);
   const snapshot = getSnapshot(component) as unknown as StoredRecord;
   const items = presetItemsOf(snapshot);
   if (!items) return null;
-  const apply = (edit: PresetEdit) => {
-    const next = editPresetItems(getSnapshot(component) as unknown as StoredRecord, edit, idsInUse(rootsOf(page)));
+  const nameOf = (id: string) => `"${page.findComponent(id)?.displayName ?? id}"`;
+  const apply = (edit: PresetEdit, confirmed = false) => {
+    const current = getSnapshot(component) as unknown as StoredRecord;
+    const roots = rootsOf(page);
+    const next = editPresetItems(current, edit, idsInUse(roots));
     if (!next) return;
+    const check = subtreeRefusals(roots, current as unknown as BehaviourNode, next as unknown as BehaviourNode);
+    if (!check) return setError('this element is no longer on the page.');
+    const hard = check.refused[0];
+    if (hard) {
+      setConfirm(null);
+      return setError(`${refusalText(hard, component.id, nameOf)}.`);
+    }
+    // Only a removal takes nodes away, so only a removal has dangling entries to ask about.
+    if (check.dangling.length > 0 && edit.kind === 'removeTab' && !confirmed) {
+      const readers = [...new Set(check.dangling.map((refusal) => refusal.nodeId ?? ''))].map((id) => page.findComponent(id)?.displayName ?? (id || 'an element'));
+      setError(null);
+      return setConfirm({ index: edit.index, base: storedText(current), readers });
+    }
+    setConfirm(null);
     const written = component.replaceSubtree(next);
     setError(written.ok ? null : written.reason);
     if (!written.ok) return;
@@ -278,6 +302,8 @@ const PresetItemControls = observer(({ component, page }: { component: Component
   };
   const noun = items.kind === 'tabs' ? 'tab' : 'slide';
   const pickedIndex = picked === '' ? -1 : Number(picked);
+  const asking = confirm && confirm.base === storedText(snapshot) && confirm.index === pickedIndex ? confirm : null;
+  const askedTitle = asking ? items.items[asking.index] ?? 'the picked tab' : '';
   return (
     <div className="flex flex-col gap-1.5" role="group" aria-label={items.kind === 'tabs' ? 'Tabs' : 'Slides'}>
       <span className={FIELD_LABEL}>{`${items.items.length} ${noun}s, made from a preset`}</span>
@@ -296,6 +322,7 @@ const PresetItemControls = observer(({ component, page }: { component: Component
             {items.items.map((title, index) => <option key={index} value={index}>{title}</option>)}
           </select>
           <button
+            ref={removeRef}
             type="button"
             className={SMALL_BUTTON}
             disabled={pickedIndex < 0}
@@ -304,6 +331,26 @@ const PresetItemControls = observer(({ component, page }: { component: Component
           >
             Remove
           </button>
+        </div>
+      )}
+      {asking && (
+        <div className="flex flex-col gap-1.5 rounded-[6px] border border-destructive/40 p-2" role="group" aria-label={`Remove ${askedTitle}?`}>
+          <p className={REASON}>{`Removing ${askedTitle} stops what names it from working: ${asking.readers.join(', ')}.`}</p>
+          <div className="flex gap-1.5">
+            <button type="button" className={SMALL_BUTTON} onClick={() => apply({ kind: 'removeTab', index: asking.index }, true)}>{`Remove ${askedTitle} anyway`}</button>
+            {/* The question takes the focus, on the choice that loses nothing; keeping it gives the focus back to Remove. */}
+            <button
+              type="button"
+              autoFocus
+              className={SMALL_BUTTON}
+              onClick={() => {
+                setConfirm(null);
+                removeRef.current?.focus();
+              }}
+            >
+              Keep it
+            </button>
+          </div>
         </div>
       )}
       {error && <p role="alert" className={REASON}>Not changed: {error}</p>}
@@ -727,6 +774,32 @@ function ShowWhen({ component, stored, states, roots, names, reason }: ShowWhenP
         </div>
       )}
       {reason && <p className={REASON}>Shown always: {reason}.</p>}
+      {error && error.for === key && <p role="alert" className={REASON}>Not changed: {error.reason}.</p>}
+    </div>
+  );
+}
+
+/**
+ * The "Hide without JavaScript" switch, checked on the whole page like every other write:
+ * turning it on adds bytes, which can take the page past its size cap.
+ */
+function NoScriptSwitch({ component, stored, roots, names }: { component: ComponentInstance; stored: StoredRecord; roots: Parameters<typeof refusalAt>[0]; names: ReturnType<typeof namesFor> }) {
+  const [error, setError] = useState<{ reason: string; for: string } | null>(null);
+  const key = storedText(stored.noScript);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <SwitchRow
+        label="Hide without JavaScript"
+        hint="For a control that only works with scripts on."
+        checked={stored.noScript === 'hide'}
+        onCheckedChange={(checked) => {
+          const next = putField(stored, 'noScript', checked ? 'hide' : undefined);
+          const refusal = refusalAt(roots, component.id, next, undefined, names.node);
+          if (refusal) return setError({ reason: refusal, for: key });
+          setError(null);
+          writeBehaviour(component, next);
+        }}
+      />
       {error && error.for === key && <p role="alert" className={REASON}>Not changed: {error.reason}.</p>}
     </div>
   );

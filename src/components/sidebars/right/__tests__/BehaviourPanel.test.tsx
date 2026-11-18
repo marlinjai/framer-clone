@@ -678,6 +678,92 @@ describe('a preset\'s items', () => {
     fireEvent.click(within(interactions().getByRole('group', { name: 'Slides' })).getByRole('button', { name: 'Add slide' }));
     expect(interactions().getByText('4 slides, made from a preset')).toBeTruthy();
   });
+
+  it('removing a tab something names asks first, names what would stop, and Keep it writes nothing', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    const panel = idsIn(getSnapshot(tabs)).find((id) => /-panel-2$/.test(id))!;
+    const trigger = { id: 't-focus', on: 'click', do: [{ focus: panel }] };
+    act(() => button.setBehaviour({ on: [trigger] }));
+    select(button);
+    expect(interactions().queryByText(/Does not run/)).toBeNull();
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    const before = history().undoIdx;
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    const question = () => within(group().getByRole('group', { name: 'Remove Third?' }));
+    expect(question().getByText('Removing Third stops what names it from working: Button.')).toBeTruthy();
+    expect(document.activeElement).toBe(question().getByRole('button', { name: 'Keep it' }));
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+    expect(history().undoIdx).toBe(before);
+    fireEvent.click(question().getByRole('button', { name: 'Keep it' }));
+    expect(group().queryByRole('group', { name: 'Remove Third?' })).toBeNull();
+    expect(document.activeElement).toBe(group().getByRole('button', { name: 'Remove Third' }));
+    expect(history().undoIdx).toBe(before);
+    // Asked again and confirmed: the tab goes, one undo step, and the trigger shows why it no longer runs.
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    fireEvent.click(question().getByRole('button', { name: 'Remove Third anyway' }));
+    expect(group().getByText('2 tabs, made from a preset')).toBeTruthy();
+    expect(history().undoIdx).toBe(before + 1);
+    expect(behaviourOf(button)?.on).toEqual([trigger]);
+    select(button);
+    expect(interactions().getByText(/^Does not run: /)).toBeTruthy();
+  });
+
+  it('removing a tab nothing names asks nothing', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    expect(group().queryByRole('group', { name: 'Remove Third?' })).toBeNull();
+    expect(group().getByText('2 tabs, made from a preset')).toBeTruthy();
+  });
+
+  /** Text values on the page root that fill the page to within `room` bytes of what `fits` still takes. */
+  const fillTo = (fits: () => boolean) => {
+    const fill = (length: number) => ({ state: [...Array.from({ length: 15 }, (_, i) => ({ id: `v-big${i}`, name: `Big ${i}`, type: 'text', initial: 'x'.repeat(4096) })), { id: 'v-last', name: 'Last', type: 'text', initial: 'x'.repeat(length) }] });
+    const whole = (length: number) => {
+      act(() => root.setBehaviour(fill(length)));
+      return fits();
+    };
+    let low = 0;
+    let high = 4096;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (whole(mid)) low = mid;
+      else high = mid - 1;
+    }
+    expect(whole(low)).toBe(true);
+  };
+  const pageRefusesNothing = () => readBehaviourTree(store.editorUI.currentPage!.expansion.root as never).refused.length === 0;
+
+  it('refuses a new tab that would take the page past its size cap, and says why', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    fillTo(pageRefusesNothing);
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    const before = JSON.stringify(getSnapshot(tabs));
+    const undo = history().undoIdx;
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect(group().getByRole('alert').textContent).toMatch(/^Not changed: .*65536 bytes.*\.$/);
+    expect(JSON.stringify(getSnapshot(tabs))).toBe(before);
+    expect(history().undoIdx).toBe(undo);
+    expect(pageRefusesNothing()).toBe(true);
+  });
+
+  it('refuses Hide without JavaScript when the page has no room for it, and says why', () => {
+    mount();
+    fillTo(pageRefusesNothing);
+    select(drawer);
+    fireEvent.click(interactions().getByRole('switch', { name: 'Hide without JavaScript' }));
+    expect(interactions().getByRole('alert').textContent).toMatch(/^Not changed: .*65536 bytes.*\.$/);
+    expect(behaviourOf(drawer)).toBeUndefined();
+    expect(pageRefusesNothing()).toBe(true);
+  });
 });
 
 describe('resume', () => {

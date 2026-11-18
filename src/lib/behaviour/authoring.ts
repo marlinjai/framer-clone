@@ -340,25 +340,89 @@ export function refusalAt(
   if (!found) return 'this element is no longer on the page';
   const tree = withBehaviourAt(found.root, nodeId, behaviour);
   if (!tree) return 'this element is no longer on the page';
-  const before = new Map<string, number>();
-  for (const refusal of readBehaviourTree(found.root).refused) {
-    const key = refusalKey(refusal);
-    before.set(key, (before.get(key) ?? 0) + 1);
-  }
   const after = readBehaviourTree(tree).refused;
-  const fresh: RefusedOnNode[] = [];
-  for (const refusal of after) {
-    const key = refusalKey(refusal);
-    const left = before.get(key) ?? 0;
-    if (left > 0) before.set(key, left - 1);
-    else fresh.push(refusal);
-  }
+  const fresh = freshRefusals(readBehaviourTree(found.root).refused, after);
   // What was written is refused on its own node, whether new or not.
   const own = after.find((refusal) => refusal.nodeId === nodeId && written !== undefined && refusal.entry !== 'behaviour' && sameJson(refusal.value, written));
   const hit = fresh.find((refusal) => refusal.nodeId === nodeId) ?? own ?? fresh[0];
   if (!hit) return null;
-  if (hit.nodeId === nodeId) return hit.reason;
-  return `it would stop ${hit.nodeId ? nameOf(hit.nodeId) : 'another element'} working: ${hit.reason}`;
+  return refusalText(hit, nodeId, nameOf);
+}
+
+/** A refusal as the panel says it: its reason, and the element it stops when that is another one. */
+export function refusalText(refusal: RefusedOnNode, nodeId: string, nameOf: (id: string) => string = (id) => id): string {
+  if (refusal.nodeId === nodeId) return refusal.reason;
+  return `it would stop ${refusal.nodeId ? nameOf(refusal.nodeId) : 'another element'} working: ${refusal.reason}`;
+}
+
+/** The refusals of `after` that `before` does not hold, counting repeats (see refusalAt). */
+function freshRefusals(before: readonly RefusedOnNode[], after: readonly RefusedOnNode[]): RefusedOnNode[] {
+  const left = new Map<string, number>();
+  for (const refusal of before) {
+    const key = refusalKey(refusal);
+    left.set(key, (left.get(key) ?? 0) + 1);
+  }
+  const fresh: RefusedOnNode[] = [];
+  for (const refusal of after) {
+    const key = refusalKey(refusal);
+    const count = left.get(key) ?? 0;
+    if (count > 0) left.set(key, count - 1);
+    else fresh.push(refusal);
+  }
+  return fresh;
+}
+
+/** The tree with the node of `subtree`'s id replaced by it whole, copying only the path to it. Null when no node has the id. */
+export function withSubtreeAt(root: BehaviourNode, subtree: BehaviourNode): BehaviourNode | null {
+  if (root.id === subtree.id) return subtree;
+  const children = childrenOf(root);
+  for (let index = 0; index < children.length; index++) {
+    const next = withSubtreeAt(children[index], subtree);
+    if (next) return { ...root, children: children.map((child, i) => (i === index ? next : child)) };
+  }
+  return null;
+}
+
+/** Every node id a subtree holds. */
+function nodeIdsIn(node: BehaviourNode, into = new Set<string>()): Set<string> {
+  if (typeof node.id === 'string') into.add(node.id);
+  childrenOf(node).forEach((child) => nodeIdsIn(child, into));
+  return into;
+}
+
+/** True when a stored value holds one of `ids` as a string anywhere. */
+function namesAny(value: unknown, ids: ReadonlySet<string>): boolean {
+  if (typeof value === 'string') return ids.has(value);
+  if (Array.isArray(value)) return value.some((entry) => namesAny(entry, ids));
+  if (isRecord(value)) return Object.values(value).some((entry) => namesAny(entry, ids));
+  return false;
+}
+
+/**
+ * What replacing a whole subtree (a preset's items edited, `replaceSubtree`) would make
+ * the parser refuse that it takes now, anywhere on the page. Both sides are read with the
+ * subtree spliced in, the stored one and the edited one, so how the page's tree is built
+ * cancels out. `dangling` are entries that name a node the edit takes away (a trigger that
+ * focuses the panel of a removed tab): the person is asked before they lose them.
+ * `refused` is everything else (a cap the edit takes the page past): the edit is not made.
+ * Null when no root holds the subtree's node.
+ */
+export function subtreeRefusals(
+  roots: readonly BehaviourNode[],
+  current: BehaviourNode,
+  next: BehaviourNode,
+): { refused: RefusedOnNode[]; dangling: RefusedOnNode[] } | null {
+  if (typeof current.id !== 'string' || current.id !== next.id) return null;
+  const found = pathTo(roots, current.id);
+  if (!found) return null;
+  const before = withSubtreeAt(found.root, current);
+  const after = withSubtreeAt(found.root, next);
+  if (!before || !after) return null;
+  const kept = nodeIdsIn(next);
+  const removed = new Set([...nodeIdsIn(current)].filter((id) => !kept.has(id)));
+  const fresh = freshRefusals(readBehaviourTree(before).refused, readBehaviourTree(after).refused);
+  const dangling = fresh.filter((refusal) => refusal.entry !== 'behaviour' && removed.size > 0 && namesAny(refusal.value, removed));
+  return { refused: fresh.filter((refusal) => !dangling.includes(refusal)), dangling };
 }
 
 // --- writing -----------------------------------------------------------------------
