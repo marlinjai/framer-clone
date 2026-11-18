@@ -16,6 +16,11 @@ import { MAPS_CONSENT_COOKIE } from '@/lib/site/cspReportOnly';
 import { parseMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { MAP_FRAME_SANDBOX } from '@/lib/renderer/mapEmbed/mapEmbedElement';
 import { CONSENT_BANNER_ID, consentRuntimeScript } from '@/lib/consent/consent';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
+import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
+import type { CmsReadRepository } from '@/server/cms';
 
 const EDITOR = 'app.editor.test';
 const SITE = 'acme.sites.test';
@@ -68,7 +73,8 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
   document.addEventListener('securitypolicyviolation', (event) => {
     if (event.disposition !== 'enforce') return;
     for (const [name, frame] of Object.entries(frames)) {
-      if (event.blockedURI && frame.src.startsWith(event.blockedURI)) window.__outcomes[name] = 'refused';
+      // A browser may name only the origin it refused, which two box frames share: a frame that loaded stays loaded.
+      if (event.blockedURI && frame.src.startsWith(event.blockedURI) && window.__outcomes[name] !== 'loaded') window.__outcomes[name] = 'refused';
     }
   });
   for (const [name, frame] of Object.entries(frames)) {
@@ -80,13 +86,15 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
   }
 </script></body></html>`;
 
-async function outcomes(page: Page, headers: Record<string, string>, documentUrl: string): Promise<Record<string, Outcome>> {
+async function outcomes(page: Page, headers: Record<string, string>, documentUrl: string, body = PAGE): Promise<Record<string, Outcome>> {
   await page.route('**/*', (route) => {
     const url = route.request().url();
-    if (url === documentUrl) return route.fulfill({ status: 200, contentType: 'text/html', headers, body: PAGE });
+    if (url === documentUrl) return route.fulfill({ status: 200, contentType: 'text/html', headers, body });
     if (url === BOX_FRAME) return route.fulfill({ status: 200, contentType: 'text/html', body: FRAME_DOCUMENT('box') });
     if (url === MAP_FRAME) return route.fulfill({ status: 200, contentType: 'text/html', body: FRAME_DOCUMENT('map') });
     if (url === OTHER_FRAME) return route.fulfill({ status: 200, contentType: 'text/html', body: FRAME_DOCUMENT('other') });
+    // Another site's box path (the per-site policy's case below).
+    if (url.startsWith(`${BOX_ORIGIN}/box/`)) return route.fulfill({ status: 200, contentType: 'text/html', body: FRAME_DOCUMENT('stranger') });
     // The report-only policy's reports, and anything else: answered, never sent anywhere.
     return route.fulfill({ status: 204 });
   });
@@ -156,6 +164,64 @@ describe('the enforced frame policy', () => {
       await browser.close();
     }
   }, 60_000);
+});
+
+// Slice C3 (D67): a published page with a block carries a `<meta>` that narrows `frame-src` to
+// its own site's box path, and keeps Google only when the page has a map. Taken here from a
+// real render of such a page, it must leave the header's decision about the map alone and
+// refuse another site's box path, which the header alone allows.
+describe("the per-site policy of a page with custom code", () => {
+  const SITE_ID = BOX_FRAME.split('/')[4];
+  const OTHER_SITE_BOX = BOX_FRAME.replace(SITE_ID, 'ffffffff-1c2d-4e5f-8a9b-0c1d2e3f4a5b');
+
+  async function siteMeta(): Promise<string> {
+    const cmsRepo = { listRows: async () => ({ rows: [], total: 0 }), getRow: async () => null } as unknown as CmsReadRepository;
+    const hash = BOX_FRAME.slice(-64);
+    const rendered = await renderPublishedPage({
+      root: {
+        type: 'div',
+        id: 'root',
+        children: [
+          { type: 'div', id: 'b', props: { customCode: { sha256: hash, title: 'Block' } } },
+          { type: 'div', id: 'm', props: { [MAP_EMBED_ATTR]: MAP_EMBED_MARKER, mapAddress: 'Berlin' } },
+        ],
+      },
+      pageParams: {},
+      cmsRepo,
+      customCode: {
+        siteId: SITE_ID,
+        origin: BOX_ORIGIN,
+        blobs: new Map([[hash, { reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true }]]),
+      },
+    });
+    const meta = renderToStaticMarkup(React.createElement(React.Fragment, null, rendered.body)).match(/<meta http-equiv="Content-Security-Policy"[^>]*>/);
+    if (!meta) throw new Error('the page carries no per-site policy');
+    return meta[0];
+  }
+
+  const pageWith = (meta: string) =>
+    PAGE.replace('<meta charset="utf-8">', `<meta charset="utf-8">${meta}`)
+      .replace("other: { src: ", `stranger: { src: ${JSON.stringify(OTHER_SITE_BOX)}, sandbox: 'allow-scripts' },\n    other: { src: `)
+      .replace("{ box: 'pending', map: 'pending', other: 'pending' }", "{ box: 'pending', map: 'pending', other: 'pending', stranger: 'pending' }");
+
+  for (const [browserName, type] of [['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][]) {
+    it(`in ${browserName}: the map follows consent, and another site's box is refused`, async () => {
+      const meta = await siteMeta();
+      expect(meta).toContain(`frame-src ${BOX_ORIGIN}/box/${SITE_ID}/ https://www.google.com`);
+      const url = `https://${SITE}/contact`;
+      const browser = await type.launch();
+      try {
+        const page = await browser.newPage();
+        const before = await outcomes(page, await headersFor(url, ''), url, pageWith(meta));
+        const second = await browser.newPage();
+        const after = await outcomes(second, await headersFor(url, `${MAPS_CONSENT_COOKIE}=1`), url, pageWith(meta));
+        expect(before).toEqual({ box: 'loaded', map: 'refused', other: 'refused', stranger: 'refused' });
+        expect(after).toEqual({ box: 'loaded', map: 'loaded', other: 'refused', stranger: 'refused' });
+      } finally {
+        await browser.close();
+      }
+    }, 60_000);
+  }
 });
 
 // A page with the consent runtime and a map as MapEmbedIsland behaves: the frame is

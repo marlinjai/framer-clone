@@ -10,6 +10,7 @@ import net, { type AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { setup as startDatabase, teardown as stopDatabase } from '../../vitest.integration.setup';
+import { BOX_ORIGIN } from './box';
 
 // Each run takes a port the system hands out, so runs in parallel (the agent fleet, two
 // checkouts) never meet on one: a fixed port made the second run talk to the first run's
@@ -93,6 +94,10 @@ function start(port: number, logFile: string): ChildProcess {
       // Public by design, and only a site with analytics turned on reads them: the consent banner needs both.
       ANALYTICS_PUBLIC_INGESTION_KEY: `ap_live_${randomBytes(16).toString('hex')}`,
       ANALYTICS_INGESTION_ENDPOINT: 'https://analytics.invalid/ingest',
+      // Custom code served, so a page with a block frames it (customCode.spec.ts). The box itself
+      // is answered inside the browser, never by a server, and pages without a block do not change.
+      SANDBOX_ORIGIN: BOX_ORIGIN,
+      CUSTOM_CODE_DISABLED: '0',
     },
   });
   // The child holds its own copy of the file.

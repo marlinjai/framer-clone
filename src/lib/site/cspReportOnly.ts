@@ -66,9 +66,15 @@ export const PUBLISHED_REPORT_ONLY_POLICY = policy("'self'");
 /** The policy for a visitor who consented to maps: Google Maps frames are expected. */
 export const PUBLISHED_REPORT_ONLY_POLICY_MAPS = policy(`'self' ${ALLOWED_FRAME_ORIGIN}`);
 
-/** The policy for one response, by whether its request carries the maps consent cookie. */
-export function reportOnlyPolicy(mapsConsented: boolean): string {
-  return mapsConsented ? PUBLISHED_REPORT_ONLY_POLICY_MAPS : PUBLISHED_REPORT_ONLY_POLICY;
+/**
+ * The policy for one response, by whether its request carries the maps consent cookie
+ * and whether this server may frame the box (boxFrameSource). Since custom code frames
+ * run (slice C3, decision D39), the box's path is expected like Google after consent, so
+ * a block's frame reports nothing; any other frame still does.
+ */
+export function reportOnlyPolicy(mapsConsented: boolean, boxSource: string | null = null): string {
+  if (!boxSource) return mapsConsented ? PUBLISHED_REPORT_ONLY_POLICY_MAPS : PUBLISHED_REPORT_ONLY_POLICY;
+  return policy(`'self' ${boxSource}${mapsConsented ? ` ${ALLOWED_FRAME_ORIGIN}` : ''}`);
 }
 
 // ---------------------------------------------------------------------------

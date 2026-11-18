@@ -187,7 +187,7 @@ export function customCodeBoxTag(tag: string, foreign: ForeignContent = false, p
 const GLOBAL_PROPS: ReadonlySet<string> = new Set(['id', 'className', 'style', 'title', 'lang', 'dir', 'role', 'hidden', 'tabIndex', 'translate', 'inert']);
 
 /** A replaced tag's props without what only that tag understood (an `img`'s `fetchPriority`, an `input`'s `type`). */
-function globalPropsOnly(props: Record<string, unknown>): Record<string, unknown> {
+export function globalPropsOnly(props: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(props).filter(([name]) => GLOBAL_PROPS.has(name) || name.startsWith('data-') || name.startsWith('aria-')));
 }
 

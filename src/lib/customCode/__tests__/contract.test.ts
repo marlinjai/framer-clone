@@ -13,6 +13,7 @@ import {
   BOX_REFUSAL_POLICY,
   BOX_SHELL_MARKER,
   BOX_SHELL_SCRIPT,
+  BOX_SHELL_VERSION,
   boxDocumentHeaders,
   boxPath,
   boxRefusalHeaders,
@@ -267,7 +268,90 @@ describe('the shell', () => {
       expect(vm.runInContext(`typeof window.${name}`, context)).toBe('undefined');
       expect(() => vm.runInContext(`'use strict'; Object.defineProperty(window, '${name}', { value: 1 })`, context)).toThrow();
     }
-    expect(posted).toEqual([[{ fc: 1, kind: 'hello', shell: 1 }, '*']]);
+    expect(posted).toEqual([[{ fc: 1, kind: 'hello', shell: BOX_SHELL_VERSION }, '*']]);
+  });
+
+  /** A model window with listeners, a parent that records posts, and a port pair to stand in for the broker. */
+  function shellWindow() {
+    const listeners: Record<string, ((event: unknown) => void)[]> = {};
+    const parent = { postMessage: () => {} };
+    const window: Record<string, unknown> = {
+      parent,
+      addEventListener: (type: string, fn: (event: unknown) => void) => (listeners[type] ??= []).push(fn),
+    };
+    window.window = window;
+    const context = vm.createContext(window);
+    vm.runInContext(BOX_SHELL_SCRIPT, context);
+    const sent: unknown[] = [];
+    const port = { onmessage: null as null | ((event: { data: unknown }) => void), postMessage: (message: unknown) => sent.push(JSON.parse(JSON.stringify(message))) };
+    const dispatch = (type: string, event: unknown) => (listeners[type] ?? []).forEach((fn) => fn(event));
+    const connect = (declaration: unknown, from: unknown = parent, ports: unknown[] = [port]) =>
+      dispatch('message', { source: from, data: { fc: 1, kind: 'connect', declaration }, ports });
+    const toFrame = (data: unknown) => port.onmessage?.({ data });
+    const run = (code: string) => vm.runInContext(code, context);
+    return { context, sent, port, connect, toFrame, dispatch, run };
+  }
+
+  it('gives the author a frozen lumitra client that queues until the page connects', async () => {
+    const shell = shellWindow();
+    expect(shell.run('Object.isFrozen(window.lumitra) && Object.keys(window.lumitra).sort().join()')).toBe('emit,onState,read,ready,resize,setState');
+    shell.run('try { window.lumitra = null; } catch (e) {}');
+    expect(shell.run('typeof window.lumitra.read')).toBe('function');
+    shell.run("lumitra.setState('open', true); lumitra.emit('done'); lumitra.emit('custom:other'); lumitra.resize('320')");
+    expect(shell.sent).toEqual([]);
+    shell.connect({ reads: [], writes: ['open'], emits: ['custom:done'], sizing: 'content', interactive: true });
+    expect(shell.sent).toEqual([
+      { kind: 'setState', id: 'open', value: true },
+      { kind: 'emit', name: 'custom:done' },
+      { kind: 'emit', name: 'custom:other' },
+      { kind: 'resize', height: 320 },
+    ]);
+  });
+
+  it('takes the port only from its parent, once, and answers pings', () => {
+    const shell = shellWindow();
+    const other = { onmessage: null, postMessage: () => { throw new Error('the wrong port'); } };
+    shell.connect({ reads: [] }, { postMessage: () => {} }, [other]);
+    shell.connect({ reads: [] }, shell.context.parent, []);
+    shell.run("lumitra.setState('a', 1)");
+    expect(shell.sent).toEqual([]);
+    shell.connect({ reads: [] });
+    expect(shell.sent).toEqual([{ kind: 'setState', id: 'a', value: 1 }]);
+    shell.connect({ reads: [] }, shell.context.parent, [other]);
+    shell.toFrame({ kind: 'ping' });
+    expect(shell.sent.at(-1)).toEqual({ kind: 'pong' });
+  });
+
+  it('reads state, calls watchers with each value, and is ready once every read has one', async () => {
+    const shell = shellWindow();
+    shell.run("window.seen = []; window.isReady = false; lumitra.ready().then(function(){ window.isReady = true; }); window.stop = lumitra.onState('tab', function(v){ seen.push(v); })");
+    shell.connect({ reads: ['tab', 'open'] });
+    shell.toFrame({ kind: 'state', id: 'tab', value: 'b' });
+    await Promise.resolve();
+    expect(shell.run('isReady')).toBe(false);
+    shell.toFrame({ kind: 'state', id: 'open', value: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shell.run('isReady')).toBe(true);
+    expect(shell.run("lumitra.read('tab')")).toBe('b');
+    expect(shell.run("lumitra.read('missing')")).toBeUndefined();
+    shell.run('stop()');
+    shell.toFrame({ kind: 'state', id: 'tab', value: 'c' });
+    expect(shell.run('seen.join()')).toBe('b');
+    // A watcher added later hears the value it already has, at once.
+    shell.run("lumitra.onState('open', function(v){ seen.push(String(v)); })");
+    expect(shell.run('seen.join()')).toBe('b,true');
+  });
+
+  it('reports a thrown watcher and an uncaught error to the page, shortened', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: ['x'] });
+    shell.run("lumitra.onState('x', function(){ throw new Error('boom'); })");
+    shell.toFrame({ kind: 'state', id: 'x', value: 1 });
+    shell.dispatch('error', { error: new Error('y'.repeat(900)) });
+    expect(shell.sent).toEqual([
+      { kind: 'error', message: 'boom' },
+      { kind: 'error', message: 'y'.repeat(500) },
+    ]);
   });
 
   it('survives a window without a parent', () => {

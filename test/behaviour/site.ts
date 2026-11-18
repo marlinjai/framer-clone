@@ -36,6 +36,8 @@ export interface PublishOptions {
   pages?: Readonly<Record<string, () => StoredNode>>;
   /** The site language (Site settings), `en` when not given; joins `siteSettings`. */
   language?: string;
+  /** The site's id, for a spec that writes rows of its own for the site; a fresh one when not given. */
+  siteId?: string;
 }
 
 /**
@@ -44,10 +46,9 @@ export interface PublishOptions {
  */
 export async function publishPages(
   port: string,
-  { analytics = false, siteSettings, pages: only, language }: PublishOptions = {},
+  { analytics = false, siteSettings, pages: only, language, siteId = randomUUID() }: PublishOptions = {},
 ): Promise<string> {
   const repo = getSiteRepository();
-  const siteId = randomUUID();
   const source = only ?? PAGES;
   const pages = { home: stored('', PAGES.plain()), ...Object.fromEntries(Object.entries(source).map(([slug, tree]) => [slug, stored(slug, tree())])) };
   const project = {

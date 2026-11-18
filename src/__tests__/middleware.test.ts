@@ -1023,9 +1023,11 @@ describe('middleware: the enforced frame policy (decision D6 of the sandboxed cu
       expect(enforced(without)).toBe(`frame-src ${BOX}/box/; object-src 'none'`);
       expect(enforced(declined)).toBe(`frame-src ${BOX}/box/; object-src 'none'`);
       expect(enforced(consented)).toBe(`frame-src ${BOX}/box/ ${ALLOWED_FRAME_ORIGIN}; object-src 'none'`);
-      // The report-only policy stays exactly as it was.
-      expect(without.headers.get(CSP_REPORT_ONLY_HEADER)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
-      expect(consented.headers.get(CSP_REPORT_ONLY_HEADER)).toBe(PUBLISHED_REPORT_ONLY_POLICY_MAPS);
+      // The report-only policy expects the box's frames too (D39), so a block reports nothing; its 'self' stays.
+      expect(without.headers.get(CSP_REPORT_ONLY_HEADER)).toBe(PUBLISHED_REPORT_ONLY_POLICY.replace("frame-src 'self'", `frame-src 'self' ${BOX}/box/`));
+      expect(consented.headers.get(CSP_REPORT_ONLY_HEADER)).toBe(
+        PUBLISHED_REPORT_ONLY_POLICY.replace("frame-src 'self'", `frame-src 'self' ${BOX}/box/ ${ALLOWED_FRAME_ORIGIN}`),
+      );
     }
     // A custom domain is a published host too.
     const custom = await middleware(req('https://www.bakery.example/menu', { host: 'www.bakery.example' }));

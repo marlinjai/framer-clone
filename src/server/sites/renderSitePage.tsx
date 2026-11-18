@@ -34,6 +34,8 @@ import { siteLookFromPages } from '@/lib/site/notFoundDefault';
 import { findLegalPage, legalLanguage } from '@/lib/legal/legalPages';
 import { productPagePath } from '@/lib/pages/slug';
 import { treesHoldMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { customCodeHashes } from '@/lib/renderer/server/applyCustomCode';
+import { loadLiveCustomCode } from '@/server/customCode/liveBlocks';
 
 type TreeLike = Parameters<typeof treesHoldMapEmbed>[0] extends Iterable<infer T> ? T : never;
 
@@ -230,6 +232,9 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
     // visitors who ask for reduced motion, decided in the browser).
     smoothScroll: site.siteSettings.smoothScroll === true,
     pageBase: site.siteSettings.pageBase,
+    // Sandboxed custom code: the live blobs this page names, read for this request; null on a
+    // preview, with the kill switch on or no box configured (every block shows its fallback).
+    customCode: await loadLiveCustomCode({ siteId: site.siteId, preview: Boolean(site.preview), hashes: customCodeHashes(root) }),
     // The site's theme: a forced light or dark mode answers `prefers-color-scheme` in
     // the page's rules, and the banner reads token references through it.
     theme: site.siteSettings.theme,

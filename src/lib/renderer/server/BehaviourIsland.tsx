@@ -3,7 +3,9 @@
 // so it is fetched only where this island is rendered, which is a page with a trigger.
 // What the program needs beside it is fetched at the same time, since a second round trip
 // after the first comes out of the gate's 3 seconds. A chunk that does not arrive lowers
-// the gate at once, rather than at its timeout.
+// the gate at once, rather than at its timeout. The broker of sandboxed custom code is
+// the third such chunk: fetched only when the page holds a block (`program.broker`), so a
+// page without one loads no byte of it. Without it every block keeps its fallback.
 'use client';
 
 import { useEffect } from 'react';
@@ -18,9 +20,10 @@ export default function BehaviourIsland({ program }: { program: BehaviourProgram
       import('@/lib/behaviour/runtime'),
       program.verbs ? import('@/lib/behaviour/verbs') : undefined,
       program.rove ? import('@/lib/behaviour/rove') : undefined,
+      program.broker ? import('@/lib/customCode/broker') : undefined,
     ]).then(
-      ([{ startBehaviour }, verbs, rove]) => {
-        if (!left) stop = startBehaviour({ container: document, program, surface: 'published', verbs: verbs?.createVerbs, extras: verbs, rove: rove?.createRover });
+      ([{ startBehaviour }, verbs, rove, broker]) => {
+        if (!left) stop = startBehaviour({ container: document, program, surface: 'published', verbs: verbs?.createVerbs, extras: verbs, rove: rove?.createRover, broker: broker?.createBroker });
       },
       (error: unknown) => {
         console.error('Page behaviour did not load: showing everything.', error);
