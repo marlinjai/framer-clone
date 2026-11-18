@@ -1131,6 +1131,30 @@ const PageModel = PageWithComponents
     get expansion(): PageExpansion {
       return expandPage(stored(self.appComponentTree), self.floatingElements.map(stored), definitions(), breakpoints());
     },
+    /**
+     * The page as the published path would expand it with one stored subtree replaced
+     * (the node of `subtree`'s id), before anything is written: the same `expandPage`
+     * with the same definitions and breakpoints as `expansion`, so a check made on it
+     * cannot drift from the page. A placement the subtree holds is expanded to its
+     * definition, behaviour included. Null when no node of the page has the id.
+     */
+    expansionWith(subtree: { id: string }): PageExpansion | null {
+      const splice = (node: ComponentSnapshotLike): ComponentSnapshotLike | null => {
+        if (node.id === subtree.id) return subtree as unknown as ComponentSnapshotLike;
+        const children = (node.children ?? []) as ComponentSnapshotLike[];
+        for (let index = 0; index < children.length; index++) {
+          const next = splice(children[index]);
+          if (next) return { ...node, children: children.map((child, i) => (i === index ? next : child)) } as ComponentSnapshotLike;
+        }
+        return null;
+      };
+      const tree = stored(self.appComponentTree);
+      const floating = self.floatingElements.map(stored);
+      const page = splice(tree);
+      const floats = floating.map(splice);
+      if (!page && floats.every((root) => root === null)) return null;
+      return expandPage(page ?? tree, floats.map((root, index) => root ?? floating[index]), definitions(), breakpoints());
+    },
     // What the font scan reads on the canvas: the page, floating elements included,
     // with literal input values in place.
     get canvasFontRoots(): ComponentNode[] {

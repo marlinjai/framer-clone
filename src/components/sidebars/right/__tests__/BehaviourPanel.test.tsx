@@ -14,7 +14,8 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import { EditorTool } from '@/stores/EditorUIStore';
 import { surfaceBehaviour } from '@/lib/behaviour/surfaceBehaviour';
-import { readBehaviourTree } from '@/lib/behaviour/format';
+import { readBehaviourTree, type BehaviourNode } from '@/lib/behaviour/format';
+import { editPresetItems, idsInUse } from '@/lib/behaviour/presetItems';
 
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
@@ -749,9 +750,9 @@ describe('a preset\'s items', () => {
     expect(group().getByText('2 tabs, made from a preset')).toBeTruthy();
   });
 
-  /** Text values on the page root that fill the page to within `room` bytes of what `fits` still takes. */
-  const fillTo = (fits: () => boolean) => {
-    const fill = (length: number) => ({ state: [...Array.from({ length: 15 }, (_, i) => ({ id: `v-big${i}`, name: `Big ${i}`, type: 'text', initial: 'x'.repeat(4096) })), { id: 'v-last', name: 'Last', type: 'text', initial: 'x'.repeat(length) }] });
+  /** Text values on the page root (`big` of 4,096 characters and one shorter) that fill the page as far as `fits` still takes. */
+  const fillTo = (fits: () => boolean, big = 15) => {
+    const fill = (length: number) => ({ state: [...Array.from({ length: big }, (_, i) => ({ id: `v-big${i}`, name: `Big ${i}`, type: 'text', initial: 'x'.repeat(4096) })), { id: 'v-last', name: 'Last', type: 'text', initial: 'x'.repeat(length) }] });
     const whole = (length: number) => {
       act(() => root.setBehaviour(fill(length)));
       return fits();
@@ -779,6 +780,34 @@ describe('a preset\'s items', () => {
     expect(group().getByRole('alert').textContent).toMatch(/^Not changed: .*65536 bytes.*\.$/);
     expect(JSON.stringify(getSnapshot(tabs))).toBe(before);
     expect(history().undoIdx).toBe(undo);
+    expect(pageRefusesNothing()).toBe(true);
+  });
+
+  it('refuses a new tab whose copied panel holds a placement past the cap, counting the definition\'s behaviour', () => {
+    mount();
+    const page = store.editorUI.currentPage!;
+    const tabs = page.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    // The last panel holds a component whose definition keeps about 3 KB of behaviour; Add tab copies it.
+    const lastPanel = page.findComponent(idsIn(getSnapshot(tabs)).find((id) => /-panel-2$/.test(id))!)!;
+    act(() => lastPanel.addChildren([createIntrinsicComponent('heavy', 'div', { children: 'Heavy' })]));
+    act(() => page.findComponent('heavy')!.setBehaviour({ state: [{ id: 'v-heavy', name: 'Heavy', type: 'text', initial: 'h'.repeat(3000) }] }));
+    const made = project.createComponentFromSelection(page.id, ['heavy'], 'Heavy');
+    if (!made.ok) throw new Error(made.message);
+    const roots = () => [page.expansion.root, ...page.expansion.floating] as unknown as BehaviourNode[];
+    const edited = () => editPresetItems(getSnapshot(tabs) as never, { kind: 'addTab' }, idsInUse(roots()))!;
+    /** The edited subtree as stored, a placement unexpanded, spliced into the expanded page: the check that missed it. */
+    const storedSplice = (node: BehaviourNode, subtree: BehaviourNode): BehaviourNode =>
+      node.id === subtree.id ? subtree : { ...node, children: ((node.children ?? []) as BehaviourNode[]).map((child) => storedSplice(child, subtree)) };
+    // Full to where the new tab's own bytes still fit, so only the copied placement's behaviour takes the page over.
+    // 14 full values, since the definition's 3 KB is on the page already.
+    fillTo(() => pageRefusesNothing() && readBehaviourTree(storedSplice(roots()[0], edited() as never)).refused.length === 0, 14);
+    expect(readBehaviourTree(page.expansionWith(edited() as never)!.root as never).refused.length).toBeGreaterThan(0);
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    const before = JSON.stringify(getSnapshot(tabs));
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect(group().getByRole('alert').textContent).toMatch(/^Not changed: .*65536 bytes.*\.$/);
+    expect(JSON.stringify(getSnapshot(tabs))).toBe(before);
     expect(pageRefusesNothing()).toBe(true);
   });
 

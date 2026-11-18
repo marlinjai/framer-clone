@@ -108,12 +108,17 @@ export const holdsBehaviour = (target: Pick<ComponentInstance, 'isViewportNode' 
 /** What the page's trees, the page and its floating elements, need from a page. */
 export interface BehaviourPage {
   expansion: { root: ComponentNode; floating: readonly ComponentNode[] };
+  /** The page expanded with one stored subtree replaced, null when no node has its id (PageModel.expansionWith). */
+  expansionWith(subtree: { id: string }): { root: ComponentNode; floating: readonly ComponentNode[] } | null;
   findComponent(id: string): ComponentInstance | undefined;
 }
 
 /** The trees the parser reads for this page: the page, then each floating element. */
-export const rootsOf = (page: BehaviourPage): BehaviourNode[] =>
-  [page.expansion.root, ...page.expansion.floating] as unknown as BehaviourNode[];
+export const rootsOf = (page: BehaviourPage): BehaviourNode[] => expansionRoots(page.expansion);
+
+/** An expansion's trees as the parser reads them: the page, then each floating element. */
+export const expansionRoots = (expansion: { root: ComponentNode; floating: readonly ComponentNode[] }): BehaviourNode[] =>
+  [expansion.root, ...expansion.floating] as unknown as BehaviourNode[];
 
 /** How ids read in a sentence: a value by its name, an element by its layer name. */
 export function namesFor(page: BehaviourPage, states: readonly StateValue[]): Names {

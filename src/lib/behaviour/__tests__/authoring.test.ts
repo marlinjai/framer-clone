@@ -27,7 +27,6 @@ import {
   storedBehaviourOf,
   subtreeRefusals,
   withBehaviourAt,
-  withSubtreeAt,
 } from '../authoring';
 
 const node = (id: string, type: string, props: Record<string, unknown> = {}, ...children: BehaviourNode[]): BehaviourNode => ({ id, type, props, children });
@@ -187,30 +186,30 @@ describe('what a person entered goes through the parser', () => {
 
 describe('a subtree replaced whole', () => {
   const box = (...ids: string[]) => node('box', 'div', {}, ...ids.map((id) => node(id, 'div', { children: id })));
-  const tree = () => node('root', 'div', {},
+  const tree = (inside: BehaviourNode = box('p1', 'p2')) => node('root', 'div', {},
     node('go', 'button', { behaviour: { on: [{ id: 't1', on: 'click', do: [{ focus: 'p2' }] }] } }),
-    box('p1', 'p2'));
-
-  it('splices the subtree in by its id', () => {
-    expect((withSubtreeAt(tree(), box('p1'))?.children as BehaviourNode[] | undefined)?.[1]).toEqual(box('p1'));
-    expect(withSubtreeAt(tree(), node('nowhere', 'div'))).toBeNull();
-  });
+    inside);
 
   it('asks about an entry that names a node the edit takes away, and refuses nothing else', () => {
-    const check = subtreeRefusals([tree()], box('p1', 'p2'), box('p1'))!;
+    const check = subtreeRefusals([tree()], [tree(box('p1'))], box('p1', 'p2'), box('p1'));
     expect(check.refused).toEqual([]);
     expect(check.dangling.map((r) => [r.nodeId, r.entry])).toEqual([['go', 'on']]);
-    expect(subtreeRefusals([tree()], box('p1', 'p2'), box('p2'))).toEqual({ refused: [], dangling: [] });
+    expect(subtreeRefusals([tree()], [tree(box('p2'))], box('p1', 'p2'), box('p2'))).toEqual({ refused: [], dangling: [] });
   });
 
   it('refuses what the page cap cuts off, and does not ask about it', () => {
     const big = (n: number) => ({ id: `v-big${n}`, name: `Big ${n}`, type: 'text', initial: 'x'.repeat(4096) });
-    const full = node('root', 'div', { behaviour: { state: Array.from({ length: 15 }, (_, i) => big(i)) } }, box('p1'));
+    const page = (inside: BehaviourNode) => node('root', 'div', { behaviour: { state: Array.from({ length: 15 }, (_, i) => big(i)) } }, inside);
     const grown = node('box', 'div', { behaviour: { state: [big(99), big(98)] } }, node('p1', 'div'));
-    const check = subtreeRefusals([full], box('p1'), grown)!;
+    const check = subtreeRefusals([page(box('p1'))], [page(grown)], box('p1'), grown);
     expect(check.dangling).toEqual([]);
     expect(check.refused[0]).toMatchObject({ nodeId: 'box', entry: 'behaviour' });
-    expect(subtreeRefusals([full], node('elsewhere', 'div'), node('elsewhere', 'div'))).toBeNull();
+  });
+
+  it('reads every tree of the page, floating elements too', () => {
+    const floating = node('float', 'div', { behaviour: { showWhen: { state: 'nothing', eq: true } } });
+    const check = subtreeRefusals([tree(), node('float', 'div')], [tree(), floating], box('p1', 'p2'), box('p1', 'p2'));
+    expect(check.refused.map((r) => [r.nodeId, r.entry])).toEqual([['float', 'showWhen']]);
   });
 });
 

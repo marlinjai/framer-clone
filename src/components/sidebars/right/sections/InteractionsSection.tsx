@@ -58,7 +58,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, namesFor, useFocusAfter, storedText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, expansionRoots, namesFor, useFocusAfter, storedText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface InteractionsSectionProps {
@@ -275,8 +275,10 @@ const PresetItemControls = observer(({ component, page }: { component: Component
     const roots = rootsOf(page);
     const next = editPresetItems(current, edit, idsInUse(roots));
     if (!next) return;
-    const check = subtreeRefusals(roots, current as unknown as BehaviourNode, next as unknown as BehaviourNode);
-    if (!check) return setError('this element is no longer on the page.');
+    // Judged on the page as it really expands, so a placement a copied panel holds counts with its definition.
+    const expanded = page.expansionWith(next as { id: string });
+    if (!expanded) return setError('this element is no longer on the page.');
+    const check = subtreeRefusals(roots, expansionRoots(expanded), current as unknown as BehaviourNode, next as unknown as BehaviourNode);
     const hard = check.refused[0];
     if (hard) {
       setConfirm(null);

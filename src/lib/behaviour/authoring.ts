@@ -372,17 +372,6 @@ function freshRefusals(before: readonly RefusedOnNode[], after: readonly Refused
   return fresh;
 }
 
-/** The tree with the node of `subtree`'s id replaced by it whole, copying only the path to it. Null when no node has the id. */
-export function withSubtreeAt(root: BehaviourNode, subtree: BehaviourNode): BehaviourNode | null {
-  if (root.id === subtree.id) return subtree;
-  const children = childrenOf(root);
-  for (let index = 0; index < children.length; index++) {
-    const next = withSubtreeAt(children[index], subtree);
-    if (next) return { ...root, children: children.map((child, i) => (i === index ? next : child)) };
-  }
-  return null;
-}
-
 /** Every node id a subtree holds. */
 function nodeIdsIn(node: BehaviourNode, into = new Set<string>()): Set<string> {
   if (typeof node.id === 'string') into.add(node.id);
@@ -400,27 +389,25 @@ function namesAny(value: unknown, ids: ReadonlySet<string>): boolean {
 
 /**
  * What replacing a whole subtree (a preset's items edited, `replaceSubtree`) would make
- * the parser refuse that it takes now, anywhere on the page. Both sides are read with the
- * subtree spliced in, the stored one and the edited one, so how the page's tree is built
- * cancels out. `dangling` are entries that name a node the edit takes away (a trigger that
- * focuses the panel of a removed tab): the person is asked before they lose them.
- * `refused` is everything else (a cap the edit takes the page past): the edit is not made.
- * Null when no root holds the subtree's node.
+ * the parser refuse that it takes now, anywhere on the page. `before` and `after` are the
+ * page's trees as the published path expands them, now and with the edited subtree in
+ * (`page.expansion` and `page.expansionWith`), so a placement a copied item holds counts
+ * with its definition's behaviour, as it does on the page. `current` and `next` are the
+ * stored subtree before and after, which say what the edit takes away. `dangling` are
+ * entries that name a node the edit takes away (a trigger that focuses the panel of a
+ * removed tab): the person is asked before they lose them. `refused` is everything else
+ * (a cap the edit takes the page past): the edit is not made.
  */
 export function subtreeRefusals(
-  roots: readonly BehaviourNode[],
+  before: readonly BehaviourNode[],
+  after: readonly BehaviourNode[],
   current: BehaviourNode,
   next: BehaviourNode,
-): { refused: RefusedOnNode[]; dangling: RefusedOnNode[] } | null {
-  if (typeof current.id !== 'string' || current.id !== next.id) return null;
-  const found = pathTo(roots, current.id);
-  if (!found) return null;
-  const before = withSubtreeAt(found.root, current);
-  const after = withSubtreeAt(found.root, next);
-  if (!before || !after) return null;
+): { refused: RefusedOnNode[]; dangling: RefusedOnNode[] } {
   const kept = nodeIdsIn(next);
   const removed = new Set([...nodeIdsIn(current)].filter((id) => !kept.has(id)));
-  const fresh = freshRefusals(readBehaviourTree(before).refused, readBehaviourTree(after).refused);
+  const refusedIn = (roots: readonly BehaviourNode[]) => roots.flatMap((root) => readBehaviourTree(root).refused);
+  const fresh = freshRefusals(refusedIn(before), refusedIn(after));
   const dangling = fresh.filter((refusal) => refusal.entry !== 'behaviour' && removed.size > 0 && namesAny(refusal.value, removed));
   return { refused: fresh.filter((refusal) => !dangling.includes(refusal)), dangling };
 }
