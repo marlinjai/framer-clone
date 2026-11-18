@@ -138,6 +138,90 @@ describe('applyCustomCode', () => {
     expect(markup).toContain('Fallback');
   });
 
+  it('accepts no block where the renderer draws no island, and gives such a block no slot (D66, D95)', () => {
+    const inside = (id: string, n: number, host: Partial<ComponentNode>): ComponentNode => ({ type: 'div', id: `${id}-host`, ...host, children: [block(id, n)] });
+    const root = page([
+      inside('form', 1, { props: { 'data-form-kind': 'form' } }),
+      { ...block('isForm', 2), props: { ...block('isForm', 2).props, 'data-form-kind': 'form' } },
+      inside('field', 3, { props: { 'data-form-kind': 'form-field' } }),
+      inside('cart', 4, { props: { 'data-component-kind': 'add-to-cart' } }),
+      inside('part', 5, { props: { 'data-shop-part': 'checkout.button' } }),
+      inside('sticky', 6, { props: { 'data-sticky-cta': 'bar' } }),
+      inside('map', 7, { props: { [MAP_EMBED_ATTR]: MAP_EMBED_MARKER, mapAddress: 'Berlin' } }),
+      inside('void', 8, { type: 'img' }),
+      // In svg and math a block is drawn as their own container (a div there is a refused tag).
+      { type: 'svg', id: 'svg-host', children: [{ ...block('svg', 9), type: 'g' }] },
+      { type: 'math', id: 'math-host', children: [{ ...block('math', 10), type: 'mrow' }] },
+      { type: 'svg', id: 'deep', children: [{ type: 'g', id: 'g', children: [block('deepSvg', 11)] }] },
+      // A box that is itself svg or math is refused too.
+      { ...block('ownSvg', 14, [{ type: 'circle', id: 'circle', props: { r: 2 } }]), type: 'svg' },
+      { ...block('ownMath', 15, [{ type: 'mi', id: 'mi', props: { children: 'x' } }]), type: 'math' },
+      // A foreignObject holds HTML again: a block there is drawn like any.
+      { type: 'svg', id: 'fo-svg', children: [{ type: 'foreignObject', id: 'fo', children: [block('fo', 12)] }] },
+      block('after', 13),
+    ]);
+    const forged = { src: 'https://elsewhere.test/x', title: 'F', reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true, states: {} } as unknown as ComponentNode['customCodeRun'];
+    // A run that arrives inside a form is taken away like any other.
+    (root.children![0].children![0] as ComponentNode).customCodeRun = forged;
+    const result = applyCustomCode(root, live(Array.from({ length: 15 }, (_, i) => [i + 1, declaration({ writes: [] })])));
+    const refused = ['form', 'isForm', 'field', 'cart', 'part', 'sticky', 'map', 'void', 'svg', 'math', 'deepSvg', 'ownSvg', 'ownMath'];
+    for (const id of refused) expect(runOf(result.root, id), id).toBeUndefined();
+    expect(runOf(result.root, 'fo')).toBeDefined();
+    expect(runOf(result.root, 'after')).toBeDefined();
+    expect(result.blocks).toBe(2);
+    expect(result.problems.map((p) => p.node)).toEqual(refused);
+    const reasons = Object.fromEntries(result.problems.map((p) => [p.node, p.reason]));
+    expect(reasons.form).toContain('inside a form');
+    expect(reasons.isForm).toContain('on a form');
+    expect(reasons.cart).toContain('inside a shop control');
+    expect(reasons.svg).toContain('inside svg');
+    expect(reasons.math).toContain('inside math');
+    expect(reasons.deepSvg).toContain('on a refused tag');
+    expect(reasons.ownSvg).toContain('on svg');
+    expect(reasons.ownMath).toContain('on math');
+  });
+
+  it('brings no broker for a page whose only block stands inside a form or svg', async () => {
+    const root = page([
+      { type: 'div', id: 'f', props: { 'data-form-kind': 'form' }, children: [block('b1', 1)] },
+      { type: 'svg', id: 's', children: [block('b2', 2)] },
+    ]);
+    const { markup, program } = await html(root, live([[1, declaration()], [2, declaration()]]));
+    expect(program).toBeNull();
+    expect(markup).not.toContain('data-fc-custom-code-state');
+    expect(markup).not.toContain('Content-Security-Policy');
+    expect(markup).not.toContain('/box/');
+  });
+
+  // Hashes told apart by their first characters, which is all the trace shows.
+  const marked = (c: string) => c.repeat(64);
+  const liveMarked = (cs: string[]): LiveCustomCode => ({ siteId: SITE, origin: ORIGIN, blobs: new Map(cs.map((c) => [marked(c), declaration()])) });
+  const markedBlock = (id: string, c: string, type = 'div', children?: ComponentNode[]): ComponentNode => ({
+    type, id, props: { customCode: { sha256: marked(c), title: `Block ${id}` } }, ...(children ? { children } : {}),
+  });
+
+  it('draws an accepted void-tag block as a div island, and one in svg as a g with its fallback (customCodeBoxTag)', async () => {
+    const root = page([markedBlock('v1', 'a', 'wbr'), { type: 'svg', id: 's', children: [markedBlock('v2', 'b', 'wbr', [{ type: 'circle', id: 'c', props: { r: 4 } }])] }]);
+    const { markup } = await html(root, liveMarked(['a', 'b']));
+    expect(markup).toMatch(/<div[^>]*data-fc-custom-code="aaaaaaaaaaaa"[^>]*data-fc-custom-code-state="waiting"/);
+    expect(markup).toMatch(/<svg><g data-fc-custom-code="bbbbbbbbbbbb"><circle r="4"><\/circle><\/g><\/svg>/);
+    expect(markup.match(/data-fc-custom-code-state=/g)).toHaveLength(1);
+  });
+
+  it('runs the stored hash whatever a binding or the address says (D98, D68)', async () => {
+    const bound: ComponentNode = {
+      ...markedBlock('b1', 'a', 'div', [{ type: 'p', id: 'f', props: { children: 'Fallback' } }]),
+      bindings: {
+        customCode: { mode: 'read', expression: '{{page.params.code}}' },
+        'customCode.sha256': { mode: 'read', expression: '{{page.params.code}}' },
+      },
+    };
+    const rendered = await renderPublishedPage({ root: page([bound]), pageParams: { code: marked('b') }, cmsRepo, customCode: liveMarked(['a', 'b']) });
+    const markup = renderToStaticMarkup(<>{rendered.body}</>);
+    expect(markup).toContain('data-fc-custom-code="aaaaaaaaaaaa" data-fc-custom-code-state="waiting"');
+    expect(markup).not.toContain('bbbbbbbbbbbb');
+  });
+
   it('leaves a page without blocks as it is', () => {
     const root = page([{ type: 'p', id: 'x' }]);
     expect(applyCustomCode(root, live([])).root).toBe(root);

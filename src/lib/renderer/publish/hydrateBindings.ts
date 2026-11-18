@@ -196,7 +196,8 @@ interface HydrationContext extends HydrationRepos {
 // The four INTERACTIVE commerce kinds. These are NEVER baked: they are left
 // verbatim as runtime island placeholders for client-side hydration on the
 // published site (cart / variant-selection / checkout are client-authoritative).
-const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
+// Exported for applyCustomCode, which runs no frame inside one (decision D66).
+export const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
   'variant-selector',
   'add-to-cart',
   'cart-view',
