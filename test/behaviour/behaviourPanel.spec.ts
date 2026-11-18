@@ -110,6 +110,48 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
   // Playwright's WebKit moves Tab between controls only with Alt held, as Safari does.
   const TAB = engineName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
 
+  // A quote in a value's name once made the focus after "Keep it" build an invalid selector,
+  // and the error took the whole editor down. By keyboard, at the desktop width.
+  it('a value named with a quote can be deleted and kept, and the editor stays up', async () => {
+    const { page, crashes } = await openEditor(browser, bundle, {});
+    page.setDefaultTimeout(5000);
+    await placeTree(page, crashes, tree());
+    const isFocused = (target: Locator) => target.evaluate((el) => el === document.activeElement);
+    await page.locator('[data-viewport-content-id] [data-inner-component-id="btn"]').first().click();
+    const pageState = page.getByTestId('page-state-panel');
+    const interactions = page.getByTestId('interactions-section');
+    await expect.poll(() => interactions.count()).toBe(1);
+    await pageState.getByRole('button', { name: 'Add a value to the page' }).focus();
+    await page.keyboard.press('Enter');
+    const name = pageState.getByLabel(/^Name of /).first();
+    await expect.poll(() => isFocused(name)).toBe(true);
+    await name.selectText();
+    await page.keyboard.type('Say "hi"');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => pageState.getByLabel('Name of Say "hi"').count()).toBe(1);
+    // Something reads it, so deleting it asks first.
+    await interactions.getByRole('button', { name: 'Add interaction' }).focus();
+    await page.keyboard.press('Enter');
+    await interactions.getByRole('button', { name: 'Add this interaction' }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => pageState.getByText(/^Read by one element/).count()).toBe(1);
+    const row = pageState.locator('[data-state-id]').filter({ has: page.getByLabel('Name of Say "hi"') });
+    await row.locator('button[data-delete-value]').focus();
+    await page.keyboard.press('Enter');
+    // The question takes the focus on Keep it, so Enter keeps the value.
+    const question = pageState.getByRole('group', { name: 'Delete Say "hi"?' });
+    await expect.poll(() => isFocused(question.getByRole('button', { name: 'Keep it' }))).toBe(true);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(100);
+    expect(crashes).toEqual([]);
+    expect(await page.getByTestId('page-state-panel').count()).toBe(1);
+    expect(await page.locator('[data-viewport-content-id]').count()).toBeGreaterThan(0);
+    await expect.poll(() => isFocused(row.locator('button[data-delete-value]'))).toBe(true);
+    expect(await question.count()).toBe(0);
+    expect(await pageState.getByLabel('Name of Say "hi"').count()).toBe(1);
+    await page.close();
+  }, 60_000);
+
   describe.each(LAYOUTS)('at the %s width', (layout, options) => {
     const phone = layout === 'phone';
 
