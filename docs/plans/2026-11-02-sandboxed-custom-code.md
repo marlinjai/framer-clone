@@ -800,10 +800,16 @@ year at most, seven days for a cookie set by script in Safari) sets the cookie a
 with a map reloads once. When storage throws, a reload would forget the answer, so it is announced as before; the runtime exposes
 `mapsAtLoad`, and the map island draws no frame the policy would refuse. Its placeholder says "Reload the page to show the map" with a
 reload button, which gets focus (the cookie is already set, so the new page allows the map, and its banner asks again because the
-answer was not stored). The visitor also keeps "Open in Google Maps". The same holds while a form field on the page holds input the
-visitor changed (a value, a tick, a choice that differs from the page's default): a reload would lose it, so the "yes" is announced
-and the map offers the reload, which the visitor presses when ready (decided after the third review of pull request #450, instead of
-listing the lost input as a limit). Where the browser blocks cookies the maps cookie never sticks, so no reload could help; the runtime
+answer was not stored). The visitor also keeps "Open in Google Maps". The same holds once the visitor has edited a field on the
+page: a reload would lose it, so the "yes" is announced and the map offers the reload, which the visitor presses when ready (decided
+after the third review of pull request #450, instead of listing the lost input as a limit). The runtime records the visitor's own
+`input` and `change` events (trusted ones, in the capture phase on the document, from an input, a textarea, a select or an editable
+region outside the banner) and holds the reload once one arrived. The first version compared each field with its default, which the
+fourth review showed missed every published form: React keeps a controlled field's default in step with what is typed, so the
+reload wiped the visitor's message; it also held the reload over untouched selects, ranges and colours. Typing into the platform's
+contact form is proven in jsdom and in Chromium and WebKit (`test/behaviour/maps.spec.ts`: no new document, the text
+kept, the map's reload button then shows the map). The map's own reload button uses the runtime's `reload()`, which drops the
+`#cookie-settings` address first, as the runtime's own reload does (fourth review). Where the browser blocks cookies the maps cookie never sticks, so no reload could help; the runtime
 exposes `mapsAllowed()`, and the placeholder then says the map cannot be shown while this browser blocks cookies, with no button, and
 "Open in Google Maps" gets focus (found by the third review; before C2 those visitors saw the map in the same page). Focus survives
 the reload: the runtime announces a maps reload first, as a `lumitra:maps-reload` event saying whether a map's "Load map" opened the
@@ -844,9 +850,16 @@ out (found by the second review of pull request #450), so the tile's link is nev
 block standing inside an `svg` draws a `g` with its attributes and the tile as HTML in a `foreignObject`, because React draws an HTML
 tag under `svg` as an SVG element, which shows nothing; inside `math`, where React draws no HTML at all, the tile is its label as text
 in `mtext`. The tile carries `role="group"`, which may hold its `aria-label`. On the published page and in the standalone preview a
-block stored as a void tag (which cannot hold the fallback) is drawn as a container of the content it stands in: a `div` in HTML, a
-`g` inside `svg`, an `mrow` inside `math` (`customCodeBoxTag`); a `div` there would be parsed out of the SVG or MathML by the browser
-and no longer match hydration (found by the third review). This is wider than the review asked (every tag that
+block stored as a void tag (which cannot hold the fallback) is drawn as a container the browser's parser leaves where it stands
+(`customCodeBoxTag`): a `g` inside `svg`, an `mrow` inside `math`, a `span` under a phrasing or transparent parent (a paragraph, a
+heading, a span, a link, a label and the like, where a `div` would close an open paragraph), and a `div` elsewhere. Under a parent that
+holds only its own kinds of children (a table, its sections and rows, a column group, a select, an option group, an option, a
+datalist) the block is not drawn at all on those two surfaces: no container would stay there, and drawing nothing is what the page
+shows anyway once the parser has moved it (decided after the fourth review; refusing such a block at the render gate would also hide
+it on the canvas, where the author can still see and move it). The published renderer passes each node its parent's tag for this,
+and the standalone preview reads it from the tree. The replacement keeps only global, `data-` and `aria-` attributes of the stored
+tag, never one that only that tag understood (`alt`, `fetchPriority`). The fallback's own children keep their stored tags, as every
+stored node does: a stored paragraph inside a paragraph breaks the same way anywhere on a page. Found by the third and fourth reviews. This is wider than the review asked (every tag that
 cannot hold the tile, not only controls and SVG). Found by the first review of pull request #450.
 
 **D97. A title refuses invisible formatting characters and lone surrogate halves, and must show something.** Besides control
@@ -856,9 +869,13 @@ interlinear annotation marks, the Mongolian vowel separator, the byte order mark
 agent reading the title would still see), the combining grapheme joiner, the blank fillers that draw nothing (the Hangul fillers and
 the blank braille pattern), and half of a surrogate pair without its other half. A title must also hold at least one visible letter,
 number, symbol or punctuation mark. They change how a title reads without being seen, on the editor surfaces now and in a frame's
-`title` from C3. An emoji joined with a zero-width joiner is refused with them; titles in any script, right-to-left ones included,
-single emoji and emoji with a variation selector still pass. Found by the second review of pull request #450, widened from a
-hand-written list to the category after the third.
+`title` from C3. So are the variation selectors that make no visible choice and can carry hidden bytes after any letter (U+FE00 to
+U+FE0D, U+E0100 to U+E01EF, and the Mongolian ones U+180B to U+180F), the object replacement character U+FFFC, and more than four
+combining marks on one character (Hebrew points, Vietnamese tone marks and Tibetan stacks need three at most). The text and emoji
+presentation selectors U+FE0E and U+FE0F pass once, right after a pictograph, and in a keycap (`1`, U+FE0F, U+20E3). An emoji joined
+with a zero-width joiner is refused with them; titles in any script, right-to-left ones included, single emoji, an emoji with its
+presentation selector and a keycap still pass. Found by the second review of pull request #450, widened from a hand-written list to
+the category after the third, and to the variation selectors, U+FFFC and stacked marks after the fourth.
 
 **D98. Nothing is bound into a custom code block's value.** `applyBindings` (`src/lib/bindings/resolver/applyBindings.ts`) skips a
 binding into `customCode` or any path below it, as it does for `behaviour` and FX scenes, so page data and the address bar can neither
