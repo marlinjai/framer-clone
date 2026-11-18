@@ -39,6 +39,22 @@ interface ConsentApi {
   mapsAtLoad?: boolean;
   /** Whether the maps cookie is set now. False after a yes means the browser blocks cookies. */
   mapsAllowed?: () => boolean;
+  /** The runtime's reload, which drops the `#cookie-settings` address first so the banner stays shut. */
+  reload?: () => void;
+}
+
+/**
+ * A new document, through the runtime's own reload when it offers one: that drops the
+ * `#cookie-settings` address first, so the new page does not open the banner again.
+ */
+function reloadPage(): void {
+  try {
+    const api = consentApi();
+    if (api && typeof api.reload === 'function') api.reload();
+    else window.location.reload();
+  } catch {
+    // Nothing to do: the note still says what would help.
+  }
 }
 
 /**
@@ -47,14 +63,6 @@ interface ConsentApi {
  * served without the maps cookie refuses: a frame drawn then would only show the
  * browser's blocked-content page, so the placeholder stays.
  */
-function reloadPage(): void {
-  try {
-    window.location.reload();
-  } catch {
-    // Nothing to do: the note still says what would help.
-  }
-}
-
 function frameAllowed(): boolean {
   return consentApi()?.mapsAtLoad !== false;
 }

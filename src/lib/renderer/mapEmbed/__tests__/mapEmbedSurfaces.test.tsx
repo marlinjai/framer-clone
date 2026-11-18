@@ -19,7 +19,7 @@ import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!5e0';
 const cmsRepo = { listRows: async () => ({ rows: [], total: 0 }), getRow: async () => null } as unknown as CmsReadRepository;
 
-type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void; mapsAtLoad?: boolean; mapsAllowed?: () => boolean } };
+type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void; mapsAtLoad?: boolean; mapsAllowed?: () => boolean; reload?: (...args: unknown[]) => void } };
 const win = window as Win;
 
 afterEach(() => {
@@ -284,6 +284,19 @@ describe('the island', () => {
       mapsReload(true);
       // The second box hears the same reload and writes nothing over the first's mark.
       expect(JSON.parse(mark()!)).toEqual({ path: window.location.pathname, index: 0 });
+    });
+
+    it('reloads through the runtime, which drops the cookie settings address, and passes it nothing', () => {
+      const reload = vi.fn();
+      const runtimeReload = vi.fn();
+      vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location);
+      win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => true, reload: runtimeReload };
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      fireEvent.click(own().getByRole('button', { name: 'Reload page' }));
+      expect(runtimeReload).toHaveBeenCalledTimes(1);
+      expect(runtimeReload).toHaveBeenCalledWith();
+      expect(reload).not.toHaveBeenCalled();
+      expect(JSON.parse(mark()!)).toMatchObject({ index: 0 });
     });
 
     it('this box\'s own reload button names it for the new page', () => {
