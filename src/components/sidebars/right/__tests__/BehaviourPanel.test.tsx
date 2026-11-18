@@ -620,7 +620,7 @@ describe('a preset\'s items', () => {
   };
   const pageIds = () => idsIn(getSnapshot(store.editorUI.currentPage!.appComponentTree));
 
-  it('a new tab takes no id an element elsewhere holds, nor a removed tab\'s id', () => {
+  it('a new tab takes no id an element elsewhere holds, nor a removed middle tab\'s id', () => {
     mount();
     const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
     const seed = tabs.id;
@@ -640,6 +640,33 @@ describe('a preset\'s items', () => {
     const after = pageIds();
     expect(new Set(after).size).toBe(after.length);
     for (const id of middle) expect(after).not.toContain(id);
+  });
+
+  it('the last tab\'s ids come back after it is removed only while nothing on the page holds or names them', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    const last = () => idsIn(getSnapshot(tabs)).filter((id) => /-tab-2$|-panel-2$/.test(id));
+    const removed = last();
+    expect(removed).toHaveLength(2);
+    const removeThird = () => {
+      fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+      fireEvent.click(group().getByRole('button', { name: /^Remove (Third|Tab 3)$/ }));
+    };
+    // Nothing names them: a new third tab takes them again, which no reference can tell apart.
+    removeThird();
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect(last()).toEqual(removed);
+    // A trigger still names the removed panel: the new panel takes another id, so it never takes the reference over.
+    const [, panel] = removed;
+    expect(panel).toMatch(/-panel-2$/);
+    act(() => button.setBehaviour({ on: [{ id: 't-focus', on: 'click', do: [{ focus: panel }] }] }));
+    removeThird();
+    fireEvent.click(group().getByRole('button', { name: /^Remove Tab 3 anyway$/ }));
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+    expect(pageIds()).not.toContain(panel);
   });
 
   it('a preset value keeps the name a person gave it when a tab is added, and a preview past the last tab goes', () => {
