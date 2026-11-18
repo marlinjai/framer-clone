@@ -58,7 +58,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, expansionRoots, namesFor, useFocusAfter, storedText, rootsOf, writeBehaviour, type BehaviourPage } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, expansionRoots, namesFor, useFocusAfter, storedText, rootsOf, writeBehaviour, type BehaviourPage, type FocusTarget } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface InteractionsSectionProps {
@@ -132,7 +132,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
 
   return (
     <Shell focus={focus}>
-      <PresetItemControls component={component} page={page} />
+      <PresetItemControls component={component} page={page} requestFocus={focus.request} />
       {holdsNonList(stored, 'on') && (
         <p className={REASON}>Its interactions are not used: {refused.find((r) => r.entry === 'on')?.reason ?? 'on is a list'}.</p>
       )}
@@ -258,7 +258,12 @@ InteractionsSection.displayName = 'InteractionsSection';
  * entry naming a node it takes away (a trigger focusing that tab's panel) asks first,
  * naming the elements that would stop working.
  */
-const PresetItemControls = observer(({ component, page }: { component: ComponentInstance; page: BehaviourPage }) => {
+const PresetItemControls = observer(({ component, page, requestFocus }: {
+  component: ComponentInstance;
+  page: BehaviourPage;
+  /** The section's focus mover (useFocusAfter): a removal takes away the control that had the focus. */
+  requestFocus: (targets: readonly FocusTarget[], said?: string) => void;
+}) => {
   const { editorUI } = useStore();
   const [picked, setPicked] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -295,6 +300,11 @@ const PresetItemControls = observer(({ component, page }: { component: Component
     setError(written.ok ? null : written.reason);
     if (!written.ok) return;
     setPicked('');
+    // After a removal the Remove button is off and the question is gone, so the focus goes to
+    // the tab picker (or Add, when one tab is left and the picker is gone), and what happened is said.
+    const before = presetItemsOf(current);
+    if (edit.kind === 'removeTab') requestFocus(['select[data-item-picker]', 'button[data-add-item]'], `Removed ${before?.items[edit.index] ?? 'the tab'}`);
+    else requestFocus([], `Added ${presetItemsOf(next)?.items.at(-1) ?? 'one'}`);
     const now = storedBehaviourOf(component.props);
     for (const state of now ? storedList(now, 'state') : []) {
       if (!isRecord(state) || typeof state.id !== 'string') continue;
@@ -309,12 +319,13 @@ const PresetItemControls = observer(({ component, page }: { component: Component
   return (
     <div className="flex flex-col gap-1.5" role="group" aria-label={items.kind === 'tabs' ? 'Tabs' : 'Slides'}>
       <span className={FIELD_LABEL}>{`${items.items.length} ${noun}s, made from a preset`}</span>
-      <button type="button" className={cn(SMALL_BUTTON, 'self-start')} onClick={() => apply(items.kind === 'tabs' ? { kind: 'addTab' } : { kind: 'addSlide' })}>
+      <button type="button" data-add-item="" className={cn(SMALL_BUTTON, 'self-start')} onClick={() => apply(items.kind === 'tabs' ? { kind: 'addTab' } : { kind: 'addSlide' })}>
         <Plus size={12} aria-hidden className="mr-1" /> {`Add ${noun}`}
       </button>
       {items.canRemove && (
         <div className="flex gap-1.5">
           <select
+            data-item-picker=""
             aria-label="Tab to remove"
             value={picked}
             onChange={(event) => setPicked(event.target.value)}

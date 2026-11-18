@@ -247,6 +247,8 @@ describe('edits keep what they do not touch', () => {
     const tree = node('root', 'div', { behaviour: { state: [{ id: 'a', name: 'Value 1', type: 'boolean', initial: false }] } },
       node('card', 'div', { behaviour: { state: [{ id: 'b', name: 'value 2', type: 'boolean', initial: false }] } }));
     expect(freshStateName([tree])).toBe('Value 3');
+    // A gap is filled: a page holding only "Value 2" gives "Value 1".
+    expect(freshStateName([node('root', 'div', { behaviour: { state: [{ id: 'b', name: 'Value 2', type: 'boolean', initial: false }] } })])).toBe('Value 1');
     expect(stateNameRefusal([tree], 'b', ' VALUE 1 ')).toBe('another value on this page is called Value 1');
     expect(stateNameRefusal([tree], 'b', 'Value 2')).toBeNull();
     expect(stateNameRefusal([tree], 'b', 'Liked')).toBeNull();

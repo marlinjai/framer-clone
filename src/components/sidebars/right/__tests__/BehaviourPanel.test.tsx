@@ -733,6 +733,9 @@ describe('a preset\'s items', () => {
     fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
     fireEvent.click(question().getByRole('button', { name: 'Remove Third anyway' }));
     expect(group().getByText('2 tabs, made from a preset')).toBeTruthy();
+    // The question that held the focus is gone: the tab picker takes it, and the removal is said.
+    expect(document.activeElement).toBe(group().getByLabelText('Tab to remove'));
+    expect(interactions().getByRole('status').textContent).toBe('Removed Third');
     expect(history().undoIdx).toBe(before + 1);
     expect(behaviourOf(button)?.on).toEqual([trigger]);
     select(button);
@@ -748,6 +751,27 @@ describe('a preset\'s items', () => {
     fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
     expect(group().queryByRole('group', { name: 'Remove Third?' })).toBeNull();
     expect(group().getByText('2 tabs, made from a preset')).toBeTruthy();
+    // Remove is off now that nothing is picked, so the focus goes to the picker, and the removal is said.
+    expect(document.activeElement).toBe(group().getByLabelText('Tab to remove'));
+    expect(interactions().getByRole('status').textContent).toBe('Removed Third');
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect(interactions().getByRole('status').textContent).toBe('Added Tab 3');
+  });
+
+  it('an undo underneath the remove question closes it, rather than answer it for another tree', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    const panel = idsIn(getSnapshot(tabs)).find((id) => /-panel-2$/.test(id))!;
+    act(() => button.setBehaviour({ on: [{ id: 't-focus', on: 'click', do: [{ focus: panel }] }] }));
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    expect(group().getByRole('group', { name: 'Remove Third?' })).toBeTruthy();
+    act(() => history().undo());
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+    expect(group().queryByRole('group', { name: 'Remove Third?' })).toBeNull();
   });
 
   /** Text values on the page root (`big` of 4,096 characters and one shorter) that fill the page as far as `fits` still takes. */
@@ -913,6 +937,10 @@ describe('re-entry', () => {
     expect(screen.queryByTestId('interactions-section')).toBeNull();
     expect(pageState().queryByRole('button', { name: /^Keep / })).toBeNull();
     expect(pageState().getByRole('button', { name: 'Add a value to the page' })).toBeTruthy();
+    // State an older build kept on a placement is never used, so it is not listed as a scope.
+    act(() => made.placement.setBehaviour({ state: [{ id: 'v-oldplace', name: 'Old', type: 'boolean', initial: false }] }));
+    expect(pageState().queryByLabelText('Name of Old')).toBeNull();
+    expect(pageState().getAllByRole('group', { name: /^Values of / }).map((group) => group.getAttribute('aria-label'))).toEqual(['Values of This page']);
   });
 
   it('keeps a second value on an element that already keeps one', () => {
