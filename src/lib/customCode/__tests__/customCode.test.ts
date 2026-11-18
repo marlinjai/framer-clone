@@ -85,6 +85,18 @@ describe('parseCustomCode', () => {
     ['a title with a Hangul filler beside letters', { sha256: HASH, title: 'scene\u3164' }],
     ['a title only of combining marks', { sha256: HASH, title: '\u0301\u0308' }],
     ['a title only of spaces of every width', { sha256: HASH, title: '\u2003\u3000\u00a0 ' }],
+    ['a title hiding bytes in variation selectors', { sha256: HASH, title: `Map${String.fromCodePoint(0xfe00, 0xfe0a, 0xe0100, 0xe0142, 0xe01ef)}` }],
+    ['a title with a variation selector after a letter', { sha256: HASH, title: 'Map\ufe00' }],
+    ['a title with a supplementary variation selector', { sha256: HASH, title: `Map${String.fromCodePoint(0xe0100)}` }],
+    ['a title with Mongolian free variation selectors', { sha256: HASH, title: 'a\u180b\u180c\u180db' }],
+    ['a title with the fourth Mongolian selector', { sha256: HASH, title: 'a\u180fb' }],
+    ['a title with an emoji presentation selector after a letter', { sha256: HASH, title: 'Map\ufe0f' }],
+    ['a title with a text presentation selector after a letter', { sha256: HASH, title: 'Map\ufe0e' }],
+    ['a title with two presentation selectors after a pictograph', { sha256: HASH, title: '\u2764\ufe0f\ufe0f' }],
+    ['a title only of an object replacement character', { sha256: HASH, title: '\ufffc' }],
+    ['a title with an object replacement character', { sha256: HASH, title: 'Scene \ufffc' }],
+    ['a title with five combining marks on one letter', { sha256: HASH, title: `H${'\u0301\u0302\u0303\u0304\u0305'}` }],
+    ['a title with 150 combining marks on one letter', { sha256: HASH, title: `H${'\u0301'.repeat(150)}` }],
     ['a proposal title with an override', { proposal: 'p1', title: '\u202dx' }],
     ['a title too long', { sha256: HASH, title: 'x'.repeat(201) }],
     ['a proposal id with a slash', { proposal: 'a/b', title: 'x' }],
@@ -106,6 +118,25 @@ describe('parseCustomCode', () => {
     for (const title of ['Waschanlage für LKW', 'מכונת שטיפה', 'غسيل الشاحنات', 'Scene \ud83d\ude9a', '\ud83d\ude9a', '\u2764\ufe0f', '한국어 장면', '+', 'Café\u0301']) {
       expect(parseCustomCode({ sha256: HASH, title })).toEqual({ ok: true, value: { kind: 'block', sha256: HASH, title } });
     }
+  });
+
+  it('keeps an emoji with its presentation selector, a keycap, and the marks real scripts stack', () => {
+    const titles = [
+      '\u2764\ufe0f Love',
+      '\u2764\ufe0e',
+      '\u260e\ufe0f Call us',
+      '1\ufe0f\u20e3 First step',
+      // Hebrew with points: shin, dagesh, shin dot, qamats on one letter.
+      'שָּׁלוֹם',
+      // Vietnamese written with combining marks: dot below and circumflex.
+      'Vie\u0323\u0302t Nam',
+      // Tibetan with subjoined letters and a vowel sign.
+      'བསྒྲུབས',
+      'ที่นี่',
+      // Four marks on one letter: the most a title may stack.
+      `H${'\u0301\u0302\u0303\u0304'}`,
+    ];
+    for (const title of titles) expect(parseCustomCode({ sha256: HASH, title }), title).toEqual({ ok: true, value: { kind: 'block', sha256: HASH, title } });
   });
 
   it('accepts an object without a prototype, and reads each field once', () => {

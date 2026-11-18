@@ -53,9 +53,20 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
  * annotation marks; and the tag characters, invisible text that an agent reading the
  * title would still see), the combining grapheme joiner, and the blank fillers that
  * draw nothing yet count as letters or symbols (the Hangul fillers and the blank braille
- * pattern). An emoji joined with a zero-width joiner is refused with them.
+ * pattern). An emoji joined with a zero-width joiner is refused with them. So are the
+ * variation selectors that carry no visible choice and can hide bytes after any letter
+ * (U+FE00 to U+FE0D, U+E0100 to U+E01EF, the Mongolian ones U+180B to U+180F), and the
+ * object replacement character, which stands for something not shown at all.
  */
-const INVISIBLE_CHARACTERS = /[\p{Cf}\u034f\u115f\u1160\u3164\uffa0\u2800]/u;
+const INVISIBLE_CHARACTERS = /[\p{Cf}\u034f\u115f\u1160\u3164\uffa0\u2800\u180b-\u180f\ufe00-\ufe0d\u{e0100}-\u{e01ef}\ufffc]/u;
+/**
+ * The text and emoji presentation selectors, allowed once, right after a pictograph
+ * (`\u2764\ufe0f`), and in a keycap (`1\ufe0f\u20e3`); anywhere else they are hidden bytes.
+ */
+const KEYCAP = /[0-9#*]\ufe0f\u20e3/gu;
+const STRAY_PRESENTATION_SELECTOR = /(?<!\p{Extended_Pictographic})[\ufe0e\ufe0f]/u;
+/** More combining marks on one character than any script stacks (Hebrew points, Tibetan stacks and Vietnamese take three at most). */
+const STACKED_MARKS = /\p{M}{5,}/u;
 /** A character someone can see: a letter, a number, a symbol or a punctuation mark. */
 const VISIBLE_CHARACTER = /[\p{L}\p{N}\p{S}\p{P}]/u;
 /** Half of a surrogate pair without its other half: not a character at all. */
@@ -83,6 +94,7 @@ function readTitle(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   if (CONTROL_CHARACTERS.test(value.replace(/[\t\n\r]/g, ' '))) return null;
   if (INVISIBLE_CHARACTERS.test(value) || LONE_SURROGATE.test(value)) return null;
+  if (STRAY_PRESENTATION_SELECTOR.test(value.replace(KEYCAP, '#')) || STACKED_MARKS.test(value)) return null;
   const title = value.replace(/\s+/g, ' ').trim();
   // Not blank: a title made only of spaces and marks would name nothing.
   if (!VISIBLE_CHARACTER.test(title)) return null;
