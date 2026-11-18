@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-18T11:11:23.569Z",
+  "generatedAt": "2026-11-18T16:09:04.309Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 762,
+  "durationSeconds": 600,
   "matrix": {
     "surfaces": {
       "format": {
@@ -7075,7 +7075,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0006378084483479716,
+            "ratio": 0,
             "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
@@ -7189,7 +7189,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.0007142949114132674,
+            "ratio": 0,
             "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
