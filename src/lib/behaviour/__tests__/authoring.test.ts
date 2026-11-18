@@ -10,15 +10,18 @@ import {
   describeTrigger,
   firstAction,
   freshStateId,
+  freshStateName,
   freshTriggerId,
   keysFromText,
   optionsFromText,
+  pickerLabels,
   putEntry,
   readersOf,
   refusalAt,
   refusalsOn,
   removeEntry,
   retype,
+  stateNameRefusal,
   stateRefusal,
   statesInReach,
   storedBehaviourOf,
@@ -167,6 +170,13 @@ describe('what a person entered goes through the parser', () => {
     expect(readersOf([tree], 'tab')).toEqual([]);
   });
 
+  it('counts a style rule whose when reads the value as a reader, on a node with no behaviour of its own', () => {
+    const tree = node('root', 'div', { behaviour: { state: [{ id: 'menu', name: 'Menu open', type: 'boolean', initial: false }] } },
+      node('panel', 'div', { rules: [{ id: 'r1', selector: '&', style: { color: 'red' }, when: { state: 'menu', eq: true } }] }));
+    expect(readersOf([tree], 'menu')).toEqual(['panel']);
+    expect(readersOf([tree], 'other')).toEqual([]);
+  });
+
   it('reads a refusal already stored, by node', () => {
     const tree = withBehaviourAt(page(), 'drawer', { showWhen: { state: 'nothing', eq: true } })!;
     expect(refusalsOn([tree], 'drawer').map((r) => r.entry)).toEqual(['showWhen']);
@@ -195,6 +205,26 @@ describe('edits keep what they do not touch', () => {
     for (const type of ['boolean', 'number', 'choice', 'text'] as const) {
       expect(stateRefusal(retype({ id: 'v', name: 'X', type: 'choice', initial: 'a', options: ['a'] }, type))).toBeNull();
     }
+  });
+
+  it('a text holding "second" becomes a choice the parser takes, its second option another name', () => {
+    const choice = retype({ id: 'v', name: 'Step', type: 'text', initial: 'second' }, 'choice');
+    expect(choice).toEqual({ id: 'v', name: 'Step', type: 'choice', initial: 'second', options: ['second', 'first'] });
+    expect(stateRefusal(choice)).toBeNull();
+  });
+
+  it('a new value takes a name no value of the page holds, and a rename to one another holds is refused', () => {
+    const tree = node('root', 'div', { behaviour: { state: [{ id: 'a', name: 'Value 1', type: 'boolean', initial: false }] } },
+      node('card', 'div', { behaviour: { state: [{ id: 'b', name: 'value 2', type: 'boolean', initial: false }] } }));
+    expect(freshStateName([tree])).toBe('Value 3');
+    expect(stateNameRefusal([tree], 'b', ' VALUE 1 ')).toBe('another value on this page is called Value 1');
+    expect(stateNameRefusal([tree], 'b', 'Value 2')).toBeNull();
+    expect(stateNameRefusal([tree], 'b', 'Liked')).toBeNull();
+  });
+
+  it('a picker shows the id after a name two values share, and the name alone otherwise', () => {
+    const labels = pickerLabels([{ id: 'a', name: 'Active tab' }, { id: 'b', name: 'Active tab' }, { id: 'c', name: 'Open' }]);
+    expect([...labels.values()]).toEqual(['Active tab (a)', 'Active tab (b)', 'Open']);
   });
 
   it('reads options and keys as a person types them', () => {

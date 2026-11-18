@@ -152,9 +152,11 @@ interface ValueControlProps {
 /**
  * A control for one value of a state's type: a select for on or off and for a choice,
  * a number field, a text field. Fields commit on Enter or when focus leaves, so typing
- * a number does not write a step per character.
+ * a number does not write a step per character. Text that is not a number, typed into a
+ * number's field, is said so under the field and written nowhere.
  */
 export function ValueControl({ state, value, onChange, 'aria-label': label, disabled, allowFirst }: ValueControlProps) {
+  const [notNumber, setNotNumber] = useState<string | null>(null);
   const type = state.type;
   if (type === 'boolean' || type === 'choice') {
     const options = type === 'boolean'
@@ -177,15 +179,22 @@ export function ValueControl({ state, value, onChange, 'aria-label': label, disa
       </select>
     );
   }
-  return <CommitField aria-label={label} disabled={disabled} numeric={type === 'number'} value={valueText(value)} allowEmpty={allowFirst} onCommit={(text) => {
-    if (text === '' && allowFirst) return onChange(undefined);
-    if (type === 'number') {
-      const number = Number(text);
-      if (text.trim() !== '' && Number.isFinite(number)) onChange(number);
-      return;
-    }
-    onChange(text);
-  }} />;
+  return (
+    <>
+      <CommitField aria-label={label} disabled={disabled} numeric={type === 'number'} invalid={notNumber !== null} value={valueText(value)} allowEmpty={allowFirst} onEdit={() => setNotNumber(null)} onCommit={(text) => {
+        setNotNumber(null);
+        if (text === '' && allowFirst) return onChange(undefined);
+        if (type === 'number') {
+          const number = Number(text);
+          if (text.trim() !== '' && Number.isFinite(number)) onChange(number);
+          else setNotNumber(`${text.trim() || 'An empty field'} is not a number`);
+          return;
+        }
+        onChange(text);
+      }} />
+      {notNumber && <span role="alert" className={REASON}>{`Not changed: ${notNumber}.`}</span>}
+    </>
+  );
 }
 
 interface CommitFieldProps {
@@ -197,10 +206,12 @@ interface CommitFieldProps {
   placeholder?: string;
   allowEmpty?: boolean;
   invalid?: boolean;
+  /** Called when the text is changed or put back, so a message about the last commit can go. */
+  onEdit?: () => void;
 }
 
 /** A text field that keeps what is typed and hands it over on Enter or blur; Escape puts back what is stored. */
-export function CommitField({ value, onCommit, 'aria-label': label, numeric, disabled, placeholder, invalid }: CommitFieldProps) {
+export function CommitField({ value, onCommit, 'aria-label': label, numeric, disabled, placeholder, invalid, onEdit }: CommitFieldProps) {
   const [draft, setDraft] = React.useState(value);
   React.useEffect(() => setDraft(value), [value]);
   const commit = () => {
@@ -215,10 +226,16 @@ export function CommitField({ value, onCommit, 'aria-label': label, numeric, dis
       disabled={disabled}
       placeholder={placeholder}
       value={draft}
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        onEdit?.();
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter') commit();
-        if (event.key === 'Escape') setDraft(value);
+        if (event.key === 'Escape') {
+          setDraft(value);
+          onEdit?.();
+        }
       }}
       onBlur={commit}
       className={cn(FIELD_CONTROL, numeric && 'tabular-nums')}

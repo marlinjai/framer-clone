@@ -24,6 +24,7 @@ import { fitsState } from '@/lib/behaviour/surfaceBehaviour';
 import {
   STATE_TYPES,
   freshStateId,
+  freshStateName,
   holdsNonList,
   isRecord,
   isStateType,
@@ -36,6 +37,7 @@ import {
   refusalsOn,
   removeEntry,
   retype,
+  stateNameRefusal,
   stateRefusal,
   storedBehaviourOf,
   storedList,
@@ -87,8 +89,8 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
   const add = (on: ComponentInstance) => {
     const stored = storedBehaviourOf(on.props);
     if (stored === null || holdsNonList(stored, 'state')) return;
-    const count = storedList(stored, 'state').length + 1;
-    const state = newState(freshStateId(roots), `Value ${count}`, 'boolean');
+    // A name no value of the page holds, so the page's "Value 1" and a card's never read as one.
+    const state = newState(freshStateId(roots), freshStateName(roots), 'boolean');
     const next = putEntry(stored, 'state', state);
     const reason = refusalAt(roots, on.id, next, state, nameIn(page));
     setAddError(reason);
@@ -242,6 +244,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
       aria-label={`${field === 'min' ? 'Lowest' : field === 'max' ? 'Highest' : 'Step'} of ${name}`}
       numeric
       placeholder={field === 'step' ? '1' : 'none'}
+      disabled={preset}
       value={valueText(entry[field])}
       onCommit={(text) => {
         if (text.trim() === '') {
@@ -259,7 +262,11 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
   return (
     <div className="flex flex-col gap-1.5 rounded-[6px] border border-border p-2" data-state-id={id}>
       <div className="flex items-center gap-1.5">
-        <CommitField aria-label={`Name of ${name}`} value={typeof entry.name === 'string' ? entry.name : ''} onCommit={(text) => commit({ ...entry, name: text.trim() })} />
+        <CommitField aria-label={`Name of ${name}`} value={typeof entry.name === 'string' ? entry.name : ''} onCommit={(text) => {
+          const taken = stateNameRefusal(rootsOf(page), id, text);
+          if (taken) return setError({ reason: taken, for: storedKey });
+          commit({ ...entry, name: text.trim() });
+        }} />
         {!preset && <DeleteButton row label={`Delete ${name}`} onClick={() => (readers.length > 0 ? setConfirmDelete(true) : remove())} />}
       </div>
       {readers.length > 0 && (
@@ -285,7 +292,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
           </div>
         </div>
       )}
-      {preset && <p className={HINT}>Made by a preset, which writes it again when the preset changes.</p>}
+      {preset && <p className={HINT}>Made by a preset, which writes it again when the preset changes. Its name and first value are yours; the rest is the preset's.</p>}
       <div className="grid grid-cols-2 gap-1.5">
         <label className="flex min-w-0 flex-col gap-1">
           <span className={FIELD_LABEL}>Type</span>
@@ -330,6 +337,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
           <span className={FIELD_LABEL}>Options, separated by commas</span>
           <CommitField
             aria-label={`Options of ${name}`}
+            disabled={preset}
             value={Array.isArray(entry.options) ? entry.options.join(', ') : ''}
             onCommit={(text) => {
               const options = optionsFromText(text);
@@ -350,6 +358,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
       {entry.type === 'text' && (
         <CommitField
           aria-label={`Longest text of ${name}`}
+          disabled={preset}
           numeric
           placeholder="no limit"
           value={valueText(entry.maxLength)}

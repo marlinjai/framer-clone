@@ -182,6 +182,37 @@ describe('forward', () => {
     expect(size().name).toBe('Size');
   });
 
+  it('says so when a number\'s first value is not a number, and writes nothing', () => {
+    mount();
+    select(button);
+    addPageValue('Count');
+    retypeTo('Count', 'number', 'Number');
+    const before = history().undoIdx;
+    typeAndCommit(pageState().getByLabelText('First value of Count'), 'abc');
+    expect(pageState().getByRole('alert').textContent).toBe('Not changed: abc is not a number.');
+    expect((behaviourOf(root)?.state as Record<string, unknown>[])[0].initial).toBe(0);
+    expect(history().undoIdx).toBe(before);
+    typeAndCommit(pageState().getByLabelText('First value of Count'), '3');
+    expect(pageState().queryByRole('alert')).toBeNull();
+    expect((behaviourOf(root)?.state as Record<string, unknown>[])[0].initial).toBe(3);
+  });
+
+  it('refuses a name another value of the page holds, and a picker tells two of one name apart', () => {
+    mount();
+    select(button);
+    addPageValue('Open');
+    const second = addPageValue('Closed');
+    typeAndCommit(pageState().getByLabelText('Name of Closed'), ' open ');
+    expect(pageState().getByRole('alert').textContent).toBe('Not changed: another value on this page is called Open.');
+    expect((behaviourOf(root)?.state as { name: string }[]).map((state) => state.name)).toEqual(['Open', 'Closed']);
+    // Two values of one name, as an import or two presets can store them: the picker adds the id.
+    act(() => drawer.setBehaviour({ state: [{ id: 'v-drawerop', name: 'Open', type: 'boolean', initial: false }] }));
+    select(drawer);
+    const options = Array.from((interactions().getByLabelText('Show when value') as HTMLSelectElement).options).map((option) => option.text);
+    expect(options).toEqual(['Always', `Open (${(behaviourOf(root)?.state as { id: string }[])[0].id})`, 'Closed', 'Open (v-drawerop)']);
+    expect(second).toMatch(/^v-/);
+  });
+
   it('refuses an interaction the parser refuses, writes nothing, and says why', () => {
     mount();
     select(button);
@@ -544,6 +575,12 @@ describe('backtrack and revise', () => {
     select(tabs);
     expect(pageState().getByText(/Made by a preset/)).toBeTruthy();
     expect(pageState().queryByRole('button', { name: /^Delete Active tab/ })).toBeNull();
+    // Only its name and first value are a person's: the preset's range and type are locked.
+    const row = within(pageState().getByLabelText(/^Name of Active tab/).closest('[data-state-id]') as HTMLElement);
+    for (const label of [/^Lowest of /, /^Highest of /, /^Step of /]) expect((row.getByLabelText(label) as HTMLInputElement).disabled).toBe(true);
+    expect((row.getByLabelText(/^Type of /) as HTMLSelectElement).disabled).toBe(true);
+    expect((row.getByLabelText(/^Name of /) as HTMLInputElement).disabled).toBe(false);
+    expect((row.getByLabelText(/^First value of /) as HTMLInputElement).disabled).toBe(false);
   });
 });
 

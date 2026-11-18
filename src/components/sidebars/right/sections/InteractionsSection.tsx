@@ -43,6 +43,7 @@ import {
   isRecord,
   keysFromText,
   pathTo,
+  pickerLabels,
   putEntry,
   putField,
   refusalAt,
@@ -542,6 +543,7 @@ function ActionEditor({ index, action, states, nodes, selfId, onChange, onRemove
   const stateTypes = verb === 'toggle' ? ['boolean'] : verb === 'step' ? ['number', 'choice'] : ['boolean', 'number', 'choice', 'text'];
   const fitting = states.filter((state) => stateTypes.includes(state.type));
   const state = states.find((entry) => entry.id === target);
+  const labels = pickerLabels(states);
 
   return (
     <div className="flex flex-col gap-1.5 border-l-2 border-border pl-2" role="group" aria-label={`Step ${n} of this interaction`}>
@@ -571,7 +573,7 @@ function ActionEditor({ index, action, states, nodes, selfId, onChange, onRemove
             className={cn(FIELD_CONTROL, 'cursor-pointer')}
           >
             {!state && <option value="">{target ? `A value out of reach (${target})` : 'Pick a value'}</option>}
-            {fitting.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+            {fitting.map((entry) => <option key={entry.id} value={entry.id}>{labels.get(entry.id) ?? entry.name}</option>)}
           </select>
         )
       )}
@@ -692,6 +694,7 @@ function ShowWhen({ component, stored, states, roots, names, reason }: ShowWhenP
   };
   const plain = isPlainCondition(condition) ? condition : null;
   const state = plain ? states.find((entry) => entry.id === plain.state) : undefined;
+  const labels = pickerLabels(states);
 
   return (
     <div className="flex flex-col gap-1.5" role="group" aria-label="Show when">
@@ -714,7 +717,7 @@ function ShowWhen({ component, stored, states, roots, names, reason }: ShowWhenP
           >
             <option value="">Always</option>
             {plain && !state && <option value={plain.state}>{`A value out of reach (${plain.state})`}</option>}
-            {states.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+            {states.map((entry) => <option key={entry.id} value={entry.id}>{labels.get(entry.id) ?? entry.name}</option>)}
           </select>
           {plain && state && (
             <ValueControl state={state as unknown as StoredRecord} value={plain.eq} aria-label="Show when it is" onChange={(value) => {

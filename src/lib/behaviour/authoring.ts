@@ -144,6 +144,49 @@ function stateIdsIn(roots: readonly BehaviourNode[]): Set<string> {
   return taken;
 }
 
+/** Every stored value of a page, with the name it was given, in tree order. */
+export function storedStatesIn(roots: readonly BehaviourNode[]): { id: string; name: string }[] {
+  const out: { id: string; name: string }[] = [];
+  const walk = (node: BehaviourNode) => {
+    const stored = storedBehaviourOf(node.props);
+    for (const entry of stored ? storedList(stored, 'state') : []) {
+      if (isRecord(entry) && typeof entry.id === 'string') out.push({ id: entry.id, name: typeof entry.name === 'string' ? entry.name : '' });
+    }
+    childrenOf(node).forEach(walk);
+  };
+  roots.forEach(walk);
+  return out;
+}
+
+/** Two names a person would read as one: the same once trimmed, in any case. */
+const nameKey = (name: string): string => name.trim().toLowerCase();
+
+/** "Value 1", "Value 2" and on: the first such name no value of the page holds. */
+export function freshStateName(roots: readonly BehaviourNode[]): string {
+  const taken = new Set(storedStatesIn(roots).map((state) => nameKey(state.name)));
+  for (let n = 1; ; n++) if (!taken.has(nameKey(`Value ${n}`))) return `Value ${n}`;
+}
+
+/**
+ * Why a value may not take this name, or null: another value of the page holds it, and
+ * the pickers would then show two entries a person cannot tell apart.
+ */
+export function stateNameRefusal(roots: readonly BehaviourNode[], stateId: string, name: string): string | null {
+  const other = storedStatesIn(roots).find((state) => state.id !== stateId && nameKey(state.name) === nameKey(name));
+  return other ? `another value on this page is called ${other.name}` : null;
+}
+
+/**
+ * How each value reads in a picker: its name, and its id after it when another value in
+ * the same list has the same name (two tab lists' "Active tab", an import), so no two
+ * entries read the same.
+ */
+export function pickerLabels(states: readonly { id: string; name: string }[]): Map<string, string> {
+  const count = new Map<string, number>();
+  for (const state of states) count.set(nameKey(state.name), (count.get(nameKey(state.name)) ?? 0) + 1);
+  return new Map(states.map((state) => [state.id, (count.get(nameKey(state.name)) ?? 0) > 1 ? `${state.name} (${state.id})` : state.name]));
+}
+
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 /**
@@ -229,9 +272,10 @@ export function stateRefusal(candidate: unknown): string | null {
 
 /**
  * The elements whose stored behaviour names a value, by id: a trigger setting it, a
- * binding or a Show when reading it. The value's own declaration does not count. Read
- * from what is stored, so a reader already refused is still one that deleting the value
- * would leave without it.
+ * binding or a Show when reading it, or a style rule whose `when` reads it (a rule's
+ * selector cannot: it may not name `data-fcs-*`, see platformAttributes.ts). The value's
+ * own declaration does not count. Read from what is stored, so a reader already refused
+ * is still one that deleting the value would leave without it.
  */
 export function readersOf(roots: readonly BehaviourNode[], stateId: string): string[] {
   const out: string[] = [];
@@ -247,6 +291,8 @@ export function readersOf(roots: readonly BehaviourNode[], stateId: string): str
       const rest = Object.entries(stored).filter(([key]) => key !== 'state' && key !== 'preset').map(([, value]) => value);
       if (rest.some(names) && !out.includes(node.id)) out.push(node.id);
     }
+    const rules = isRecord(node.props) && Array.isArray(node.props.rules) ? node.props.rules : [];
+    if (typeof node.id === 'string' && rules.some((rule) => isRecord(rule) && names(rule.when)) && !out.includes(node.id)) out.push(node.id);
     childrenOf(node).forEach(walk);
   };
   roots.forEach(walk);
@@ -378,7 +424,8 @@ export function retype(stored: StoredRecord, type: StateType): StateValue {
     }
     case 'choice': {
       const first = typeof initial === 'string' && initial.trim() !== '' ? initial.trim() : String(initial ?? '');
-      if (first && first !== 'first') return { ...fresh, initial: first, options: [first, 'second'], ...mark };
+      // The second option is one the first is not, since the parser refuses two the same.
+      if (first && first !== 'first') return { ...fresh, initial: first, options: [first, first === 'second' ? 'first' : 'second'], ...mark };
       return { ...fresh, ...mark };
     }
     case 'text':
