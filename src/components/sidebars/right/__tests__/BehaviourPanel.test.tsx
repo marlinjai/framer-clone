@@ -725,5 +725,31 @@ describe('re-entry', () => {
     fireEvent.click(pageState().getByRole('button', { name: /^Keep per row/ }));
     expect(behaviourOf(store.editorUI.currentPage!.findComponent('card')!)?.state).toHaveLength(1);
     expect(pageState().getByRole('group', { name: 'Values of Article' })).toBeTruthy();
+
+    // A placement: its behaviour is its definition's, so it has no Interactions and keeps no value.
+    const made = project.createComponentFromSelection(store.editorUI.currentPage!.id, [drawer.id], 'Card');
+    if (!made.ok) throw new Error(made.message);
+    select(made.placement);
+    expect(made.placement.type).toBe('#component');
+    expect(screen.queryByTestId('interactions-section')).toBeNull();
+    expect(pageState().queryByRole('button', { name: /^Keep / })).toBeNull();
+    expect(pageState().getByRole('button', { name: 'Add a value to the page' })).toBeTruthy();
+  });
+
+  it('keeps a second value on an element that already keeps one', () => {
+    mount();
+    act(() => {
+      main.addChildren([createIntrinsicComponent('list', 'div', { 'data-component-kind': 'collection' })]);
+      (main.children.find((c: ComponentInstance) => c.id === 'list') as ComponentInstance).addChildren([createIntrinsicComponent('card', 'article', {})]);
+    });
+    const card = store.editorUI.currentPage!.findComponent('card')!;
+    select(card);
+    fireEvent.click(pageState().getByRole('button', { name: /^Keep per row/ }));
+    fireEvent.click(pageState().getByRole('button', { name: /^Keep per row/ }));
+    const kept = behaviourOf(card)?.state as { id: string; name: string }[];
+    expect(kept).toHaveLength(2);
+    expect(new Set(kept.map((state) => state.name)).size).toBe(2);
+    const group = within(pageState().getByRole('group', { name: 'Values of Article' }));
+    for (const state of kept) expect(group.getByLabelText(`Name of ${state.name}`)).toBeTruthy();
   });
 });

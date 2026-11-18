@@ -42,7 +42,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, inStateRow, storedText, rootsOf, useFocusAfter, valueText, writeBehaviour, type BehaviourPage, type FocusTarget } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, holdsBehaviour, inStateRow, storedText, rootsOf, useFocusAfter, valueText, writeBehaviour, type BehaviourPage, type FocusTarget } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface PageStatePanelProps {
@@ -63,6 +63,8 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
   if (!page) return null;
   const root = page.appComponentTree;
   const roots = rootsOf(page);
+  // A frame, a text run and a placement hold no values of their own (holdsBehaviour), so
+  // nothing is kept on one; the scopes above a placement are still listed.
   const selected = component && !component.isViewportNode && component.type !== '#text' ? component : undefined;
   const found = selected ? pathTo(roots, selected.id) : null;
 
@@ -71,10 +73,15 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
   for (const node of found?.path ?? []) {
     if (typeof node.id !== 'string' || node.id === root.id) continue;
     const live = page.findComponent(node.id);
-    const stored = live ? storedBehaviourOf(live.props) : null;
-    if (live && stored !== null && (storedList(stored, 'state').length > 0 || holdsNonList(stored, 'state'))) scopes.push(live);
+    if (!live || !holdsBehaviour(live)) continue;
+    const stored = storedBehaviourOf(live.props);
+    if (stored !== null && (storedList(stored, 'state').length > 0 || holdsNonList(stored, 'state'))) scopes.push(live);
   }
-  const canKeepHere = selected && selected.id !== root.id && found !== null && !scopes.includes(selected);
+  // Offered whenever the element can take another value, also when it already keeps some,
+  // so a card can keep both "expanded" and "liked".
+  const selectedStored = selected ? storedBehaviourOf(selected.props) : null;
+  const canKeepHere = selected && holdsBehaviour(selected) && selected.id !== root.id && found !== null
+    && selectedStored !== null && !holdsNonList(selectedStored, 'state');
   const keepLabel = found && insideCollection(found.path) ? 'Keep per row' : 'Keep on this element';
 
   const add = (on: ComponentInstance) => {

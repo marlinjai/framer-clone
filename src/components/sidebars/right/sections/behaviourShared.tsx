@@ -11,6 +11,7 @@ import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BehaviourNode, StateValue } from '@/lib/behaviour/format';
 import { isRecord, sameStored, storedBehaviourOf, type Names, type StoredRecord } from '@/lib/behaviour/authoring';
 import { FIELD_CONTROL, FIELD_LABEL, PropertySwitch } from '../primitives';
+import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { cn } from '@/lib/utils';
 
 export const HINT = 'text-[11px] leading-snug text-muted-foreground';
@@ -95,6 +96,14 @@ export function useFocusAfter() {
   const live = <p role="status" aria-live="polite" className="sr-only">{message}</p>;
   return { ref, request, live };
 }
+
+/**
+ * True for a node that can hold behaviour: an element of its own, not a frame, a text run
+ * or a placement (or what is left of one). A placement's behaviour is its definition's:
+ * the expansion drops what its own props hold, so a value kept there would never be used.
+ */
+export const holdsBehaviour = (target: Pick<ComponentInstance, 'isViewportNode' | 'type'>): boolean =>
+  !target.isViewportNode && target.type !== '#text' && !isComponentPlaceholderType(target.type);
 
 /** What the page's trees, the page and its floating elements, need from a page. */
 export interface BehaviourPage {
