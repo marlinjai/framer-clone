@@ -20,6 +20,7 @@ let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
 import RightSidebar from '../../RightSidebar';
+import { useFocusAfter } from '../sections/behaviourShared';
 
 let project: ProjectModelType;
 let root: ComponentInstance;
@@ -314,6 +315,43 @@ describe('focus and what is said', () => {
     expect(document.activeElement).toBe(pageState().getByRole('button', { name: 'Keep it' }));
     fireEvent.click(pageState().getByRole('button', { name: 'Keep it' }));
     expect(document.activeElement).toBe(pageState().getByRole('button', { name: 'Delete Open' }));
+  });
+
+  it('a quote in a value\'s name never breaks the focus, and Keep it still gives it back to the delete button', () => {
+    mount();
+    select(button);
+    addPageValue('Say "hi"');
+    addInteraction('click');
+    fireEvent.click(pageState().getByRole('button', { name: 'Delete Say "hi"' }));
+    fireEvent.click(pageState().getByRole('button', { name: 'Keep it' }));
+    expect(screen.getByTestId('page-state-panel')).toBeTruthy();
+    expect(document.activeElement).toBe(pageState().getByRole('button', { name: 'Delete Say "hi"' }));
+  });
+
+  it('a quote in a stored value\'s id never breaks the focus after a neighbour is deleted', () => {
+    mount();
+    act(() => root.setBehaviour({ state: [{ id: 'v-gone', name: 'Gone', type: 'boolean', initial: false }, { id: 'a"b', name: 'Imported', type: 'boolean', initial: false }] }));
+    select(button);
+    fireEvent.click(pageState().getByRole('button', { name: 'Delete Gone' }));
+    expect(screen.getByTestId('page-state-panel')).toBeTruthy();
+    expect(document.activeElement).toBe(pageState().getByLabelText('Name of Imported'));
+  });
+
+  it('a target that cannot be looked up is passed over, and the next one takes the focus', () => {
+    const Probe = () => {
+      const focus = useFocusAfter();
+      return (
+        <div ref={focus.ref}>
+          <button type="button" data-next="" onClick={() => focus.request(['[data-x="a"b"]', () => { throw new Error('lost'); }, '[data-next]'], 'Moved')}>Go</button>
+          {focus.live}
+        </div>
+      );
+    };
+    render(<Probe />);
+    const go = screen.getByRole('button', { name: 'Go' });
+    expect(() => fireEvent.click(go)).not.toThrow();
+    expect(document.activeElement).toBe(go);
+    expect(screen.getByRole('status').textContent).toBe('Moved');
   });
 });
 

@@ -46,30 +46,52 @@ export function SwitchRow({ label, name, hint, checked, onCheckedChange }: {
 }
 
 /**
+ * Something focus can go to: a fixed selector, or a function that finds the control by
+ * comparing attributes. Stored text (a value's name, an id from an import) is never put
+ * into a selector, since a quote in it makes the selector invalid and `querySelector`
+ * throw; `inStateRow` is how a value's row is found.
+ */
+export type FocusTarget = string | ((root: HTMLElement) => HTMLElement | null | undefined);
+
+/** A control inside one value's row, the row found by comparing its id rather than through a selector. */
+export const inStateRow = (stateId: string, selector: string): FocusTarget => (root) => {
+  const row = Array.from(root.querySelectorAll<HTMLElement>('[data-state-id]')).find((el) => el.getAttribute('data-state-id') === stateId);
+  return row?.querySelector<HTMLElement>(selector);
+};
+
+/**
  * Where keyboard focus goes after a write, and what is said about it. A control that a
  * write takes away (Add swapped for the editor, a deleted row, a closed editor) would
- * leave focus on the page body, so after the write the first control that matches one of
- * `selectors` inside the section takes it. `message` is announced politely, since adding
- * or deleting changes the panel out of sight of a screen reader. The focus moves after the
- * render the write causes, so the control it looks for is there.
+ * leave focus on the page body, so after the write the first of `targets` found inside
+ * the section takes it. `message` is announced politely, since adding or deleting changes
+ * the panel out of sight of a screen reader. The focus moves after the render the write
+ * causes, so the control it looks for is there. A target that cannot be looked up (an
+ * invalid selector, a function that throws) is passed over: moving the focus never takes
+ * the editor down.
  */
 export function useFocusAfter() {
   const ref = useRef<HTMLDivElement>(null);
-  const [pending, setPending] = useState<{ selectors: readonly string[]; message?: string } | null>(null);
+  const [pending, setPending] = useState<{ targets: readonly FocusTarget[]; message?: string } | null>(null);
   const [message, setMessage] = useState('');
   useEffect(() => {
     if (!pending) return;
-    for (const selector of pending.selectors) {
-      const target = ref.current?.querySelector<HTMLElement>(selector);
-      if (target) {
-        target.focus();
+    const root = ref.current;
+    for (const target of root ? pending.targets : []) {
+      let found: HTMLElement | null | undefined = null;
+      try {
+        found = typeof target === 'string' ? root!.querySelector<HTMLElement>(target) : target(root!);
+      } catch {
+        found = null;
+      }
+      if (found) {
+        found.focus();
         break;
       }
     }
     if (pending.message) setMessage(pending.message);
     setPending(null);
   }, [pending]);
-  const request = useCallback((selectors: readonly string[], said?: string) => setPending({ selectors, message: said }), []);
+  const request = useCallback((targets: readonly FocusTarget[], said?: string) => setPending({ targets, message: said }), []);
   const live = <p role="status" aria-live="polite" className="sr-only">{message}</p>;
   return { ref, request, live };
 }

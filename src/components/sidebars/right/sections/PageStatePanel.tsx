@@ -42,7 +42,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, storedText, rootsOf, useFocusAfter, valueText, writeBehaviour, type BehaviourPage } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, inStateRow, storedText, rootsOf, useFocusAfter, valueText, writeBehaviour, type BehaviourPage, type FocusTarget } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface PageStatePanelProps {
@@ -87,7 +87,7 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
     setAddError(reason);
     if (reason) return;
     writeBehaviour(on, next);
-    focus.request([`[data-state-id="${state.id}"] input[aria-label^="Name of"]`], `Added ${state.name}`);
+    focus.request([inStateRow(state.id, NAME_FIELD)], `Added ${state.name}`);
   };
 
   return (
@@ -118,7 +118,11 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
 PageStatePanel.displayName = 'PageStatePanel';
 
 /** Where focus goes after a row's write, handed down from the panel (useFocusAfter). */
-const FocusRequest = React.createContext<(selectors: readonly string[], said?: string) => void>(() => {});
+const FocusRequest = React.createContext<(targets: readonly FocusTarget[], said?: string) => void>(() => {});
+
+/** A row's name field and its delete button, as fixed selectors inside the row. */
+const NAME_FIELD = 'input[aria-label^="Name of"]';
+const ROW_DELETE = 'button[data-delete-value]';
 
 /** An element as a refusal names it: its layer name. */
 const nameIn = (page: BehaviourPage) => (id: string): string => `"${page.findComponent(id)?.displayName ?? id}"`;
@@ -217,8 +221,8 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
     // Focus goes to the next value, or the one before, or Add value, since this row is gone.
     const list = storedList(stored, 'state');
     const near = [list[index + 1], list[index - 1]]
-      .map((other) => (isRecord(other) && typeof other.id === 'string' ? `[data-state-id="${other.id}"] input[aria-label^="Name of"]` : null))
-      .filter((selector): selector is string => selector !== null);
+      .map((other) => (isRecord(other) && typeof other.id === 'string' ? inStateRow(other.id, NAME_FIELD) : null))
+      .filter((target): target is FocusTarget => target !== null);
     writeBehaviour(scope, removeEntry(stored, 'state', index));
     requestFocus([...near, '[data-add-value]'], `Deleted ${name}`);
     if (editorUI.previewState[id] !== undefined) editorUI.setPreviewValue(id, undefined);
@@ -249,7 +253,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
     <div className="flex flex-col gap-1.5 rounded-[6px] border border-border p-2" data-state-id={id}>
       <div className="flex items-center gap-1.5">
         <CommitField aria-label={`Name of ${name}`} value={typeof entry.name === 'string' ? entry.name : ''} onCommit={(text) => commit({ ...entry, name: text.trim() })} />
-        {!preset && <DeleteButton label={`Delete ${name}`} onClick={() => (readers.length > 0 ? setConfirmDelete(true) : remove())} />}
+        {!preset && <DeleteButton row label={`Delete ${name}`} onClick={() => (readers.length > 0 ? setConfirmDelete(true) : remove())} />}
       </div>
       {readers.length > 0 && (
         <p className={HINT}>{`Read by ${readers.length === 1 ? 'one element' : `${readers.length} elements`}: ${readerNames.join(', ')}`}</p>
@@ -266,7 +270,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
               className={SMALL_BUTTON}
               onClick={() => {
                 setConfirmDelete(false);
-                requestFocus([`[data-state-id="${id}"] button[aria-label="Delete ${name}"]`]);
+                requestFocus([inStateRow(id, ROW_DELETE)]);
               }}
             >
               Keep it
@@ -372,9 +376,9 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
 
 StateRow.displayName = 'StateRow';
 
-function DeleteButton({ label, onClick }: { label: string; onClick: () => void }) {
+function DeleteButton({ label, onClick, row }: { label: string; onClick: () => void; row?: boolean }) {
   return (
-    <button type="button" aria-label={label} title={label} onClick={onClick} className={cn(SMALL_BUTTON, 'w-7 flex-none px-0')}>
+    <button type="button" data-delete-value={row ? '' : undefined} aria-label={label} title={label} onClick={onClick} className={cn(SMALL_BUTTON, 'w-7 flex-none px-0')}>
       <Trash2 size={12} aria-hidden />
     </button>
   );
