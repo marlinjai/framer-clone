@@ -208,6 +208,27 @@ describe('applyCustomCode', () => {
     expect(markup.match(/data-fc-custom-code-state=/g)).toHaveLength(1);
   });
 
+  it('gives a void-tag block under a table part, a select or an option no frame and no slot, and one in a paragraph a span island with global attributes only', async () => {
+    const root = page([
+      { type: 'table', id: 't', children: [markedBlock('inTable', 'a', 'img')] },
+      { type: 'select', id: 's', children: [markedBlock('inSelect', 'b', 'wbr')] },
+      { type: 'p', id: 'p', children: [{ ...markedBlock('inP', 'c', 'img'), props: { ...markedBlock('inP', 'c', 'img').props, alt: 'A', src: '/x.png', title: 'T' } }] },
+    ]);
+    const result = applyCustomCode(root, liveMarked(['a', 'b', 'c']));
+    expect(runOf(result.root, 'inTable')).toBeUndefined();
+    expect(runOf(result.root, 'inSelect')).toBeUndefined();
+    expect(runOf(result.root, 'inP')).toBeDefined();
+    expect(result.blocks).toBe(1);
+    expect(result.problems.map((p) => p.reason)).toEqual([
+      'a frame is not drawn under a table, where a void tag gets no box; this block shows its fallback',
+      'a frame is not drawn under a select, where a void tag gets no box; this block shows its fallback',
+    ]);
+    const { markup } = await html(root, liveMarked(['a', 'b', 'c']));
+    expect(markup).not.toContain('aaaaaaaaaaaa');
+    expect(markup).not.toContain('bbbbbbbbbbbb');
+    expect(markup).toMatch(/<p><span title="T" data-fc-custom-code="cccccccccccc" data-fc-custom-code-state="waiting"><\/span><\/p>/);
+  });
+
   it('runs the stored hash whatever a binding or the address says (D98, D68)', async () => {
     const bound: ComponentNode = {
       ...markedBlock('b1', 'a', 'div', [{ type: 'p', id: 'f', props: { children: 'Fallback' } }]),

@@ -919,11 +919,13 @@ oversize. The rate is counted before anything else, so a flood costs one compari
 draws the rest as their fallback with a warning; the broker refuses a fifth on its own. Only a block the renderer will draw as a box
 of its own in HTML is counted: one on or inside a form part or inside a shop control (whose islands get the node without its value,
 D95), inside a shop part, the sticky bar, a map, a void or unnamed tag or a refused tag (none of which draw their children), or inside
-`svg` or `math`, or itself stored as `svg` or `math`, is refused with a reason, takes no slot, and brings no broker and no `<meta>`.
+`svg` or `math`, itself stored as `svg` or `math`, or stored as a void tag under a parent where `customCodeBoxTag` draws no box (a
+table part, a select, an option), is refused with a reason, takes no slot, and brings no broker and no `<meta>`.
 An HTML element directly under an SVG or MathML element is outside what those formats render (HTML belongs in a `foreignObject`, or
 in a MathML text element), so a frame there could not be seen and its hello would remove a fallback that was showing. That is
 reasoned from the specifications, not probed in a browser. A block inside a `foreignObject` stands in HTML again and runs. Decided while rebasing C3 onto C2's third review, say so
-if you disagree. Inside `svg` and `math` the fallback box is drawn as `customCodeBoxTag` says (C2's D96).
+if you disagree. The island draws its box as `customCodeBoxTag` says (C2's D96), with the parent's tag, and a void tag's box
+keeps only the attributes any element may carry, as the fallback's does.
 
 **D67. The per-site `<meta>` names the site's box path, and Google only on a page with a map.** A policy in a `<meta>` element
 narrows the header's, never widens it, so the consent cookie still decides the map in the header (D48); the `<meta>` only keeps a
