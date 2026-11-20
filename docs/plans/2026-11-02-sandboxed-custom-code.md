@@ -912,8 +912,23 @@ is not 5), no clamping (99 for a maximum of 9 is dropped, not stored as 9), and 
 value; it queues up to 30 calls made before `connect`. `onState` calls a new watcher at once with a known value. `emit('done')` and
 `emit('custom:done')` mean the same. The client is a frozen object on a non-configurable `window.lumitra`.
 
-**D65. The 64 kilobyte rule is the UTF-8 length of the message's JSON form.** A message JSON cannot express (a cycle) is dropped as
-oversize. The rate is counted before anything else, so a flood costs one comparison per message.
+**D65. The 64 kilobyte rule is the UTF-8 length of the message's JSON form, of plain data only; a flood ends the frame.** Changed
+after the first review of pull request #452 (C3), which proved in all three engines that dropping message by message did not hold.
+- Plain data only: a message must be primitives, arrays and plain objects. JSON says nothing of a buffer, a typed array, a `Map` or a
+  `Set` (`{}`), so a 32 megabyte buffer passed the size rule as almost nothing, already deserialised in the page. `JSON.stringify`
+  now runs with a replacer that throws at any object whose constructor is not the realm's `Object` or `Array`; a cycle or a bigint
+  makes it throw itself. Such a message is dropped; one after any earlier wrong message removes the frame (`not plain data`).
+- The rate: every message of the frame counts, on its port and to the page's window, before `hello` and after. Past 30 in a second
+  a message is dropped; past 90 in a second the frame is removed (`flooded`), because each message costs the page's main thread a
+  task whether it is used or not. The review measured a click beside a flooding frame at 8.9 seconds in Chromium, 584 ms in
+  WebKit and 255 ms in Firefox, with the frame never removed. The bridge gate's new case floods the port and the window for 4
+  seconds: both frames are removed and a click answers in about 40 ms in all three engines. A frame keeping between 31 and 90 a
+  second is only dropped from: at that rate the cost is a few dozen tasks a second, which the page does not feel.
+- `resize` shares the count: it is honoured only among the frame's first 10 messages of the second (decided, for the broker's size;
+  a frame that resizes sends little else).
+- One warning a frame: the first wrong message or reported error says `dropped a message or error, then silent`, and every later
+  one is silent, so a frame cannot fill the page's console with text of its choosing (review 1, L2). Removal is always said. The
+  frame's own errors stay in its own console, where the developer tools show them.
 
 **D66. Four blocks a page, held twice.** The server accepts the first four blocks in document order (`applyCustomCode`) and
 draws the rest as their fallback with a warning; the broker refuses a fifth on its own. Only a block the renderer will draw as a box
@@ -961,9 +976,13 @@ three times.
   therefore also looks where the keyboard is, so a theft no event announces is still seen within one ping. Seen that late, a
   person's own move needs as long to explain it, so for those arrivals the grace is 6 seconds instead of 1.
 
-The rule: a move into a non-interactive frame removes it the first time. A move into an interactive frame counts as theft unless
-the pointer is over the frame (`:hover`), or the pointer entered a frame or a Tab was pressed in the page within the last second
-(6 seconds when only a ping saw the move); the third theft removes it. The proof, in `customCodeBridge.gate.ts` with real input
+The rule: a move into a non-interactive frame removes it the first time. A move into an interactive frame counts as theft when
+the page had a key other than Tab pressed within the last half second, pointer or not; otherwise it counts unless the pointer is
+over the frame (`:hover`), or the pointer entered a frame or a Tab was pressed in the page within the last second (6 seconds when
+only a ping saw the move). The third theft removes it. The typing clause came from the first review of pull request #452 (M2): a
+frame receives `mousemove` whenever the pointer is over it, so one that took the keyboard only then had every move excused, and
+captured what the visitor typed after resting the pointer on it. A person stops typing before reaching for a frame; a frame that
+grabs the keyboard under the pointer does not wait. A Tab clears the typing, since it moves the keyboard on purpose. The proof, in `customCodeBridge.gate.ts` with real input
 from Playwright:
 - Chromium and Firefox: a frame whose script focuses an input inside it every 300 ms takes the keyboard back after the page
   takes it, and is removed at its third arrival (interactive) or its first (not interactive). An attempt where Firefox did not
@@ -972,7 +991,16 @@ from Playwright:
 - WebKit never lets a frame of another site take the keyboard by script: the page keeps it in every attempt, so the watch has
   nothing to do there. The test asserts exactly that, so a change in WebKit shows.
 - No false removal in any of the three engines: four clicks into an interactive frame and out again, four Tabs into it and back,
-  four taps on a touch screen, and three clicks into it with the pointer then moved away past a ping leave it in place.
+  four taps on a touch screen, three clicks into it with the pointer then moved away past a ping, and four rounds of typing in the
+  page, a pause of 700 ms and a click into the frame leave it in place.
+- The review's probe (six rounds of: click the page's field, type, move onto a frame that focuses itself on `mousemove`, type):
+  Chromium removes the frame at its third move, so it gets the keys of two rounds and never a third. Firefox, in this harness,
+  honours the frame's `focus()` in the first round or two only, so it never reaches a third move and stays, with at most two
+  rounds' keys. WebKit refuses the focus every time and the page keeps every key.
+
+What remains: a frame that waits for the visitor to pause typing for more than half a second, then takes the keyboard under the
+pointer, is excused as a person's click would be. The visitor sees the caret leave the field. The page cannot tell a click inside a
+frame of another site from a script's `focus()` there, so no signal from the page closes this; the residual is accepted with D8.
 
 The per-engine moves are written to `custom-code-bridge.log` in the system's temporary folder on every run.
 
@@ -980,7 +1008,9 @@ The per-engine moves are written to `custom-code-bridge.log` in the system's tem
 policy's `frame-src` is `'self'`, the box's path and, after consent, Google, so a block's frame reports nothing and any other frame
 still does.
 
-**D73. The broker's size, and what it does not check twice.** 2 kilobytes gzipped, held on esbuild's measure in the unit suite
+**D73. The broker's size, and what it does not check twice.** After the first review's fixes (D65, D71) esbuild measures 1974 bytes; to
+make room, the warnings became one a frame, the removal reasons shorter (`no hello`, `no pong`), the resize limit shares the
+message count, and the plain-data check rides on `JSON.stringify`'s replacer instead of a walk of its own. 2 kilobytes gzipped, held on esbuild's measure in the unit suite
 and on Next's real chunk in the behaviour suite. Next compiles `?.`, `??` and template strings into longer code than esbuild does
 (its first real chunk came to 2037 bytes against esbuild's 1990), so the broker is written without them, and its numbers are
 literals at their use, since a bundler keeps a module's constants as variables. The registry it shares with the island and the
