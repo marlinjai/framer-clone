@@ -8,9 +8,9 @@
 // so each row of a list, or each copy of a component, keeps its own.
 //
 // Every edit goes through the parser before it is written, the value on its own
-// (`stateRefusal`) and then the whole page (`refusalAt`), so a value that would push the
-// page past its size cap, or break what reads it elsewhere, is refused with the parser's
-// reason. Each edit is one undo step. The preview is the canvas's (EditorUIStore.previewState): volatile, never
+// (`stateRefusal`) and then the whole page, and inside a component definition every page
+// placing it (`behaviourRefusal`), so a value that would push a page past its size cap, or
+// break what reads it elsewhere, is refused with the parser's reason. Each edit is one undo step. The preview is the canvas's (EditorUIStore.previewState): volatile, never
 // saved, never in undo, and off in Interact, where the page runs from its first values.
 // A value that no longer fits its state after an edit (an option removed, a type
 // changed) is taken out of the preview, not just hidden.
@@ -33,7 +33,6 @@ import {
   pathTo,
   putEntry,
   readersOf,
-  refusalAt,
   refusalsOn,
   removeEntry,
   retype,
@@ -44,7 +43,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, holdsBehaviour, inStateRow, storedText, rootsOf, useFocusAfter, valueText, writeBehaviour, type BehaviourPage, type FocusTarget } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, ValueControl, behaviourRefusal, holdsBehaviour, inStateRow, storedText, rootsOf, useFocusAfter, valueText, writeBehaviour, type BehaviourPage, type FocusTarget } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface PageStatePanelProps {
@@ -92,7 +91,7 @@ export const PageStatePanel = observer(({ component }: PageStatePanelProps) => {
     // A name no value of the page holds, so the page's "Value 1" and a card's never read as one.
     const state = newState(freshStateId(roots), freshStateName(roots), 'boolean');
     const next = putEntry(stored, 'state', state);
-    const reason = refusalAt(roots, on.id, next, state, nameIn(page));
+    const reason = behaviourRefusal(page, on, next, state, nameIn(page));
     setAddError(reason);
     if (reason) return;
     writeBehaviour(on, next);
@@ -209,7 +208,7 @@ const StateRow = observer(({ scope, page, stored, entry, index, reason }: StateR
   /** Writes one change through the parser; a refusal is shown and nothing is written. True when written. */
   const commit = (next: StoredRecord): boolean => {
     const behaviour = putEntry(stored, 'state', next, index);
-    const refusal = stateRefusal(next) ?? refusalAt(rootsOf(page), scope.id, behaviour, next, nameIn(page));
+    const refusal = stateRefusal(next) ?? behaviourRefusal(page, scope, behaviour, next, nameIn(page));
     if (refusal) {
       setError({ reason: refusal, for: storedKey });
       return false;

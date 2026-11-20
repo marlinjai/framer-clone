@@ -9,8 +9,9 @@
 // address that leaves the site is typed here by a person, nowhere else.
 //
 // An interaction is edited as a draft and saved as one undo step. The draft is checked by
-// the parser against the whole page before it is written, and the parser's reason is what
-// shows when it refuses. A stored entry the parser refuses (a value it reads was deleted,
+// the parser against the whole page before it is written (and, inside a component
+// definition, against every page placing it: behaviourRefusal), and the parser's reason is
+// what shows when it refuses. A stored entry the parser refuses (a value it reads was deleted,
 // say) stays stored and shows its reason; it can be edited or deleted. Entries a preset
 // wrote carry its mark and are shown, not edited: the preset writes them again.
 
@@ -46,7 +47,6 @@ import {
   pickerLabels,
   putEntry,
   putField,
-  refusalAt,
   refusalText,
   refusalsOn,
   removeEntry,
@@ -58,7 +58,7 @@ import {
   type StoredRecord,
 } from '@/lib/behaviour/authoring';
 import { CollapsibleSection, FIELD_CONTROL, FIELD_LABEL } from '../primitives';
-import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, expansionRoots, namesFor, useFocusAfter, storedText, rootsOf, writeBehaviour, type BehaviourPage, type FocusTarget } from './behaviourShared';
+import { CommitField, HINT, REASON, SMALL_BUTTON, SwitchRow, ValueControl, behaviourRefusal, expansionRoots, namesFor, placingRefusal, useFocusAfter, storedText, rootsOf, writeBehaviour, type BehaviourPage, type FocusTarget } from './behaviourShared';
 import { cn } from '@/lib/utils';
 
 interface InteractionsSectionProps {
@@ -121,7 +121,7 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
   /** Checks a trigger on this node against the whole page, and writes it when the parser takes it. */
   const save = (trigger: StoredRecord, index?: number): string | null => {
     const next = putEntry(stored, 'on', trigger, index);
-    const reason = refusalAt(roots, component.id, next, trigger, names.node);
+    const reason = behaviourRefusal(page, component, next, trigger, names.node);
     if (reason) return reason;
     writeBehaviour(component, next);
     return null;
@@ -237,8 +237,8 @@ export const InteractionsSection = observer(({ component }: InteractionsSectionP
         )
       )}
       {states.length === 0 && <p className={HINT}>To show, hide or switch something, add a value in Page state first.</p>}
-      <ShowWhen component={component} stored={stored} states={states} roots={roots} names={names} reason={refused.find((r) => r.entry === 'showWhen')?.reason} />
-      <NoScriptSwitch component={component} stored={stored} roots={roots} names={names} />
+      <ShowWhen component={component} page={page} stored={stored} states={states} names={names} reason={refused.find((r) => r.entry === 'showWhen')?.reason} />
+      <NoScriptSwitch component={component} page={page} stored={stored} names={names} />
       <Bindings component={component} stored={stored} names={names} refused={refused} />
     </Shell>
   );
@@ -296,6 +296,9 @@ const PresetItemControls = observer(({ component, page, requestFocus }: {
       return setConfirm({ index: edit.index, base: storedText(current), readers });
     }
     setConfirm(null);
+    // Inside a definition, the pages that place it are judged too.
+    const placing = placingRefusal(page, next as { id: string });
+    if (placing) return setError(`${placing}.`);
     const written = component.replaceSubtree(next);
     setError(written.ok ? null : written.reason);
     if (!written.ok) return;
@@ -731,20 +734,20 @@ function AddressField({ index, value, onChange }: { index: number; value: string
 
 interface ShowWhenProps {
   component: ComponentInstance;
+  page: BehaviourPage;
   stored: StoredRecord;
   states: readonly StateValue[];
-  roots: Parameters<typeof refusalAt>[0];
   names: ReturnType<typeof namesFor>;
   reason?: string;
 }
 
-function ShowWhen({ component, stored, states, roots, names, reason }: ShowWhenProps) {
+function ShowWhen({ component, page, stored, states, names, reason }: ShowWhenProps) {
   const [error, setError] = useState<{ reason: string; for: string } | null>(null);
   const condition = stored.showWhen;
   const key = storedText(condition);
   const write = (next: unknown) => {
     const behaviour = putField(stored, 'showWhen', next);
-    const refusal = next === undefined ? null : refusalAt(roots, component.id, behaviour, next, names.node);
+    const refusal = next === undefined ? null : behaviourRefusal(page, component, behaviour, next, names.node);
     if (refusal) {
       setError({ reason: refusal, for: key });
       return;
@@ -796,7 +799,7 @@ function ShowWhen({ component, stored, states, roots, names, reason }: ShowWhenP
  * The "Hide without JavaScript" switch, checked on the whole page like every other write:
  * turning it on adds bytes, which can take the page past its size cap.
  */
-function NoScriptSwitch({ component, stored, roots, names }: { component: ComponentInstance; stored: StoredRecord; roots: Parameters<typeof refusalAt>[0]; names: ReturnType<typeof namesFor> }) {
+function NoScriptSwitch({ component, page, stored, names }: { component: ComponentInstance; page: BehaviourPage; stored: StoredRecord; names: ReturnType<typeof namesFor> }) {
   const [error, setError] = useState<{ reason: string; for: string } | null>(null);
   const key = storedText(stored.noScript);
   return (
@@ -807,7 +810,7 @@ function NoScriptSwitch({ component, stored, roots, names }: { component: Compon
         checked={stored.noScript === 'hide'}
         onCheckedChange={(checked) => {
           const next = putField(stored, 'noScript', checked ? 'hide' : undefined);
-          const refusal = refusalAt(roots, component.id, next, undefined, names.node);
+          const refusal = behaviourRefusal(page, component, next, undefined, names.node);
           if (refusal) return setError({ reason: refusal, for: key });
           setError(null);
           writeBehaviour(component, next);

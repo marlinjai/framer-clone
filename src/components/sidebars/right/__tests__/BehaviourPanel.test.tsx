@@ -756,6 +756,27 @@ describe('a preset\'s items', () => {
     expect(interactions().getByRole('status').textContent).toBe('Removed Third');
     fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
     expect(interactions().getByRole('status').textContent).toBe('Added Tab 3');
+    // Down to the last tab the picker goes, and the focus falls back to Add tab.
+    for (const [index, title] of [['2', 'Tab 3'], ['1', 'Second']]) {
+      fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: index } });
+      fireEvent.click(group().getByRole('button', { name: `Remove ${title}` }));
+    }
+    expect(group().getByText('1 tabs, made from a preset')).toBeTruthy();
+    expect(group().queryByLabelText('Tab to remove')).toBeNull();
+    expect(document.activeElement).toBe(group().getByRole('button', { name: 'Add tab' }));
+    // Splicing a node the page does not hold gives no expansion, so the panel says the element is gone.
+    expect(store.editorUI.currentPage!.expansionWith({ id: 'nowhere' })).toBeNull();
+  });
+
+  it('adds a tab to a tabs preset that floats beside the frames', () => {
+    mount();
+    const tabs = store.editorUI.currentPage!.insertRegistryComponent('tabs', { kind: 'floating', x: 0, y: 0 })!;
+    expect(store.editorUI.currentPage!.floatingElements.map((node) => node.id)).toContain(tabs.id);
+    select(tabs);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect(group().queryByRole('alert')).toBeNull();
+    expect(group().getByText('4 tabs, made from a preset')).toBeTruthy();
   });
 
   it('an undo underneath the remove question closes it, rather than answer it for another tree', () => {
@@ -833,6 +854,52 @@ describe('a preset\'s items', () => {
     expect(group().getByRole('alert').textContent).toMatch(/^Not changed: .*65536 bytes.*\.$/);
     expect(JSON.stringify(getSnapshot(tabs))).toBe(before);
     expect(pageRefusesNothing()).toBe(true);
+  });
+
+  /** A component placed on the home page, then that page filled to its cap, then the definition opened on the canvas. */
+  const openPlacedDefinition = (made: { ok: true; definitionId: string } | { ok: false; message: string }) => {
+    if (!made.ok) throw new Error(made.message);
+    fillTo(pageRefusesNothing);
+    const definition = project.components.get(made.definitionId)!;
+    act(() => store.editorUI.setCurrentPage(definition.page as never));
+    return definition;
+  };
+
+  it('refuses a rename inside a component that would take a page placing it past the cap, naming that page', () => {
+    mount();
+    const home = store.editorUI.currentPage!;
+    act(() => main.addChildren([createIntrinsicComponent('heavy', 'div', { children: 'Heavy' })]));
+    act(() => home.findComponent('heavy')!.setBehaviour({ state: [{ id: 'v-heavy', name: 'Note', type: 'text', initial: 'h'.repeat(3000) }] }));
+    const definition = openPlacedDefinition(project.createComponentFromSelection(home.id, ['heavy'], 'Heavy'));
+    const homeRefuses = () => readBehaviourTree(home.expansion.root as never).refused;
+    expect(homeRefuses()).toEqual([]);
+    const defRoot = definition.page.appComponentTree as unknown as ComponentInstance;
+    select(defRoot);
+    const stateOf = () => (behaviourOf(defRoot)?.state as { name: string }[])[0];
+    // Its own page holds it easily: only the page placing it is past the cap.
+    typeAndCommit(pageState().getByLabelText('Name of Note'), 'Note with a much longer name than before');
+    expect(pageState().getByRole('alert').textContent).toMatch(new RegExp(`^Not changed: it would stop ".+" working on ${home.metadata.title}: .*65536 bytes.*\\.$`));
+    expect(stateOf().name).toBe('Note');
+    expect(homeRefuses()).toEqual([]);
+    // A shorter name fits, and is written.
+    typeAndCommit(pageState().getByLabelText('Name of Note'), 'N');
+    expect(stateOf().name).toBe('N');
+    expect(homeRefuses()).toEqual([]);
+  });
+
+  it('refuses Add tab inside a component when a page placing it has no room, naming that page', () => {
+    mount();
+    const home = store.editorUI.currentPage!;
+    const tabs = home.insertRegistryComponent('tabs', { kind: 'appTree' })!;
+    const definition = openPlacedDefinition(project.createComponentFromSelection(home.id, [tabs.id], 'Tabbed'));
+    const defRoot = definition.page.appComponentTree as unknown as ComponentInstance;
+    select(defRoot);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    const before = JSON.stringify(getSnapshot(defRoot));
+    fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+    expect(group().getByRole('alert').textContent).toMatch(new RegExp(`^Not changed: it would stop ".+" working on ${home.metadata.title}: .*65536 bytes.*\\.$`));
+    expect(JSON.stringify(getSnapshot(defRoot))).toBe(before);
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
   });
 
   it('refuses Hide without JavaScript when the page has no room for it, and says why', () => {

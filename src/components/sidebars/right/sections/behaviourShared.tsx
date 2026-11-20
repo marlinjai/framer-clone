@@ -9,7 +9,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BehaviourNode, StateValue } from '@/lib/behaviour/format';
-import { isRecord, sameStored, storedBehaviourOf, type Names, type StoredRecord } from '@/lib/behaviour/authoring';
+import { getSnapshot } from 'mobx-state-tree';
+import { isRecord, newRefusals, refusalAt, sameStored, storedBehaviourOf, type Names, type StoredRecord } from '@/lib/behaviour/authoring';
 import { FIELD_CONTROL, FIELD_LABEL, PropertySwitch } from '../primitives';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { cn } from '@/lib/utils';
@@ -110,6 +111,13 @@ export interface BehaviourPage {
   expansion: { root: ComponentNode; floating: readonly ComponentNode[] };
   /** The page expanded with one stored subtree replaced, null when no node has its id (PageModel.expansionWith). */
   expansionWith(subtree: { id: string }): { root: ComponentNode; floating: readonly ComponentNode[] } | null;
+  /** When the page is a definition's: each page placing it, expanded now and with `subtree` written (PageModel.placingExpansionsWith). */
+  placingExpansionsWith(subtree: { id: string }): readonly {
+    name: string;
+    before: { root: ComponentNode; floating: readonly ComponentNode[] };
+    after: { root: ComponentNode; floating: readonly ComponentNode[] };
+    findComponent(id: string): { displayName?: string } | undefined;
+  }[];
   findComponent(id: string): ComponentInstance | undefined;
 }
 
@@ -119,6 +127,41 @@ export const rootsOf = (page: BehaviourPage): BehaviourNode[] => expansionRoots(
 /** An expansion's trees as the parser reads them: the page, then each floating element. */
 export const expansionRoots = (expansion: { root: ComponentNode; floating: readonly ComponentNode[] }): BehaviourNode[] =>
   [expansion.root, ...expansion.floating] as unknown as BehaviourNode[];
+
+/**
+ * Why writing `subtree` would make the parser refuse something new on a page that places
+ * the definition open on the canvas, or null. A definition's behaviour counts on every
+ * page that places it (the 64 KB cap above all), so an edit inside one is judged there
+ * too, naming the element and the page it would stop. Null on an ordinary page.
+ */
+export function placingRefusal(page: BehaviourPage, subtree: { id: string }): string | null {
+  for (const placing of page.placingExpansionsWith(subtree)) {
+    const hit = newRefusals(expansionRoots(placing.before), expansionRoots(placing.after))[0];
+    if (!hit) continue;
+    const element = (hit.nodeId && placing.findComponent(hit.nodeId)?.displayName) || 'an element';
+    return `it would stop "${element}" working on ${placing.name}: ${hit.reason}`;
+  }
+  return null;
+}
+
+/**
+ * The one check before a node's behaviour is written: the page it is on (refusalAt, the
+ * whole page read before and after), then, inside a definition, every page placing it.
+ */
+export function behaviourRefusal(
+  page: BehaviourPage,
+  component: ComponentInstance,
+  behaviour: StoredRecord,
+  written?: unknown,
+  nameOf?: (id: string) => string,
+): string | null {
+  const here = refusalAt(rootsOf(page), component.id, behaviour, written, nameOf);
+  if (here) return here;
+  const snapshot = getSnapshot(component) as unknown as StoredRecord & { id: string };
+  const props = isRecord(snapshot.props) ? snapshot.props : {};
+  const next: StoredRecord & { id: string } = { ...snapshot, props: { ...props, behaviour } };
+  return placingRefusal(page, next);
+}
 
 /** How ids read in a sentence: a value by its name, an element by its layer name. */
 export function namesFor(page: BehaviourPage, states: readonly StateValue[]): Names {

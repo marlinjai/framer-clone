@@ -97,6 +97,31 @@ function findComponentInPage(page: PageLike, id: string): ComponentInstance | un
 }
 
 /** The project around a page, whichever of its pages or definitions this is. */
+/** A page that places a definition, as it expands now and as it would with the definition edited. */
+export interface PlacingExpansion {
+  pageId: string;
+  /** What a person calls the page: its title, or a definition's name. */
+  name: string;
+  before: PageExpansion;
+  after: PageExpansion;
+  /** A node of that page by id, for naming what an edit would stop. */
+  findComponent(id: string): { displayName?: string } | undefined;
+}
+
+/**
+ * A stored tree with the node of `subtree`'s id replaced by it whole, copying only the
+ * path to it, or null when no node of the tree has the id.
+ */
+export function spliceSnapshot(node: ComponentSnapshotLike, subtree: { id: string }): ComponentSnapshotLike | null {
+  if (node.id === subtree.id) return subtree as unknown as ComponentSnapshotLike;
+  const children = (node.children ?? []) as ComponentSnapshotLike[];
+  for (let index = 0; index < children.length; index++) {
+    const next = spliceSnapshot(children[index], subtree);
+    if (next) return { ...node, children: children.map((child, i) => (i === index ? next : child)) } as ComponentSnapshotLike;
+  }
+  return null;
+}
+
 function projectOf(page: object): { definitions: ComponentDefinitions } | undefined {
   let node: object = page;
   while (hasParent(node)) {
@@ -1132,6 +1157,13 @@ const PageModel = PageWithComponents
       return expandPage(stored(self.appComponentTree), self.floatingElements.map(stored), definitions(), breakpoints());
     },
     /**
+     * The page as `expansion` expands it, but with `definitions` in place of the project's:
+     * how this page would read with one definition edited. The same `expandPage` call.
+     */
+    expansionUnder(definitions: ComponentDefinitions): PageExpansion {
+      return expandPage(stored(self.appComponentTree), self.floatingElements.map(stored), definitions, breakpoints());
+    },
+    /**
      * The page as the published path would expand it with one stored subtree replaced
      * (the node of `subtree`'s id), before anything is written: the same `expandPage`
      * with the same definitions and breakpoints as `expansion`, so a check made on it
@@ -1139,21 +1171,23 @@ const PageModel = PageWithComponents
      * definition, behaviour included. Null when no node of the page has the id.
      */
     expansionWith(subtree: { id: string }): PageExpansion | null {
-      const splice = (node: ComponentSnapshotLike): ComponentSnapshotLike | null => {
-        if (node.id === subtree.id) return subtree as unknown as ComponentSnapshotLike;
-        const children = (node.children ?? []) as ComponentSnapshotLike[];
-        for (let index = 0; index < children.length; index++) {
-          const next = splice(children[index]);
-          if (next) return { ...node, children: children.map((child, i) => (i === index ? next : child)) } as ComponentSnapshotLike;
-        }
-        return null;
-      };
       const tree = stored(self.appComponentTree);
       const floating = self.floatingElements.map(stored);
-      const page = splice(tree);
-      const floats = floating.map(splice);
+      const page = spliceSnapshot(tree, subtree);
+      const floats = floating.map((root) => spliceSnapshot(root, subtree));
       if (!page && floats.every((root) => root === null)) return null;
       return expandPage(page ?? tree, floats.map((root, index) => root ?? floating[index]), definitions(), breakpoints());
+    },
+    /**
+     * When this page is a component definition's, every page and definition that places
+     * it (directly or through another component), each expanded now and with `subtree`
+     * written into the definition: a definition's behaviour counts on every page that
+     * places it, so an edit here is judged there too. Empty for an ordinary page, or when
+     * the subtree is not in the definition's tree (ProjectModel.placingExpansionsWith).
+     */
+    placingExpansionsWith(subtree: { id: string }): PlacingExpansion[] {
+      const project = projectOf(self) as (ReturnType<typeof projectOf> & { placingExpansionsWith?: (pageId: string, subtree: { id: string }) => PlacingExpansion[] }) | undefined;
+      return project?.placingExpansionsWith?.(self.id, subtree) ?? [];
     },
     // What the font scan reads on the canvas: the page, floating elements included,
     // with literal input values in place.

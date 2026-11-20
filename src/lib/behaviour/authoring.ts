@@ -355,6 +355,12 @@ export function refusalText(refusal: RefusedOnNode, nodeId: string, nameOf: (id:
   return `it would stop ${refusal.nodeId ? nameOf(refusal.nodeId) : 'another element'} working: ${refusal.reason}`;
 }
 
+/** What the parser refuses in the trees of `after` that it does not in `before`, counting repeats: two reads of one page. */
+export function newRefusals(before: readonly BehaviourNode[], after: readonly BehaviourNode[]): RefusedOnNode[] {
+  const refusedIn = (roots: readonly BehaviourNode[]) => roots.flatMap((root) => readBehaviourTree(root).refused);
+  return freshRefusals(refusedIn(before), refusedIn(after));
+}
+
 /** The refusals of `after` that `before` does not hold, counting repeats (see refusalAt). */
 function freshRefusals(before: readonly RefusedOnNode[], after: readonly RefusedOnNode[]): RefusedOnNode[] {
   const left = new Map<string, number>();
@@ -406,8 +412,7 @@ export function subtreeRefusals(
 ): { refused: RefusedOnNode[]; dangling: RefusedOnNode[] } {
   const kept = nodeIdsIn(next);
   const removed = new Set([...nodeIdsIn(current)].filter((id) => !kept.has(id)));
-  const refusedIn = (roots: readonly BehaviourNode[]) => roots.flatMap((root) => readBehaviourTree(root).refused);
-  const fresh = freshRefusals(refusedIn(before), refusedIn(after));
+  const fresh = newRefusals(before, after);
   const dangling = fresh.filter((refusal) => refusal.entry !== 'behaviour' && removed.size > 0 && namesAny(refusal.value, removed));
   return { refused: fresh.filter((refusal) => !dangling.includes(refusal)), dangling };
 }
