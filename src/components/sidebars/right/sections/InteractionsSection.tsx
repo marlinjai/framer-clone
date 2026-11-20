@@ -289,6 +289,13 @@ const PresetItemControls = observer(({ component, page, requestFocus }: {
       setConfirm(null);
       return setError(`${refusalText(hard, component.id, nameOf)}.`);
     }
+    // Inside a definition, the pages that place it are judged too, before any question: a
+    // reader there out of sight refuses outright, so a confirmation is never a dead end.
+    const placing = placingRefusal(page, next as { id: string }, current as unknown as { id: string });
+    if (placing) {
+      setConfirm(null);
+      return setError(`${placing}.`);
+    }
     // Only a removal takes nodes away, so only a removal has dangling entries to ask about.
     if (check.dangling.length > 0 && edit.kind === 'removeTab' && !confirmed) {
       const readers = [...new Set(check.dangling.map((refusal) => refusal.nodeId ?? ''))].map((id) => page.findComponent(id)?.displayName ?? (id || 'an element'));
@@ -296,9 +303,6 @@ const PresetItemControls = observer(({ component, page, requestFocus }: {
       return setConfirm({ index: edit.index, base: storedText(current), readers });
     }
     setConfirm(null);
-    // Inside a definition, the pages that place it are judged too.
-    const placing = placingRefusal(page, next as { id: string });
-    if (placing) return setError(`${placing}.`);
     const written = component.replaceSubtree(next);
     setError(written.ok ? null : written.reason);
     if (!written.ok) return;

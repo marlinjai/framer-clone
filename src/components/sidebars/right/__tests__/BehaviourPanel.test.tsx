@@ -8,7 +8,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { getSnapshot } from 'mobx-state-tree';
 import { openProject } from '@/stores/openProject';
 import { createRootStore, getHistoryStore, type RootStoreType } from '@/stores/RootStore';
-import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
+import { CanvasNodeType, createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
 import type { ProjectModelType } from '@/models/ProjectModel';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
@@ -795,11 +795,11 @@ describe('a preset\'s items', () => {
     expect(group().queryByRole('group', { name: 'Remove Third?' })).toBeNull();
   });
 
-  /** Text values on the page root (`big` of 4,096 characters and one shorter) that fill the page as far as `fits` still takes. */
-  const fillTo = (fits: () => boolean, big = 15) => {
+  /** Text values on a page root (`big` of 4,096 characters and one shorter) that fill the page as far as `fits` still takes. */
+  const fillTo = (fits: () => boolean, big = 15, on: ComponentInstance = root) => {
     const fill = (length: number) => ({ state: [...Array.from({ length: big }, (_, i) => ({ id: `v-big${i}`, name: `Big ${i}`, type: 'text', initial: 'x'.repeat(4096) })), { id: 'v-last', name: 'Last', type: 'text', initial: 'x'.repeat(length) }] });
     const whole = (length: number) => {
-      act(() => root.setBehaviour(fill(length)));
+      act(() => on.setBehaviour(fill(length)));
       return fits();
     };
     let low = 0;
@@ -811,6 +811,7 @@ describe('a preset\'s items', () => {
     }
     expect(whole(low)).toBe(true);
   };
+  const CAP = 'a page holds at most 65536 bytes of behaviour';
   const pageRefusesNothing = () => readBehaviourTree(store.editorUI.currentPage!.expansion.root as never).refused.length === 0;
 
   it('refuses a new tab that would take the page past its size cap, and says why', () => {
@@ -878,7 +879,7 @@ describe('a preset\'s items', () => {
     const stateOf = () => (behaviourOf(defRoot)?.state as { name: string }[])[0];
     // Its own page holds it easily: only the page placing it is past the cap.
     typeAndCommit(pageState().getByLabelText('Name of Note'), 'Note with a much longer name than before');
-    expect(pageState().getByRole('alert').textContent).toMatch(new RegExp(`^Not changed: it would stop ".+" working on ${home.metadata.title}: .*65536 bytes.*\\.$`));
+    expect(pageState().getByRole('alert').textContent).toBe(`Not changed: it would stop "Container" in "Heavy" working on "${home.metadata.title}": ${CAP}.`);
     expect(stateOf().name).toBe('Note');
     expect(homeRefuses()).toEqual([]);
     // A shorter name fits, and is written.
@@ -903,7 +904,7 @@ describe('a preset\'s items', () => {
     expect(placing.sort()).toEqual([home.metadata.title, 'Outer'].sort());
     select(innerRoot);
     typeAndCommit(pageState().getByLabelText('Name of Note'), 'Note with a much longer name than before');
-    expect(pageState().getByRole('alert').textContent).toMatch(new RegExp(`working on ${home.metadata.title}: .*65536 bytes`));
+    expect(pageState().getByRole('alert').textContent).toBe(`Not changed: it would stop "Container" in "Heavy" working on "${home.metadata.title}": ${CAP}.`);
   });
 
   it('refuses Add tab inside a component when a page placing it has no room, naming that page', () => {
@@ -916,10 +917,104 @@ describe('a preset\'s items', () => {
     const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
     const before = JSON.stringify(getSnapshot(defRoot));
     fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
-    expect(group().getByRole('alert').textContent).toMatch(new RegExp(`^Not changed: it would stop ".+" working on ${home.metadata.title}: .*65536 bytes.*\\.$`));
+    expect(group().getByRole('alert').textContent).toBe(`Not changed: it would stop "Tabs" in "Tabbed" working on "${home.metadata.title}": ${CAP}.`);
     expect(JSON.stringify(getSnapshot(defRoot))).toBe(before);
     expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
   });
+
+  /** "Tabbed" from a tabs preset (and `alongside`, next to it in main) made on Home, then opened on the canvas. */
+  const makeTabbed = (alongside: ComponentInstance[] = []) => {
+    const home = store.editorUI.currentPage!;
+    const tabs = home.insertRegistryComponent('tabs', { kind: 'parent', parentId: main.id })!;
+    const panel = idsIn(getSnapshot(tabs)).find((id) => /-panel-2$/.test(id))!;
+    return { home, tabs, panel, open: () => {
+      const made = project.createComponentFromSelection(home.id, [...alongside.map((node) => node.id), tabs.id], 'Tabbed');
+      if (!made.ok) throw new Error(made.message);
+      const definition = project.components.get(made.definitionId)!;
+      act(() => store.editorUI.setCurrentPage(definition.page as never));
+      return definition;
+    } };
+  };
+
+  it('a confirmed tab removal inside a placed component is made: its reader is inside every placement too', () => {
+    mount();
+    const { home, tabs, panel, open } = makeTabbed([button]);
+    act(() => {
+      button.setLabel('Go');
+      button.setBehaviour({ on: [{ id: 't-focus', on: 'click', do: [{ focus: panel }] }] });
+    });
+    const definition = open();
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
+    select(definition.page.findComponent(tabs.id)!);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    const before = history().undoIdx;
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    const question = () => within(group().getByRole('group', { name: 'Remove Third?' }));
+    expect(question().getByText('Removing Third stops what names it from working: Go.')).toBeTruthy();
+    fireEvent.click(question().getByRole('button', { name: 'Remove Third anyway' }));
+    expect(group().queryByRole('alert')).toBeNull();
+    expect(group().getByText('2 tabs, made from a preset')).toBeTruthy();
+    expect(history().undoIdx).toBe(before + 1);
+    act(() => history().undo());
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+  });
+
+  it('a tab removal inside a component is refused when a reader on a page placing it names the tab, naming both', () => {
+    mount();
+    const { home, panel, open } = makeTabbed();
+    const definition = open();
+    // The reader stays on Home, out of sight from the definition; a quote in its layer name stays readable.
+    act(() => {
+      button.setLabel('Go "now"');
+      button.setBehaviour({ on: [{ id: 't-focus', on: 'click', do: [{ focus: panel }] }] });
+    });
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
+    select(definition.page.appComponentTree as unknown as ComponentInstance);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    const before = history().undoIdx;
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    // Nothing in the definition names it, so nothing asks: Home's reader refuses it outright.
+    expect(group().queryByRole('group', { name: 'Remove Third?' })).toBeNull();
+    expect(group().getByRole('alert').textContent).toBe(`Not changed: it would stop 'Go "now"' working on "${home.metadata.title}": it names something this removes.`);
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+    expect(history().undoIdx).toBe(before);
+  });
+
+  /**
+   * "Tabbed" placed on Home and on a second page, About, which is full. There the placement
+   * sits in the page's tree, or inside a floating element (the parser reads each floating
+   * tree on its own, so that tree is the one filled).
+   */
+  const placedTwice = (where: 'tree' | 'floating') => {
+    const { open } = makeTabbed();
+    const about = project.createPage('About');
+    const holder = where === 'tree'
+      ? about.appComponentTree as unknown as ComponentInstance
+      : about.addCanvasNode({ ...(getSnapshot(createIntrinsicComponent('floating-holder', 'div', {})) as object), canvasNodeType: CanvasNodeType.FLOATING_ELEMENT, canvasX: 0, canvasY: 0 } as never) as unknown as ComponentInstance;
+    const definition = open();
+    const placed = project.placeComponent(about.id, definition.id, { kind: 'parent', parentId: holder.id });
+    if (!placed.ok) throw new Error(placed.message);
+    if (where === 'floating') expect(about.floatingElements.map((node) => node.id)).toContain(holder.id);
+    const aboutRefuses = () => [about.expansion.root, ...about.expansion.floating].flatMap((tree) => readBehaviourTree(tree as never).refused);
+    fillTo(() => aboutRefuses().length === 0, 15, holder);
+    expect([...project.pages.values()].at(-1)).toBe(about);
+    return { definition, aboutRefuses };
+  };
+
+  for (const where of ['tree', 'floating'] as const) {
+    it(`refuses Add tab inside a component when the second page placing it (${where === 'tree' ? 'in its tree' : 'floating'}) has no room`, () => {
+      mount();
+      const { definition, aboutRefuses } = placedTwice(where);
+      select(definition.page.appComponentTree as unknown as ComponentInstance);
+      const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+      fireEvent.click(group().getByRole('button', { name: 'Add tab' }));
+      expect(group().getByRole('alert').textContent).toBe(`Not changed: it would stop "Tabs" in "Tabbed" working on "About": ${CAP}.`);
+      expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+      expect(aboutRefuses()).toEqual([]);
+    });
+  }
 
   it('refuses Hide without JavaScript when the page has no room for it, and says why', () => {
     mount();

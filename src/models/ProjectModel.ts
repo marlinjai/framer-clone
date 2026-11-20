@@ -1594,6 +1594,7 @@ export const ProjectModel = types
       return pages.map(page => ({
         pageId: page.id,
         name: all.find(other => other.page.id === page.id)?.name ?? page.metadata.title,
+        definition: definition.name,
         before: page.expansion,
         after: page.expansionUnder(edited),
         findComponent: (id: string) => page.findComponent(id),

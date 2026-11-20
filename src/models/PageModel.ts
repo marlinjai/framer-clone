@@ -102,6 +102,8 @@ export interface PlacingExpansion {
   pageId: string;
   /** What a person calls the page: its title, or a definition's name. */
   name: string;
+  /** The name of the definition being edited, for naming an element inside a placement of it. */
+  definition: string;
   before: PageExpansion;
   after: PageExpansion;
   /** A node of that page by id, for naming what an edit would stop. */

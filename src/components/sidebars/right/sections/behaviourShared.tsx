@@ -10,7 +10,7 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { BehaviourNode, StateValue } from '@/lib/behaviour/format';
 import { getSnapshot } from 'mobx-state-tree';
-import { isRecord, newRefusals, refusalAt, sameStored, storedBehaviourOf, type Names, type StoredRecord } from '@/lib/behaviour/authoring';
+import { isRecord, refusalAt, subtreeRefusals, sameStored, storedBehaviourOf, type Names, type StoredRecord } from '@/lib/behaviour/authoring';
 import { FIELD_CONTROL, FIELD_LABEL, PropertySwitch } from '../primitives';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { cn } from '@/lib/utils';
@@ -114,6 +114,7 @@ export interface BehaviourPage {
   /** When the page is a definition's: each page placing it, expanded now and with `subtree` written (PageModel.placingExpansionsWith). */
   placingExpansionsWith(subtree: { id: string }): readonly {
     name: string;
+    definition: string;
     before: { root: ComponentNode; floating: readonly ComponentNode[] };
     after: { root: ComponentNode; floating: readonly ComponentNode[] };
     findComponent(id: string): { displayName?: string } | undefined;
@@ -128,18 +129,52 @@ export const rootsOf = (page: BehaviourPage): BehaviourNode[] => expansionRoots(
 export const expansionRoots = (expansion: { root: ComponentNode; floating: readonly ComponentNode[] }): BehaviourNode[] =>
   [expansion.root, ...expansion.floating] as unknown as BehaviourNode[];
 
+/** A name in a sentence, in quotes a quote inside the name cannot close. */
+export const quoted = (name: string): string =>
+  !name.includes('"') ? `"${name}"` : !name.includes("'") ? `'${name}'` : `\u201c${name}\u201d`;
+
+/** The node with this id in an expansion's trees. */
+function nodeIn(roots: readonly ComponentNode[], id: string): ComponentNode | undefined {
+  for (const root of roots) {
+    if (root.id === id) return root;
+    const found = nodeIn(root.children ?? [], id);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 /**
  * Why writing `subtree` would make the parser refuse something new on a page that places
  * the definition open on the canvas, or null. A definition's behaviour counts on every
  * page that places it (the 64 KB cap above all), so an edit inside one is judged there
  * too, naming the element and the page it would stop. Null on an ordinary page.
+ *
+ * With `current` (the subtree as stored now), a removal's refusals are split as on the
+ * definition's own page (subtreeRefusals). A reference to a removed node from inside a
+ * placement of the definition is the same reader the definition's own page asks about
+ * (and the person may confirm), so it is let through here. One from outside the
+ * placement (a trigger on the placing page itself) is out of sight, and is refused.
  */
-export function placingRefusal(page: BehaviourPage, subtree: { id: string }): string | null {
+export function placingRefusal(page: BehaviourPage, subtree: { id: string }, current?: { id: string }): string | null {
   for (const placing of page.placingExpansionsWith(subtree)) {
-    const hit = newRefusals(expansionRoots(placing.before), expansionRoots(placing.after))[0];
-    if (!hit) continue;
-    const element = (hit.nodeId && placing.findComponent(hit.nodeId)?.displayName) || 'an element';
-    return `it would stop "${element}" working on ${placing.name}: ${hit.reason}`;
+    const before = expansionRoots(placing.before);
+    const after = expansionRoots(placing.after);
+    const { refused, dangling } = subtreeRefusals(before, after, (current ?? subtree) as unknown as BehaviourNode, subtree as unknown as BehaviourNode);
+    // An expanded node keeps its id in the definition as classKey: found there, it is inside a placement.
+    const reader = (nodeId: string | null | undefined) => {
+      const node = nodeId ? nodeIn([placing.after.root, ...placing.after.floating], nodeId) : undefined;
+      const key = node?.classKey;
+      // A node the edit adds is not stored yet: it is named as part of the element being edited.
+      const inner = key === undefined ? undefined
+        : page.findComponent(key) ?? (nodeIn([subtree as ComponentNode], key) ? page.findComponent(subtree.id) : undefined);
+      if (inner) return { inside: true, name: `${quoted(inner.displayName ?? 'an element')} in ${quoted(placing.definition)}` };
+      const own = nodeId ? placing.findComponent(nodeId)?.displayName : undefined;
+      return { inside: false, name: own ? quoted(own) : 'an element' };
+    };
+    const hard = refused[0];
+    if (hard) return `it would stop ${reader(hard.nodeId).name} working on ${quoted(placing.name)}: ${hard.reason}`;
+    const outside = dangling.map((refusal) => reader(refusal.nodeId)).find((found) => !found.inside);
+    if (outside) return `it would stop ${outside.name} working on ${quoted(placing.name)}: it names something this removes`;
   }
   return null;
 }
