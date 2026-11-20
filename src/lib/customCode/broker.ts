@@ -16,19 +16,21 @@
 //     `load` of the frame removes it, and so does no `hello` within 5 seconds of
 //     the frame's `load`;
 //   - transfers one port of a MessageChannel with `connect`, and from then on
-//     reads only that port, under every rule of the protocol: at most 64
-//     kilobytes and 30 messages a second, a declared write of the right type
-//     within `min`, `max` and `options`, never `text` state, a declared
+//     reads only that port, under every rule of the protocol: plain data of at
+//     most 64 kilobytes as JSON, 30 messages a second (counted with the frame's
+//     window messages; past 90 the frame is removed), a declared write of the
+//     right type within `min`, `max` and `options`, never `text` state, a declared
 //     `custom:<name>` (which runs state verbs only, Kit.emit), `resize` only for
-//     `sizing: 'content'`, 10 a second, up to 10,000 pixels; anything else is
-//     dropped with a console warning naming the block;
+//     `sizing: 'content'`, among the second's first 10 messages, up to 10,000
+//     pixels; anything else is dropped, with one console warning a frame;
 //   - sends each declared read at `connect` and on every change, read from the
 //     `data-fcs-<id>` attribute the runtime reflects on the state's scope, which
 //     is never written for `text` state;
 //   - pings every 5 seconds, and removes a frame that left three pings unanswered;
 //   - removes an interactive frame that took the keyboard three times while the
-//     pointer was not over it and no Tab was pressed in the page, and a frame that
-//     is not interactive the first time (decision D8, see the plan, "Decided in slice C3").
+//     visitor was typing in the page, or while the pointer was not over it and no
+//     Tab was pressed in the page, and a frame that is not interactive the first
+//     time (decisions D8 and D71, see the plan, "Decided in slice C3").
 //
 // Whatever a frame does, the page goes on: every failure takes the frame away and
 // leaves the fallback, for good. At most 4 blocks per page.
@@ -42,8 +44,9 @@ import { serveBlocks, type BlockHandle, type BlockState } from './registry';
 
 // The protocol's numbers, as contract.ts (BOX_LIMITS) states them, are written where they are
 // used: at most 4 blocks a page; `hello` within 5 s of `load`; a ping every 5 s, 3 missed remove
-// the frame; 64 KB and 30 messages a second; 10 resizes a second, up to 10,000 pixels; 3 thefts
-// of the keyboard; a Tab in the page within 1 s explains a move. Literals, not names: esbuild
+// the frame; 64 KB and 30 messages a second, 90 remove the frame; resizes among a second's first 10
+// messages, up to 10,000 pixels; 3 thefts of the keyboard; a Tab in the page within 1 s explains a
+// move, typing in it within 0.5 s does not. Literals, not names: esbuild
 // keeps a module's constants as variables, and every byte counts against the 2 kilobyte limit.
 // The bridge tests in the browser hold each number.
 
@@ -58,17 +61,17 @@ export const fits = (state: BlockState | undefined, value: unknown): boolean => 
       : type === 'choice' && !!options && options.includes(value as string);
 };
 
-/** A count per second: true once it goes past `limit` in the current second. */
-const meter = (limit: number, now: () => number) => {
-  let start = -Infinity;
-  let count = 0;
-  return (): boolean => {
-    if (now() - start > 1000) {
-      start = now();
-      count = 0;
-    }
-    return ++count > limit;
-  };
+/**
+ * JSON.stringify's replacer for a frame's message: throws at anything but plain data. A cloned plain object or
+ * array has its realm's Object or Array as constructor; a Map, a Set, a buffer, a typed array or a Blob has its
+ * own (and an own `constructor` key holding something else is refused with them). A cycle or a bigint makes JSON.stringify throw itself.
+ * A Date reaches it as its string (toJSON runs first), which is plain.
+ */
+const plain = (_: string, value: unknown): unknown => {
+  const kind = value && (value as object).constructor;
+  // `kind` is null for null, and for a primitive its wrapper, which `typeof` leaves out.
+  if (kind && kind != Object && kind != Array && typeof value == 'object') throw 0;
+  return value;
 };
 
 export const createBroker = (kit: Kit): (() => void) => {
@@ -78,10 +81,16 @@ export const createBroker = (kit: Kit): (() => void) => {
   const frames = new Map<Element, (late: boolean) => void>();
   let blocks = 0;
   let tabAt = -Infinity;
+  let typedAt = -Infinity;
 
-  /** A person's move: a Tab in the page, or the pointer entering a frame. */
+  /**
+   * A person's move: a Tab in the page, or the pointer entering a frame. And typing: a key other than Tab
+   * in the page, which a Tab forgets (it moves the keyboard on purpose).
+   */
   const onKey = (event: Event): void => {
-    if (event.type[0] == 'p' || (event as KeyboardEvent).key === 'Tab') tabAt = now();
+    const key = (event as KeyboardEvent).key;
+    if (event.type[0] == 'p' || key == 'Tab') tabAt = now();
+    typedAt = key == 'Tab' ? -Infinity : key ? now() : typedAt;
   };
   // Where the keyboard went is read a task after any focus or blur in the page, the window's own
   // included (caught in the capture phase): Chromium blurs the window when a frame takes the keyboard,
@@ -107,6 +116,12 @@ export const createBroker = (kit: Kit): (() => void) => {
   const serve = ({ el, block, settle }: BlockHandle): (() => void) => {
     const { title, reads, writes, emits, sizing, interactive, states } = block;
     const say = (why: string): void => console.warn('Custom code "' + title + '": ' + why);
+    // One warning a frame, at its first wrong message (or its first reported error), so a frame cannot fill
+    // the page's console: every later one is dropped silently.
+    let warned = 0;
+    const note = (): void => {
+      if (!warned++) say('dropped a message or error, then silent');
+    };
     // A fifth block: the server draws only four, so this is never run. The address is the server's
     // (boxPath, from the site's id and a stored hash), and the page's enforced frame-src and its per-site
     // <meta> admit only that site's box path, so it is not checked again here.
@@ -123,10 +138,11 @@ export const createBroker = (kit: Kit): (() => void) => {
     let loads = 0;
     let missed = 0;
     let thefts = 0;
+    // The frame's messages this second, on its port and to the window alike.
+    let second = -Infinity;
+    let count = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let pinger: ReturnType<typeof setInterval> | undefined;
-    const tooMany = meter(30, now);
-    const tooOften = meter(10, now);
     const scopeOf = (id: string) => el.closest('[' + stateAttribute(id) + ']');
     const watcher = new MutationObserver((records) => records.forEach((record) => send((record.attributeName as string).slice(9))));
     // Within one viewport of the screen, in any direction.
@@ -166,28 +182,48 @@ export const createBroker = (kit: Kit): (() => void) => {
       if (text != null && value != null) post({ kind: 'state', id, value });
     };
 
+    /**
+     * Counts one message of the frame: true past 30 this second. Past 90 in a second the frame is removed: every
+     * message costs the page a task, so a flood ends rather than being dropped message by message.
+     */
+    const over = (): boolean => {
+      if (now() - second > 1000) {
+        second = now();
+        count = 0;
+      }
+      if (++count > 90) end('flooded');
+      return count > 30;
+    };
+
     /** One message on the port, under every rule of the protocol. */
     const onPort = ({ data }: MessageEvent): void => {
-      if (tooMany()) return say('dropped a message over 30 a second');
-      let size = Infinity;
+      if (over()) return note();
+      // Its size as JSON, when it is plain data: primitives, arrays and plain objects only. A buffer, a typed
+      // array, a Map or a Set says nothing as JSON however large it is, so such a message is refused.
+      let size = -1;
       try {
-        size = new Blob([JSON.stringify(data)]).size;
+        size = new Blob([JSON.stringify(data, plain)]).size;
       } catch {
-        // Not something JSON can say: dropped below.
+        // Not plain data.
       }
-      if (!(size <= 65536)) return say('dropped a message over 64 KB');
-      const kind = data && data.kind;
+      // Not plain data after any earlier wrong message (the first is warned of) removes the frame.
+      if (size < 0) return warned ? end('not plain data') : note();
+      if (size > 65536) return note();
+      const kind = data.kind;
       if (kind === 'pong') missed = 0;
       else if (kind === 'setState' && writes.includes(data.id) && fits(states[data.id], data.value)) kit.write(data.id, data.value, el);
       else if (kind === 'emit' && emits.includes(data.name)) kit.emit(data.name.slice(7), el);
-      else if (kind === 'resize' && sizing === 'content' && !tooOften() && typeof data.height == 'number' && data.height >= 0) {
+      else if (kind === 'resize' && sizing === 'content' && count <= 10 && typeof data.height == 'number' && data.height >= 0) {
         (frame as HTMLIFrameElement).style.height = Math.min(data.height, 10_000) + 'px';
-      } else say(kind === 'error' ? String(data.message).slice(0, 500) : 'dropped a message');
+      } else note();
     };
 
     const onMessage = (event: MessageEvent): void => {
       const data = event.data;
-      if (!frame || event.source !== frame.contentWindow || event.origin !== 'null' || !data || data.fc !== 1 || data.kind !== 'hello') return;
+      if (!frame || event.source !== frame.contentWindow) return;
+      // Every window message of the frame counts against the same ceiling as its port, before hello and after.
+      over();
+      if (gone || event.origin !== 'null' || !data || data.fc !== 1 || data.kind !== 'hello') return;
       if (hello) return end('a second hello');
       hello = true;
       clearTimeout(timer);
@@ -204,9 +240,8 @@ export const createBroker = (kit: Kit): (() => void) => {
       reads.forEach(send);
       pinger = setInterval(() => {
         onFocus(true);
-        if (missed >= 3) return end('3 pings unanswered');
-        missed += 1;
-        post({ kind: 'ping' });
+        if (missed++ > 2) end('no pong');
+        else post({ kind: 'ping' });
       }, 5000);
     };
 
@@ -228,16 +263,18 @@ export const createBroker = (kit: Kit): (() => void) => {
       }
       made.addEventListener('load', () => {
         if (++loads > 1) return end('loaded twice');
-        if (!hello) timer = setTimeout(() => end('no hello within 5 s'), 5000);
+        if (!hello) timer = setTimeout(() => end('no hello'), 5000);
       });
       addEventListener('message', onMessage);
       // A person's move explains the frame having the keyboard: the pointer over it now, or the pointer
       // entering a frame or a Tab in the page within the last second, or within 6 seconds when only a ping
       // saw the move.
       made.addEventListener('pointerover', onKey);
+      // Typing in the page within half a second before the move explains nothing, pointer or not: a person
+      // stops typing before reaching for a frame, a frame that grabs the keyboard under the pointer does not wait.
       frames.set(made, (late) => {
         if (!interactive) return end('took the keyboard');
-        if (!made.matches(':hover') && now() - tabAt > (late ? 6000 : 1000) && ++thefts >= 3) end('took the keyboard 3 times');
+        if ((now() - typedAt < 500 || (!made.matches(':hover') && now() - tabAt > (late ? 6000 : 1000))) && ++thefts >= 3) end('took the keyboard 3 times');
       });
       made.src = block.src;
       el.appendChild(made);
