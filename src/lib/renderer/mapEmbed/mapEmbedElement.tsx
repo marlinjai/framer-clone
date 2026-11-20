@@ -125,13 +125,15 @@ export interface MapPlaceholderOptions {
    * "Open in Google Maps" is the way to the map.
    */
   cookiesBlocked?: boolean;
+  /** With onReload: the visitor has edited a field on the page, so the note says a reload clears it. */
+  reloadClears?: boolean;
 }
 
 /**
  * The placeholder: the address, a note that loading the map sends data to Google,
  * the "Load map" button and "Open in Google Maps", a plain link that needs no consent.
  */
-export function mapPlaceholder(view: MapEmbedView, { onLoad, liveLink, onReload, cookiesBlocked }: MapPlaceholderOptions): React.ReactElement {
+export function mapPlaceholder(view: MapEmbedView, { onLoad, liveLink, onReload, cookiesBlocked, reloadClears }: MapPlaceholderOptions): React.ReactElement {
   const { copy } = view;
   return (
     <div data-fc-map-placeholder="" role="group" aria-label={copy.region} style={PLACEHOLDER_STYLE}>
@@ -140,7 +142,7 @@ export function mapPlaceholder(view: MapEmbedView, { onLoad, liveLink, onReload,
         <p data-fc-map-cookies-note="" role="status" style={{ margin: 0, maxWidth: 420, fontSize: 13 }}>{copy.cookiesBlocked}</p>
       ) : view.src && onReload ? (
         <>
-          <p data-fc-map-reload-note="" role="status" style={{ margin: 0, maxWidth: 420, fontSize: 13 }}>{copy.reloadNote}</p>
+          <p data-fc-map-reload-note="" role="status" style={{ margin: 0, maxWidth: 420, fontSize: 13 }}>{reloadClears ? `${copy.reloadNote} ${copy.reloadClears}` : copy.reloadNote}</p>
           <button type="button" data-fc-map-reload="" onClick={onReload} style={BUTTON_STYLE}>
             {copy.reload}
           </button>

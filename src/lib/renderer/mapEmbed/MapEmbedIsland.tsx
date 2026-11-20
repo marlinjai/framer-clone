@@ -39,6 +39,8 @@ interface ConsentApi {
   mapsAtLoad?: boolean;
   /** Whether the maps cookie is set now. False after a yes means the browser blocks cookies. */
   mapsAllowed?: () => boolean;
+  /** Whether the visitor has edited a field still on the page, which a reload would clear. */
+  edited?: () => boolean;
   /** The runtime's reload, which drops the `#cookie-settings` address first so the banner stays shut. */
   reload?: () => void;
 }
@@ -226,6 +228,8 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
   const kept = refused ? cookieKept() : true;
   const needsReload = refused && kept;
   const cookiesBlocked = refused && !kept;
+  // A yes held because the visitor typed on the page: the note says a reload clears it.
+  const reloadClears = needsReload && consentApi()?.edited?.() === true;
   const reloadHere = useCallback(() => {
     // This box's own reload: the new page focuses it, as after the runtime's.
     if (host.current) writeFocusMark({ path: window.location.pathname, index: boxIndex(host.current) });
@@ -265,7 +269,7 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
       style={MAP_FRAME_STYLE}
     />
   ) : (
-    mapPlaceholder(view, { onLoad: load, liveLink: true, onReload: needsReload ? reloadHere : undefined, cookiesBlocked })
+    mapPlaceholder(view, { onLoad: load, liveLink: true, onReload: needsReload ? reloadHere : undefined, cookiesBlocked, reloadClears })
   );
   return React.createElement(
     'div',

@@ -336,6 +336,8 @@ export interface MapEmbedCopy {
   reloadNote: string;
   /** The button that loads that new page. */
   reload: string;
+  /** Said with reloadNote when the visitor has edited a field on the page, which a reload clears. */
+  reloadClears: string;
   /** Shown after a "yes" where the browser blocks cookies: no page here can show the map. */
   cookiesBlocked: string;
   privacyLink: string;
@@ -351,6 +353,7 @@ const COPY: Record<LegalLanguage, MapEmbedCopy> = {
     empty: 'Hier ist noch keine Karte hinterlegt.',
     reloadNote: 'Laden Sie die Seite neu, um die Karte anzuzeigen.',
     reload: 'Seite neu laden',
+    reloadClears: 'Was Sie auf dieser Seite eingegeben haben, geht dabei verloren.',
     cookiesBlocked: 'Die Karte kann nicht angezeigt werden, solange dieser Browser Cookies blockiert. Öffnen Sie sie in Google Maps.',
     privacyLink: 'Datenschutzerklärung',
   },
@@ -363,6 +366,7 @@ const COPY: Record<LegalLanguage, MapEmbedCopy> = {
     empty: 'No map has been set here yet.',
     reloadNote: 'Reload the page to show the map.',
     reload: 'Reload page',
+    reloadClears: 'Reloading clears what you typed on this page.',
     cookiesBlocked: 'The map cannot be shown while this browser blocks cookies. Open it in Google Maps instead.',
     privacyLink: 'Privacy policy',
   },

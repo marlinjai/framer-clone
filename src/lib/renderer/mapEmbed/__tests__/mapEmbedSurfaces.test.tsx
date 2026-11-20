@@ -19,7 +19,7 @@ import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!5e0';
 const cmsRepo = { listRows: async () => ({ rows: [], total: 0 }), getRow: async () => null } as unknown as CmsReadRepository;
 
-type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void; mapsAtLoad?: boolean; mapsAllowed?: () => boolean; reload?: (...args: unknown[]) => void } };
+type Win = Window & { __lumitraConsent?: { get: (c?: string) => string | null; open: (c?: string) => void; mapsAtLoad?: boolean; mapsAllowed?: () => boolean; edited?: () => boolean; reload?: (...args: unknown[]) => void } };
 const win = window as Win;
 
 afterEach(() => {
@@ -219,6 +219,16 @@ describe('the island', () => {
       });
       expect(shadowRoot()!.activeElement).toBe(own().getByRole('link', { name: 'Open in Google Maps' }));
     });
+  });
+
+  it('says a reload clears what the visitor typed, when that is why the yes was held', () => {
+    win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => true, edited: () => true };
+    render(<MapEmbedIsland domProps={{}} config={config} />);
+    expect(own().getByRole('status').textContent).toBe('Reload the page to show the map. Reloading clears what you typed on this page.');
+    cleanup();
+    win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => true, edited: () => false };
+    render(<MapEmbedIsland domProps={{}} config={config} />);
+    expect(own().getByRole('status').textContent).toBe('Reload the page to show the map.');
   });
 
   it('moves focus to the reload button when the yes this box asked for cannot show the map', () => {
