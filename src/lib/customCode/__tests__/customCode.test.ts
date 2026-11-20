@@ -95,12 +95,25 @@ describe('parseCustomCode', () => {
     ['a title with two presentation selectors after a pictograph', { sha256: HASH, title: '\u2764\ufe0f\ufe0f' }],
     ['a title only of an object replacement character', { sha256: HASH, title: '\ufffc' }],
     ['a title with an object replacement character', { sha256: HASH, title: 'Scene \ufffc' }],
-    ['a title with one more code point in a character than the cap', { sha256: HASH, title: `H${'\u0301'.repeat(10)}` }],
+    ['a title with one more code point in a character than the cap', { sha256: HASH, title: `H${'\u0301'.repeat(12)}` }],
     ['a title with Khmer inherent vowels between letters', { sha256: HASH, title: 'M\u17b4a\u17b5p' }],
     ['a title with an unassigned default-ignorable code point', { sha256: HASH, title: `Map${String.fromCodePoint(0xe0080)}` }],
     ['a title with the last default-ignorable code point', { sha256: HASH, title: `Map${String.fromCodePoint(0xe0fff)}` }],
     ['a title with a Hangul filler', { sha256: HASH, title: 'Map\uffa0' }],
     ['a title with a zero-width joiner after a pictograph', { sha256: HASH, title: '\u2764\u200d' }],
+    ['a title with a zero-width joiner before a pictograph', { sha256: HASH, title: '\u200d\ud83d\udcbb' }],
+    ['a title with two zero-width joiners between pictographs', { sha256: HASH, title: '\ud83d\udc69\u200d\u200d\ud83d\udcbb' }],
+    ['a title with a zero-width joiner between a letter and a pictograph', { sha256: HASH, title: 'a\u200d\ud83d\udcbb' }],
+    ['a title with a zero-width non-joiner between pictographs', { sha256: HASH, title: '\ud83d\udc69\u200c\ud83d\udcbb' }],
+    ['a title with a zero-width non-joiner between Latin letters', { sha256: HASH, title: 'a\u200cb' }],
+    ['a title with a zero-width non-joiner at the end of a Persian word', { sha256: HASH, title: '\u06a9\u062a\u0627\u0628\u200c' }],
+    ['a title with a zero-width non-joiner at the start of a Persian word', { sha256: HASH, title: '\u200c\u06a9\u062a\u0627\u0628' }],
+    ['a title with two zero-width non-joiners between Arabic letters', { sha256: HASH, title: '\u06a9\u062a\u0627\u0628\u200c\u200c\u0647\u0627' }],
+    ['a title with a zero-width joiner between a Latin and an Arabic letter', { sha256: HASH, title: 'a\u200d\u0647' }],
+    ['a title with a zero-width joiner after a Sinhala word and a space', { sha256: HASH, title: '\u0dc1\u0dca\u200d \u0dbb' }],
+    ['a title with the flag of England, spelled in tag characters', { sha256: HASH, title: '\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f' }],
+    ['a title with a digit and an emoji presentation selector but no keycap', { sha256: HASH, title: '1\ufe0f' }],
+    ['a title with a number sign and an emoji presentation selector but no keycap', { sha256: HASH, title: '#\ufe0f' }],
     ['a title with 150 combining marks on one letter', { sha256: HASH, title: `H${'\u0301'.repeat(150)}` }],
     ['a proposal title with an override', { proposal: 'p1', title: '\u202dx' }],
     ['a title too long', { sha256: HASH, title: 'x'.repeat(201) }],
@@ -143,8 +156,31 @@ describe('parseCustomCode', () => {
       'လျှော့ဈေး',
       // Pointed Hebrew with an accent and a meteg: five marks on the shin.
       '\u05e9\u05c1\u05bc\u05b8\u05a5\u05bdלוֹם',
-      // Ten code points in one character: the most a title may hold.
-      `H${'\u0301'.repeat(9)}`,
+      // Twelve code points in one character: the most a title may hold.
+      `H${'\u0301'.repeat(11)}`,
+    ];
+    for (const title of titles) expect(parseCustomCode({ sha256: HASH, title }), title).toEqual({ ok: true, value: { kind: 'block', sha256: HASH, title } });
+  });
+
+  it('keeps the joiners Persian, Sinhala, Marathi and joined emoji are written with', () => {
+    const titles = [
+      // Persian: "books" (plural suffix) and "I want" (verb prefix), each with a zero-width non-joiner.
+      '\u06a9\u062a\u0627\u0628\u200c\u0647\u0627',
+      '\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645',
+      // Sinhala: "Sri Lanka" and "sports", the zero-width joiner after a virama.
+      '\u0dc1\u0dca\u200d\u0dbb\u0dd3 \u0dbd\u0d82\u0d9a\u0dcf',
+      '\u0d9a\u0dca\u200d\u0dbb\u0dd3\u0da9\u0dcf',
+      // Marathi's eyelash ra: ra, virama, zero-width joiner, ya.
+      '\u0930\u094d\u200d\u092f',
+      // Sanskrit: nine code points in one conjunct.
+      '\u0915\u093e\u0930\u094d\u0924\u094d\u0938\u094d\u0928\u094d\u092f',
+      // A technologist, a rainbow flag (selector before the joiner), a family, a runner with a skin tone.
+      '\ud83d\udc69\u200d\ud83d\udcbb Our team',
+      '\ud83c\udff3\ufe0f\u200d\ud83c\udf08',
+      '\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67\u200d\ud83d\udc66',
+      '\ud83c\udfc3\ud83c\udffd\u200d\u2640\ufe0f',
+      // A kiss with two skin tones: ten code points in one character.
+      '\ud83d\udc69\ud83c\udffd\u200d\u2764\ufe0f\u200d\ud83d\udc8b\u200d\ud83d\udc68\ud83c\udffb',
     ];
     for (const title of titles) expect(parseCustomCode({ sha256: HASH, title }), title).toEqual({ ok: true, value: { kind: 'block', sha256: HASH, title } });
   });
@@ -155,8 +191,8 @@ describe('parseCustomCode', () => {
     try {
       const fresh = await import('../customCode');
       expect(fresh.parseCustomCode({ sha256: HASH, title: 'မျှော်လင့်ချက်' }).ok).toBe(true);
-      expect(fresh.parseCustomCode({ sha256: HASH, title: `H${'\u0301'.repeat(9)}` }).ok).toBe(true);
-      expect(fresh.parseCustomCode({ sha256: HASH, title: `H${'\u0301'.repeat(10)}` }).ok).toBe(false);
+      expect(fresh.parseCustomCode({ sha256: HASH, title: `H${'\u0301'.repeat(11)}` }).ok).toBe(true);
+      expect(fresh.parseCustomCode({ sha256: HASH, title: `H${'\u0301'.repeat(12)}` }).ok).toBe(false);
     } finally {
       vi.unstubAllGlobals();
       vi.resetModules();

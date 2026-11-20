@@ -56,7 +56,7 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
  * inherent vowels U+17B4 and U+17B5, the Mongolian selectors): invisible text an agent
  * reading the title would still see. Besides them, the blank braille pattern, which
  * draws nothing, and the object replacement character, which stands for something not
- * shown at all. An emoji joined with a zero-width joiner is refused with them.
+ * shown at all. The two joiners pass only where they shape visible text (see below).
  */
 const INVISIBLE_CHARACTERS = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\ufffc]/u;
 /**
@@ -66,12 +66,31 @@ const INVISIBLE_CHARACTERS = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\ufff
  */
 const PRESENTATION_AFTER_PICTOGRAPH = /(\p{Extended_Pictographic})[\ufe0e\ufe0f]/gu;
 const KEYCAP = /([0-9#*])\ufe0f(?=\u20e3)/gu;
+/** The scripts whose spelling needs the zero-width non-joiner or joiner: Arabic and Syriac, and the Indic scripts. */
+const JOINING_SCRIPT =
+  '\\p{sc=Arabic}\\p{sc=Syriac}\\p{sc=Devanagari}\\p{sc=Bengali}\\p{sc=Gurmukhi}\\p{sc=Gujarati}\\p{sc=Oriya}\\p{sc=Tamil}\\p{sc=Telugu}\\p{sc=Kannada}\\p{sc=Malayalam}\\p{sc=Sinhala}';
 /**
- * Most code points one user-perceived character may hold. Real scripts stay far below
- * (Burmese and pointed Hebrew reach four to six, a keycap three); a letter carrying a
- * pile of combining marks, a way to smear text or hide bytes, is refused.
+ * The zero-width non-joiner and joiner where a word needs them (decision D97): one,
+ * between two characters of a joining script, as Persian writes `\u06a9\u062a\u0627\u0628\u200c\u0647\u0627`
+ * ("books") and Sinhala `\u0dc1\u0dca\u200d\u0dbb\u0dd3` ("Sri"). Taken out before the check above;
+ * at a word's edge, doubled, or between Latin letters it is a hidden byte.
  */
-export const CUSTOM_CODE_TITLE_CLUSTER_MAX = 10;
+const SCRIPT_JOINER = new RegExp(`(?<=[${JOINING_SCRIPT}])[\\u200c\\u200d](?=[${JOINING_SCRIPT}])`, 'gu');
+/**
+ * One zero-width joiner between two pictographs, which draws them as one emoji (a
+ * technologist, a rainbow flag, a family); the left one may carry its presentation
+ * selector or a skin tone. The flags built from tag characters (England, Scotland,
+ * Wales) stay refused: their letters are hidden.
+ */
+const EMOJI_JOINER = /(?<=\p{Extended_Pictographic}(?:\ufe0f|\p{Emoji_Modifier})?)\u200d(?=\p{Extended_Pictographic})/gu;
+/**
+ * Most code points one user-perceived character may hold. Real text measured on the
+ * grapheme rules of Unicode 17 reaches ten: a kiss with two skin tones; Sanskrit's
+ * `\u0915\u093e\u0930\u094d\u0924\u094d\u0938\u094d\u0928\u094d\u092f` holds nine in one conjunct, ten with a joiner inside it. Twelve
+ * leaves that margin; a letter carrying a pile of combining marks, a way to smear text
+ * or hide bytes, is still refused.
+ */
+export const CUSTOM_CODE_TITLE_CLUSTER_MAX = 12;
 /** A character someone can see: a letter, a number, a symbol or a punctuation mark. */
 const VISIBLE_CHARACTER = /[\p{L}\p{N}\p{S}\p{P}]/u;
 /** Half of a surrogate pair without its other half: not a character at all. */
@@ -118,7 +137,7 @@ function readTitle(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   if (CONTROL_CHARACTERS.test(value.replace(/[\t\n\r]/g, ' '))) return null;
   if (LONE_SURROGATE.test(value)) return null;
-  if (INVISIBLE_CHARACTERS.test(value.replace(PRESENTATION_AFTER_PICTOGRAPH, '$1').replace(KEYCAP, '$1'))) return null;
+  if (INVISIBLE_CHARACTERS.test(value.replace(SCRIPT_JOINER, '').replace(EMOJI_JOINER, '').replace(PRESENTATION_AFTER_PICTOGRAPH, '$1').replace(KEYCAP, '$1'))) return null;
   if (largestCluster(value) > CUSTOM_CODE_TITLE_CLUSTER_MAX) return null;
   const title = value.replace(/\s+/g, ' ').trim();
   // Not blank: a title made only of spaces and marks would name nothing.

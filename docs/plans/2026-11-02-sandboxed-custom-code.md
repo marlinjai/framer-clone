@@ -876,15 +876,25 @@ number, symbol or punctuation mark. They change how a title reads without being 
 `title` from C3. Also refused: the variation selectors that make no visible choice and can carry hidden bytes after any letter (U+FE00 to
 U+FE0D, U+E0100 to U+E01EF, and the Mongolian ones U+180B to U+180F), the object replacement character U+FFFC, every default-ignorable code point
 (Unicode's Default_Ignorable_Code_Point, which also covers the Khmer inherent vowels U+17B4 and U+17B5 and the unassigned U+E0080 to
-U+E0FFF; it replaced most of the hand-written list after the fifth review), and more than ten code points in one grapheme cluster, the
-character a reader sees (counted with `Intl.Segmenter`, or as a base and its marks where a runtime has none). The fourth review's first
-cap, five marks in a row, refused everyday Burmese ("hope", "discount sale") and pointed Hebrew with an accent and a meteg; those reach
-four to six code points in a character, while a letter under 150 marks is still refused. The text and emoji
-presentation selectors U+FE0E and U+FE0F pass once, right after a pictograph, and in a keycap (`1`, U+FE0F, U+20E3). An emoji joined
-with a zero-width joiner is refused with them; titles in any script, right-to-left ones included, single emoji, an emoji with its
-presentation selector and a keycap still pass. Found by the second review of pull request #450, widened from a hand-written list to
-the category after the third, to the variation selectors, U+FFFC and stacked marks after the fourth, and to the default-ignorables and
-the per-character cap after the fifth.
+U+E0FFF; it replaced most of the hand-written list after the fifth review), and more than twelve code points in one grapheme cluster,
+the character a reader sees (counted with `Intl.Segmenter`, or as a base and its marks where a runtime has none). The fourth review's
+first cap, five marks in a row, refused everyday Burmese ("hope", "discount sale") and pointed Hebrew with an accent and a meteg; those
+reach four to six code points in a character, while a letter under 150 marks is still refused. The fifth review's cap of ten left no
+margin: measured on Node 22 (Unicode 17, whose grapheme rules join an Indic conjunct into one character), Sanskrit `कार्त्स्न्य` holds
+nine code points in one character, ten with a joiner inside the conjunct, and a kiss emoji with two skin tones holds ten, so the sixth
+review raised it to twelve; a runtime on older Unicode data splits conjuncts smaller, which only lowers the count. The text and emoji
+presentation selectors U+FE0E and U+FE0F pass once, right after a pictograph, and in a keycap (`1`, U+FE0F, U+20E3); a digit with
+U+FE0F and no keycap is refused. The zero-width non-joiner U+200C and joiner U+200D pass in two places only: one between two characters
+of a script whose spelling needs them (Arabic and Syriac, Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada,
+Malayalam and Sinhala), as Persian writes `کتاب‌ها` ("books") and `می‌خواهم` ("I want"), Sinhala `ශ්‍රී ලංකා` and Marathi its eyelash ra; and
+one zero-width joiner between two pictographs, the left one optionally carrying its presentation selector or a skin tone, which draws
+them as one emoji (a technologist, a rainbow flag, a family). That reverses the earlier refusal of joined emoji (decided by the
+coordinator with the sixth review): a single joiner between two visible pictographs carries no hidden payload. A joiner at a word's edge,
+doubled, between Latin letters or across scripts is still refused. The subdivision flags (England, Scotland, Wales) stay refused,
+because their letters are tag characters, which are hidden text. Titles in any script, right-to-left ones included, single and joined
+emoji, an emoji with its presentation selector and a keycap pass. Found by the second review of pull request #450, widened from a
+hand-written list to the category after the third, to the variation selectors, U+FFFC and stacked marks after the fourth, and to the
+default-ignorables and the per-character cap after the fifth; the joiners were let back in after the sixth.
 
 **D98. Nothing is bound into a custom code block's value.** `applyBindings` (`src/lib/bindings/resolver/applyBindings.ts`) skips a
 binding into `customCode` or any path below it, as it does for `behaviour` and FX scenes, so page data and the address bar can neither
