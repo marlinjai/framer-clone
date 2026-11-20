@@ -2,7 +2,7 @@
 // reads (src/lib/customCode/customCode.ts). Every malformed shape is refused, and
 // the kill switch reads exactly as the box reads it.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   boxFrameSource,
   customCodePreviewHref,
@@ -95,7 +95,12 @@ describe('parseCustomCode', () => {
     ['a title with two presentation selectors after a pictograph', { sha256: HASH, title: '\u2764\ufe0f\ufe0f' }],
     ['a title only of an object replacement character', { sha256: HASH, title: '\ufffc' }],
     ['a title with an object replacement character', { sha256: HASH, title: 'Scene \ufffc' }],
-    ['a title with five combining marks on one letter', { sha256: HASH, title: `H${'\u0301\u0302\u0303\u0304\u0305'}` }],
+    ['a title with one more code point in a character than the cap', { sha256: HASH, title: `H${'\u0301'.repeat(10)}` }],
+    ['a title with Khmer inherent vowels between letters', { sha256: HASH, title: 'M\u17b4a\u17b5p' }],
+    ['a title with an unassigned default-ignorable code point', { sha256: HASH, title: `Map${String.fromCodePoint(0xe0080)}` }],
+    ['a title with the last default-ignorable code point', { sha256: HASH, title: `Map${String.fromCodePoint(0xe0fff)}` }],
+    ['a title with a Hangul filler', { sha256: HASH, title: 'Map\uffa0' }],
+    ['a title with a zero-width joiner after a pictograph', { sha256: HASH, title: '\u2764\u200d' }],
     ['a title with 150 combining marks on one letter', { sha256: HASH, title: `H${'\u0301'.repeat(150)}` }],
     ['a proposal title with an override', { proposal: 'p1', title: '\u202dx' }],
     ['a title too long', { sha256: HASH, title: 'x'.repeat(201) }],
@@ -133,10 +138,29 @@ describe('parseCustomCode', () => {
       // Tibetan with subjoined letters and a vowel sign.
       'བསྒྲུབས',
       'ที่นี่',
-      // Four marks on one letter: the most a title may stack.
-      `H${'\u0301\u0302\u0303\u0304'}`,
+      // Burmese: "hope" and "discount sale", four code points in a character.
+      'မျှော်လင့်ချက်',
+      'လျှော့ဈေး',
+      // Pointed Hebrew with an accent and a meteg: five marks on the shin.
+      '\u05e9\u05c1\u05bc\u05b8\u05a5\u05bdלוֹם',
+      // Ten code points in one character: the most a title may hold.
+      `H${'\u0301'.repeat(9)}`,
     ];
     for (const title of titles) expect(parseCustomCode({ sha256: HASH, title }), title).toEqual({ ok: true, value: { kind: 'block', sha256: HASH, title } });
+  });
+
+  it('caps a character by its marks where the runtime has no grapheme splitter', async () => {
+    vi.resetModules();
+    vi.stubGlobal('Intl', { ...Intl, Segmenter: undefined });
+    try {
+      const fresh = await import('../customCode');
+      expect(fresh.parseCustomCode({ sha256: HASH, title: 'မျှော်လင့်ချက်' }).ok).toBe(true);
+      expect(fresh.parseCustomCode({ sha256: HASH, title: `H${'\u0301'.repeat(9)}` }).ok).toBe(true);
+      expect(fresh.parseCustomCode({ sha256: HASH, title: `H${'\u0301'.repeat(10)}` }).ok).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
   });
 
   it('accepts an object without a prototype, and reads each field once', () => {

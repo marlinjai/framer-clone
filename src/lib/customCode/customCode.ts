@@ -50,23 +50,28 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
  * (Unicode category Cf: the bidirectional marks, embeddings, overrides and isolates, so
  * a title cannot read backwards in the editor or, from slice C3, in a frame's `title`;
  * the zero-width characters; the soft hyphen; the byte order mark; the interlinear
- * annotation marks; and the tag characters, invisible text that an agent reading the
- * title would still see), the combining grapheme joiner, and the blank fillers that
- * draw nothing yet count as letters or symbols (the Hangul fillers and the blank braille
- * pattern). An emoji joined with a zero-width joiner is refused with them. So are the
- * variation selectors that carry no visible choice and can hide bytes after any letter
- * (U+FE00 to U+FE0D, U+E0100 to U+E01EF, the Mongolian ones U+180B to U+180F), and the
- * object replacement character, which stands for something not shown at all.
+ * annotation marks) and every default-ignorable code point, which a renderer draws as
+ * nothing (the tag characters and the rest of U+E0000 to U+E0FFF, assigned or not, all
+ * the variation selectors, the combining grapheme joiner, the Hangul fillers, the Khmer
+ * inherent vowels U+17B4 and U+17B5, the Mongolian selectors): invisible text an agent
+ * reading the title would still see. Besides them, the blank braille pattern, which
+ * draws nothing, and the object replacement character, which stands for something not
+ * shown at all. An emoji joined with a zero-width joiner is refused with them.
  */
-const INVISIBLE_CHARACTERS = /[\p{Cf}\u034f\u115f\u1160\u3164\uffa0\u2800\u180b-\u180f\ufe00-\ufe0d\u{e0100}-\u{e01ef}\ufffc]/u;
+const INVISIBLE_CHARACTERS = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\ufffc]/u;
 /**
- * The text and emoji presentation selectors, allowed once, right after a pictograph
- * (`\u2764\ufe0f`), and in a keycap (`1\ufe0f\u20e3`); anywhere else they are hidden bytes.
+ * The text and emoji presentation selectors where they make a visible choice: once,
+ * right after a pictograph (`\u2764\ufe0f`), and in a keycap (`1\ufe0f\u20e3`). Taken
+ * out before the check above; anywhere else they are hidden bytes like the others.
  */
-const KEYCAP = /[0-9#*]\ufe0f\u20e3/gu;
-const STRAY_PRESENTATION_SELECTOR = /(?<!\p{Extended_Pictographic})[\ufe0e\ufe0f]/u;
-/** More combining marks on one character than any script stacks (Hebrew points, Tibetan stacks and Vietnamese take three at most). */
-const STACKED_MARKS = /\p{M}{5,}/u;
+const PRESENTATION_AFTER_PICTOGRAPH = /(\p{Extended_Pictographic})[\ufe0e\ufe0f]/gu;
+const KEYCAP = /([0-9#*])\ufe0f(?=\u20e3)/gu;
+/**
+ * Most code points one user-perceived character may hold. Real scripts stay far below
+ * (Burmese and pointed Hebrew reach four to six, a keycap three); a letter carrying a
+ * pile of combining marks, a way to smear text or hide bytes, is refused.
+ */
+export const CUSTOM_CODE_TITLE_CLUSTER_MAX = 10;
 /** A character someone can see: a letter, a number, a symbol or a punctuation mark. */
 const VISIBLE_CHARACTER = /[\p{L}\p{N}\p{S}\p{P}]/u;
 /** Half of a surrogate pair without its other half: not a character at all. */
@@ -84,6 +89,25 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+/** Grapheme clusters, the characters a reader sees, where the runtime can split them. */
+let graphemes: Intl.Segmenter | null | undefined;
+
+/**
+ * The most code points in one character of the text. Node, every current browser and
+ * the edge runtime have Intl.Segmenter; without it a character is counted as a base and
+ * the combining marks that follow it, which is what the cap is about.
+ */
+function largestCluster(text: string): number {
+  if (graphemes === undefined) graphemes = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  let largest = 0;
+  if (graphemes) {
+    for (const { segment } of graphemes.segment(text)) largest = Math.max(largest, [...segment].length);
+    return largest;
+  }
+  for (const run of text.match(/\P{M}?\p{M}*/gu) ?? []) largest = Math.max(largest, [...run].length);
+  return largest;
+}
+
 /**
  * The title as shown: white space runs folded to one space and trimmed. A title
  * that is not a string, is empty, is longer than CUSTOM_CODE_TITLE_MAX, or holds a
@@ -93,8 +117,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function readTitle(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   if (CONTROL_CHARACTERS.test(value.replace(/[\t\n\r]/g, ' '))) return null;
-  if (INVISIBLE_CHARACTERS.test(value) || LONE_SURROGATE.test(value)) return null;
-  if (STRAY_PRESENTATION_SELECTOR.test(value.replace(KEYCAP, '#')) || STACKED_MARKS.test(value)) return null;
+  if (LONE_SURROGATE.test(value)) return null;
+  if (INVISIBLE_CHARACTERS.test(value.replace(PRESENTATION_AFTER_PICTOGRAPH, '$1').replace(KEYCAP, '$1'))) return null;
+  if (largestCluster(value) > CUSTOM_CODE_TITLE_CLUSTER_MAX) return null;
   const title = value.replace(/\s+/g, ' ').trim();
   // Not blank: a title made only of spaces and marks would name nothing.
   if (!VISIBLE_CHARACTER.test(title)) return null;
