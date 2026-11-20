@@ -130,8 +130,10 @@ function IslandBody({
   // Recurse back into the server walk for island descendants (e.g. an
   // add-to-cart inside a variant-selector), keeping the binding scope intact so
   // {{variant.*}} / {{availability.*}} re-resolve to the visitor's selection.
+  // Each child stands in the island's host element, whose tag it is told (a void-tag
+  // custom code block's box needs it, customCodeBoxTag).
   const renderNode = (child: ComponentInstance, childScope: BindingScope) =>
-    renderComponentNode(child as unknown as ComponentNode, childScope, (child as any).id);
+    renderComponentNode(child as unknown as ComponentNode, childScope, (child as any).id, false, false, hostType);
 
   switch (kind) {
     case 'variant-selector':

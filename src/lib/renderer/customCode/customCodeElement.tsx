@@ -150,14 +150,6 @@ function tileOf(parsed: CustomCodeParse, previewHref: string | null): React.Reac
 const TILE_HOST_TAGS: ReadonlySet<string> = new Set(['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'figure', 'blockquote', 'li', 'dd', 'td', 'th']);
 
 /**
- * Parents whose content is phrasing (or transparent, so possibly inside a paragraph): a
- * `div` there closes an open `p` when the browser parses the page, so the box is a `span`.
- */
-const PHRASING_PARENTS: ReadonlySet<string> = new Set(
-  'p h1 h2 h3 h4 h5 h6 span a em strong b i u s small mark abbr cite code dfn kbd q samp sub sup time var bdi bdo data label button legend summary dt pre output ruby rt rp del ins object canvas audio video map'.split(' '),
-);
-
-/**
  * Parents that hold only their own kinds of children (a table's structure, a select,
  * an option group, an option): the browser's parser moves any box out of them or drops
  * it, so a void-tag block there is not drawn at all.
@@ -168,19 +160,17 @@ const NO_BOX_PARENTS: ReadonlySet<string> = new Set(['table', 'thead', 'tbody', 
  * The tag a block's box is drawn in on the published page and the standalone preview
  * (decision D96): its own, unless that is a void tag, which cannot hold the fallback.
  * Then a container the parser leaves where it stands: a `g` inside `svg`, an `mrow`
- * inside `math`, a `span` under a phrasing parent, a `div` elsewhere; null (draw
- * nothing) under a parent that holds only its own kinds of children. A `div` in the
- * wrong place would be moved by the browser when it parses the page, and the page
- * would no longer match what hydration draws.
+ * inside `math`, and a `span` anywhere in HTML, since a `span` never closes an open
+ * paragraph however deep inside it the block sits (a `div` would, and the page would
+ * no longer match what hydration draws); null (draw nothing) under a parent that holds
+ * only its own kinds of children, out of which the parser would move any box.
  */
 export function customCodeBoxTag(tag: string, foreign: ForeignContent = false, parentTag: string | null = null): string | null {
   if (!isVoidTag(tag)) return tag;
   if (foreign === 'svg') return 'g';
   if (foreign === 'math') return 'mrow';
-  const parent = parentTag?.toLowerCase() ?? null;
-  if (parent && NO_BOX_PARENTS.has(parent)) return null;
-  if (parent && PHRASING_PARENTS.has(parent)) return 'span';
-  return 'div';
+  if (parentTag && NO_BOX_PARENTS.has(parentTag.toLowerCase())) return null;
+  return 'span';
 }
 
 /** Attributes any element may carry; the rest belonged to the stored tag a box replaces. */

@@ -168,7 +168,7 @@ describe('the published page', () => {
 
   it('draws a void tag holding the prop as a box with its fallback', async () => {
     const markup = await publish({ type: 'img', id: 'cc', props: { customCode: { sha256: HASH, title: TITLE }, alt: 'x' }, children: [fallback('cc')] });
-    expect(markup).toMatch(/<div[^>]*data-fc-custom-code="0123456789ab"[^>]*>/);
+    expect(markup).toMatch(/<span[^>]*data-fc-custom-code="0123456789ab"[^>]*>/);
     expect(markup).toContain('Fallback of cc');
   });
 });
@@ -430,9 +430,9 @@ describe('a block with a void tag inside svg or math', () => {
     expect(box.parentElement?.localName).toBe('svg');
   });
 
-  it('is a div in HTML', async () => {
+  it('is a span in HTML', async () => {
     const markup = await publish({ type: 'div', id: 'page', props: {}, children: [voidBlock('input')] });
-    expect(parsedBox(markup).localName).toBe('div');
+    expect(parsedBox(markup).localName).toBe('span');
   });
 });
 
@@ -457,24 +457,31 @@ describe('a block with a void tag in HTML, as the browser parses the published p
   }
 
   // Each parent with the block between two words; the box must stay where it stands.
-  const PARENTS: [string, (inner: ComponentNode) => ComponentNode, string][] = [
-    ['a paragraph', (b) => el('p', 'host', [text('t1', 'before'), b, text('t2', 'after')]), 'span'],
-    ['a span inside a paragraph', (b) => el('p', 'outer', [el('span', 'host', [text('t1', 'before'), b, text('t2', 'after')])]), 'span'],
-    ['a link inside a paragraph', (b) => el('p', 'outer', [el('a', 'host', [text('t1', 'before'), b, text('t2', 'after')], { href: '/x' })]), 'span'],
-    ['a heading', (b) => el('h2', 'host', [text('t1', 'before'), b, text('t2', 'after')]), 'span'],
-    ['a label', (b) => el('label', 'host', [text('t1', 'before'), b, text('t2', 'after')]), 'span'],
-    ['a list item', (b) => el('ul', 'outer', [el('li', 'host', [text('t1', 'before'), b, text('t2', 'after')])]), 'div'],
-    ['a table cell', (b) => el('table', 'outer', [el('tbody', 'body', [el('tr', 'row', [el('td', 'host', [b])])])]), 'div'],
-    ['a section', (b) => el('section', 'host', [text('t1', 'before'), b, text('t2', 'after')]), 'div'],
+  // A span in every one: it never closes an open paragraph, however deep the block sits.
+  const around = (b: ComponentNode) => [text('t1', 'before'), b, text('t2', 'after')];
+  const PARENTS: [string, (inner: ComponentNode) => ComponentNode][] = [
+    ['a paragraph', (b) => el('p', 'host', around(b))],
+    ['a span inside a paragraph', (b) => el('p', 'outer', [el('span', 'host', around(b))])],
+    ['a link inside a paragraph', (b) => el('p', 'outer', [el('a', 'host', around(b), { href: '/x' })])],
+    ['a picture inside a paragraph', (b) => el('p', 'outer', [el('picture', 'host', [b])])],
+    ['a picture inside a link inside a paragraph', (b) => el('p', 'outer', [el('a', 'link', [el('picture', 'host', [b])], { href: '/x' })])],
+    ['a progress bar inside a paragraph', (b) => el('p', 'outer', [el('progress', 'host', [b])])],
+    ['a meter inside a paragraph', (b) => el('p', 'outer', [el('meter', 'host', [b])])],
+    ['a font element inside a paragraph', (b) => el('p', 'outer', [el('font', 'host', around(b))])],
+    ['a heading', (b) => el('h2', 'host', around(b))],
+    ['a label', (b) => el('label', 'host', around(b))],
+    ['a list item', (b) => el('ul', 'outer', [el('li', 'host', around(b))])],
+    ['a table cell', (b) => el('table', 'outer', [el('tbody', 'body', [el('tr', 'row', [el('td', 'host', [b])])])])],
+    ['a section', (b) => el('section', 'host', around(b))],
   ];
 
   for (const voidTag of ['img', 'input', 'hr', 'br', 'wbr']) {
-    it.each(PARENTS)(`keeps a <${voidTag}> block inside %s, as a %s`, async (_name, wrap, expected) => {
+    it.each(PARENTS)(`keeps a <${voidTag}> block inside %s, as a span`, async (_name, wrap) => {
       const markup = await publish(wrap(block(voidTag)));
       const page = parsed(markup);
       const box = page.querySelector('[data-fc-custom-code]') as HTMLElement;
       expect(box).not.toBeNull();
-      expect(box.localName).toBe(expected);
+      expect(box.localName).toBe('span');
       expect(box.parentElement?.id).toBe('host');
       expect(box.textContent).toBe('Fallback text');
       // Nothing split or moved: one element per stored one, in the stored order.
@@ -502,7 +509,7 @@ describe('a block with a void tag in HTML, as the browser parses the published p
       el('div', 'host', [block('img', { id: 'keep', className: 'k', title: 'T', 'data-x': '1', 'aria-describedby': 'd', alt: 'Alt', fetchPriority: 'high', width: '10', loading: 'lazy' })]),
     );
     const box = parsed(markup).querySelector('[data-fc-custom-code]') as HTMLElement;
-    expect(box.localName).toBe('div');
+    expect(box.localName).toBe('span');
     expect(box.id).toBe('keep');
     expect(box.className).toContain('k');
     expect(box.getAttribute('data-x')).toBe('1');
