@@ -887,6 +887,25 @@ describe('a preset\'s items', () => {
     expect(homeRefuses()).toEqual([]);
   });
 
+  it('judges an edit inside a component placed through another component on the page that places the outer one', () => {
+    mount();
+    const home = store.editorUI.currentPage!;
+    act(() => main.addChildren([createIntrinsicComponent('heavy', 'div', { children: 'Heavy' })]));
+    act(() => home.findComponent('heavy')!.setBehaviour({ state: [{ id: 'v-heavy', name: 'Note', type: 'text', initial: 'h'.repeat(3000) }] }));
+    const inner = project.createComponentFromSelection(home.id, ['heavy'], 'Heavy');
+    if (!inner.ok) throw new Error(inner.message);
+    const outer = project.createComponentFromSelection(home.id, [inner.placement.id], 'Outer');
+    const innerDefinition = openPlacedDefinition(outer.ok ? { ok: true, definitionId: inner.definitionId } : outer);
+    const innerRoot = innerDefinition.page.appComponentTree as unknown as ComponentInstance;
+    const placing = (innerDefinition.page as unknown as { placingExpansionsWith(subtree: { id: string }): { name: string }[] })
+      .placingExpansionsWith(getSnapshot(innerRoot) as never)
+      .map((entry) => entry.name);
+    expect(placing.sort()).toEqual([home.metadata.title, 'Outer'].sort());
+    select(innerRoot);
+    typeAndCommit(pageState().getByLabelText('Name of Note'), 'Note with a much longer name than before');
+    expect(pageState().getByRole('alert').textContent).toMatch(new RegExp(`working on ${home.metadata.title}: .*65536 bytes`));
+  });
+
   it('refuses Add tab inside a component when a page placing it has no room, naming that page', () => {
     mount();
     const home = store.editorUI.currentPage!;
