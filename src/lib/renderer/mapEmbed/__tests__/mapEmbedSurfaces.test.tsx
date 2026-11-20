@@ -221,14 +221,40 @@ describe('the island', () => {
     });
   });
 
-  it('says a reload clears what the visitor typed, when that is why the yes was held', () => {
+  it('says a reload may clear what the visitor typed, when that is why the yes was held', () => {
     win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => true, edited: () => true };
     render(<MapEmbedIsland domProps={{}} config={config} />);
-    expect(own().getByRole('status').textContent).toBe('Reload the page to show the map. Reloading clears what you typed on this page.');
+    expect(own().getByRole('status').textContent).toBe('Reload the page to show the map. Reloading may clear what you typed on this page.');
     cleanup();
     win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => true, edited: () => false };
     render(<MapEmbedIsland domProps={{}} config={config} />);
     expect(own().getByRole('status').textContent).toBe('Reload the page to show the map.');
+  });
+
+  it('reads again whether the visitor typed while the note shows: after an edit, and when the visitor reaches the box', () => {
+    let edited = false;
+    win.__lumitraConsent = { get: (c) => (c === 'maps' ? 'granted' : null), open: vi.fn(), mapsAtLoad: false, mapsAllowed: () => true, edited: () => edited };
+    const field = document.body.appendChild(document.createElement('input'));
+    try {
+      render(<MapEmbedIsland domProps={{}} config={config} />);
+      expect(own().getByRole('status').textContent).toBe('Reload the page to show the map.');
+      // Typed after the note appeared: the runtime counts it, the note says so.
+      edited = true;
+      fireEvent.input(field, { target: { value: 'Hello' } });
+      expect(own().getByRole('status').textContent).toBe('Reload the page to show the map. Reloading may clear what you typed on this page.');
+      // The form was sent and its fields left the page: reaching the box reads it again.
+      edited = false;
+      fireEvent.pointerOver(own().getByRole('button', { name: 'Reload page' }));
+      expect(own().getByRole('status').textContent).toBe('Reload the page to show the map.');
+      edited = true;
+      fireEvent.focusIn(own().getByRole('button', { name: 'Reload page' }));
+      expect(own().getByRole('status').textContent).toBe('Reload the page to show the map. Reloading may clear what you typed on this page.');
+      edited = false;
+      fireEvent.change(field, { target: { value: '' } });
+      expect(own().getByRole('status').textContent).toBe('Reload the page to show the map.');
+    } finally {
+      field.remove();
+    }
   });
 
   it('moves focus to the reload button when the yes this box asked for cannot show the map', () => {

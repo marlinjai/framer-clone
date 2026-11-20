@@ -125,7 +125,7 @@ export interface MapPlaceholderOptions {
    * "Open in Google Maps" is the way to the map.
    */
   cookiesBlocked?: boolean;
-  /** With onReload: the visitor has edited a field on the page, so the note says a reload clears it. */
+  /** With onReload: the visitor has edited a field on the page, so the note says a reload may clear it. */
   reloadClears?: boolean;
 }
 

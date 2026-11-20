@@ -228,8 +228,31 @@ export default function MapEmbedIsland({ domProps, config }: MapEmbedIslandProps
   const kept = refused ? cookieKept() : true;
   const needsReload = refused && kept;
   const cookiesBlocked = refused && !kept;
-  // A yes held because the visitor typed on the page: the note says a reload clears it.
-  const reloadClears = needsReload && consentApi()?.edited?.() === true;
+  // A yes held because the visitor typed on the page: the note says a reload may clear
+  // it ("may": the platform's form brings its draft back after a reload where storage
+  // works). Read when the hold begins and again whenever it can change while the note
+  // shows: an edit on the page (after the runtime's own capture listener has counted
+  // it), or the visitor reaching the box (a sent form's fields are gone by then).
+  const [reloadClears, setReloadClears] = useState(false);
+  useEffect(() => {
+    if (!needsReload) {
+      setReloadClears(false);
+      return;
+    }
+    const read = () => setReloadClears(consentApi()?.edited?.() === true);
+    read();
+    const box = host.current;
+    document.addEventListener('input', read);
+    document.addEventListener('change', read);
+    box?.addEventListener('focusin', read);
+    box?.addEventListener('pointerover', read);
+    return () => {
+      document.removeEventListener('input', read);
+      document.removeEventListener('change', read);
+      box?.removeEventListener('focusin', read);
+      box?.removeEventListener('pointerover', read);
+    };
+  }, [needsReload]);
   const reloadHere = useCallback(() => {
     // This box's own reload: the new page focuses it, as after the runtime's.
     if (host.current) writeFocusMark({ path: window.location.pathname, index: boxIndex(host.current) });

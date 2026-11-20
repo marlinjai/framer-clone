@@ -806,7 +806,11 @@ after the third review of pull request #450, instead of listing the lost input a
 `input` and `change` events (trusted ones, in the capture phase on the document, from an input, a textarea, a select or an editable
 region outside the banner, the field read from the event's composed path so one in a shadow root counts) and holds the reload while a
 field the visitor edited is still on the page: a platform form that was sent replaces its fields with its thanks, so a later "yes"
-reloads again (fifth review). The held note then adds that reloading clears what the visitor typed on the page. The first version compared each field with its default, which the
+reloads again (fifth review). The held note then adds that reloading may clear what the visitor typed on the page: "may", because
+the platform's contact form brings its draft back from session storage after a reload where storage works, and loses it where
+storage is blocked. The map reads `edited()` when the hold begins and again on every `input` and `change` on the page (after the
+runtime's capture listener has counted it) and when the visitor points at or focuses the box, so an edit made while the note shows,
+and a form sent since, change the sentence (sixth review; before, it was read once per render and nothing re-rendered). The first version compared each field with its default, which the
 fourth review showed missed every published form: React keeps a controlled field's default in step with what is typed, so the
 reload wiped the visitor's message; it also held the reload over untouched selects, ranges and colours. Typing into the platform's
 contact form is proven in jsdom and in Chromium and WebKit (`test/behaviour/maps.spec.ts`: no new document, the text
