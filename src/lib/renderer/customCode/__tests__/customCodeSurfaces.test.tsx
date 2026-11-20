@@ -319,7 +319,9 @@ describe('a block inside a client island (decision D95)', () => {
     const serialized = islandProps(element);
     // The island still gets its subtree, the fallbacks included.
     expect(serialized).toContain('Fallback of cc');
-    expect(serialized).not.toContain('customCode');
+    // The prop stays, emptied, so the island still draws the block's box and fallback.
+    expect(serialized).not.toMatch(/"customCode":(?!null)/);
+    expect(serialized).toContain('"customCode":null');
     expect(serialized).not.toContain(HASH.slice(0, 12));
     expect(serialized).not.toContain('prop_1');
     expect(serialized).not.toContain(TITLE);
@@ -327,7 +329,7 @@ describe('a block inside a client island (decision D95)', () => {
 
   it('a block itself marked as a form field loses the value too', () => {
     const element = renderComponentNode({ type: 'div', id: 'x', props: { 'data-form-kind': 'form-field', customCode: { sha256: HASH, title: TITLE } } });
-    expect(islandProps(element)).not.toContain('customCode');
+    expect(islandProps(element)).not.toMatch(/"customCode":(?!null)|Truck wash|0123456789ab/);
   });
 });
 

@@ -296,17 +296,18 @@ describe('the box origin (decision D37)', () => {
 });
 
 describe('withoutCustomCodeTree', () => {
-  it('drops the value from a node and every descendant, and leaves the input untouched', () => {
+  it('empties the value on a node and every descendant, and leaves the input untouched', () => {
     const tree = {
       type: 'div',
       props: { id: 'a', customCode: { sha256: 'x', title: 't' } },
       children: [{ type: 'p', props: { children: 'keep' } }, { type: 'div', props: { customCode: 1 }, children: [{ type: 'span', props: { customCode: 2 } }] }],
     };
     const out = withoutCustomCodeTree(tree);
-    expect(JSON.stringify(out)).not.toContain('customCode');
+    expect(JSON.stringify(out)).not.toMatch(/sha256|"customCode":(?!null)/);
     expect(out.children[0]).toBe(tree.children[0]);
-    expect(out.props).toEqual({ id: 'a' });
-    expect(JSON.stringify(tree)).toContain('customCode');
+    expect(out.props).toEqual({ id: 'a', customCode: null });
+    expect(out.children[1]).toEqual({ type: 'div', props: { customCode: null }, children: [{ type: 'span', props: { customCode: null } }] });
+    expect(JSON.stringify(tree)).toContain('"title":"t"');
   });
 
   it('returns a tree without the value as it is', () => {

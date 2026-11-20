@@ -202,14 +202,23 @@ export interface CustomCodeTreeNode {
   children?: CustomCodeTreeNode[];
 }
 
+/** `props` with `customCode` emptied to null: still a block, with nothing of its value. */
+function withEmptiedCustomCode<P extends Record<string, unknown>>(props: P): P {
+  if (!Object.prototype.hasOwnProperty.call(props, CUSTOM_CODE_PROP) || props[CUSTOM_CODE_PROP] === null) return props;
+  return { ...props, [CUSTOM_CODE_PROP]: null };
+}
+
 /**
- * A node and every descendant without `props.customCode`, for a node that crosses
- * into a client island (a form, a shop control): an island's props are serialized
- * into the page's script data, and nothing of a block's stored value may reach the
- * page (decisions D36, D45 and D95). Unchanged nodes are returned as they are.
+ * A node and every descendant with `props.customCode` emptied to null, for a node that
+ * crosses into a client island (a form, a shop control): an island's props are
+ * serialized into the page's script data, and nothing of a block's stored value may
+ * reach the page (decisions D36, D45 and D95). The emptied prop keeps the node a block,
+ * so the island draws it as an invalid one: its box and its fallback, without the trace
+ * mark, and a void tag swapped for the box as everywhere else (D96). Unchanged nodes
+ * are returned as they are.
  */
 export function withoutCustomCodeTree<N extends CustomCodeTreeNode>(node: N): N {
-  const props = node.props ? withoutCustomCodeProp(node.props) : node.props;
+  const props = node.props ? withEmptiedCustomCode(node.props) : node.props;
   let children = node.children;
   if (Array.isArray(node.children)) {
     const next = node.children.map((child) => (child && typeof child === 'object' ? withoutCustomCodeTree(child) : child));

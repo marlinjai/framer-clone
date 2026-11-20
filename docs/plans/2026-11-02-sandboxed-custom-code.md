@@ -840,9 +840,13 @@ the page), so nothing else on the policed documents is affected.
 **D95. A block inside a form or a shop control shows its fallback, with no stored value in the page's script data.** Form and shop
 controls are client islands that receive their whole stored node, and an island's props are serialized into the page (the React
 Server Components payload). `withoutCustomCodeTree` (`src/lib/customCode/customCode.ts`) takes `customCode` off such a node and
-every descendant before it crosses, so nothing of a block's value reaches the page, as D36 and D45 say; inside one the block renders
-as its fallback, without the trace mark. Running a block inside a form or a shop control is left to C3 if it is ever wanted. Found
-by the first review of pull request #450.
+every descendant before it crosses, so nothing of a block's value reaches the page, as D36 and D45 say. It empties the prop to null
+rather than deleting it, so the node stays a block and the island draws it as an invalid one: its box with the fallback inside,
+without the trace mark, a void tag swapped for the box as D96 says. Until the sixth review it deleted the prop, and a void-tag block
+inside a form published as its bare element with the fallback dropped (an `img` showing only its `alt`), while this text already
+claimed the fallback; tests now read the drawn markup inside a form and a shop control. As everywhere, the block check comes before
+the shop part and shop control checks, so a part or a nested control carrying the prop is drawn as a block. Running a block inside a
+form or a shop control is left to C3 if it is ever wanted. Found by the first review of pull request #450, corrected after the sixth.
 
 **D96. The tile is drawn in a plain container, as a labelled group.** On the canvas a block stored as a link, a button, an SVG
 element or any tag that cannot hold the tile (a paragraph, a list, a table part) draws the tile in a `div`, without the control's
@@ -861,7 +865,8 @@ holds only its own kinds of children (a table, its sections and rows, a column g
 datalist) the block is not drawn at all on those two surfaces: no container would stay there, and drawing nothing is what the page
 shows anyway once the parser has moved it (decided after the fourth review; refusing such a block at the render gate would also hide
 it on the canvas, where the author can still see and move it). The published renderer passes each node its parent's tag for this
-(the commerce island passes its host's tag to the nodes it renders), and the standalone preview reads it from the tree. The replacement keeps only global, `data-` and `aria-` attributes of the stored
+(a shop control's island passes its host's tag to the nodes it renders, so a block in a selector drawn as a table is dropped there as
+it is anywhere else), and the standalone preview reads it from the tree. The replacement keeps only global, `data-` and `aria-` attributes of the stored
 tag, never one that only that tag understood (`alt`, `fetchPriority`). The fallback's own children keep their stored tags, as every
 stored node does: a stored paragraph inside a paragraph breaks the same way anywhere on a page. Found by the third and fourth reviews. This is wider than the review asked (every tag that
 cannot hold the tile, not only controls and SVG). Found by the first review of pull request #450.
