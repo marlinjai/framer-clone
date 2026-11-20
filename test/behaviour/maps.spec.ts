@@ -377,7 +377,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(await frame().count()).toBe(0);
     expect(google()).toEqual([]);
     const reloadButton = tab.getByRole('button', { name: 'Reload page' });
-    expect(await tab.getByText('Reload the page to show the map.').isVisible()).toBe(true);
+    expect(await tab.getByText('Reload the page to show the map. Reloading clears what you typed on this page.').isVisible()).toBe(true);
     // The visitor reloads when ready: a new document, whose policy allows the map.
     await reloadButton.click();
     await tab.waitForLoadState('load');

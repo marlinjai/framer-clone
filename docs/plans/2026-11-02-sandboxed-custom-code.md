@@ -804,7 +804,9 @@ answer was not stored). The visitor also keeps "Open in Google Maps". The same h
 page: a reload would lose it, so the "yes" is announced and the map offers the reload, which the visitor presses when ready (decided
 after the third review of pull request #450, instead of listing the lost input as a limit). The runtime records the visitor's own
 `input` and `change` events (trusted ones, in the capture phase on the document, from an input, a textarea, a select or an editable
-region outside the banner) and holds the reload once one arrived. The first version compared each field with its default, which the
+region outside the banner, the field read from the event's composed path so one in a shadow root counts) and holds the reload while a
+field the visitor edited is still on the page: a platform form that was sent replaces its fields with its thanks, so a later "yes"
+reloads again (fifth review). The held note then adds that reloading clears what the visitor typed on the page. The first version compared each field with its default, which the
 fourth review showed missed every published form: React keeps a controlled field's default in step with what is typed, so the
 reload wiped the visitor's message; it also held the reload over untouched selects, ranges and colours. Typing into the platform's
 contact form is proven in jsdom and in Chromium and WebKit (`test/behaviour/maps.spec.ts`: no new document, the text
@@ -851,13 +853,15 @@ block standing inside an `svg` draws a `g` with its attributes and the tile as H
 tag under `svg` as an SVG element, which shows nothing; inside `math`, where React draws no HTML at all, the tile is its label as text
 in `mtext`. The tile carries `role="group"`, which may hold its `aria-label`. On the published page and in the standalone preview a
 block stored as a void tag (which cannot hold the fallback) is drawn as a container the browser's parser leaves where it stands
-(`customCodeBoxTag`): a `g` inside `svg`, an `mrow` inside `math`, a `span` under a phrasing or transparent parent (a paragraph, a
-heading, a span, a link, a label and the like, where a `div` would close an open paragraph), and a `div` elsewhere. Under a parent that
+(`customCodeBoxTag`): a `g` inside `svg`, an `mrow` inside `math`, and a `span` anywhere in HTML. A `div` closes an open paragraph
+wherever inside it the block sits (under a picture, a meter, a progress bar or a link in a paragraph, as the fifth review showed), while
+a `span` never does, so one rule covers every depth without tracking paragraphs down the walk; the box is inline where a `div` was a
+block, which matches most void tags (an image, an input) anyway. Under a parent that
 holds only its own kinds of children (a table, its sections and rows, a column group, a select, an option group, an option, a
 datalist) the block is not drawn at all on those two surfaces: no container would stay there, and drawing nothing is what the page
 shows anyway once the parser has moved it (decided after the fourth review; refusing such a block at the render gate would also hide
-it on the canvas, where the author can still see and move it). The published renderer passes each node its parent's tag for this,
-and the standalone preview reads it from the tree. The replacement keeps only global, `data-` and `aria-` attributes of the stored
+it on the canvas, where the author can still see and move it). The published renderer passes each node its parent's tag for this
+(the commerce island passes its host's tag to the nodes it renders), and the standalone preview reads it from the tree. The replacement keeps only global, `data-` and `aria-` attributes of the stored
 tag, never one that only that tag understood (`alt`, `fetchPriority`). The fallback's own children keep their stored tags, as every
 stored node does: a stored paragraph inside a paragraph breaks the same way anywhere on a page. Found by the third and fourth reviews. This is wider than the review asked (every tag that
 cannot hold the tile, not only controls and SVG). Found by the first review of pull request #450.
@@ -869,13 +873,18 @@ interlinear annotation marks, the Mongolian vowel separator, the byte order mark
 agent reading the title would still see), the combining grapheme joiner, the blank fillers that draw nothing (the Hangul fillers and
 the blank braille pattern), and half of a surrogate pair without its other half. A title must also hold at least one visible letter,
 number, symbol or punctuation mark. They change how a title reads without being seen, on the editor surfaces now and in a frame's
-`title` from C3. So are the variation selectors that make no visible choice and can carry hidden bytes after any letter (U+FE00 to
-U+FE0D, U+E0100 to U+E01EF, and the Mongolian ones U+180B to U+180F), the object replacement character U+FFFC, and more than four
-combining marks on one character (Hebrew points, Vietnamese tone marks and Tibetan stacks need three at most). The text and emoji
+`title` from C3. Also refused: the variation selectors that make no visible choice and can carry hidden bytes after any letter (U+FE00 to
+U+FE0D, U+E0100 to U+E01EF, and the Mongolian ones U+180B to U+180F), the object replacement character U+FFFC, every default-ignorable code point
+(Unicode's Default_Ignorable_Code_Point, which also covers the Khmer inherent vowels U+17B4 and U+17B5 and the unassigned U+E0080 to
+U+E0FFF; it replaced most of the hand-written list after the fifth review), and more than ten code points in one grapheme cluster, the
+character a reader sees (counted with `Intl.Segmenter`, or as a base and its marks where a runtime has none). The fourth review's first
+cap, five marks in a row, refused everyday Burmese ("hope", "discount sale") and pointed Hebrew with an accent and a meteg; those reach
+four to six code points in a character, while a letter under 150 marks is still refused. The text and emoji
 presentation selectors U+FE0E and U+FE0F pass once, right after a pictograph, and in a keycap (`1`, U+FE0F, U+20E3). An emoji joined
 with a zero-width joiner is refused with them; titles in any script, right-to-left ones included, single emoji, an emoji with its
 presentation selector and a keycap still pass. Found by the second review of pull request #450, widened from a hand-written list to
-the category after the third, and to the variation selectors, U+FFFC and stacked marks after the fourth.
+the category after the third, to the variation selectors, U+FFFC and stacked marks after the fourth, and to the default-ignorables and
+the per-character cap after the fifth.
 
 **D98. Nothing is bound into a custom code block's value.** `applyBindings` (`src/lib/bindings/resolver/applyBindings.ts`) skips a
 binding into `customCode` or any path below it, as it does for `behaviour` and FX scenes, so page data and the address bar can neither
