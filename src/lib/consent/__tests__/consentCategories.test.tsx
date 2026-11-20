@@ -36,6 +36,7 @@ interface Api {
   get(category?: string): string | null;
   mapsAtLoad?: boolean;
   mapsAllowed?: () => boolean;
+  edited?: () => boolean;
   reload?: () => void;
   categories: string[];
   grant?: unknown;
@@ -233,6 +234,7 @@ describe('a site with one purpose', () => {
     });
     afterEach(() => {
       visitor = false;
+      vi.unstubAllGlobals();
       window.removeEventListener('input', asVisitor, true);
       window.removeEventListener('change', asVisitor, true);
       document.querySelectorAll('[data-test-field]').forEach((f) => f.remove());
@@ -249,6 +251,7 @@ describe('a site with one purpose', () => {
             children: [
               { id: 'f-name', type: 'div', props: { [FORM_KIND_ATTR]: 'form-field', fieldType: 'text', name: 'name', label: 'Name' } },
               { id: 'f-message', type: 'div', props: { [FORM_KIND_ATTR]: 'form-field', fieldType: 'textarea', name: 'message', label: 'Message' } },
+              { id: 'f-send', type: 'button', props: { [FORM_KIND_ATTR]: 'form-submit', children: 'Send' } },
             ],
           }}
           scope={createScope()}
@@ -270,6 +273,34 @@ describe('a site with one purpose', () => {
       expect(events).toEqual([{ maps: true }]);
       expect(mapsCookie()).toBe(`${CONSENT_MAPS_COOKIE}=1`);
       expect(message.value).toBe('Please call me back on Monday.');
+    });
+
+    it('reloads again once the contact form was sent: its thanks replaced the fields that held the text', async () => {
+      const reload = mockReload();
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ ok: true, message: 'Thanks' }), { status: 200, headers: { 'content-type': 'application/json' } }))));
+      contactForm();
+      const api = load(['maps']);
+      fireEvent.change(screen.getByLabelText(/^Message/), { target: { value: 'Please call me back.' } });
+      expect(api.edited?.()).toBe(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+      await screen.findByText('Thanks');
+      expect(api.edited?.()).toBe(false);
+      click('Accept');
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts a field inside a shadow root', () => {
+      const reload = mockReload();
+      const host = document.createElement('div');
+      host.setAttribute('data-test-field', '');
+      document.body.append(host);
+      const field = document.createElement('input');
+      host.attachShadow({ mode: 'open' }).append(field);
+      load(['maps']);
+      field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      click('Accept');
+      expect(reload).not.toHaveBeenCalled();
+      expect(events).toEqual([{ maps: true }]);
     });
 
     it('holds for a name typed into the contact form too', () => {
