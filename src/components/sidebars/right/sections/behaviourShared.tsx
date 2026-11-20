@@ -133,14 +133,14 @@ export const expansionRoots = (expansion: { root: ComponentNode; floating: reado
 export const quoted = (name: string): string =>
   !name.includes('"') ? `"${name}"` : !name.includes("'") ? `'${name}'` : `\u201c${name}\u201d`;
 
-/** The node with this id in an expansion's trees. */
-function nodeIn(roots: readonly ComponentNode[], id: string): ComponentNode | undefined {
+/** The nodes from a root of an expansion's trees down to the node with this id, or empty. */
+function pathTo(roots: readonly ComponentNode[], id: string): ComponentNode[] {
   for (const root of roots) {
-    if (root.id === id) return root;
-    const found = nodeIn(root.children ?? [], id);
-    if (found) return found;
+    if (root.id === id) return [root];
+    const below = pathTo(root.children ?? [], id);
+    if (below.length > 0) return [root, ...below];
   }
-  return undefined;
+  return [];
 }
 
 /**
@@ -162,14 +162,18 @@ export function placingRefusal(page: BehaviourPage, subtree: { id: string }, cur
     const { refused, dangling } = subtreeRefusals(before, after, (current ?? subtree) as unknown as BehaviourNode, subtree as unknown as BehaviourNode);
     // An expanded node keeps its id in the definition as classKey: found there, it is inside a placement.
     const reader = (nodeId: string | null | undefined) => {
-      const node = nodeId ? nodeIn([placing.after.root, ...placing.after.floating], nodeId) : undefined;
+      const path = nodeId ? pathTo([placing.after.root, ...placing.after.floating], nodeId) : [];
+      const node = path.at(-1);
       const key = node?.classKey;
       // A node the edit adds is not stored yet: it is named as part of the element being edited.
       const inner = key === undefined ? undefined
-        : page.findComponent(key) ?? (nodeIn([subtree as ComponentNode], key) ? page.findComponent(subtree.id) : undefined);
+        : page.findComponent(key) ?? (pathTo([subtree as ComponentNode], key).length > 0 ? page.findComponent(subtree.id) : undefined);
       if (inner) return { inside: true, name: `${quoted(inner.displayName ?? 'an element')} in ${quoted(placing.definition)}` };
       const own = nodeId ? placing.findComponent(nodeId)?.displayName : undefined;
-      return { inside: false, name: own ? quoted(own) : 'an element' };
+      if (own) return { inside: false, name: quoted(own) };
+      // Inside another component's placement: named by the nearest placement the page holds.
+      const around = path.slice(0, -1).reverse().map((above) => placing.findComponent(above.id ?? '')?.displayName).find(Boolean);
+      return { inside: false, name: around ? `an element in ${quoted(around)}` : 'an element' };
     };
     const hard = refused[0];
     if (hard) return `it would stop ${reader(hard.nodeId).name} working on ${quoted(placing.name)}: ${hard.reason}`;

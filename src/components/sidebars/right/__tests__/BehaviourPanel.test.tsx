@@ -21,7 +21,7 @@ let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 
 import RightSidebar from '../../RightSidebar';
-import { useFocusAfter } from '../sections/behaviourShared';
+import { quoted, useFocusAfter } from '../sections/behaviourShared';
 
 let project: ProjectModelType;
 let root: ComponentInstance;
@@ -980,6 +980,50 @@ describe('a preset\'s items', () => {
     expect(group().getByRole('alert').textContent).toBe(`Not changed: it would stop 'Go "now"' working on "${home.metadata.title}": it names something this removes.`);
     expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
     expect(history().undoIdx).toBe(before);
+  });
+
+  it('a reader on a placing page refuses a removal before any question, even when the definition has a reader too', () => {
+    mount();
+    const { home, tabs, panel, open } = makeTabbed([button]);
+    act(() => {
+      button.setLabel('Go');
+      button.setBehaviour({ on: [{ id: 't-focus', on: 'click', do: [{ focus: panel }] }] });
+      drawer.setLabel('Home link');
+      drawer.setBehaviour({ on: [{ id: 't-home', on: 'click', do: [{ focus: panel }] }] });
+    });
+    const definition = open();
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
+    select(definition.page.findComponent(tabs.id)!);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    // No question it could only answer with a refusal: Home's reader is named at once.
+    expect(group().queryByRole('group', { name: 'Remove Third?' })).toBeNull();
+    expect(group().getByRole('alert').textContent).toBe(`Not changed: it would stop "Home link" working on "${home.metadata.title}": it names something this removes.`);
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+  });
+
+  it('a reader inside another component on a placing page is named by that component', () => {
+    mount();
+    const { home, panel, open } = makeTabbed();
+    act(() => button.setBehaviour({ on: [{ id: 't-focus', on: 'click', do: [{ focus: panel }] }] }));
+    // Two elements, so the reader is inside the placement rather than its root (which Home names as "Other" itself).
+    const other = project.createComponentFromSelection(home.id, [button.id, drawer.id], 'Other');
+    if (!other.ok) throw new Error(other.message);
+    const definition = open();
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
+    select(definition.page.appComponentTree as unknown as ComponentInstance);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    expect(group().getByRole('alert').textContent).toBe(`Not changed: it would stop an element in "Other" working on "${home.metadata.title}": it names something this removes.`);
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+  });
+
+  it('a name in a refusal keeps its own quotes readable', () => {
+    expect(quoted('Go')).toBe('"Go"');
+    expect(quoted('Say "hi"')).toBe(`'Say "hi"'`);
+    expect(quoted(`Say "it's"`)).toBe(`\u201cSay "it's"\u201d`);
   });
 
   /**
