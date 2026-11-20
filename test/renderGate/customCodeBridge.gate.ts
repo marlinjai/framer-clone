@@ -101,6 +101,38 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
     `),
   },
   foreign: { shell: false, body: raw("probe({ connected: 'foreign' });") },
+  // Floods for 4 seconds in bursts that leave its own event loop free: on its port, or to the page's window.
+  deluge: {
+    shell: false,
+    body: raw(`
+      var stop = Date.now() + 4000;
+      (function burst() { for (var i = 0; i < 500; i++) port.postMessage({ kind: 'nothing' }); if (Date.now() < stop) setTimeout(burst, 0); })();
+    `),
+  },
+  windowDeluge: {
+    shell: false,
+    body: raw(`
+      var stop = Date.now() + 4000;
+      (function burst() { for (var i = 0; i < 500; i++) parent.postMessage({ kind: 'nothing' }, '*'); if (Date.now() < stop) setTimeout(burst, 0); })();
+    `),
+  },
+  // Data JSON cannot weigh: a 32 MB buffer, then a 4 MB string inside a Map.
+  binary: {
+    shell: false,
+    body: raw(`
+      port.postMessage({ kind: 'setState', id: 'n', value: 4, pad: new ArrayBuffer(32 * 1024 * 1024) });
+      setTimeout(function () { port.postMessage({ kind: 'setState', id: 'n', value: 5, pad: new Map([['a', 'x'.repeat(4000000)]]) }); }, 200);
+    `),
+  },
+  // Takes the keyboard only while the pointer moves over it, and reports what it was typed.
+  hoverThief: {
+    shell: true,
+    body: `<input id="i" aria-label="inside" style="width:90%;height:150px"><script>
+      var i = document.getElementById('i');
+      addEventListener('mousemove', function () { if (document.activeElement !== i) i.focus(); });
+      i.addEventListener('input', function () { parent.postMessage({ probe: true, typed: i.value }, '*'); });
+    </script>`,
+  },
   go: { shell: true, body: `<script>lumitra.ready().then(function () { lumitra.emit('go'); });</script>` },
   steal: { shell: true, body: `<input id="i" aria-label="inside"><script>setInterval(function () { document.getElementById('i').focus(); }, 300);</script>` },
   calm: { shell: true, body: `<input id="i" aria-label="inside" style="width:90%;height:60px">` },
@@ -342,19 +374,18 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       // The frame was sent its one allowed read, never the text state.
       expect((await probes(page)).find((p) => Array.isArray(p.states))?.states).toEqual(['tab']);
       expect((await frameOf(page, 'h'))?.height).toBe('100%');
+      // Twelve refusals, all but the last message (other, '5', 99, -1, NaN, 'c', the text state, the oversize one,
+      // navigate, a resize of a fixed block, an undeclared emit and one without its prefix), shown by the state and
+      // the height above, and warned of once: a frame cannot fill the page's console (D65).
       const warnings = lines.filter((line) => line.startsWith('Custom code "Hostile"'));
-      // Twelve refusals, all but the last message: other, '5', 99, -1, NaN, 'c', the text state, the oversize one,
-      // navigate, a resize of a fixed block, an undeclared emit and one without its prefix.
-      expect(warnings).toHaveLength(12);
-      expect(warnings.filter((line) => line.endsWith('dropped a message'))).toHaveLength(11);
-      expect(warnings.filter((line) => line.endsWith('over 64 KB'))).toHaveLength(1);
+      expect(warnings).toEqual(['Custom code "Hostile": dropped a message or error, then silent']);
       expect(await frameOf(page, 'h')).not.toBeNull();
     } finally {
       await context.close();
     }
   }, 60_000);
 
-  it('drops what goes past 30 messages and 10 resizes a second, and clamps a height to 10,000 pixels', async () => {
+  it('drops what goes past 30 messages and resizes past the first 10 messages of a second, and clamps a height to 10,000 pixels', async () => {
     const { page, context, console: lines } = await open(browser, [
       { id: 'f', doc: 'flood' },
       { id: 'r', doc: 'resizer', block: { sizing: 'content' } },
@@ -363,9 +394,52 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-count') === '41'", 10_000);
       await until(page, "document.querySelector('#r iframe') && document.querySelector('#r iframe').style.height === '10000px'", 5_000);
       expect(await stateOf(page, 'count')).toBe('41');
-      expect(lines.filter((line) => line.endsWith('"Block f": dropped a message over 30 a second'))).toHaveLength(10);
+      // Past 30 is dropped, and warned of once; 40 in a second is under the ceiling that removes a frame.
+      expect(lines.filter((line) => line.startsWith('Custom code "Block f"'))).toEqual(['Custom code "Block f": dropped a message or error, then silent']);
+      expect(await frameOf(page, 'f')).not.toBeNull();
       expect((await frameOf(page, 'r'))?.height).toBe('10000px');
-      expect(lines.filter((line) => line.endsWith('"Block r": dropped a message'))).toHaveLength(5);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block r"'))).toEqual(['Custom code "Block r": dropped a message or error, then silent']);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('removes a frame that floods its port or the window, and the page answers a click meanwhile', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'port', doc: 'deluge' }, { id: 'win', doc: 'windowDeluge' }]);
+    try {
+      // The flood starts at connect: the click goes in while it runs.
+      await until(page, `${shownOnce('port')} && ${shownOnce('win')}`, 10_000);
+      const started = Date.now();
+      await page.click('#toB');
+      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 10_000);
+      const click = Date.now() - started;
+      await until(page, `${removed('port')} && ${removed('win')}`, 5_000);
+      record(`flood in ${engine}: click answered in ${click} ms`);
+      expect(await stateOf(page, 'tab')).toBe('b');
+      expect(click).toBeLessThan(2_000);
+      for (const id of ['port', 'win']) {
+        expect(await frameOf(page, id)).toBeNull();
+        expect(await fallbackShown(page, id)).toBe(true);
+        const own = lines.filter((line) => line.startsWith(`Custom code "Block ${id}"`));
+        expect(own.at(-1)).toBe(`Custom code "Block ${id}": flooded: removed`);
+        // At most the one warning before it.
+        expect(own.length).toBeLessThanOrEqual(2);
+      }
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('refuses a message JSON cannot weigh (a buffer, a Map), and removes the frame at the second', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'bin', doc: 'binary' }]);
+    try {
+      await until(page, removed('bin'), 10_000);
+      expect(await stateOf(page, 'n')).toBe('0');
+      expect(await frameOf(page, 'bin')).toBeNull();
+      expect(lines.filter((line) => line.startsWith('Custom code "Block bin"'))).toEqual([
+        'Custom code "Block bin": dropped a message or error, then silent',
+        'Custom code "Block bin": not plain data: removed',
+      ]);
     } finally {
       await context.close();
     }
@@ -397,9 +471,9 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       for (const id of ['mute']) {
         expect(await frameOf(page, id)).toBeNull();
         expect(await fallbackShown(page, id)).toBe(true);
-        expect(lines.join('\n')).toContain(`Custom code "Block ${id}": 3 pings unanswered: removed`);
+        expect(lines.join('\n')).toContain(`Custom code "Block ${id}": no pong: removed`);
       }
-      expect(lines.join('\n')).toContain('Custom code "Block quiet": no hello within 5 s: removed');
+      expect(lines.join('\n')).toContain('Custom code "Block quiet": no hello: removed');
       expect(await settled(page)).not.toContainEqual({ id: 'well', shown: false });
       expect(await frameOf(page, 'well')).not.toBeNull();
     } finally {
@@ -426,7 +500,7 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       const { page, console: lines } = opened;
       await bounded(until(page, removed('frozen'), 35_000), 40_000, 'wait for removal');
       const after = await bounded(settled(page), 5_000, 'read the page');
-      const report = { engine, steps, after, removedLine: lines.some((line) => line.includes('"Block frozen": 3 pings unanswered: removed')) };
+      const report = { engine, steps, after, removedLine: lines.some((line) => line.includes('"Block frozen": no pong: removed')) };
       record(`frozen frame in ${engine}: ${JSON.stringify(report)}`);
       if (engine !== 'chromium') {
         // WebKit, and Firefox as Playwright runs it (Fission does not start there, even asked), run a frame
@@ -595,6 +669,68 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
         await page.touchscreen.tap(outside.x + 10, outside.y + 10);
         await page.waitForTimeout(150);
       }
+      expect(await settled(page)).toEqual([{ id: 'calm', shown: true }]);
+      expect(await frameOf(page, 'calm')).not.toBeNull();
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  // The review's probe (pull request #452, review 1, M2): a frame that takes the keyboard only while the pointer
+  // moves over it, so the pointer excuses every move. Typing in the page just before the move does not.
+  it('removes a frame that takes the keyboard under the pointer while the visitor types in the page', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'hover', doc: 'hoverThief' }]);
+    try {
+      await until(page, shownOnce('hover'), 10_000);
+      await page.bringToFront();
+      const box = await page.locator('#hover iframe').boundingBox();
+      if (!box) throw new Error('no frame to move onto');
+      for (let n = 0; n < 6 && !(await settled(page)).some((s) => !s.shown); n++) {
+        await page.click('#outside');
+        await page.keyboard.type('p');
+        await page.mouse.move(box.x + 60 + n * 7, box.y + 40, { steps: 4 });
+        await page.waitForTimeout(100);
+        await page.keyboard.type(`k${n}`);
+        await page.waitForTimeout(300);
+      }
+      const typed = (await probes(page)).filter((p) => typeof p.typed === 'string').map((p) => p.typed as string).at(-1) ?? '';
+      const outside = await page.inputValue('#outside');
+      record(`hover theft in ${engine}: frame got ${JSON.stringify(typed)}, page field ${JSON.stringify(outside)}`);
+      // The rounds whose keys the frame got: each is a move it made under the pointer.
+      const rounds = typed.match(/k\d/g)?.length ?? 0;
+      const gone = (await settled(page)).some((s) => s.id === 'hover' && !s.shown);
+      if (gone) {
+        // Removed at its third move, before that round's keys: it never got a third round's keys or later.
+        expect(lines.join('\n')).toContain('Custom code "Block hover": took the keyboard 3 times: removed');
+        expect(rounds).toBeLessThanOrEqual(2);
+        expect(typed).not.toMatch(/k[2-5]/);
+      } else if (typed) {
+        // The engine let the frame take the keyboard fewer than three times in six rounds (Firefox in this harness
+        // stops honouring its focus() after a round or two): nothing to remove yet, and never a third round.
+        expect(rounds).toBeLessThan(3);
+      } else {
+        // An engine that refuses script focus from a frame of another site (WebKit): the page kept every key.
+        expect(outside).toBe('pk0pk1pk2pk3pk4pk5');
+        expect(await settled(page)).toEqual([{ id: 'hover', shown: true }]);
+      }
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('keeps an interactive frame a person clicks into after pausing their typing in the page', async () => {
+    const { page, context } = await open(browser, [{ id: 'calm', doc: 'calm' }]);
+    try {
+      await until(page, shownOnce('calm'), 10_000);
+      const inside = page.frameLocator('#calm iframe').locator('#i');
+      for (let i = 0; i < 4; i++) {
+        await page.click('#outside');
+        await page.keyboard.type('abc');
+        await page.waitForTimeout(700);
+        await inside.click();
+        await page.keyboard.type('x');
+      }
+      await page.waitForTimeout(300);
       expect(await settled(page)).toEqual([{ id: 'calm', shown: true }]);
       expect(await frameOf(page, 'calm')).not.toBeNull();
     } finally {
