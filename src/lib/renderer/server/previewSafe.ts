@@ -15,11 +15,18 @@
 //   - A map box loads a frame of Google's, which is told the page it sits on
 //     (the frame asks for it) and would learn the address. Replaced by a box of
 //     the same style that says so.
+//   - A custom code block (src/lib/customCode) never runs on a preview link
+//     (decision D13 of docs/plans/2026-11-02-sandboxed-custom-code.md: the box
+//     never names a preview host as a frame ancestor). Its `customCode` is taken
+//     off, so the node renders as what it holds, its fallback, with no mark a
+//     published island could act on.
 //
 // Platform forms and the checkout are made inert where they run
 // (FormUnavailableContext, CheckoutUnavailableContext): they need their props.
 
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
+import { hasCustomCode, withoutCustomCodeProp } from '@/lib/customCode/customCode';
+import { isVoidTag } from '@/lib/drag/voidTags';
 
 interface SafeNode {
   type: string;
@@ -32,8 +39,9 @@ const DROPPED: ReadonlySet<string> = new Set(['referrerpolicy', 'action', 'forma
 /** What a map box says on a preview. */
 export const PREVIEW_MAP_NOTICE = 'A map is shown here on the live site. It is not loaded in a preview.';
 
-function safeProps(props: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!props) return props;
+function safeProps(stored: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!stored) return stored;
+  const props = withoutCustomCodeProp(stored);
   const names = Object.keys(props);
   if (!names.some((name) => DROPPED.has(name.toLowerCase()))) return props;
   return Object.fromEntries(names.filter((name) => !DROPPED.has(name.toLowerCase())).map((name) => [name, props[name]]));
@@ -52,11 +60,15 @@ export function previewSafeTree<N extends SafeNode>(root: N): N {
       } as unknown as N;
     }
     const props = safeProps(node.props);
+    // A block stored on a void tag (an `img`) holds its fallback as children, which a
+    // void element cannot draw: the published page draws that block as a `span`, so the
+    // preview does too, and the fallback stays visible.
+    const type = hasCustomCode(node.props) && isVoidTag(node.type) ? 'span' : node.type;
     const children = Array.isArray(node.children) ? (node.children as N[]) : null;
     const nextChildren = children ? children.map(walk) : null;
     const changedChildren = !!children && nextChildren!.some((child, i) => child !== children[i]);
-    if (props === node.props && !changedChildren) return node;
-    return { ...node, ...(props !== node.props ? { props } : {}), ...(changedChildren ? { children: nextChildren } : {}) } as N;
+    if (props === node.props && !changedChildren && type === node.type) return node;
+    return { ...node, ...(type !== node.type ? { type } : {}), ...(props !== node.props ? { props } : {}), ...(changedChildren ? { children: nextChildren } : {}) } as N;
   };
   return walk(root);
 }

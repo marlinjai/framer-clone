@@ -1,9 +1,11 @@
 // The render gate: what no stored node may put on a page. Both renderers drop it,
 // so existing rows and every write path are covered. A page snapshot is opaque JSON to the
 // save and publish routes (src/app/api/projects/_schema.ts), so the render step
-// is the one place all of it passes through. The editor never produces these;
-// see docs/plans/2026-11-01-complete-primitives.md for the custom code primitive
-// that would be the deliberate way to run code on a site.
+// is the one place all of it passes through. The editor never produces these.
+// The deliberate way to run code on a site is the sandboxed custom code block
+// (src/lib/customCode, docs/plans/2026-11-02-sandboxed-custom-code.md): its frame
+// is drawn from an address the renderers build, never from a stored tag, so
+// `iframe` stays refused here.
 //
 // Names are refused by default (./renderVocabulary.ts). Then values: an address
 // must have a scheme a browser only follows, and a stored string or array is never
@@ -179,7 +181,9 @@ export function isBlockedTag(tag: unknown, foreign: ForeignContent = false): boo
   return true;
 }
 
-const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName', 'scene']);
+// `customCode` names a sandboxed custom code block (src/lib/customCode/customCode.ts), drawn by
+// the renderers from its parsed value: never an attribute, under any value.
+const NODE_SETTINGS: ReadonlySet<string> = new Set(['query', 'bindings', 'effects', 'rules', 'behaviour', 'instance', 'fieldName', 'scene', 'customCode']);
 
 /** Settings the renderers read from the node. Off the element, as they should be, so nothing to report. */
 export const isSettingsProp = (name: string): boolean =>

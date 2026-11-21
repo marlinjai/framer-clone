@@ -209,3 +209,27 @@ describe('a checkout published before parts', () => {
     await waitFor(() => expect(container.querySelector('button[data-checkout]')?.textContent).toBe('Checkout'));
   });
 });
+
+describe('a custom code block inside a published checkout (decision D95)', () => {
+  const HASH = '0123456789abcdef'.repeat(4);
+  const block = { sha256: HASH, title: 'Scene' };
+
+  it('keeps a required part that carries a block as the part, so the checkout keeps its button', async () => {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ variantId: 'var_a', quantity: 1 }]));
+    const tree = designed(normalizeShopControl(control, 'en', 'node'), { 'checkout.button': (props) => ({ ...props, customCode: block }) });
+    const { container } = await publish(page(tree), 'en');
+    await waitFor(() => expect(container.querySelector('button[data-checkout]')).not.toBeNull());
+    expect(container.innerHTML).not.toContain(HASH.slice(0, 12));
+  });
+
+  it('draws a void-tag block beside the parts as its box with the fallback', async () => {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([{ variantId: 'var_a', quantity: 1 }]));
+    const base = normalizeShopControl(control, 'en', 'node');
+    const image = { type: 'img', id: 'cc', props: { alt: 'x', customCode: block }, children: [{ type: 'p', id: 'cc-fb', props: { children: 'Fallback text' } }] };
+    const { container } = await publish(page({ ...base, children: [...(base.children ?? []), image as ShopTreeNode] }), 'en');
+    await waitFor(() => expect(container.querySelector('button[data-checkout]')).not.toBeNull());
+    expect(container.querySelector('span > p')?.textContent).toBe('Fallback text');
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.innerHTML).not.toContain(HASH.slice(0, 12));
+  });
+});

@@ -19,10 +19,10 @@ vi.mock('next/navigation', () => ({
   usePathname: () => pathname,
   useSearchParams: () => new URLSearchParams(search),
 }));
-vi.mock('next/link', () => ({
-  __esModule: true,
-  default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
-}));
+// The project preview route carries an enforced frame policy, which a client-side step
+// would carry into the editor: leaving it must be a full document load.
+const leave = vi.fn();
+vi.mock('../leavePreview', () => ({ leavePreview: (href: string) => leave(href) }));
 // The frame's renderer is covered elsewhere; here: which page it shows,
 // whether it fills the window, and what the shell does with a clicked link
 // (`follow` stands in for a click on a link to `followPath`).
@@ -57,6 +57,7 @@ beforeEach(() => {
   search = '';
   replace.mockReset();
   push.mockReset();
+  leave.mockReset();
   const p = ProjectModel.create({ id: 'site_1', metadata: { title: 'Untitled Project', description: '' }, pages: {} });
   const home = p.createPage('test page');
   home.setSlug('');
@@ -185,10 +186,11 @@ describe('PreviewShell', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('"Editor" returns to this project on this page (it used to open the demo editor at /)', () => {
+  it('"Editor" returns to this project on this page with a full document load (it used to open the demo editor at /)', () => {
     render(<PreviewShell />);
     fireEvent.click(screen.getByRole('button', { name: /editor/i }));
-    expect(push).toHaveBeenCalledWith(`/projects/site_1?page=${bakeryId}`);
+    expect(leave).toHaveBeenCalledWith(`/projects/site_1?page=${bakeryId}`);
+    expect(push).not.toHaveBeenCalled();
   });
 
   it('a page that is not in the saved project: says so (announced), shows home', async () => {
@@ -205,6 +207,7 @@ describe('PreviewShell', () => {
     render(<PreviewShell />);
     fireEvent.click(screen.getByRole('button', { name: /editor/i }));
     expect(push).toHaveBeenCalledWith(`/?page=${bakeryId}`);
+    expect(leave).not.toHaveBeenCalled();
   });
 
   describe('fullscreen', () => {

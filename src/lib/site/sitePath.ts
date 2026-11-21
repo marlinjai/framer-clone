@@ -11,7 +11,12 @@ import { PRODUCT_PARAM_SEGMENT } from '@/lib/pages/slug';
 /** The site path a click lands on (`/contact` from `<a href="/contact#x">`), or null for anchors and outside links. */
 export function sitePathOfClick(target: EventTarget | null): string | null {
   if (!(target instanceof Element)) return null;
-  const href = target.closest('a[href]')?.getAttribute('href') ?? '';
+  const link = target.closest('a[href]');
+  // A custom code tile's link (customCodeElement.tsx) leads out of the editor to the
+  // standalone preview, never to a page of the site. A stored node cannot carry the
+  // attribute: the render gate reserves every `data-fc-custom-code` name.
+  if (link?.hasAttribute('data-fc-custom-code-preview')) return null;
+  const href = link?.getAttribute('href') ?? '';
   if (!href.startsWith('/') || href.startsWith('//')) return null;
   return href.split(/[?#]/)[0];
 }

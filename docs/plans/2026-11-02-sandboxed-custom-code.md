@@ -524,7 +524,7 @@ C1 to C6 can be built now: nothing is served on the real domain until O1, and no
 | C1a | `sandbox-service`, the service and the contract. **Built 2026-11-12,** see "Decided in slice C1a" | `services/box/` (server, cache, rate limit, shell, tests, a fixture that states the view's columns), `src/lib/customCode/contract.ts`, `Dockerfile.box`, `Dockerfile.box.dockerignore`, `.github/workflows/box.yml` (build and test only) | none | 1 session | Every box test above passes against the built image and a real Postgres holding the fixture; `box_reader` reads only the view; the image runs read-only as non-root with every capability dropped; `contract.ts` imports nothing; nothing in the application imports it; no image is pushed and nothing is deployed |
 | C1b | `sandbox-schema`. **Built 2026-11-15** on `feat/sandbox-box-schema` after Marlin's yes to the migration by name that day, see "Decided in slice C1b" | Prisma migration `20261115000000_custom_code` (`custom_code_blobs`, `custom_code_audit`, `custom_code_proposals`, `sites.custom_code_enabled`, the function `box_document` of D18 instead of the view), the grant of EXECUTE on it in `prisma/sql/box-reader.sql` (no password in it, applied by the operator in O1), the `deploy/README.md` section, and the box's integration suite pointed at the real migration instead of the fixture | C1a, #394 merged, **Marlin's yes to the migration** | 1 session | The box's integration suite passes against the migrated schema; `box_reader` may call only `box_document`, reads no table and never gets the code of a blob that is not live; the migration is additive and applies on a database without `box_reader` |
 | O1 | `sandbox-domain-and-host` (operator, not a worker). **Repository half built 2026-11-17 on `feat/sandbox-box-deploy`,** see "Decided in step O1 (repository half)"; the operator half (infra repository, Coolify, Infisical, DNS, monitors) is open | Infra repo: Cloudflare zone and records in Terraform, Infisical project `framer-clone-box` and its machine identity, Coolify application, `box_reader` applied, five Kuma monitors. In this repository: the Infisical client and login entrypoint in `Dockerfile.box`, and the push, webhook and health poll steps in `box.yml` | C1a, C1b, **M2 bought** | Half a day | `curl` with and without fetch metadata headers gives 200 and 403 on `run.<domain>`; certificates valid; no `Set-Cookie`; all monitors green; abuse page answers |
-| C2 | `sandbox-element` | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `HeadlessComponentRenderer.tsx`, `componentRegistry.ts`, `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), the tile | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
+| C2 | `sandbox-element`. **Built 2026-11-16 on `feat/sandbox-element`,** see "Decided in slice C2" | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `blockedNodes.ts`, `renderVocabulary.ts`, `previewSafe.ts`, `src/components/CustomCodeSurface.tsx` with `EditorApp.tsx` and `PreviewMount.tsx` (the surface context), `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), `src/lib/consent/consent.ts` and `MapEmbedIsland.tsx` (D48), `PreviewShell.tsx` and `src/lib/site/sitePath.ts` (D49), `applyBindings.ts` (D98); no registry entry (D43), `HeadlessComponentRenderer.tsx` unchanged | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
 | C3 | `sandbox-bridge` | `src/lib/customCode/broker.ts`, `CustomCodeIsland.tsx`, the shell client in `contract.ts`, `runtime.ts` (third lazy chunk), size test (broker at most 2 kilobytes gzipped, as the behaviour plan holds) | C2, B4 | 3 sessions | Bridge tests above in three engines; a page without blocks loads no broker byte; the focus watch proven or replaced with the proof attached |
 | C4 | `sandbox-authoring` | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
 | C5 | `sandbox-lifecycle` | `src/server/sites/repository.ts` (blob pruning with revisions), `src/server/sites/erase.ts` (D9), publish dialog listing, `publishCheck.ts` warnings, proposals (D7): `propose_custom_code` in the site operations, the importer's "Propose as custom code", the panel's Accept, `POST /api/internal/custom-code/block` | C4 | 2 sessions | Rollback to a revision whose blob was blocked shows the fallback; an erase inside code rewrites the hash in every kept revision in one transaction; a proposal never reaches the box; an agent key cannot write a hash |
@@ -690,6 +690,233 @@ Built on 2026-11-17 on the branch `feat/sandbox-box-deploy`: the Infisical clien
 **D59. Whether to publish is judged against the commit running in production, by a small tested script.** The second review showed that comparing a push with its own previous commit loses box changes: a waiting run cancelled by a newer database-only push, or a deploy that failed, is never retried. `services/box/ci/publishDecision.ts` (run by node, which strips its types, with nothing installed) asks GitHub's Deployments API for the newest deployment to `box-production` whose latest status is success (the job token has `deployments: read` and nothing more than reading), and its compare API for the files changed from that commit to this one; a comparison through the API also works when the repository is private, where an anonymous `git fetch` would not. It publishes on a box change, holds back on a database change (D56), and stays quiet otherwise. It publishes, with a notice, when no deployment ever reached success. **When it cannot tell, the step fails:** the API failed or was rate limited, the newest success was not made by this workflow's deploying jobs, or the deployed commit is not an ancestor of this one. **A list of files cut at GitHub's 300 holds instead, with a notice** (the fifth review: the box deploys rarely in an active repository, so a cut list is likely and must not be permanent): the database hold cannot be checked, so the notice says to deploy the application if the database changed and then run the workflow by hand. It writes `publish=false` and an error naming the way out (re-run, or run the workflow by hand with `override_guard`), and it runs after the tests, so they report first. Publishing on not knowing (the second round's choice) was corrected by the third review: when a migration lies between production and main, a box published then replaces the running container and production answers 503 until the application is deployed, which is not "at most one deploy of an unchanged box". Failing loudly costs a re-run or a manual run; the decision asks GitHub nothing on a manual run, and the publish job's guard lets a manual run through with `override_guard` once the operator has checked what runs. **No state is permanent:** every refusal names its way out (a re-run, a manual run, `override_guard`, `publish_while_pinned`, or deploying the application first). While `BOX_DEPLOY_PINNED` is set, and on a manual rollback run, it publishes nothing (D53). **Only deployments this workflow's deploying jobs made count** (the fourth review, made workable by the fifth): a job with `environment:` creates its deployment itself, its creator is the run's actor (not `github-actions[bot]`), and every status of it names the job in its log address (`.../actions/runs/<run>/job/<job>`), as recorded from this repository's own environment deployments. A success is trusted when that address is on GitHub, its job (`/actions/jobs/<id>`, with `actions: read`) is the publish or rollback job, succeeded on main at the deployment's commit, and its run's workflow is `box.yml`. A deployment created through the API has the commit's checks page as its log address and is not trusted, nor is one by another job, workflow or branch: what runs is then unknown, and the run fails loudly. The first version asked for the creator and listed the commit's runs and jobs; it was built and tested on invented answers and could never pass on a real run (the publish job's own deployment is listed in progress while it runs, and the creator is the actor), so the tests now use answers recorded from this repository's API, including the running job's own in-progress deployment. **Only the end of the list without a success means none** (the first deploy): the deployments are read page by page (100 a page, newest first), passing over failed ones and the running job's own. The sixth review found that the first version read one page of 30 and took no success there as none, so 30 failed deploys (Coolify down a while, each run and re-run adding one) would have skipped the database hold and the guard's ancestry check. Each page is one GraphQL query that returns every deployment with its latest status (the seventh review: one call per row spent a large share of the run token's hourly allowance in exactly the state of many failed deploys), so a lookup costs a call per 100 rows plus the job and run of the success; a refused query (200 with errors and no data) is not known, and so is any answer carrying errors next to partial data (the eighth review: a status that failed to load comes back null and would read as none). That a job token with only `deployments: read` may read deployments through GraphQL is confirmed on the first run; if it may not, GitHub answers with errors, which fails safe and loudly with `override_guard` as the way out. At most two pages are read; no success among the newest 200 means not known, and the run fails loudly with `override_guard` as the way out. The decision step's error names `override_guard`, since without it a manual run's guard asks the same question and refuses again when the cause lasts. Reporting the build's commit from `/health` and comparing it after the deploy was considered for the case of an old container answering: with every deployment status that is not `finished` failing the run, and the application pointed at the exact digest first, a finished deployment runs that image, so it is not added.
 
 **How it was tested.** `services/box/test/launch.test.ts` (44 tests) runs the start program against stand-ins for the client and the box, real processes that record their own command lines and environments: every missing or malformed variable, root, a refused login (its message passed on without any credential), a login that gives no token, one that hangs, a missing client, SIGTERM during the login, SIGTERM and SIGINT reaching the box, the run's status and a run ended by a signal, a refused fetch of the secrets (its message passed on without the token), a client secret and a token straddling the 16 kilobyte cut of a line without a newline (in one write, and split across two), a fetch that never ends and a box that never answers `/health` (both stopped at the time limit) and a box that answered in time (left alone), the time limit's own checks, and the start program bundled and run in a process of its own, where nothing else keeps it alive (it once ended with 0 there before reading the status, which only the image suite had caught), and no credential on any command line, in any log line or in the box's environment. The image suite now starts every box through the real entrypoint and the real Infisical client against a stand-in for Infisical (`test/integration/fakeInfisical.ts`) on its private network, and adds: each missing start variable and the database address on the container stop the box before Infisical is asked anything; a refused login ends with 69 and writes no credential; a project Infisical will not give ends with 1, the client's reason in the log, no box started and no credential written; a fetch Infisical never answers ends with 69 at the time limit; a running box has `tini` as process 1, the secret in its environment and no credential in its environment, in any process's command line or in the log; and `docker stop` ends the chain with status 0 within the grace period. Six rules of the start program were also removed on purpose, one at a time, and tests failed on an expectation each time (never by hanging): the token passed as an argument (1 test), signals not passed on (5), a missing variable tolerated (6), the token left in the box's environment (2), the login's message passed on without taking the credentials out (1), the standard error of `infisical run` passed on without taking them out (1). After the first review, five more: the old cut of a long line (2), no overlap kept at the cut (2), no time limit on the start (2), the client's message dropped on "no usable token" (1), and the start program's waits not holding the process open (1). After the second review: a JWT-shaped token straddling the cut (in one write, and in two writes cut inside its header and just after its first dot), where the cut may fall (`safeCut`), and an allow-list test with log, proxy and `NODE_OPTIONS` variables on the container; the image suite adds a box started with `LOG_LEVEL=debug`, `LOG_DESTINATION=stdout` and a proxy that is not there, which still starts and logs no credential and no database address, and the image's health check now starts after 60 seconds, the start program's default limit. `services/box/test/publishDecision.test.ts` (25 tests) covers the publish decision (D56, D59): pull requests and other branches, the variable off, a manual run, each box path, nothing of the box changed, a box change of a cancelled run, a migration, a role file and a migration with a box change held back, nothing deployed or not known, and the GitHub answers (failed, running and inactive deployments passed over, failed calls, a deployed commit that is not an ancestor, a cut file list, a renamed file). Four more rules removed on purpose: the token pattern applied to the part kept back (1 test failed), no move of the cut back to an `eyJ` run (1), no allow-list (3), no log flags (1); and four in the decision: this push judged instead of the deployed commit (10), no database hold (3), any deployment status taken as success (2), a diverged comparison trusted (1). The deploy step was run against a stand-in for Coolify: `finished` passes, and `failed`, `cancelled-by-user`, `skipped`, no deployment named, a 401 on reading the deployment, a 403 on setting the tag and no answer at all (`HTTP 000`) each fail the step. After the third review: `test/publishDecision.test.ts` (now 31 tests) adds the pin (no publish on a push, on a manual run without `publish_while_pinned`, or when what runs is unknown; a manual run with it publishes), the rollback run (publishes nothing, pinned or not), and the loud failure (an unknown deployed commit or comparison gives no publish and an error, and the script run as the workflow runs it exits 1 with `publish=false`). `test/deploy.test.ts` (19 tests) runs `ci/deploy.ts` against a stand-in for Coolify: the digest in the `sha256-<hex>` form, the calls in order with the token and the health check without it, the masks first and no address or token in the log, each failing status, a refused tag, webhook or read with the token hint naming read, write and deploy, no deployment or a malformed one, the 15 minute limit with unknown statuses never printed, `/health/db` never answering, and every malformed input refused before Coolify is asked. Rules removed on purpose: the pin ignored on a push (1 test failed), any manual run lifting the pin (1), an unknown deployed commit publishing (3), the error not failing the step (1), a rollback run also publishing (1); and in the deploy script, cancelled and skipped not failures (2), no deployment passing (1), a refused read polled on (1), the digest not in Coolify's form (1), the bare host not masked (1). After the fourth review: `test/publishDecision.test.ts` (now 39 tests) adds the guard (an ancestor or the same commit or nothing deployed passes; a deployed commit ahead or diverged, the pin, a run off main and an unknown deployed commit refuse; run as the workflow runs it, it fails the step while pinned), the trust check (a success by another creator, with no box.yml run on main, from another branch or file, or with no successful deploying job is not trusted; a rollback job counts), and the comparison while pinned (the database notice, and no failure when GitHub cannot be asked). `test/deploy.test.ts` (now 25 tests) adds the earlier tag read, named and put back on each failure before a deployment started, a failed put-back and a missing earlier tag reported, three 404s in a row ending the follow while a single one does not, `cancel_previous=queued`, the five second health limit, and a plain http webhook refused. Rules removed on purpose: the guard trusting any order (1 test failed), the guard ignoring the pin (2), any creator trusted (1), no deploying run needed (1), the database hidden by the pin (1), a skipped job counted (1); in the deploy script, 404s followed for 15 minutes (2), the earlier tag not put back (6), a plain http webhook accepted (1), no short health limit (1), 404s counted across other answers (1). After the fifth review: the trust check, the guard and the comparison were rewritten smaller and their tests moved onto answers recorded read-only from this repository's API (`test/fixtures/github`: the plugin-mirror deployment made by its job with all five statuses, its job and run, a production deployment made through the API, and comparisons ahead, behind and cut at 300 files). `test/publishDecision.test.ts` (now 45 tests) covers the first publish with only the running job's own in-progress deployment listed (none, and the guard passes), a recorded success made by the publish or rollback job (trusted), the recorded records unchanged and each changed field (job name, branch, conclusion, commit, run, workflow path, the run's branch, a log address elsewhere, an API deployment) not trusted, the guard passing a cut list, refusing behind and diverged with the way out, and `override_guard` passing a manual run but not a push. Rules removed on purpose: no success read as unknown (3 tests failed), the running job's own row not passed over (5), the workflow path not checked (1), the job name not checked (1), the log address's host not checked (1), the guard needing a whole file list (1), a cut list failing (2), `override_guard` on a push (1), decide ignoring ancestry (1). After the sixth review: `test/publishDecision.test.ts` (now 54 tests) adds a success found behind a full page of 100 failures on the second page (with 35 more failures), a full last page followed by an empty one (none), every page it may read full of failures (not known, and no third page asked), a later page that does not answer, `override_guard` refused on attempts 2, 7 and an absent attempt without asking GitHub, the guard's verdict printed when started through a symlinked path, and `box.yml`'s guard step run by bash as GitHub runs it (the real guard's verdict passes, a refusal fails showing the error, a script exiting 0 with nothing or another line fails). `test/deploy.test.ts` (now 27 tests) adds Coolify's "Unauthorized to deploy" answer (the earlier image put back, the token hint shown) and the script started through a symlinked path. Rules removed on purpose: one page read only (4 tests failed), the page limit meaning none (1), no attempt rule (1), the entry compared by plain path (1 each in both scripts), no verdict line (2), the step passing without a verdict (1), no hint on "Unauthorized to deploy" (1), the decision error without `override_guard` (2). After the seventh review: `test/publishDecision.test.ts` (now 55 tests) moves the lookup onto GraphQL answers recorded read-only from this repository (`graphql-deployments.json`, the plugin-mirror environment's three newest deployments with their latest statuses; `graphql-deployments-api.json`, the newest production deployment, made through the REST API), checks the query and its variables, passes cursors from page to page, and adds a refused query (not known); the REST fixtures for the per-row calls are removed. `test/deploy.test.ts` (now 32 tests) adds a deployment queued or in progress (refused, only the two reads made) and a list refused, unanswered or malformed (nothing changed, the token hint on 403). The image suite adds the image's own health check reading healthy (an interval and a start period of one second; a start period of 0s would mean the image's own 60 seconds, in which failures do not count), ending on either verdict. Rules removed on purpose: any latest status taken as success (8 tests failed), the first page taken as the end (4), no cursor passed on (2), a refused query read as none (1), no look at Coolify's deployments (2), in progress not counted as busy (1), a list Coolify refused ignored (2), and in the image the health check asking a path the box does not serve (the test failed on the status, unhealthy, after about nine seconds). After the eighth review, `test/publishDecision.test.ts` (now 56 tests) adds errors next to partial data (not known); with the errors check removed on purpose it and the refused-query case failed (2). The unit suite has 333 tests, the image suite 65.
+
+## Decided in slice C2, say so if you disagree
+
+Slice C2 was built on 2026-11-16 on the branch `feat/sandbox-element`: the stored value of a block and its parse
+(`src/lib/customCode/customCode.ts`), the element on every surface (`src/lib/renderer/customCode/customCodeElement.tsx`),
+the dispatch in both renderers, and the enforced `frame-src` from the middleware (D6). It draws no frame anywhere: the published
+page and the standalone preview show the fallback until the island of C3 exists. It does not depend on C1b. Numbering continues
+after D35, the last number of the C1b pull request.
+
+**D36. The stored value is read strictly, and never reaches the DOM.** `props.customCode` is either `{ sha256, title }` or
+`{ proposal, title }`, exactly those two keys, in a plain object. The hash must match the contract's pattern (64 lower case hex,
+`BOX_SHA256_PATTERN`, reused from `contract.ts`). A proposal id is 1 to 64 characters of letters, digits, `_` and `-` (a UUID or a
+similar token), so it can never be markup or a path. The title has its white space folded and is refused when it is empty, longer
+than 200 characters or holds a control character. Anything else is invalid, and an invalid value, like a proposal, shows only the
+fallback. The prop is kept off the element in four places that do not depend on each other: the server renderer's list of props
+that are never attributes, the render gate's node settings (so it is dropped without a warning), the element itself, and the render
+vocabulary, which now reserves `data-fc-custom-code` and its `-` forms, so a stored node cannot pass for a block or its tile.
+
+**D37. The box's origin is one environment value, `SANDBOX_ORIGIN`, with no default.** No configuration for it existed. It must be
+exactly `https://` and an exact host name (the contract's `isExactHostname`): no path, port, wildcard, address literal or second
+source. Unset or malformed means no page may frame the box at all, so every block shows its fallback. A default naming
+`run.lumitrausercontent.com` was rejected: the domain is registered (M2) but nothing is served on it until O1, and a default would
+allow frames from a host before anyone decided to run the box there. A set but malformed value is logged at start
+(`src/instrumentation.node.ts`) and does not refuse the start: the sites work, only custom code stays off. Documented in
+`.env.example` and `deploy/README.md`. O1 sets it together with the kill switch.
+
+**D38. The application's side of the kill switch is in the middleware.** D16 asked C2 to read `CUSTOM_CODE_DISABLED` the way the box
+does. `isCustomCodeServing` reads it (only `0` serves), and a test holds it equal to the box's `isKillSwitchOn` for a dozen values.
+While the switch is not `0`, the enforced `frame-src` leaves the box out, so no page can frame a block even if something drew a
+frame. The renderers do not read the switch in C2, since they draw no frame. C3's island must take the same decision from the
+server (never from `process.env` in the client bundle, which does not have it).
+
+**D39. The enforced `frame-src` names the box and Google, not `'self'`.** On every published document the middleware sends
+`Content-Security-Policy: frame-src https://run.<box domain>/box/`, plus `https://www.google.com` when the maps consent cookie is
+set (the same switch the report-only policy uses), or `frame-src 'none'` when neither applies. The report-only policy measures
+`frame-src 'self'`; the enforced one leaves `'self'` out because a published page holds exactly the two kinds of frame D6 names,
+and no part of a published page frames its own origin. The same header carries `object-src 'none'` (added after the second review
+of pull request #450): that review saw WebKit load an `object` and an `embed` from another host under `frame-src` alone, while the
+render gate's WebKit build refused both as `frame-src` violations; `object-src 'none'` refuses them in every engine whichever way it
+reads them, and no published page uses either. The standalone preview and branch preview hosts send it too. What no policy refuses: an `iframe srcdoc` or an `about:blank`
+frame makes no request, so it runs in the page's own origin whatever `frame-src` says. The policy is a second line for frames and
+plugins that load from somewhere; the render gate refusing `iframe`, `object` and `embed` stays the line that holds. The report-only
+header is unchanged. **For C3:** once blocks run, the
+report-only `frame-src` (which has no box) will report every box frame. C3 either adds the box there or drops `frame-src` from the
+report-only policy, now that it is enforced.
+
+**D40. The standalone preview route is matched by its exact shape.** `/projects/<id>/preview` on the normalized path (so `//Projects/x/%70review`
+counts too, and `/projects/x/preview/extra` does not). Its header joins both directives in one value,
+`frame-ancestors 'none'; frame-src ...`, because the frame guard adds `frame-ancestors 'none'` only where no policy is set yet; a
+test asserts both. A signed-out request is redirected to the login and gets no frame policy (a redirect is not a document). Not
+matched, and tested as such: the editor (`/projects/<id>`, with or without the preview over it), the dashboard, the approval and
+review pages, Books, the catalogue and the demo preview `/preview`. The demo project lives only in the browser and has no site, so
+no block of it can run anywhere.
+
+**D41. Which preview draws the box is said by a context, and the default is the tile.** The preview over the editor and the
+standalone preview both render through `PreviewShell` and `HeadlessComponentRenderer` in the same mode, so a surface signal is
+needed. `CustomCodeSurfaceContext` defaults to "tile, no link". Only `PreviewMount` (the standalone route) says `standalone`; the
+editor (`src/components/CustomCodeSurface.tsx`) gives the tile its link; the branch review pane and the demo preview keep the
+default. The canvas always draws the tile, whatever the context says. The plan's "button to the standalone preview" is a link
+(`target="_blank"`, `rel="noopener noreferrer"`): it opens the page in a new tab, which is what a button would do, and works
+without script. The demo project's tile has no link.
+
+**D42. On the editor surfaces the tile replaces the fallback.** As the map embed does, the tile fills the box and the fallback
+children are not drawn on the canvas or in the preview over the editor. The Layers panel still lists them. How an author edits the
+fallback (for example a switch in the panel that shows it instead of the tile) is C4's, with the panel section.
+
+**D43. No registry entry in C2.** A `COMPONENT_REGISTRY` entry is an item of the insert menu and is taught to the generator; the
+insert entry is C4 ("only on an enabled site"). So C2 changes neither `componentRegistry.ts` nor the panel's categories, and a block
+reaches a page only as stored data. The generator and the review already refuse `customCode` in any spelling (`validate.ts`,
+`ai/review/ops.ts`, both tested), as D7 requires.
+
+**D44. A branch preview link shows the fallback, unchanged from D13.** D13 named C2 as its revisit point. Nothing is widened: a
+preview host keeps its `frame-ancestors 'none'` and now also gets `frame-src 'none'` (changed after the first review of pull request
+#450): a preview draws no frame at all (a map shows a notice, a block its fallback), so this refuses only a frame a stored page could
+sneak past the render gate, the backstop the published plane has. Nothing frames a preview host, which already refuses being framed.
+`previewSafeTree` takes `customCode` off every node, so a block on a preview link renders as its fallback with no mark an island could
+act on. Letting preview links run blocks stays
+Marlin's decision, with the design D13 asks for.
+
+**D45. What the published page marks, and what it cannot know.** The server renders the node's own tag (a void tag becomes a
+`div`, since a block holds children), its attributes and its children. Only a valid block carries
+`data-fc-custom-code="<first 12 hex of the hash>"`; a proposal and an invalid value carry no mark and nothing of the stored
+value. Whether a hash belongs to another site, or to no stored blob, the renderer cannot tell without a database read (C1b
+is not merged, and the published render path has none for this): the box answers 404 for it (its lookup is keyed on the site and
+the hash, D3), and since the page draws no frame in C2, the fallback is what shows.
+
+**D46. Left for C3, deliberately.** The per-site `<meta>` that tightens `frame-src` to `/box/<siteId>/` (D6) and the limit of 4
+blocks per page (the renderer warns for the rest) both only matter once a frame is drawn, so they come with the island. C2 draws
+no frame on any surface.
+
+**D47. The browser proof runs in the render gate job.** `test/renderGate/frameSrc.gate.ts` takes the headers from a real call of the
+middleware, for a published page and for the standalone preview, with and without maps consent, serves a document with exactly
+those headers in Chromium and WebKit, and tries three frames: the box, the map as its island builds it, and another host. It
+asserts each frame's outcome (loaded, by a message from its document, or refused, by an enforced violation the page sees), so a
+weakened policy fails on an expectation, not a timeout. Firefox is not covered there: the render gate installs Chromium and WebKit
+only. The render gate fuzz has new probes for blocks carrying `src`, `srcdoc` and iframe markup, and for forged renderer
+attributes.
+
+**D48. A maps "yes" given on a page already loaded reloads the page.** The middleware reads the maps consent cookie into the
+document's enforced `frame-src`, and a policy cannot widen after the document loaded. Before C2 the map island drew the map in the
+same document on the banner's "yes"; under the enforced header that frame would be refused. The consent runtime
+(`src/lib/consent/consent.ts`) now remembers whether the document was served with the cookie: a "yes" on a page with a map, in a
+document served without it, once stored, reloads the page instead of announcing it, and the new document allows the map. A page
+without a map only sets the cookie, and the next document's policy allows Google. The reload is decided before anything loads, so
+the document it replaces starts no tracker and a visit is not counted twice (changed after the first review of pull request #450),
+and the `#cookie-settings` address is dropped first, so the banner does not open again. A stored "yes" whose cookie has expired (a
+year at most, seven days for a cookie set by script in Safari) sets the cookie again before the tracker could start, and on a page
+with a map reloads once. When storage throws, a reload would forget the answer, so it is announced as before; the runtime exposes
+`mapsAtLoad`, and the map island draws no frame the policy would refuse. Its placeholder says "Reload the page to show the map" with a
+reload button, which gets focus (the cookie is already set, so the new page allows the map, and its banner asks again because the
+answer was not stored). The visitor also keeps "Open in Google Maps". The same holds once the visitor has edited a field on the
+page: a reload would lose it, so the "yes" is announced and the map offers the reload, which the visitor presses when ready (decided
+after the third review of pull request #450, instead of listing the lost input as a limit). The runtime records the visitor's own
+`input` and `change` events (trusted ones, in the capture phase on the document, from an input, a textarea, a select or an editable
+region outside the banner, the field read from the event's composed path so one in a shadow root counts) and holds the reload while a
+field the visitor edited is still on the page: a platform form that was sent replaces its fields with its thanks, so a later "yes"
+reloads again (fifth review). The held note then adds that reloading may clear what the visitor typed on the page: "may", because
+the platform's contact form brings its draft back from session storage after a reload where storage works, and loses it where
+storage is blocked. The map reads `edited()` when the hold begins and again on every `input` and `change` on the page (after the
+runtime's capture listener has counted it) and when the visitor points at or focuses the box, so an edit made while the note shows,
+and a form sent since, change the sentence (sixth review; before, it was read once per render and nothing re-rendered). The first version compared each field with its default, which the
+fourth review showed missed every published form: React keeps a controlled field's default in step with what is typed, so the
+reload wiped the visitor's message; it also held the reload over untouched selects, ranges and colours. Typing into the platform's
+contact form is proven in jsdom and in Chromium and WebKit (`test/behaviour/maps.spec.ts`: no new document, the text
+kept, the map's reload button then shows the map). The map's own reload button uses the runtime's `reload()`, which drops the
+`#cookie-settings` address first, as the runtime's own reload does (fourth review). Where the browser blocks cookies the maps cookie never sticks, so no reload could help; the runtime
+exposes `mapsAllowed()`, and the placeholder then says the map cannot be shown while this browser blocks cookies, with no button, and
+"Open in Google Maps" gets focus (found by the third review; before C2 those visitors saw the map in the same page). Focus survives
+the reload: the runtime announces a maps reload first, as a `lumitra:maps-reload` event saying whether a map's "Load map" opened the
+banner, and only then does the last map that asked leave a one-shot `sessionStorage` mark naming its box (path and position among the
+page's maps); a map's own reload button does the same. After the reload that box focuses its frame once and removes the mark; a mark
+for another page is removed unread. A banner declined or closed without a "yes" leaves no mark (the third review found one written on
+"Load map" that lingered). Two limits remain. A visitor whose tracker already runs (analytics granted earlier) and who then accepts maps on a page
+with a map still reloads, so that page view is counted twice; the alternative, a placeholder asking for a manual reload, costs every
+map visitor a step for a rarer double count. And `mapsAtLoad` is read from the cookie as the runtime starts, not from the response: if
+the maps cookie is set (in another tab, say) between the request leaving and the runtime script running, the page believes its policy
+allows Google when it does not, and shows a refused frame until the next load. A page restored from the back-forward cache keeps the
+value it had at load, which matches the policy it was served with, so a later yes takes the reload path as it should. The address cleanup applies to the analytics revoke reload as well. A placeholder that says "reload to show the map" was the alternative; a reload is what the visitor asked
+for in one step. The render gate proves it in Chromium and WebKit: a page served without the cookie, the banner's yes, a second
+document with Google in `frame-src`, and the map loads.
+
+**D49. The project's standalone preview is left with a full document load.** A response header applies to the document it came
+with. A client-side step from `/projects/<id>/preview` back into the editor would keep the preview's `frame-src` there and refuse
+the editor's own frames (the Books PDF preview in `ImportRowEditor.tsx`). "Editor" and the "Open your projects" link of the
+preview now load a new document (`src/components/preview/leavePreview.ts`). The way in is already a full load: the tile's link
+opens a new tab, and no other client-side link leads to the route. The preview over the editor and Interact read every link to a
+path as a page of the site (`sitePathOfClick`, `src/lib/site/sitePath.ts`); a link with the tile's reserved
+`data-fc-custom-code-preview` attribute is left alone, so it opens its tab (the third review found it cancelled with a false notice). The demo preview at `/preview` stays client-side, because its
+project lives only in the tab's memory, and it never carries the policy. The checkout draws no frame (no payment script runs on
+the page), so nothing else on the policed documents is affected.
+
+**D95. A block inside a form or a shop control shows its fallback, with no stored value in the page's script data.** Form and shop
+controls are client islands that receive their whole stored node, and an island's props are serialized into the page (the React
+Server Components payload). `withoutCustomCodeTree` (`src/lib/customCode/customCode.ts`) takes `customCode` off such a node and
+every descendant before it crosses, so nothing of a block's value reaches the page, as D36 and D45 say. It empties the prop to null
+rather than deleting it, so the node stays a block and the island draws it as an invalid one: its box with the fallback inside,
+without the trace mark, a void tag swapped for the box as D96 says. Until the sixth review it deleted the prop, and a void-tag block
+inside a form published as its bare element with the fallback dropped (an `img` showing only its `alt`), while this text already
+claimed the fallback; tests now read the drawn markup inside a form, a variant selector and a checkout. A shop part and a nested
+shop control lose the prop instead and stay what they are: the block check comes before theirs, so emptied they would be drawn as
+a box, and a checkout whose button carried the prop would publish without a button (decided after the sixth review, say so if you
+disagree). Running a block inside a
+form or a shop control is left to C3 if it is ever wanted. Found by the first review of pull request #450, corrected after the sixth.
+
+**D96. The tile is drawn in a plain container, as a labelled group.** On the canvas a block stored as a link, a button, an SVG
+element or any tag that cannot hold the tile (a paragraph, a list, a table part) draws the tile in a `div`, without the control's
+own attributes (`href`, `type` and the like). A block whose ancestor is a link, a button, a label or a summary leaves the tile's link
+out (found by the second review of pull request #450), so the tile's link is never inside another control. Plain containers (`div`,
+`section`, `article`, `aside`, `header`, `footer`, `main`, `nav`, `figure`, `blockquote`, `li`, `dd`, `td`, `th`) keep their tag. A
+block standing inside an `svg` draws a `g` with its attributes and the tile as HTML in a `foreignObject`, because React draws an HTML
+tag under `svg` as an SVG element, which shows nothing; inside `math`, where React draws no HTML at all, the tile is its label as text
+in `mtext`. The tile carries `role="group"`, which may hold its `aria-label`. On the published page and in the standalone preview a
+block stored as a void tag (which cannot hold the fallback) is drawn as a container the browser's parser leaves where it stands
+(`customCodeBoxTag`): a `g` inside `svg`, an `mrow` inside `math`, and a `span` anywhere in HTML. A `div` closes an open paragraph
+wherever inside it the block sits (under a picture, a meter, a progress bar or a link in a paragraph, as the fifth review showed), while
+a `span` never does, so one rule covers every depth without tracking paragraphs down the walk; the box is inline where a `div` was a
+block, which matches most void tags (an image, an input) anyway. Under a parent that
+holds only its own kinds of children (a table, its sections and rows, a column group, a select, an option group, an option, a
+datalist) the block is not drawn at all on those two surfaces: no container would stay there, and drawing nothing is what the page
+shows anyway once the parser has moved it (decided after the fourth review; refusing such a block at the render gate would also hide
+it on the canvas, where the author can still see and move it). The published renderer passes each node its parent's tag for this
+(a shop control's island passes its host's tag to the nodes it renders, so a block in a selector drawn as a table is dropped there as
+it is anywhere else), and the standalone preview reads it from the tree. The replacement keeps only global, `data-` and `aria-` attributes of the stored
+tag, never one that only that tag understood (`alt`, `fetchPriority`). The fallback's own children keep their stored tags, as every
+stored node does: a stored paragraph inside a paragraph breaks the same way anywhere on a page. Found by the third and fourth reviews. This is wider than the review asked (every tag that
+cannot hold the tile, not only controls and SVG). Found by the first review of pull request #450.
+
+**D97. A title refuses invisible formatting characters and lone surrogate halves, and must show something.** Besides control
+characters, the parser refuses every format character (Unicode category Cf: the bidirectional marks, embeddings, overrides and
+isolates, the zero-width characters and the word joiner range, the soft hyphen, the deprecated format marks U+206A to U+206F, the
+interlinear annotation marks, the Mongolian vowel separator, the byte order mark and the tag characters, which are invisible text an
+agent reading the title would still see), the combining grapheme joiner, the blank fillers that draw nothing (the Hangul fillers and
+the blank braille pattern), and half of a surrogate pair without its other half. A title must also hold at least one visible letter,
+number, symbol or punctuation mark. They change how a title reads without being seen, on the editor surfaces now and in a frame's
+`title` from C3. Also refused: the variation selectors that make no visible choice and can carry hidden bytes after any letter (U+FE00 to
+U+FE0D, U+E0100 to U+E01EF, and the Mongolian ones U+180B to U+180F), the object replacement character U+FFFC, every default-ignorable code point
+(Unicode's Default_Ignorable_Code_Point, which also covers the Khmer inherent vowels U+17B4 and U+17B5 and the unassigned U+E0080 to
+U+E0FFF; it replaced most of the hand-written list after the fifth review), and more than twelve code points in one grapheme cluster,
+the character a reader sees (counted with `Intl.Segmenter`, or as a base and its marks where a runtime has none). The fourth review's
+first cap, five marks in a row, refused everyday Burmese ("hope", "discount sale") and pointed Hebrew with an accent and a meteg; those
+reach four to six code points in a character, while a letter under 150 marks is still refused. The fifth review's cap of ten left no
+margin: measured on Node 22 (Unicode 17, whose grapheme rules join an Indic conjunct into one character), Sanskrit `कार्त्स्न्य` holds
+nine code points in one character, ten with a joiner after its first virama, and a kiss emoji with two skin tones holds ten. Nothing
+measured exceeds ten, so twelve is margin, not need: raised after the sixth review (decided, say so if you disagree); a runtime on older Unicode data splits conjuncts smaller, which only lowers the count. The text and emoji
+presentation selectors U+FE0E and U+FE0F pass once, right after a pictograph, and in a keycap (`1`, U+FE0F, U+20E3); a digit with
+U+FE0F and no keycap is refused. The zero-width non-joiner U+200C and joiner U+200D pass in two places only: one between two letters
+(Unicode category L) of the same script whose spelling needs them (Arabic, Syriac, Devanagari, Bengali, Gurmukhi, Gujarati, Oriya,
+Tamil, Telugu, Kannada, Malayalam or Sinhala), the left letter optionally followed by combining marks of any script (a virama, the
+Arabic shadda) and the right letter directly after the joiner, as Persian writes `کتاب‌ها` ("books") and `می‌خواهم` ("I want"), Sinhala `ශ්‍රී ලංකා` and Marathi its eyelash ra; and
+one zero-width joiner between two pictographs, the left one optionally carrying its presentation selector or a skin tone, which draws
+them as one emoji (a technologist, a rainbow flag, a family). That reverses the earlier refusal of joined emoji (decided by the
+coordinator with the sixth review): a single joiner between two visible pictographs carries no hidden payload. A joiner at a word's edge,
+doubled, between Latin letters, across two joining scripts (Bengali to Devanagari), before a mark, or next to a digit, a tatweel, a
+danda, a modifier apostrophe or a shared mark on a Latin letter is still refused (the sixth review's first version matched by script
+extension and let several of these through; the seventh review found it). Between two letters of the same script a joiner passes
+even where it changes nothing visible (after an alef, between two Devanagari consonants with no virama): one such byte hides no text. The subdivision flags (England, Scotland, Wales) stay refused,
+because their letters are tag characters, which are hidden text. Titles in any script, right-to-left ones included, single and joined
+emoji, an emoji with its presentation selector and a keycap pass. Found by the second review of pull request #450, widened from a
+hand-written list to the category after the third, to the variation selectors, U+FFFC and stacked marks after the fourth, and to the
+default-ignorables and the per-character cap after the fifth; the joiners were let back in after the sixth and anchored to
+same-script letters after the seventh.
+
+**D98. Nothing is bound into a custom code block's value.** `applyBindings` (`src/lib/bindings/resolver/applyBindings.ts`) skips a
+binding into `customCode` or any path below it, as it does for `behaviour` and FX scenes, so page data and the address bar can neither
+create a block nor choose which approved code it names: that stays the stored revision's choice, which D4 relies on to know which code
+a revision uses. The agent refusal (`namesCustomCodeProp`) matches every name whose folded form starts with `customcode`, so a dotted
+path such as `customCode.sha256` is refused in every spelling. Found by the third review of pull request #450.
 
 ## For Marlin
 

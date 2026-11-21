@@ -332,6 +332,14 @@ export interface MapEmbedCopy {
   region: string;
   /** Shown when the box has no usable map. */
   empty: string;
+  /** Shown after a "yes" in a page whose policy refuses the map (storage blocked): a new page shows it. */
+  reloadNote: string;
+  /** The button that loads that new page. */
+  reload: string;
+  /** Said with reloadNote when the visitor has edited a field on the page, which a reload may clear. */
+  reloadClears: string;
+  /** Shown after a "yes" where the browser blocks cookies: no page here can show the map. */
+  cookiesBlocked: string;
   privacyLink: string;
 }
 
@@ -343,6 +351,10 @@ const COPY: Record<LegalLanguage, MapEmbedCopy> = {
     title: (address) => (address ? `Karte: ${address}` : 'Karte'),
     region: 'Karte von Google Maps',
     empty: 'Hier ist noch keine Karte hinterlegt.',
+    reloadNote: 'Laden Sie die Seite neu, um die Karte anzuzeigen.',
+    reload: 'Seite neu laden',
+    reloadClears: 'Was Sie auf dieser Seite eingegeben haben, kann dabei verloren gehen.',
+    cookiesBlocked: 'Die Karte kann nicht angezeigt werden, solange dieser Browser Cookies blockiert. Öffnen Sie sie in Google Maps.',
     privacyLink: 'Datenschutzerklärung',
   },
   en: {
@@ -352,6 +364,10 @@ const COPY: Record<LegalLanguage, MapEmbedCopy> = {
     title: (address) => (address ? `Map: ${address}` : 'Map'),
     region: 'Map from Google Maps',
     empty: 'No map has been set here yet.',
+    reloadNote: 'Reload the page to show the map.',
+    reload: 'Reload page',
+    reloadClears: 'Reloading may clear what you typed on this page.',
+    cookiesBlocked: 'The map cannot be shown while this browser blocks cookies. Open it in Google Maps instead.',
     privacyLink: 'Privacy policy',
   },
 };

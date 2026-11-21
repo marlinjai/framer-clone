@@ -102,8 +102,11 @@ export const REFUSED_RENDER_ATTRIBUTES: ReadonlySet<string> = new Set(words(`
  * node may not pass for it.
  * `data-fc-map-` belongs to the map embed (src/lib/renderer/mapEmbed): its button
  * records consent, so a stored node must not be able to look like one.
+ * `data-fc-custom-code` and its `-` forms belong to the custom code block
+ * (src/lib/renderer/customCode): the published island of slice C3 acts on the
+ * block it marks, and a report is traced by it, so a stored node may not pass for one.
  */
-const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|map(?:-|$)|site-base|page-base|fonts|effects|rules|responsive|behaviour|theme|preview(?:-|$)|b$)/;
+const RENDERER_ATTRIBUTE = /^data-fc-(?:consent|sticky-cta-|map(?:-|$)|custom-code(?:-|$)|site-base|page-base|fonts|effects|rules|responsive|behaviour|theme|preview(?:-|$)|b$)/;
 
 /** A custom element's shape. A colon would let createElementNS read `x-y:script` as `script`. */
 const CUSTOM_ELEMENT = /^[a-z][a-z0-9._]*-[a-z0-9._-]*$/;

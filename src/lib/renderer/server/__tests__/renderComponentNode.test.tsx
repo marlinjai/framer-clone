@@ -251,6 +251,65 @@ describe('renderComponentNode: interactive commerce islands', () => {
   });
 });
 
+describe('a custom code block inside a client island (decisions D95 and D96)', () => {
+  const HASH = '0123456789abcdef'.repeat(4);
+  // A void-tag block whose fallback is a paragraph: its box is a span, unless its parent holds only its own kinds of children.
+  const imageBlock = (): ComponentNode => ({
+    type: 'img',
+    id: 'cc',
+    props: { alt: 'x', src: '/a.png', customCode: { sha256: HASH, title: 'Scene' } },
+    children: [{ type: 'p', id: 'cc-fb', props: { children: 'Fallback text' } }],
+  });
+  const product: ProductDTO = { id: 'p1', handle: 'h', title: 'T', description: null, options: [], variantIds: ['v1'] };
+
+  it('a form draws a void-tag block as its box with the fallback, without the trace mark', () => {
+    const { container } = renderWithProviders({ type: 'form', id: 'f', props: { 'data-form-kind': 'form' }, children: [imageBlock()] });
+    expect(container.querySelector('img')).toBeNull();
+    const box = container.querySelector('span > p')?.parentElement;
+    expect(box?.textContent).toBe('Fallback text');
+    expect(box?.getAttributeNames()).toEqual([]);
+    expect(container.innerHTML).not.toContain(HASH.slice(0, 12));
+  });
+
+  it('a shop control draws it the same way, and tells the block the tag it stands in', async () => {
+    const { container } = renderWithProviders(
+      { type: 'div', id: 'vs', props: { 'data-component-kind': 'variant-selector' }, children: [imageBlock()] },
+      pushProductFrame(createScope(), product),
+    );
+    await waitFor(() => expect(container.querySelector('span > p')?.textContent).toBe('Fallback text'));
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.innerHTML).not.toContain(HASH.slice(0, 12));
+  });
+
+  it('a nested add to cart carrying a block stays a working buy button, never a box', async () => {
+    const { container } = renderWithProviders(
+      {
+        type: 'div',
+        id: 'vs',
+        props: { 'data-component-kind': 'variant-selector' },
+        children: [{ type: 'div', id: 'atc', props: { 'data-component-kind': 'add-to-cart', label: 'Add', customCode: { sha256: HASH, title: 'Scene' } } }],
+      },
+      pushProductFrame(createScope(), product),
+    );
+    await waitFor(() => {
+      const button = container.querySelector('[data-add-to-cart]') as HTMLButtonElement | null;
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+    });
+    expect(container.innerHTML).not.toContain(HASH.slice(0, 12));
+  });
+
+  it('a shop control drawn as a table draws no box at all, as a table would outside one', async () => {
+    const { container } = renderWithProviders(
+      { type: 'table', id: 'vs', props: { 'data-component-kind': 'variant-selector' }, children: [imageBlock()] },
+      pushProductFrame(createScope(), product),
+    );
+    await waitFor(() => expect(container.querySelector('table[data-component-kind="variant-selector"]')).not.toBeNull());
+    expect(container.textContent).not.toContain('Fallback text');
+    expect(container.querySelector('img, span > p')).toBeNull();
+  });
+});
+
 describe('an empty custom property inline', () => {
   it('reaches the attribute React writes, and a stored nothing does not', () => {
     const html = renderToStaticMarkup(<>{renderComponentNode({ id: 'a', type: 'div', props: { style: { '--tw-blur': ' ', '--gone': '' } } })}</>);

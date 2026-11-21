@@ -72,6 +72,13 @@ const PAGES = {
     map('the-map', { mapUrl: SHARE, mapAddress: ADDRESS, style: { width: '100%', height: '360px' } }),
   ),
   other: page(node('other-title', 'h1', { children: 'Another page' })),
+  // The platform's own contact form beside a map: React-controlled fields (FormIsland).
+  contact: page(
+    node('contact-form', 'div', { 'data-form-kind': 'form', formName: 'Contact', successMessage: 'Thanks.' },
+      node('contact-name', 'div', { 'data-form-kind': 'form-field', fieldType: 'text', name: 'name', label: 'Name' }),
+      node('contact-message', 'div', { 'data-form-kind': 'form-field', fieldType: 'textarea', name: 'message', label: 'Message' })),
+    map('contact-map', { mapUrl: SHARE, mapAddress: ADDRESS, style: { width: '100%', height: '360px' } }),
+  ),
   // The review's payload: a map box over the whole screen, everything in it made
   // transparent by a stored rule, above a decoy that asks for a tap.
   jack: page(
@@ -241,9 +248,10 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     await expect.poll(() => google()).toEqual([SHARE]);
     record('after Load map and the banner\'s Accept');
     expect(await mapsCookie()).toBe('1');
-    // The page view on which the visitor said yes was served before the choice, so its
-    // policy reports the Google frame once (src/lib/site/cspReportOnly.ts says so).
-    expect(cspReports.every((line) => line.includes('https://www.google.com'))).toBe(true);
+    // The yes reloads the page (decision D48 of docs/plans/2026-11-02-sandboxed-custom-code.md):
+    // the map is drawn only in the new document, whose policies already allow Google, so
+    // neither the page view of the choice nor the new one reports a frame.
+    expect(cspReports).toEqual([]);
 
     requests = [];
     cspReports = [];
@@ -341,6 +349,43 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(await banner().isVisible()).toBe(true);
     expect(await banner().textContent()).toContain('Google Ireland Limited');
     expect(await topAt('#fc-consent [data-fc-consent-accept]')).toBe('top');
+    expect(errors).toEqual([]);
+  });
+
+  it('keeps what the visitor typed into the contact form: a yes does not reload, the map offers the reload, and that shows the map', async () => {
+    const MESSAGE = 'Please call me back on Monday.';
+    await open(`${mapsOnly}/contact`);
+    await banner().getByRole('button', { name: 'Decline' }).click();
+    // Real key presses, as a visitor types: trusted input events.
+    await tab.getByLabel(/^Message/).pressSequentially(MESSAGE);
+    await tab.getByLabel(/^Name/).pressSequentially('Ana');
+    // A mark on this document: a reload would take it away.
+    await tab.evaluate(() => { (window as unknown as { fcSameDocument?: boolean }).fcSameDocument = true; });
+    const documents = requests.filter((url) => url.endsWith('/contact')).length;
+    await tab.getByRole('button', { name: 'Load map' }).click();
+    await expect.poll(() => banner().isVisible()).toBe(true);
+    await pastGuard();
+    await banner().getByRole('button', { name: 'Accept' }).click();
+    await tab.waitForTimeout(SETTLE_MS);
+    expect(await tab.evaluate(() => (window as unknown as { fcSameDocument?: boolean }).fcSameDocument === true)).toBe(true);
+    expect(requests.filter((url) => url.endsWith('/contact')).length).toBe(documents);
+    expect(await tab.getByLabel(/^Message/).inputValue()).toBe(MESSAGE);
+    expect(await tab.getByLabel(/^Name/).inputValue()).toBe('Ana');
+    expect((await stored())?.maps).toBe(true);
+    expect(await mapsCookie()).toBe('1');
+    // This document's policy refuses Google: no frame, and the map offers the reload.
+    expect(await frame().count()).toBe(0);
+    expect(google()).toEqual([]);
+    const reloadButton = tab.getByRole('button', { name: 'Reload page' });
+    expect(await tab.getByText('Reload the page to show the map. Reloading may clear what you typed on this page.').isVisible()).toBe(true);
+    // The visitor reloads when ready: a new document, whose policy allows the map.
+    await reloadButton.click();
+    await tab.waitForLoadState('load');
+    await tab.waitForTimeout(SETTLE_MS);
+    expect(await tab.evaluate(() => (window as unknown as { fcSameDocument?: boolean }).fcSameDocument === true)).toBe(false);
+    await expect.poll(() => frame().count()).toBe(1);
+    expect(await banner().isVisible()).toBe(false);
+    expect(cspReports).toEqual([]);
     expect(errors).toEqual([]);
   });
 
