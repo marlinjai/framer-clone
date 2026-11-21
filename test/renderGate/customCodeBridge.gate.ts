@@ -141,6 +141,11 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
       setTimeout(function () { port.postMessage({ kind: 'setState', id: 'n', value: 2 }); }, 300);
     `),
   },
+  // Within the walk's bounds but over 64 KB as JSON (each quote is escaped): ends the frame at the second.
+  bulky: {
+    shell: false,
+    body: raw("for (var i = 0; i < 3; i++) port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(40000).join('\"') });"),
+  },
   // L2: a message that is not an object.
   nulls: { shell: false, body: raw("for (var i = 0; i < 5; i++) port.postMessage(null);") },
   // L1: a nested frame of the block floods the page's window.
@@ -550,6 +555,20 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       expect(click).toBeLessThan(2_000);
       expect(await stateOf(page, 'n')).toBe('2');
       expect(await settled(page)).toEqual([{ id: 'huge', shown: true }]);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('removes a frame at its second message over 64 KB, as with data that is not plain', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'bulk', doc: 'bulky' }]);
+    try {
+      await until(page, removed('bulk'), 10_000);
+      expect(await stateOf(page, 'n')).toBe('0');
+      expect(lines.filter((line) => line.startsWith('Custom code "Block bulk"'))).toEqual([
+        'Custom code "Block bulk": dropped a message or error, then silent',
+        'Custom code "Block bulk": not plain data or over 64 KB: removed',
+      ]);
     } finally {
       await context.close();
     }
