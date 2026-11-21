@@ -281,6 +281,24 @@ describe('a custom code block inside a client island (decisions D95 and D96)', (
     expect(container.innerHTML).not.toContain(HASH.slice(0, 12));
   });
 
+  it('a nested add to cart carrying a block stays a working buy button, never a box', async () => {
+    const { container } = renderWithProviders(
+      {
+        type: 'div',
+        id: 'vs',
+        props: { 'data-component-kind': 'variant-selector' },
+        children: [{ type: 'div', id: 'atc', props: { 'data-component-kind': 'add-to-cart', label: 'Add', customCode: { sha256: HASH, title: 'Scene' } } }],
+      },
+      pushProductFrame(createScope(), product),
+    );
+    await waitFor(() => {
+      const button = container.querySelector('[data-add-to-cart]') as HTMLButtonElement | null;
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+    });
+    expect(container.innerHTML).not.toContain(HASH.slice(0, 12));
+  });
+
   it('a shop control drawn as a table draws no box at all, as a table would outside one', async () => {
     const { container } = renderWithProviders(
       { type: 'table', id: 'vs', props: { 'data-component-kind': 'variant-selector' }, children: [imageBlock()] },
