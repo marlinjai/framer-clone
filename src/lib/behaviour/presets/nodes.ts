@@ -92,6 +92,12 @@ export function initialOf(node: PresetNode, state: string): number {
   return found?.type === 'number' ? found.initial : 0;
 }
 
+/** The name a person gave a preset's value, kept when the preset writes the value again, or `fallback`. */
+export function nameOf(node: PresetNode, state: string, fallback: string): string {
+  const found = behaviourOf(node).state?.find((entry) => entry.id === state);
+  return typeof found?.name === 'string' && found.name.trim() !== '' ? found.name : fallback;
+}
+
 /** A keyboard trigger that keeps the key from the page. */
 export const onKeys = (id: string, keys: string[], ...actions: Action[]): Trigger =>
   ({ id, on: 'keydown', keys, prevent: true, do: actions });
@@ -102,21 +108,30 @@ function idsUnder(node: PresetNode, out: Set<string>): Set<string> {
   return out;
 }
 
-/** Hands out ids that follow an item's own and that nothing under `root` holds yet. */
-function freshIds(root: PresetNode): (old: string) => string {
-  const taken = idsUnder(root, new Set());
+/**
+ * Hands out ids that follow an item's own: one past the highest number its stem has under
+ * `root` or in `taken` (the rest of the page, and every id the page's behaviour names), so
+ * an id is never one a node elsewhere holds, nor one a removed item had while anything
+ * still names it, where a reference would silently pass to the new item.
+ */
+function freshIds(root: PresetNode, taken: ReadonlySet<string> = new Set()): (old: string) => string {
+  const used = idsUnder(root, new Set(taken));
   return (old) => {
     const stem = old.replace(/-\d+$/, '');
     let at = 0;
-    while (taken.has(`${stem}-${at}`)) at += 1;
-    taken.add(`${stem}-${at}`);
+    for (const id of used) {
+      if (!id.startsWith(`${stem}-`)) continue;
+      const rest = id.slice(stem.length + 1);
+      if (/^\d+$/.test(rest)) at = Math.max(at, Number(rest) + 1);
+    }
+    used.add(`${stem}-${at}`);
     return `${stem}-${at}`;
   };
 }
 
-/** A copy of an item with fresh ids, a person's references inside it following them. */
-export function copyItem(root: PresetNode, item: PresetNode): PresetNode {
-  const newId = freshIds(root);
+/** A copy of an item with fresh ids, a person's references inside it following them. `taken` is what the rest of the page uses. */
+export function copyItem(root: PresetNode, item: PresetNode, taken?: ReadonlySet<string>): PresetNode {
+  const newId = freshIds(root, taken);
   const ids = new Map<string, string>();
   const renew = (at: PresetNode): PresetNode => {
     const id = newId(at.id);

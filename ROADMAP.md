@@ -264,11 +264,11 @@ connections to the suite. The four lines below are in that order.
   documents, so the import refuses them too (`reverse_charge_domestic`, the row says to keep the
   invoice outside the Books); Whiz-Art Media is never affected (section 13b does not apply to a
   small-business supplier). See [plan](docs/plans/2026-10-20-books-upload-import.md), Build notes
-  item 15. (2026-10-20)
+  item 15. (2026-11-21)
 - [ ] 7. Production on Node 24 before Node 22 leaves support (2027-04-30): the Dockerfile's
   NODE_IMAGE, `.nvmrc`, package.json engines and `@types/node` move together, as in the move to
   Node 22 of 2026-10-20 (pinned by digest, Dependabot proposes patch and minor releases but never a
-  new major). (2026-10-20)
+  new major). (2026-11-21)
 - [x] 8. A visual invoice template composer in the Books (asked by the owner on 2026-10-21): a
   block-based A4 composer like the email editor whose canvas is the real PDF, versioned templates,
   legally required blocks that move but cannot be removed, a save gate running the completeness

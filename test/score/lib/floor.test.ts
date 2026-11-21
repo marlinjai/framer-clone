@@ -10,7 +10,7 @@ function scored(rows: Record<string, string>, extra: { fixtures?: Array<[string,
   const check = { pass: extra.checks ?? 10, total: 10 };
   const fixture = ([fixture, pass]: [string, boolean]) => ({ fixture, pass, group: 'edge' as const, source: '', checks: { screenshot: check, 'computed-styles': check, 'accessibility-tree': check, interaction: check }, failures: [], notMeasured: [] });
   return {
-    matrix: { surfaces: {} as Scored['matrix']['surfaces'], acceptedNotTaught: 0, byKind: {} as Scored['matrix']['byKind'], included: 0, excluded: [], rows },
+    matrix: { surfaces: {} as Scored['matrix']['surfaces'], acceptedNotTaught: 0, rawField: { css: 0, events: 0 }, byKind: {} as Scored['matrix']['byKind'], included: 0, excluded: [], rows },
     corpus: { passed: 0, total: 0, checks: { screenshot: check, 'computed-styles': { pass: 0, total: 0 }, 'accessibility-tree': { pass: 0, total: 0 }, interaction: { pass: 0, total: 0 } }, fixtures: (extra.fixtures ?? []).map(fixture) },
     busbasis: { passed: 0, total: 0, pages: [], gaps: [], uncaptured: [] },
     roundTrip: { nodesToJsxToNodes: { pass: 0, total: 0 }, jsxToNodesToRender: { pass: 0, total: 0 }, cases: (extra.cases ?? []).map(([id, pass]) => ({ id, pass, direction: 'nodes-jsx-nodes' as const })) },

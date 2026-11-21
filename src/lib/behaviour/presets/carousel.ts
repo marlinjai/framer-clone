@@ -15,7 +15,7 @@
 // PURE: no React, no MST.
 
 import { MIN_EVERY_MS, type Action, type Trigger } from '../format';
-import { assertSeed, behaviourOf, copyItem, derived, el, initialOf, propsOf, stateIdOn, withProps, type PresetNode } from './nodes';
+import { assertSeed, behaviourOf, copyItem, derived, el, initialOf, nameOf, propsOf, stateIdOn, withProps, type PresetNode } from './nodes';
 
 export const CAROUSEL_VERSION = 1;
 
@@ -85,10 +85,10 @@ export function deriveCarousel(root: PresetNode, firstRotateMs?: number): Preset
     }),
   }, {
     state: [
-      { id: slide, name: 'Current slide', type: 'number', initial: Math.min(initialOf(root, slide), last), min: 0, max: last },
+      { id: slide, name: nameOf(root, slide, 'Current slide'), type: 'number', initial: Math.min(initialOf(root, slide), last), min: 0, max: last },
       ...(rotates ? [
-        { id: playing, name: 'Rotating', type: 'boolean' as const, initial: true },
-        { id: hovered, name: 'Pointer on it', type: 'boolean' as const, initial: false },
+        { id: playing, name: nameOf(root, playing, 'Rotating'), type: 'boolean' as const, initial: true },
+        { id: hovered, name: nameOf(root, hovered, 'Pointer on it'), type: 'boolean' as const, initial: false },
       ] : []),
     ],
     on: rotates
@@ -130,12 +130,12 @@ export function carousel({ seed, label = 'Highlights', slides = ['First slide', 
 }
 
 /** One more slide, cloned from the last, with every generated entry derived again. */
-export function addSlide(root: PresetNode, text: string): PresetNode {
+export function addSlide(root: PresetNode, text: string, taken?: ReadonlySet<string>): PresetNode {
   const children = root.children ?? [];
   const slidesNode = children.find((child) => child.children?.some(isSlide));
   const last = slidesNode?.children?.filter(isSlide).at(-1);
   if (!slidesNode || !last) return root;
-  const slide = withProps(copyItem(root, last), { children: text });
+  const slide = withProps(copyItem(root, last, taken), { children: text });
   return deriveCarousel({
     ...root,
     children: children.map((child) => (child === slidesNode ? { ...slidesNode, children: [...(slidesNode.children ?? []), slide] } : child)),

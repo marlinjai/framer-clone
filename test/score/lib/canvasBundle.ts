@@ -184,7 +184,7 @@ export async function placeTree(page: Page, crashes: readonly string[], tree: Co
  * once every frame runs its page (`data-surface-running`, set by useSurfaceRuntime).
  */
 export async function enterInteract(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Interact' }).click();
+  await page.getByRole('button', { name: 'Interact', exact: true }).click();
   await page.waitForFunction(() => {
     const frames = [...document.querySelectorAll('[data-viewport-content-id]')];
     return frames.length > 0 && frames.every((frame) => frame.hasAttribute('data-surface-running'));

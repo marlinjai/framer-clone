@@ -11,6 +11,7 @@ import { UNCAPTURED_PAGES, type UncapturedPage } from './busbasis/pages';
 import type { ImportRun, ImportScoreOut } from './import/types';
 import {
   ACCEPTED_NOT_TAUGHT,
+  RAW_FIELD,
   GAPS,
   KIND_LABEL,
   ROW_KINDS,
@@ -43,6 +44,8 @@ interface PanelDetail {
   presetsPlaced: string[];
   /** The rows whose panel cell passes only through the text field for rules. */
   rawFieldRows: string[];
+  /** The event rows whose interaction was picked from "All events" rather than the first list. */
+  rawFieldEvents?: string[];
 }
 
 type Counts = { pass: number; fail: number; notTested: number; total: number };
@@ -67,8 +70,6 @@ function tally(counts: Counts, cell: Cell | undefined): void {
 const percent = (part: number, whole: number) => (whole === 0 ? 'none' : `${((part / whole) * 100).toFixed(1)} percent`);
 const ratio = (c: { pass: number; total: number }) => `${c.pass} of ${c.total} (${percent(c.pass, c.total)})`;
 
-/** The panel cells that pass only through the text field for rules. */
-const rawFieldCells = (score: Score): number => score.panel.rawFieldRows.length;
 
 /** A pattern is editable only when every tag and prop it uses is. */
 function patternPanelCells(patterns: PatternsOut, panel: SurfaceResults, detail: PanelDetail): SurfaceResults {
@@ -129,6 +130,8 @@ export interface Score {
     surfaces: Record<Surface, Counts>;
     /** AI passes the prompt does not teach: earned, but weaker than the column reads. */
     acceptedNotTaught: number;
+    /** Panel passes no designed control earned: CSS typed into the rule field, an event picked from "All events". */
+    rawField: { css: number; events: number };
     byKind: Record<RowKind, Record<Surface, Counts>>;
     included: number;
     excluded: Array<{ kind: RowKind; id: string; reason: string }>;
@@ -229,6 +232,14 @@ export function buildScore(durationSeconds?: number): Score {
   // An event row asks whether a stored action runs from a real cause, on both.
   Object.assign(results.format, events);
   Object.assign(results.renderer, events);
+  // The panel writes the proof's page; that counts only where the proof runs on the published page.
+  for (const [key, cell] of Object.entries(results.panel)) {
+    if (!key.startsWith('html-event-handler:') || cell.status !== 'pass') continue;
+    const published = events[key];
+    if (published?.status !== 'pass') {
+      results.panel[key] = { status: 'fail', gap: published?.gap ?? 'blocked-event-handlers', note: `the panel writes it, and it does not run on the published page: ${published?.note ?? 'no proof ran'}` };
+    }
+  }
   // And on the mounted editor, in the Interact tool.
   Object.assign(results.canvas, canvasEvents);
 
@@ -295,6 +306,7 @@ export function buildScore(durationSeconds?: number): Score {
   const gapCells = new Map<GapId, number>();
   const rows: Score['matrix']['rows'] = {};
   let acceptedNotTaught = 0;
+  const rawField = { css: 0, events: 0 };
 
   for (const entry of included) {
     const key = rowKey(entry.kind, entry.id);
@@ -307,6 +319,7 @@ export function buildScore(durationSeconds?: number): Score {
       tally(byKind[entry.kind][surface], cell);
       if (cell.status === 'fail' && cell.gap) gapCells.set(cell.gap, (gapCells.get(cell.gap) ?? 0) + 1);
       if (cell.status === 'pass' && cell.note === ACCEPTED_NOT_TAUGHT) acceptedNotTaught += 1;
+      if (surface === 'panel' && cell.status === 'pass' && cell.note === RAW_FIELD) rawField[entry.kind === 'html-event-handler' ? 'events' : 'css'] += 1;
     }
     rows[key] = cells.join(' ');
   }
@@ -360,6 +373,7 @@ export function buildScore(durationSeconds?: number): Score {
     matrix: {
       surfaces,
       acceptedNotTaught,
+      rawField,
       byKind,
       included: included.length,
       excluded: entries.filter((e) => e.excluded).map((e) => ({ kind: e.kind, id: e.id, reason: e.excluded as string })),
@@ -438,14 +452,14 @@ export function renderReport(score: Score): string {
     '- **Format stores it:** the entry is written into a node, survives `ComponentModel.create`, a snapshot, JSON and a second create, and is read back unchanged through `getResolvedProps`. For a selector, at-rule, media feature or event handler the bytes alone prove nothing (props are opaque JSON and hold anything), so it also needs a reader that gives it a meaning: it has to reach the page. An attribute named like a CSS property comes back as a style, which counts as stored.',
     '- **Published renderer emits it:** the node goes through `applyResponsiveStyles` and `renderComponentNode`. An element or attribute must be in the markup, an attribute on the opening tag of its own element, and when that element is missing the attribute takes the element\'s gap. An SVG or MathML entry sits inside its root element and Chromium must parse the tag into that namespace. A CSS property must be there both ways a declaration reaches a page: inline, and in the page stylesheet as a responsive value, with `initial` as the value. A value row does the same with its sample on a host property. A WAI-ARIA pattern must pass its keyboard contract in real Chromium.',
     '- **Editor canvas shows it:** the same entry through the real `ComponentRenderer` with a real store, rendered to markup. An SVG attribute that arrives as a style declaration passes, because SVG maps those to the same property; an HTML one is `attribute-read-as-style`. A WAI-ARIA pattern runs its contract on the mounted editor instead: the real `EditorApp` in Chromium with the tree on a page, its server edge stubbed, in the Interact tool, where the page runs. So does the proof of an event row. A contract that passes when published and fails there is `canvas-editor-context`. A rule row renders the canvas sheet beside it and reads the text that sheet holds: pointer states and conditions on the editor must be dead until previewed, and the frame must answer a width.',
-    '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does: its stored behaviour, with the rules on a state or the gate, when the palette places that preset, and a plain rule through the raw field. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed.',
+    '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does: its stored behaviour, with the rules on a state or the gate, when the palette places that preset, and a plain rule through the raw field. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed. An event row puts the stored page of its proof on the page without its trigger, picks the proof\'s host, and adds the interaction through the Interactions section as a person would; it counts when the node then holds exactly the proof\'s triggers, the parser refuses nothing on it, and the proof runs on the published page. An event picked from "All events" rather than the first list carries `raw field`.',
     '- **AI generator can produce it:** `validateGeneration` is given a node with the entry, and the entry must still be there afterwards. A tag rewritten to `div` is a fail. A value row needs the exact value back. A sample on a host property outside the allowlist fails as `ai-style-allowlist`, so it says nothing about the value. A rule row needs its stored rule back unchanged, and carries the note `accepted, not taught` unless the prompt teaches that form. A rule that reads a visitor or looks past its node is `ai-rule-refused`: that is a safety decision, not a missing feature. An event row gives the generator the stored page of its proof and needs every stored trigger back unchanged, references following the fresh ids; only a press is taught, so every other row is `accepted, not taught`, a proof whose host is a raw form control fails as `ai-tag-allowlist`, and a proof that stores a trigger on anything but a click, a key, an input or a change, or one holding a `delay` or an `emit`, fails as `ai-trigger-refused`, since a trigger the model writes itself must not run without a person. A pattern built from a preset is asked for the way the prompt teaches it, a preset request, and what the validator builds must pass the pattern\'s whole contract on the published page in Chromium. A generated carousel never rotates, so its cell is `ai-motion-refused`.',
     '- **A reusable component row** is a promise of the format, not a web standard entry. Format: it survives the snapshot round trip with a reader. Published: it is emitted through `renderPublishedPage`. Canvas: it renders through the real `ComponentRenderer`. Panel: it changes through the real section. AI: it survives `validateGeneration`. A pass here proves less than it reads: the corpus is the test.',
   );
   push(
     `The panel writes ${score.panel.styleKeysWritten.length} style keys and ${score.panel.propKeysWritten.length} other props across every category. Palette tags: ${score.panel.paletteTags.map((t) => `\`${t}\``).join(', ')}.`,
     '',
-    `Of the panel's passing cells, ${rawFieldCells(score)} are the \`raw field\`: a person typed the CSS, and no control exists for it. They pass, and they say less than a control would.`,
+    `Of the panel's passing cells, ${matrix.rawField.css + matrix.rawField.events} are the \`raw field\`: ${matrix.rawField.css} where a person typed the CSS, and no control exists for it, and ${matrix.rawField.events} event rows whose interaction was picked by name from "All events" rather than from the first list. They pass, and they say less than a control would.`,
     `Of the AI generator's passing cells, ${matrix.acceptedNotTaught} are \`accepted, not taught\`: the validator keeps the rule or the trigger, and the prompt never asks for it. They pass, and they say the generator can write the form, not that it will.`,
   );
 

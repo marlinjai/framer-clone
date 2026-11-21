@@ -32,7 +32,7 @@ import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
 import { v4 as uuidv4 } from 'uuid';
-import PageModel, { PageModelType, type InsertTarget } from './PageModel';
+import PageModel, { PageModelType, spliceSnapshot, type InsertTarget, type PlacingExpansion } from './PageModel';
 import { ComponentDefinitionModel, parseModelComponents, type ComponentDefinitionInstance } from './ComponentDefinitionModel';
 import { takeBackRefusedEdit } from '@/stores/HistoryStore';
 import ComponentModel, { createIntrinsicComponent, createViewportNode, type ComponentInstance, type ComponentSnapshotIn } from './ComponentModel';
@@ -1555,6 +1555,50 @@ export const ProjectModel = types
     // The reusable components as plain data, for expansion.
     get definitions(): ComponentDefinitions {
       return definitionsOf(self);
+    },
+
+    // When `pageId` is a definition's page: every page and other definition that places
+    // it, directly or through another component, expanded now and with `subtree` written
+    // into the definition's tree. The same expandPage each page's `expansion` uses, with
+    // the edited definition in the definitions map, so the behaviour panel can judge an
+    // edit inside a definition on every page it would change (src/lib/behaviour/authoring.ts).
+    placingExpansionsWith(pageId: string, subtree: { id: string }): PlacingExpansion[] {
+      const all = Array.from(self.components.values());
+      const definition = all.find(candidate => candidate.page.id === pageId);
+      if (!definition) return [];
+      const definitions = definitionsOf(self);
+      const current = definitions[definition.id];
+      const tree = current ? spliceSnapshot(current.page.appComponentTree as never, subtree) : null;
+      if (!current || !tree) return [];
+      const edited = { ...definitions, [definition.id]: { ...current, page: { ...current.page, appComponentTree: tree as never } } };
+      // Which definitions reach the edited one, through their own placements: those change too.
+      const places = (root: unknown, ids: ReadonlySet<string>): boolean => {
+        const node = root as { type?: unknown; props?: Partial<PlacementProps>; children?: unknown[] } | null;
+        if (!node || typeof node !== 'object') return false;
+        if (isPlacementType(node.type) && typeof node.props?.component === 'string' && ids.has(node.props.component)) return true;
+        return (node.children ?? []).some(child => places(child, ids));
+      };
+      const reach = new Set([definition.id]);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const other of all) {
+          if (reach.has(other.id) || !places(getSnapshot(other.page.appComponentTree), reach)) continue;
+          reach.add(other.id);
+          grew = true;
+        }
+      }
+      const pages = [
+        ...Array.from(self.pages.values()),
+        ...all.filter(other => other.id !== definition.id).map(other => other.page as PageModelType),
+      ].filter(page => [page.appComponentTree, ...page.floatingElements].some(root => places(getSnapshot(root), reach)));
+      return pages.map(page => ({
+        pageId: page.id,
+        name: all.find(other => other.page.id === page.id)?.name ?? page.metadata.title,
+        definition: definition.name,
+        before: page.expansion,
+        after: page.expansionUnder(edited),
+        findComponent: (id: string) => page.findComponent(id),
+      }));
     },
 
     // The page with this id, among the pages or inside a definition.

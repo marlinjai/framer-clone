@@ -12,6 +12,9 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { InputsSection } from './right/sections/InputsSection';
 import { RepeatSection } from './right/sections/RepeatSection';
 import { ShopPartNote, ShopStyleNote, isLockedShopText } from './right/sections/ShopPartNote';
+import { InteractionsSection } from './right/sections/InteractionsSection';
+import { PageStatePanel } from './right/sections/PageStatePanel';
+import { holdsBehaviour } from './right/sections/behaviourShared';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -125,9 +128,17 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
                 {/* Data section: renders only when the node has bindable slots
                     (text / button / image / data components); null otherwise. */}
                 {category !== 'placement' && <DataSourceSection component={target} breakpointId={breakpointId} />}
+                {/* What the element does, then the values it reads (docs/plans/2026-11-02-behaviour-model.md,
+                    "The panel"). A frame, a text run and a placement hold no behaviour of their own: a
+                    placement's is its definition's. Keyed by node, so a draft never moves to another. */}
+                {holdsBehaviour(target) && <InteractionsSection key={target.id} component={target} />}
+                <PageStatePanel component={target} />
               </>
             ) : (
-              <p className="p-3 text-[12px] text-muted-foreground">Select an element to edit its properties.</p>
+              <>
+                <p className="p-3 text-[12px] text-muted-foreground">Select an element to edit its properties.</p>
+                <PageStatePanel />
+              </>
             )}
           </div>
         </div>

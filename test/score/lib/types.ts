@@ -16,6 +16,9 @@ export interface Cell {
   note?: string;
 }
 
+/** A panel cell no designed control earned: a person typed the CSS, or picked the event from "All events". */
+export const RAW_FIELD = 'raw field';
+
 /** A cell the prompt does not teach: acceptance alone earned it. */
 export const ACCEPTED_NOT_TAUGHT = 'accepted, not taught';
 
