@@ -1037,6 +1037,35 @@ describe('a preset\'s items', () => {
     expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
   });
 
+  it('a placement\'s own Show when is out of sight: an edit breaking it refuses, naming the placement; the definition\'s own refuses on its page', () => {
+    mount();
+    const home = store.editorUI.currentPage!;
+    act(() => main.addChildren([createIntrinsicComponent('card', 'div', { children: 'Card' })]));
+    act(() => home.findComponent('card')!.setBehaviour({ state: [{ id: 'v-open', name: 'Open', type: 'boolean', initial: false }] }));
+    const made = project.createComponentFromSelection(home.id, ['card'], 'Card');
+    if (!made.ok) throw new Error(made.message);
+    // The placement's own Show when, stored on Home (nothing in the editor writes it yet), reads the value as on or off.
+    act(() => made.placement.setBehaviour({ showWhen: { state: 'v-open', eq: true } }));
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
+    const definition = project.components.get(made.definitionId)!;
+    act(() => store.editorUI.setCurrentPage(definition.page as never));
+    const defRoot = definition.page.appComponentTree as unknown as ComponentInstance;
+    select(defRoot);
+    // Nothing in the definition reads Open, so only Home breaks, through the placement's own entry.
+    retypeTo('Open', 'number', 'Number');
+    expect(pageState().getByRole('alert').textContent).toBe(`Not changed: it would stop "Card" working on "${home.metadata.title}": v-open is a number.`);
+    expect((behaviourOf(defRoot)?.state as { type: string }[])[0].type).toBe('boolean');
+    // The definition's own Show when reading Open: the definition's own page refuses first, and names no placing page.
+    act(() => {
+      made.placement.setBehaviour({});
+      defRoot.setBehaviour({ ...behaviourOf(defRoot), showWhen: { state: 'v-open', eq: true } });
+    });
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
+    retypeTo('Open', 'number', 'Number');
+    expect(pageState().getByRole('alert').textContent).not.toContain('working on');
+    expect((behaviourOf(defRoot)?.state as { type: string }[])[0].type).toBe('boolean');
+  });
+
   it('a reader stored in an outer component is named on that component, where it is fixed', () => {
     mount();
     const { home, tabs, panel } = makeTabbed();
