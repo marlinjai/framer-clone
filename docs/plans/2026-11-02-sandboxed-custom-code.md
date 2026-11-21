@@ -952,15 +952,39 @@ after the first review of pull request #452 (C3), which proved in all three engi
 - Plain data only: a message must be primitives, arrays and plain objects. JSON says nothing of a buffer, a typed array, a `Map` or a
   `Set` (`{}`), so a 32 megabyte buffer passed the size rule as almost nothing, already deserialised in the page. `JSON.stringify`
   now runs with a replacer that throws at any object whose constructor is not the realm's `Object` or `Array`; a cycle or a bigint
-  makes it throw itself. Such a message is dropped; one after any earlier wrong message removes the frame (`not plain data`).
-- The rate: every message of the frame counts, on its port and to the page's window, before `hello` and after. Past 30 in a second
+  makes it throw itself. A message that is not an object (`null`, a number, a string) is refused the same way, without an error
+  in the page (review 2, L2: `null` raised an uncaught error per message).
+- The walk is bounded before its cost (review 2 of pull request #452, M1). A sparse array is plain data that costs its sender
+  nothing, since structured clone carries only its length, while `JSON.stringify` in the page walks every slot: ten million
+  slots 28 times a second kept a click from answering for 3.6 to 4.7 seconds, and with the frame in its own process (Chromium's
+  site isolation) for more than a minute. The replacer counts its calls, and each call writes at least one byte of JSON, so past
+  65,536 calls, or at any string or array longer than 65,536, it throws at once: such a message cannot be 64 kilobytes of JSON,
+  and it now costs the page no more than a small one. `sizeOf` in `broker.ts` holds this, with unit tests for escaped characters,
+  an own `length` key and a fresh budget per message.
+- Over 64 kilobytes is treated like data that is not plain: dropped and warned of the first time, and after any earlier wrong
+  message the frame is removed (`not plain data or over 64 KB`), so an expensive message cannot be repeated.
+- The rate: every message of the frame counts, on its port and to the page's window, before `hello` and after, and so does a window
+  message from a frame nested in it at any depth (review 2, L1: a `srcdoc` child flooded the page's window uncounted); the page
+  walks the message's source up through its parents, which any site may read. Each message is counted as it is handled, first,
+  before anything else is done with it, and with the walk bounded no message takes long enough to push the next into a fresh
+  second. Past 30 in a second
   a message is dropped; past 90 in a second the frame is removed (`flooded`), because each message costs the page's main thread a
   task whether it is used or not. The review measured a click beside a flooding frame at 8.9 seconds in Chromium, 584 ms in
   WebKit and 255 ms in Firefox, with the frame never removed. The bridge gate's new case floods the port and the window for 4
   seconds: both frames are removed and a click answers in about 40 ms in all three engines. A frame keeping between 31 and 90 a
-  second is only dropped from: at that rate the cost is a few dozen tasks a second, which the page does not feel.
-- `resize` shares the count: it is honoured only among the frame's first 10 messages of the second (decided, for the broker's size;
-  a frame that resizes sends little else).
+  second is only dropped from: at that rate the cost is a few dozen tasks a second, which the page does not feel. The gate pins
+  both edges (review 2, L3): 85 messages in each of three seconds keeps the frame, with what is past 30 dropped, and 95 in one
+  second removes it.
+- `resize` shares the count and nothing else: the earlier rule that honoured it only among the first 10 messages of a second is
+  gone (review 2, M3), since it dropped exactly the settled height at the end of a burst.
+- The shell client coalesces (shell version 3, review 2, M2 and M3). An honest block that writes a state from every animation
+  frame sends 120 messages a second on a 120 Hz screen, and was removed as `flooded`; dropping past 30 lost the last value (a
+  growing block ended at 134 to 263 pixels instead of 400). `lumitra.setState` and `lumitra.resize` now keep the latest value
+  of each state and the latest height and send them on the trailing edge of a timer, about one message per 50 milliseconds
+  (after a flush of `n` messages the next waits `n` times 50), so an honest author stays near 20 a second and the last value
+  always arrives. An `emit` goes at once, after the writes before it; errors are reported at most once a second. The broker's
+  ceiling is then left for code that bypasses the client on purpose. The gate proves it in three engines: two writes per
+  animation frame and a 4 ms timer keep the block and end on their last values, and a block growing to 400 pixels ends at 400.
 - One warning a frame: the first wrong message or reported error says `dropped a message or error, then silent`, and every later
   one is silent, so a frame cannot fill the page's console with text of its choosing (review 1, L2). Removal is always said. The
   frame's own errors stay in its own console, where the developer tools show them.
@@ -1012,12 +1036,16 @@ three times.
   person's own move needs as long to explain it, so for those arrivals the grace is 6 seconds instead of 1.
 
 The rule: a move into a non-interactive frame removes it the first time. A move into an interactive frame counts as theft when
-the page had a key other than Tab pressed within the last half second, pointer or not; otherwise it counts unless the pointer is
+a character was typed into a text field of the page (an `input`, a `textarea` or an element that is `contenteditable`; a key whose
+name is one character) within the last half second, pointer or not; otherwise it counts unless the pointer is
 over the frame (`:hover`), or the pointer entered a frame or a Tab was pressed in the page within the last second (6 seconds when
 only a ping saw the move). The third theft removes it. The typing clause came from the first review of pull request #452 (M2): a
 frame receives `mousemove` whenever the pointer is over it, so one that took the keyboard only then had every move excused, and
 captured what the visitor typed after resting the pointer on it. A person stops typing before reaching for a frame; a frame that
-grabs the keyboard under the pointer does not wait. A Tab clears the typing, since it moves the keyboard on purpose. The proof, in `customCodeBridge.gate.ts` with real input
+grabs the keyboard under the pointer does not wait. A Tab clears the typing, since it moves the keyboard on purpose. The second
+review (M4) found the first version took any key anywhere as typing, so a visitor who scrolled with the arrow keys and then
+clicked into a block within half a second was counted as a theft, and removed at the third time in Chromium and WebKit. Arrows,
+Space on the page, Escape and the modifiers no longer count, and the gate keeps a frame clicked into right after arrow keys. The proof, in `customCodeBridge.gate.ts` with real input
 from Playwright:
 - Chromium and Firefox: a frame whose script focuses an input inside it every 300 ms takes the keyboard back after the page
   takes it, and is removed at its third arrival (interactive) or its first (not interactive). An attempt where Firefox did not
@@ -1034,7 +1062,9 @@ from Playwright:
   rounds' keys. WebKit refuses the focus every time and the page keeps every key.
 
 What remains: a frame that waits for the visitor to pause typing for more than half a second, then takes the keyboard under the
-pointer, is excused as a person's click would be. The visitor sees the caret leave the field. The page cannot tell a click inside a
+pointer, is excused as a person's click would be. The visitor sees the caret leave the field. Once the frame holds the keyboard
+the page sees no keys, so a later grab under the pointer (after the visitor Tabs out of the frame, say) is excused the same way;
+that is the same residual, not a new one. The page cannot tell a click inside a
 frame of another site from a script's `focus()` there, so no signal from the page closes this; the residual is accepted with D8.
 
 The per-engine moves are written to `custom-code-bridge.log` in the system's temporary folder on every run.
@@ -1045,8 +1075,13 @@ still does.
 
 **D73. The broker's size, and what it does not check twice.** After the first review's fixes (D65, D71) esbuild measures 1974 bytes; to
 make room, the warnings became one a frame, the removal reasons shorter (`no hello`, `no pong`), the resize limit shares the
-message count, and the plain-data check rides on `JSON.stringify`'s replacer instead of a walk of its own. 2 kilobytes gzipped, held on esbuild's measure in the unit suite
-and on Next's real chunk in the behaviour suite. Next compiles `?.`, `??` and template strings into longer code than esbuild does
+message count, and the plain-data check rides on `JSON.stringify`'s replacer instead of a walk of its own. The limit was 2 kilobytes
+gzipped until the second review of pull request #452, when the real chunk stood at 1993 bytes. That review's fixes need about 130
+more: the bounded walk (`sizeOf` and its budget, M1), the walk up a message's parents for nested frames (L1), the check that a
+message is an object (L2) and the typing signal's text-field test (M4), against the bytes the removed first-10 resize rule and the
+merged oversize branch gave back. Cutting a fix to fit would cost correctness, so the limit is now 2,200 bytes gzipped (decided,
+inside the brief's ceiling of 2,400; say so if you disagree). esbuild measures 2107 bytes and Next's real chunk 2122, 78 bytes under the new limit (the core's stays at 4968 of 5000, unchanged by this review). It is
+held on esbuild's measure in the unit suite and on Next's real chunk in the behaviour suite. Next compiles `?.`, `??` and template strings into longer code than esbuild does
 (its first real chunk came to 2037 bytes against esbuild's 1990), so the broker is written without them, and its numbers are
 literals at their use, since a bundler keeps a module's constants as variables. The registry it shares with the island and the
 attribute names it shares with the core sit in other chunks in Next and are left out of the esbuild measure too. The broker does not
