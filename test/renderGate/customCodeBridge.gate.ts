@@ -71,6 +71,8 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
   hostile: {
     shell: false,
     body: raw(`
+      // First, since over 64 KB after any earlier wrong message removes the frame (D65).
+      port.postMessage({ kind: 'setState', id: 'n', value: 4, pad: 'x'.repeat(70000) });
       port.postMessage({ kind: 'setState', id: 'other', value: 5 });
       port.postMessage({ kind: 'setState', id: 'n', value: '5' });
       port.postMessage({ kind: 'setState', id: 'n', value: 99 });
@@ -78,7 +80,6 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
       port.postMessage({ kind: 'setState', id: 'n', value: NaN });
       port.postMessage({ kind: 'setState', id: 'tab', value: 'c' });
       port.postMessage({ kind: 'setState', id: 'name', value: 'leak' });
-      port.postMessage({ kind: 'setState', id: 'n', value: 4, pad: 'x'.repeat(70000) });
       port.postMessage({ kind: 'navigate', href: '/away' });
       port.postMessage({ kind: 'resize', height: 999 });
       port.postMessage({ kind: 'emit', name: 'custom:undeclared' });
@@ -97,7 +98,7 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
     shell: false,
     body: raw(`
       for (var i = 1; i <= 15; i++) port.postMessage({ kind: 'resize', height: 100 + i });
-      setTimeout(function () { port.postMessage({ kind: 'resize', height: 50000 }); }, 1300);
+      setTimeout(function () { port.postMessage({ kind: 'resize', height: 50000 }); }, 2500);
     `),
   },
   foreign: { shell: false, body: raw("probe({ connected: 'foreign' });") },
@@ -123,6 +124,66 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
       port.postMessage({ kind: 'setState', id: 'n', value: 4, pad: new ArrayBuffer(32 * 1024 * 1024) });
       setTimeout(function () { port.postMessage({ kind: 'setState', id: 'n', value: 5, pad: new Map([['a', 'x'.repeat(4000000)]]) }); }, 200);
     `),
+  },
+  // Review 2 of pull request #452, M1: plain data that is cheap to send and dear to weigh.
+  sparse: {
+    shell: false,
+    body: raw(`
+      var stop = Date.now() + 4000;
+      var t = setInterval(function () { if (Date.now() > stop) return clearInterval(t); port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(10000000) }); }, 40);
+    `),
+  },
+  sparseHuge: {
+    shell: false,
+    body: raw(`
+      // An engine may refuse to clone it in the frame already; either way the next write follows.
+      try { port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(4294967295) }); } catch (e) {}
+      setTimeout(function () { port.postMessage({ kind: 'setState', id: 'n', value: 2 }); }, 300);
+    `),
+  },
+  // L2: a message that is not an object.
+  nulls: { shell: false, body: raw("for (var i = 0; i < 5; i++) port.postMessage(null);") },
+  // L1: a nested frame of the block floods the page's window.
+  nested: {
+    shell: false,
+    body: raw(`
+      var f = document.createElement('iframe');
+      f.srcdoc = '<scr' + 'ipt>var s = Date.now() + 4000; (function b() { for (var i = 0; i < 500; i++) top.postMessage({ kind: "nothing" }, "*"); if (Date.now() < s) setTimeout(b, 0); })();</scr' + 'ipt>';
+      document.body.appendChild(f);
+    `),
+  },
+  // L3: 85 messages in each of three seconds stays under the ceiling; 95 in one second does not.
+  band: {
+    shell: false,
+    body: raw(`
+      var burst = function (n) { for (var i = 1; i <= 85; i++) port.postMessage({ kind: 'setState', id: 'count', value: n * 100 + i }); };
+      burst(1); setTimeout(function () { burst(2); }, 1150); setTimeout(function () { burst(3); }, 2300);
+    `),
+  },
+  ceiling: { shell: false, body: raw("for (var i = 1; i <= 95; i++) port.postMessage({ kind: 'setState', id: 'count', value: i });") },
+  // M2 and M3: honest bursts through the shell client, which coalesces them; each ends on a known last value.
+  animate: {
+    shell: true,
+    body: `<script>lumitra.ready().then(function () {
+      var stop = performance.now() + 2000, i = 0;
+      (function tick() {
+        lumitra.setState('count', (i++ % 500) + 1); lumitra.setState('count', (i++ % 500) + 1);
+        if (performance.now() < stop) requestAnimationFrame(tick); else lumitra.setState('count', 777);
+      })();
+      var fast = setInterval(function () { lumitra.setState('n', i % 9); lumitra.setState('n', (i + 1) % 9); }, 4);
+      setTimeout(function () { clearInterval(fast); lumitra.setState('n', 6); }, 2000);
+    });</script>`,
+  },
+  growing: {
+    shell: true,
+    body: `<script>lumitra.ready().then(function () {
+      var start = performance.now();
+      (function tick() {
+        var t = Math.min(1, (performance.now() - start) / 600);
+        lumitra.resize(Math.round(100 + 300 * t));
+        if (t < 1) requestAnimationFrame(tick);
+      })();
+    });</script>`,
   },
   // Takes the keyboard only while the pointer moves over it, and reports what it was typed.
   hoverThief: {
@@ -226,6 +287,8 @@ interface Opened {
   context: BrowserContext;
   console: string[];
   requests: string[];
+  /** Uncaught errors in the page itself. */
+  errors: string[];
 }
 
 async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?: boolean } = {}): Promise<Opened> {
@@ -233,7 +296,9 @@ async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?:
   const page = await context.newPage();
   const consoleLines: string[] = [];
   const requests: string[] = [];
+  const errors: string[] = [];
   page.on('console', (message) => consoleLines.push(message.text()));
+  page.on('pageerror', (error) => errors.push(error.message));
   await context.route('**/*', (route) => {
     const url = route.request().url();
     requests.push(url);
@@ -249,7 +314,7 @@ async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?:
     return route.fulfill({ status: 204 });
   });
   await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' });
-  return { page, context, console: consoleLines, requests };
+  return { page, context, console: consoleLines, requests, errors };
 }
 
 const settled = (page: Page) => page.evaluate(() => (window as unknown as { __settled: { id: string; shown: boolean }[] }).__settled);
@@ -385,12 +450,15 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
     }
   }, 60_000);
 
-  it('drops what goes past 30 messages and resizes past the first 10 messages of a second, and clamps a height to 10,000 pixels', async () => {
+  it('drops what goes past 30 messages, takes every resize within them, and clamps a height to 10,000 pixels', async () => {
     const { page, context, console: lines } = await open(browser, [
       { id: 'f', doc: 'flood' },
       { id: 'r', doc: 'resizer', block: { sizing: 'content' } },
     ]);
     try {
+      // All 15 resizes of the first second are taken (review 2, M3: no rule of the first 10), so it ends at the 15th.
+      await until(page, "document.querySelector('#r iframe') && document.querySelector('#r iframe').style.height === '115px'", 5_000);
+      expect((await frameOf(page, 'r'))?.height).toBe('115px');
       await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-count') === '41'", 10_000);
       await until(page, "document.querySelector('#r iframe') && document.querySelector('#r iframe').style.height === '10000px'", 5_000);
       expect(await stateOf(page, 'count')).toBe('41');
@@ -398,7 +466,7 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       expect(lines.filter((line) => line.startsWith('Custom code "Block f"'))).toEqual(['Custom code "Block f": dropped a message or error, then silent']);
       expect(await frameOf(page, 'f')).not.toBeNull();
       expect((await frameOf(page, 'r'))?.height).toBe('10000px');
-      expect(lines.filter((line) => line.startsWith('Custom code "Block r"'))).toEqual(['Custom code "Block r": dropped a message or error, then silent']);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block r"'))).toEqual([]);
     } finally {
       await context.close();
     }
@@ -438,8 +506,117 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       expect(await frameOf(page, 'bin')).toBeNull();
       expect(lines.filter((line) => line.startsWith('Custom code "Block bin"'))).toEqual([
         'Custom code "Block bin": dropped a message or error, then silent',
-        'Custom code "Block bin": not plain data: removed',
+        'Custom code "Block bin": not plain data or over 64 KB: removed',
       ]);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  /** Milliseconds from a click on the page's button to the state it sets, with any frame beside it. */
+  const clickToState = async (page: Page): Promise<number> => {
+    const started = Date.now();
+    await page.click('#toB', { timeout: 30_000 });
+    await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
+    return Date.now() - started;
+  };
+
+  it('removes a frame that sends sparse arrays of ten million slots, and the page answers a click meanwhile', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'sp', doc: 'sparse' }]);
+    try {
+      await until(page, shownOnce('sp'), 10_000);
+      await page.waitForTimeout(150);
+      const click = await clickToState(page);
+      await until(page, removed('sp'), 5_000);
+      record(`sparse flood in ${engine}: click answered in ${click} ms`);
+      expect(click).toBeLessThan(2_000);
+      expect(await stateOf(page, 'n')).toBe('0');
+      expect(lines.filter((line) => line.startsWith('Custom code "Block sp"'))).toEqual([
+        'Custom code "Block sp": dropped a message or error, then silent',
+        'Custom code "Block sp": not plain data or over 64 KB: removed',
+      ]);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('drops one array of the greatest length there is at the cost of a small message, and takes the next write', async () => {
+    const { page, context } = await open(browser, [{ id: 'huge', doc: 'sparseHuge' }]);
+    try {
+      await until(page, shownOnce('huge'), 10_000);
+      const click = await clickToState(page);
+      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-n') === '2'", 10_000);
+      record(`one huge sparse array in ${engine}: click answered in ${click} ms`);
+      expect(click).toBeLessThan(2_000);
+      expect(await stateOf(page, 'n')).toBe('2');
+      expect(await settled(page)).toEqual([{ id: 'huge', shown: true }]);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('treats a null message as not plain, without an error in the page', async () => {
+    const { page, context, console: lines, errors } = await open(browser, [{ id: 'nul', doc: 'nulls' }]);
+    try {
+      await until(page, removed('nul'), 10_000);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block nul"')).at(-1)).toBe('Custom code "Block nul": not plain data or over 64 KB: removed');
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it("counts a nested frame's messages to the page as the block's, and removes the block for its flood", async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'nest', doc: 'nested' }]);
+    try {
+      await until(page, removed('nest'), 10_000);
+      expect(await frameOf(page, 'nest')).toBeNull();
+      expect(lines.filter((line) => line.startsWith('Custom code "Block nest"')).at(-1)).toBe('Custom code "Block nest": flooded: removed');
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('keeps a frame at 85 messages a second, dropping past 30, and removes one at 95 in a second', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'band', doc: 'band' }, { id: 'over', doc: 'ceiling' }]);
+    try {
+      await until(page, removed('over'), 10_000);
+      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-count') > 300", 6_000);
+      await page.waitForTimeout(500);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block over"')).at(-1)).toBe('Custom code "Block over": flooded: removed');
+      expect(await settled(page)).not.toContainEqual({ id: 'band', shown: false });
+      expect(await frameOf(page, 'band')).not.toBeNull();
+      // The third second's writes past its 30th were dropped: the last taken is at most 330.
+      const count = Number(await stateOf(page, 'count'));
+      expect(count).toBeGreaterThan(300);
+      expect(count).toBeLessThanOrEqual(330);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block band"'))).toEqual(['Custom code "Block band": dropped a message or error, then silent']);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('keeps an honest block that writes from every animation frame and a 4 ms timer, and takes its last writes', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'anim', doc: 'animate' }]);
+    try {
+      await until(page, `${shownOnce('anim')} && document.querySelector('[data-fc-scope]').getAttribute('data-fcs-count') === '777' && document.querySelector('[data-fc-scope]').getAttribute('data-fcs-n') === '6'`, 15_000);
+      expect(await stateOf(page, 'count')).toBe('777');
+      expect(await stateOf(page, 'n')).toBe('6');
+      expect(await settled(page)).toEqual([{ id: 'anim', shown: true }]);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block anim"'))).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('ends a growing content block at its last height', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'grow', doc: 'growing', block: { sizing: 'content' } }]);
+    try {
+      await until(page, "document.querySelector('#grow iframe') && document.querySelector('#grow iframe').style.height === '400px'", 10_000);
+      await page.waitForTimeout(300);
+      expect((await frameOf(page, 'grow'))?.height).toBe('400px');
+      expect(await settled(page)).toEqual([{ id: 'grow', shown: true }]);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block grow"'))).toEqual([]);
     } finally {
       await context.close();
     }
@@ -729,6 +906,27 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
         await page.waitForTimeout(700);
         await inside.click();
         await page.keyboard.type('x');
+      }
+      await page.waitForTimeout(300);
+      expect(await settled(page)).toEqual([{ id: 'calm', shown: true }]);
+      expect(await frameOf(page, 'calm')).not.toBeNull();
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  // Review 2, M4: keys that are not typing into a page field (arrows on the page) are not the typing signal.
+  it('keeps an interactive frame a person clicks into right after scrolling with the arrow keys', async () => {
+    const { page, context } = await open(browser, [{ id: 'calm', doc: 'calm' }]);
+    try {
+      await until(page, shownOnce('calm'), 10_000);
+      const inside = page.frameLocator('#calm iframe').locator('#i');
+      for (let i = 0; i < 4; i++) {
+        await page.click('body', { position: { x: 2, y: 2 } });
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowUp');
+        await page.waitForTimeout(250);
+        await inside.click();
       }
       await page.waitForTimeout(300);
       expect(await settled(page)).toEqual([{ id: 'calm', shown: true }]);

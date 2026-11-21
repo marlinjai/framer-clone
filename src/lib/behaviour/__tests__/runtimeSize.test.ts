@@ -51,10 +51,11 @@ describe('the behaviour chunks', () => {
 
   // The custom code broker, the third lazy chunk (slice C3 of the sandboxed custom code plan). Next
   // keeps the registry (shared with the island) and the attribute names (shared with the core) in
-  // other chunks, so they are not counted here either.
-  it('the custom code broker stays within 2 kilobytes gzipped', async () => {
+  // other chunks, so they are not counted here either. 2.2 kilobytes since the second review of pull
+  // request #452 (decision D73: the bounded plain-data walk and the nested-frame count).
+  it('the custom code broker stays within 2.2 kilobytes gzipped', async () => {
     const { bytes } = await gzippedSize('../customCode/broker.ts', ['./registry', '@/lib/behaviour/names']);
-    expect(bytes).toBeLessThanOrEqual(2 * KILOBYTE);
+    expect(bytes).toBeLessThanOrEqual(2.2 * KILOBYTE);
   });
 
   it.each(['runtime.ts', 'rove.ts', 'verbs.ts', '../customCode/broker.ts'])('%s holds no part of the parser, and no code from a string', async (entry) => {

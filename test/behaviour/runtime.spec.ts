@@ -60,7 +60,8 @@ describe("the size of Next's real chunks, as gzip sends them", () => {
     ['the core', RUNTIME_MARK, 5000],
     ['rove', 'data-u-active', 3000],
     ['verbs', 'the browser refused', 2500],
-    ['the custom code broker', BROKER_MARK, 2000],
+    // 2200 since the second review of pull request #452 (decision D73).
+    ['the custom code broker', BROKER_MARK, 2200],
   ])('holds %s to its limit', (name, mark, limit) => {
     const found = fs.readdirSync(CHUNKS_ON_DISK).filter((file) => file.endsWith('.js'))
       .map((file) => fs.readFileSync(path.join(CHUNKS_ON_DISK, file), 'utf8'))

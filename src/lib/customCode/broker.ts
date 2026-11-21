@@ -67,11 +67,32 @@ export const fits = (state: BlockState | undefined, value: unknown): boolean => 
  * own (and an own `constructor` key holding something else is refused with them). A cycle or a bigint makes JSON.stringify throw itself.
  * A Date reaches it as its string (toJSON runs first), which is plain.
  */
+let budget = 0;
+/**
+ * The walk is bounded too, before its cost: JSON.stringify calls the replacer once for every value it writes,
+ * every array slot included, and each writes at least one byte. So past 65,536 calls, or at a string or array
+ * longer than 65,536, the message cannot be 64 KB of JSON, and it is refused at once instead of being built: a
+ * sparse array of ten million slots costs its sender nothing and the page one call. (An object with its own
+ * numeric `length` above that is refused with them.) `budget` is set to 0 before each message.
+ */
 const plain = (_: string, value: unknown): unknown => {
   const kind = value && (value as object).constructor;
   // `kind` is null for null, and for a primitive its wrapper, which `typeof` leaves out.
-  if (kind && kind != Object && kind != Array && typeof value == 'object') throw 0;
+  if ((kind && kind != Object && kind != Array && typeof value == 'object') || ++budget > 65536 || ((value || 0) as string).length > 65536) throw 0;
   return value;
+};
+
+/**
+ * A frame's message's size as the UTF-8 bytes of its JSON, or -1 when it is not plain data, is past the walk's
+ * budget, or is not an object (null, a number or a string are refused like data that is not plain).
+ */
+export const sizeOf = (data: unknown): number => {
+  budget = 0;
+  try {
+    return data && typeof data == 'object' ? new Blob([JSON.stringify(data, plain)]).size : -1;
+  } catch {
+    return -1;
+  }
 };
 
 export const createBroker = (kit: Kit): (() => void) => {
@@ -84,13 +105,16 @@ export const createBroker = (kit: Kit): (() => void) => {
   let typedAt = -Infinity;
 
   /**
-   * A person's move: a Tab in the page, or the pointer entering a frame. And typing: a key other than Tab
-   * in the page, which a Tab forgets (it moves the keyboard on purpose).
+   * A person's move: a Tab in the page, or the pointer entering a frame. And typing: a character (a key whose
+   * name is one character) typed into a text field of the page, which a Tab forgets (it moves the keyboard on
+   * purpose). Arrows, Space on the page, Escape and the modifiers are not typing.
    */
   const onKey = (event: Event): void => {
     const key = (event as KeyboardEvent).key;
+    const at = event.target as HTMLElement;
     if (event.type[0] == 'p' || key == 'Tab') tabAt = now();
-    typedAt = key == 'Tab' ? -Infinity : key ? now() : typedAt;
+    if (key == 'Tab') typedAt = -Infinity;
+    else if (key && key.length == 1 && (at.isContentEditable || at.tagName == 'INPUT' || at.tagName == 'TEXTAREA')) typedAt = now();
   };
   // Where the keyboard went is read a task after any focus or blur in the page, the window's own
   // included (caught in the capture phase): Chromium blurs the window when a frame takes the keyboard,
@@ -200,29 +224,26 @@ export const createBroker = (kit: Kit): (() => void) => {
       if (over()) return note();
       // Its size as JSON, when it is plain data: primitives, arrays and plain objects only. A buffer, a typed
       // array, a Map or a Set says nothing as JSON however large it is, so such a message is refused.
-      let size = -1;
-      try {
-        size = new Blob([JSON.stringify(data, plain)]).size;
-      } catch {
-        // Not plain data.
-      }
-      // Not plain data after any earlier wrong message (the first is warned of) removes the frame.
-      if (size < 0) return warned ? end('not plain data') : note();
-      if (size > 65536) return note();
+      const size = sizeOf(data);
+      // Not plain data, or over 64 KB, after any earlier wrong message (the first is warned of) removes the frame:
+      // each costs the page more than a small message, so neither may be repeated.
+      if (size < 0 || size > 65536) return warned ? end('not plain data or over 64 KB') : note();
       const kind = data.kind;
       if (kind === 'pong') missed = 0;
       else if (kind === 'setState' && writes.includes(data.id) && fits(states[data.id], data.value)) kit.write(data.id, data.value, el);
       else if (kind === 'emit' && emits.includes(data.name)) kit.emit(data.name.slice(7), el);
-      else if (kind === 'resize' && sizing === 'content' && count <= 10 && typeof data.height == 'number' && data.height >= 0) {
+      else if (kind === 'resize' && sizing === 'content' && typeof data.height == 'number' && data.height >= 0) {
         (frame as HTMLIFrameElement).style.height = Math.min(data.height, 10_000) + 'px';
       } else note();
     };
 
     const onMessage = (event: MessageEvent): void => {
       const data = event.data;
-      if (!frame || event.source !== frame.contentWindow) return;
-      // Every window message of the frame counts against the same ceiling as its port, before hello and after.
-      over();
+      if (!frame) return;
+      // Every window message of the frame counts against the same ceiling as its port, before hello and after,
+      // and so does one from a frame nested in it at any depth (a parent is readable across sites).
+      for (let at = event.source as Window | null; at; at = at == at.parent ? null : at.parent) if (at == frame.contentWindow) over();
+      if (event.source !== frame.contentWindow) return;
       if (gone || event.origin !== 'null' || !data || data.fc !== 1 || data.kind !== 'hello') return;
       if (hello) return end('a second hello');
       hello = true;
