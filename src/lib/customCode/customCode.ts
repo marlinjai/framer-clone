@@ -66,9 +66,9 @@ const INVISIBLE_CHARACTERS = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\ufff
  */
 const PRESENTATION_AFTER_PICTOGRAPH = /(\p{Extended_Pictographic})[\ufe0e\ufe0f]/gu;
 const KEYCAP = /([0-9#*])\ufe0f(?=\u20e3)/gu;
-/** The scripts whose spelling needs the zero-width non-joiner or joiner: Arabic and Syriac, and the Indic scripts. */
+/** The scripts whose spelling needs the zero-width non-joiner or joiner (Arabic and Syriac, the Indic scripts), by script extension, so a shared mark such as the shadda counts. */
 const JOINING_SCRIPT =
-  '\\p{sc=Arabic}\\p{sc=Syriac}\\p{sc=Devanagari}\\p{sc=Bengali}\\p{sc=Gurmukhi}\\p{sc=Gujarati}\\p{sc=Oriya}\\p{sc=Tamil}\\p{sc=Telugu}\\p{sc=Kannada}\\p{sc=Malayalam}\\p{sc=Sinhala}';
+  '\\p{scx=Arabic}\\p{scx=Syriac}\\p{scx=Devanagari}\\p{scx=Bengali}\\p{scx=Gurmukhi}\\p{scx=Gujarati}\\p{scx=Oriya}\\p{scx=Tamil}\\p{scx=Telugu}\\p{scx=Kannada}\\p{scx=Malayalam}\\p{scx=Sinhala}';
 /**
  * The zero-width non-joiner and joiner where a word needs them (decision D97): one,
  * between two characters of a joining script, as Persian writes `\u06a9\u062a\u0627\u0628\u200c\u0647\u0627`
@@ -202,10 +202,11 @@ export interface CustomCodeTreeNode {
   children?: CustomCodeTreeNode[];
 }
 
-/** `props` with `customCode` emptied to null: still a block, with nothing of its value. */
-function withEmptiedCustomCode<P extends Record<string, unknown>>(props: P): P {
-  if (!Object.prototype.hasOwnProperty.call(props, CUSTOM_CODE_PROP) || props[CUSTOM_CODE_PROP] === null) return props;
-  return { ...props, [CUSTOM_CODE_PROP]: null };
+/** `props` with `customCode` emptied to null (still a block, with nothing of its value), or gone where `drop` says. */
+function withEmptiedCustomCode<P extends Record<string, unknown>>(props: P, drop: boolean): P {
+  if (!Object.prototype.hasOwnProperty.call(props, CUSTOM_CODE_PROP)) return props;
+  if (drop) return withoutCustomCodeProp(props);
+  return props[CUSTOM_CODE_PROP] === null ? props : { ...props, [CUSTOM_CODE_PROP]: null };
 }
 
 /**
@@ -214,14 +215,16 @@ function withEmptiedCustomCode<P extends Record<string, unknown>>(props: P): P {
  * serialized into the page's script data, and nothing of a block's stored value may
  * reach the page (decisions D36, D45 and D95). The emptied prop keeps the node a block,
  * so the island draws it as an invalid one: its box and its fallback, without the trace
- * mark, and a void tag swapped for the box as everywhere else (D96). Unchanged nodes
- * are returned as they are.
+ * mark, and a void tag swapped for the box as everywhere else (D96). A node for which
+ * `drawnAsItself` is true (a shop part or a nested shop control, which a block would
+ * replace) loses the prop instead and stays what it is, so a control never loses a
+ * part it needs. Unchanged nodes are returned as they are.
  */
-export function withoutCustomCodeTree<N extends CustomCodeTreeNode>(node: N): N {
-  const props = node.props ? withEmptiedCustomCode(node.props) : node.props;
+export function withoutCustomCodeTree<N extends CustomCodeTreeNode>(node: N, drawnAsItself: (props: Record<string, unknown>) => boolean = () => false): N {
+  const props = node.props ? withEmptiedCustomCode(node.props, drawnAsItself(node.props)) : node.props;
   let children = node.children;
   if (Array.isArray(node.children)) {
-    const next = node.children.map((child) => (child && typeof child === 'object' ? withoutCustomCodeTree(child) : child));
+    const next = node.children.map((child) => (child && typeof child === 'object' ? withoutCustomCodeTree(child, drawnAsItself) : child));
     if (next.some((child, i) => child !== node.children![i])) children = next;
   }
   if (props === node.props && children === node.children) return node;

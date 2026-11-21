@@ -180,6 +180,16 @@ function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreig
 }
 
 /**
+ * Inside an island, the nodes a custom code block must not replace: a shop part and a
+ * nested shop control, which the block check below would otherwise draw as a box, so
+ * a control would lose its button (D95). They lose the prop instead.
+ */
+function drawnAsItselfInIsland(props: Record<string, unknown>): boolean {
+  const kind = props['data-component-kind'];
+  return shopPartRoleOf(props) !== undefined || (typeof kind === 'string' && INTERACTIVE_COMMERCE_KINDS.has(kind));
+}
+
+/**
  * Render one hydrated ComponentNode to a React element. `scope` is threaded to
  * any interactive island so its descendants re-resolve `{{variant.*}}` /
  * `{{availability.*}}` client-side. `key` disambiguates list siblings.
@@ -209,10 +219,10 @@ export function renderComponentNode(
   const formKind = formKindOf(node.props as Record<string, unknown> | undefined);
   if (formKind === 'form') {
     // A client island's props are serialized into the page: no stored custom code value goes with them (D95).
-    return <FormIsland key={key} node={withoutCustomCodeTree(node)} scope={scope} renderedAt={Date.now()} />;
+    return <FormIsland key={key} node={withoutCustomCodeTree(node, drawnAsItselfInIsland)} scope={scope} renderedAt={Date.now()} />;
   }
-  if (formKind === 'form-field') return <FormFieldIsland key={key} node={withoutCustomCodeTree(node)} />;
-  if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={withoutCustomCodeTree(node)} />;
+  if (formKind === 'form-field') return <FormFieldIsland key={key} node={withoutCustomCodeTree(node, drawnAsItselfInIsland)} />;
+  if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={withoutCustomCodeTree(node, drawnAsItselfInIsland)} />;
 
   // The sticky call to action bar draws its own link; renderPublishedPage
   // moved it to the end of the page and its stylesheet pins it on phones.
@@ -280,7 +290,7 @@ export function renderComponentNode(
         key={key}
         kind={dataKind as CommerceIslandProps['kind']}
         // Serialized into the page with the island: no stored custom code value goes with it (D95).
-        node={withoutCustomCodeTree(node)}
+        node={withoutCustomCodeTree(node, drawnAsItselfInIsland)}
         // The product, variant and availability of the source the island sits in (hydrateBindings
         // records them on the node): a variant selector inside a product detail reads its product here.
         scope={node.islandFrames ? createScope([...scope.frames, ...node.islandFrames]) : scope}

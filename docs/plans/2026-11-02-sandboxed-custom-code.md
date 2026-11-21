@@ -848,8 +848,10 @@ every descendant before it crosses, so nothing of a block's value reaches the pa
 rather than deleting it, so the node stays a block and the island draws it as an invalid one: its box with the fallback inside,
 without the trace mark, a void tag swapped for the box as D96 says. Until the sixth review it deleted the prop, and a void-tag block
 inside a form published as its bare element with the fallback dropped (an `img` showing only its `alt`), while this text already
-claimed the fallback; tests now read the drawn markup inside a form and a shop control. As everywhere, the block check comes before
-the shop part and shop control checks, so a part or a nested control carrying the prop is drawn as a block. Running a block inside a
+claimed the fallback; tests now read the drawn markup inside a form, a variant selector and a checkout. A shop part and a nested
+shop control lose the prop instead and stay what they are: the block check comes before theirs, so emptied they would be drawn as
+a box, and a checkout whose button carried the prop would publish without a button (decided after the sixth review, say so if you
+disagree). Running a block inside a
 form or a shop control is left to C3 if it is ever wanted. Found by the first review of pull request #450, corrected after the sixth.
 
 **D96. The tile is drawn in a plain container, as a labelled group.** On the canvas a block stored as a link, a button, an SVG
@@ -890,11 +892,11 @@ the character a reader sees (counted with `Intl.Segmenter`, or as a base and its
 first cap, five marks in a row, refused everyday Burmese ("hope", "discount sale") and pointed Hebrew with an accent and a meteg; those
 reach four to six code points in a character, while a letter under 150 marks is still refused. The fifth review's cap of ten left no
 margin: measured on Node 22 (Unicode 17, whose grapheme rules join an Indic conjunct into one character), Sanskrit `कार्त्स्न्य` holds
-nine code points in one character, ten with a joiner inside the conjunct, and a kiss emoji with two skin tones holds ten, so the sixth
-review raised it to twelve; a runtime on older Unicode data splits conjuncts smaller, which only lowers the count. The text and emoji
+nine code points in one character, ten with a joiner after its first virama, and a kiss emoji with two skin tones holds ten. Nothing
+measured exceeds ten, so twelve is margin, not need: raised after the sixth review (decided, say so if you disagree); a runtime on older Unicode data splits conjuncts smaller, which only lowers the count. The text and emoji
 presentation selectors U+FE0E and U+FE0F pass once, right after a pictograph, and in a keycap (`1`, U+FE0F, U+20E3); a digit with
 U+FE0F and no keycap is refused. The zero-width non-joiner U+200C and joiner U+200D pass in two places only: one between two characters
-of a script whose spelling needs them (Arabic and Syriac, Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada,
+of a script whose spelling needs them, read by script extension so a shared mark such as the Arabic shadda counts (Arabic and Syriac, Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada,
 Malayalam and Sinhala), as Persian writes `کتاب‌ها` ("books") and `می‌خواهم` ("I want"), Sinhala `ශ්‍රී ලංකා` and Marathi its eyelash ra; and
 one zero-width joiner between two pictographs, the left one optionally carrying its presentation selector or a skin tone, which draws
 them as one emoji (a technologist, a rainbow flag, a family). That reverses the earlier refusal of joined emoji (decided by the

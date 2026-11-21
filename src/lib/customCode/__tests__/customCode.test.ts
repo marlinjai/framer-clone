@@ -167,6 +167,8 @@ describe('parseCustomCode', () => {
       // Persian: "books" (plural suffix) and "I want" (verb prefix), each with a zero-width non-joiner.
       '\u06a9\u062a\u0627\u0628\u200c\u0647\u0627',
       '\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645',
+      // Persian with a shadda before the non-joiner: "rights".
+      '\u062d\u0642\u0651\u200c\u0647\u0627',
       // Sinhala: "Sri Lanka" and "sports", the zero-width joiner after a virama.
       '\u0dc1\u0dca\u200d\u0dbb\u0dd3 \u0dbd\u0d82\u0d9a\u0dcf',
       '\u0d9a\u0dca\u200d\u0dbb\u0dd3\u0da9\u0dcf',
