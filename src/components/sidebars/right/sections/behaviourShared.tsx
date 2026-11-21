@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
-import type { BehaviourNode, StateValue } from '@/lib/behaviour/format';
+import type { BehaviourNode, RefusedOnNode, StateValue } from '@/lib/behaviour/format';
 import { getSnapshot } from 'mobx-state-tree';
 import { isRecord, refusalAt, subtreeRefusals, sameStored, storedBehaviourOf, type Names, type StoredRecord } from '@/lib/behaviour/authoring';
 import { FIELD_CONTROL, FIELD_LABEL, PropertySwitch } from '../primitives';
@@ -130,8 +130,28 @@ export const expansionRoots = (expansion: { root: ComponentNode; floating: reado
   [expansion.root, ...expansion.floating] as unknown as BehaviourNode[];
 
 /** A name in a sentence, in quotes a quote inside the name cannot close. */
-export const quoted = (name: string): string =>
-  !name.includes('"') ? `"${name}"` : !name.includes("'") ? `'${name}'` : `\u201c${name}\u201d`;
+export const quoted = (raw: string): string => {
+  // One line, and a closing typographic quote inside the name cannot close the quotes around it.
+  const name = raw.replace(/\s+/g, ' ').trim();
+  if (!name.includes('"')) return `"${name}"`;
+  if (!name.includes("'")) return `'${name}'`;
+  return `\u201c${name.replace(/\u201d/g, '"')}\u201d`;
+};
+
+/**
+ * True when the definition itself stores the refused entry of a placement's root. The
+ * expansion merges the placement's own Trigger field onto that root (`withPlacementBehaviour`
+ * in expand.ts: its `on` after the definition's, its `showWhen` instead), and that field is
+ * stored on the placing page, out of sight from the definition.
+ */
+function definitionStores(stored: StoredRecord | null, refusal: RefusedOnNode): boolean {
+  if (refusal.entry === 'on') {
+    const entry = stored && Array.isArray(stored.on) && refusal.index !== undefined ? stored.on[refusal.index] : undefined;
+    return isRecord(entry) && isRecord(refusal.value) && entry.id === refusal.value.id;
+  }
+  if (refusal.entry === 'showWhen') return stored?.showWhen !== undefined && sameStored(stored.showWhen, refusal.value);
+  return true;
+}
 
 /** The nodes from a root of an expansion's trees down to the node with this id, or empty. */
 function pathTo(roots: readonly ComponentNode[], id: string): ComponentNode[] {
@@ -156,31 +176,38 @@ function pathTo(roots: readonly ComponentNode[], id: string): ComponentNode[] {
  * placement (a trigger on the placing page itself) is out of sight, and is refused.
  */
 export function placingRefusal(page: BehaviourPage, subtree: { id: string }, current?: { id: string }): string | null {
+  // A reader named by a node of the page it is on (the one a person opens to fix it) wins
+  // over one named only through a placement, so a reader stored in an outer definition is
+  // named on that definition rather than on the first page placing it.
+  let indirect: string | null = null;
   for (const placing of page.placingExpansionsWith(subtree)) {
     const before = expansionRoots(placing.before);
     const after = expansionRoots(placing.after);
     const { refused, dangling } = subtreeRefusals(before, after, (current ?? subtree) as unknown as BehaviourNode, subtree as unknown as BehaviourNode);
     // An expanded node keeps its id in the definition as classKey: found there, it is inside a placement.
-    const reader = (nodeId: string | null | undefined) => {
-      const path = nodeId ? pathTo([placing.after.root, ...placing.after.floating], nodeId) : [];
+    const reader = (refusal: RefusedOnNode) => {
+      const path = refusal.nodeId ? pathTo([placing.after.root, ...placing.after.floating], refusal.nodeId) : [];
       const node = path.at(-1);
       const key = node?.classKey;
       // A node the edit adds is not stored yet: it is named as part of the element being edited.
-      const inner = key === undefined ? undefined
+      const found = key === undefined ? undefined
         : page.findComponent(key) ?? (pathTo([subtree as ComponentNode], key).length > 0 ? page.findComponent(subtree.id) : undefined);
-      if (inner) return { inside: true, name: `${quoted(inner.displayName ?? 'an element')} in ${quoted(placing.definition)}` };
-      const own = nodeId ? placing.findComponent(nodeId)?.displayName : undefined;
-      if (own) return { inside: false, name: quoted(own) };
+      const inner = found && (!node?.placementRoot || definitionStores(storedBehaviourOf(found.props), refusal)) ? found : undefined;
+      if (inner) return { inside: true, direct: true, name: `${quoted(inner.displayName ?? 'an element')} in ${quoted(placing.definition)}` };
+      const own = refusal.nodeId ? placing.findComponent(refusal.nodeId)?.displayName : undefined;
+      if (own) return { inside: false, direct: true, name: quoted(own) };
       // Inside another component's placement: named by the nearest placement the page holds.
       const around = path.slice(0, -1).reverse().map((above) => placing.findComponent(above.id ?? '')?.displayName).find(Boolean);
-      return { inside: false, name: around ? `an element in ${quoted(around)}` : 'an element' };
+      return { inside: false, direct: false, name: around ? `an element in ${quoted(around)}` : 'an element' };
     };
     const hard = refused[0];
-    if (hard) return `it would stop ${reader(hard.nodeId).name} working on ${quoted(placing.name)}: ${hard.reason}`;
-    const outside = dangling.map((refusal) => reader(refusal.nodeId)).find((found) => !found.inside);
-    if (outside) return `it would stop ${outside.name} working on ${quoted(placing.name)}: it names something this removes`;
+    const hit = hard ? reader(hard) : dangling.map(reader).find((found) => !found.inside);
+    if (!hit) continue;
+    const message = `it would stop ${hit.name} working on ${quoted(placing.name)}: ${hard ? hard.reason : 'it names something this removes'}`;
+    if (hit.direct) return message;
+    indirect ??= message;
   }
-  return null;
+  return indirect;
 }
 
 /**

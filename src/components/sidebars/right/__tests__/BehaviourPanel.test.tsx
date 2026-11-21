@@ -1020,10 +1020,52 @@ describe('a preset\'s items', () => {
     expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
   });
 
+  it('a placement\'s own Trigger field reading a removed tab refuses the removal, naming the placement', () => {
+    mount();
+    const { home, panel, open } = makeTabbed();
+    const definition = open();
+    // Nothing in the editor writes a placement's Trigger field yet, so the test stores it directly.
+    const placement = (main.children as ComponentInstance[]).find((child) => child.type === '#component')!;
+    act(() => placement.setBehaviour({ on: [{ id: 't-placed', on: 'click', do: [{ focus: panel }] }] }));
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
+    select(definition.page.appComponentTree as unknown as ComponentInstance);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    expect(group().queryByRole('group', { name: 'Remove Third?' })).toBeNull();
+    expect(group().getByRole('alert').textContent).toBe(`Not changed: it would stop "Tabbed" working on "${home.metadata.title}": it names something this removes.`);
+    expect(group().getByText('3 tabs, made from a preset')).toBeTruthy();
+  });
+
+  it('a reader stored in an outer component is named on that component, where it is fixed', () => {
+    mount();
+    const { home, tabs, panel } = makeTabbed();
+    act(() => {
+      button.setLabel('Outer go');
+      button.setBehaviour({ on: [{ id: 't-focus', on: 'click', do: [{ focus: panel }] }] });
+    });
+    const tabbed = project.createComponentFromSelection(home.id, [tabs.id], 'Tabbed');
+    if (!tabbed.ok) throw new Error(tabbed.message);
+    const outer = project.createComponentFromSelection(home.id, [button.id, tabbed.placement.id], 'Outer');
+    if (!outer.ok) throw new Error(outer.message);
+    const definition = project.components.get(tabbed.definitionId)!;
+    act(() => store.editorUI.setCurrentPage(definition.page as never));
+    expect(readBehaviourTree(home.expansion.root as never).refused).toEqual([]);
+    select(definition.page.appComponentTree as unknown as ComponentInstance);
+    const group = () => within(interactions().getByRole('group', { name: 'Tabs' }));
+    fireEvent.change(group().getByLabelText('Tab to remove'), { target: { value: '2' } });
+    fireEvent.click(group().getByRole('button', { name: 'Remove Third' }));
+    // Home also breaks, but there the reader is only "an element in Outer": Outer names it.
+    expect(group().getByRole('alert').textContent).toBe('Not changed: it would stop "Outer go" working on "Outer": it names something this removes.');
+  });
+
   it('a name in a refusal keeps its own quotes readable', () => {
     expect(quoted('Go')).toBe('"Go"');
     expect(quoted('Say "hi"')).toBe(`'Say "hi"'`);
     expect(quoted(`Say "it's"`)).toBe(`\u201cSay "it's"\u201d`);
+    // All three kinds: a closing typographic quote inside cannot close the quotes, and a name stays on one line.
+    expect(quoted(`Say "it's\u201d`)).toBe(`\u201cSay "it's"\u201d`);
+    expect(quoted('Two\n  lines')).toBe('"Two lines"');
   });
 
   /**
