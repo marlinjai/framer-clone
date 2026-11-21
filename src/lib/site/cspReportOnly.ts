@@ -36,6 +36,9 @@ export const CSP_REPORT_ONLY_HEADER = 'content-security-policy-report-only';
  * The cookie that says this visitor consented to maps, so Google frames are allowed.
  * The consent runtime writes it (src/lib/consent/consent.ts imports it from here).
  */
+/** The Server-Timing entry the edge middleware answers with: its `desc` is 1 when the document was served with maps allowed, else 0. */
+export const MAPS_POLICY_TIMING = 'fc-maps';
+
 export const MAPS_CONSENT_COOKIE = 'lumitra-consent-maps';
 
 /** The same-origin path browsers post violations to, on whichever host served the page. */

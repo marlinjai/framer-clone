@@ -18,7 +18,7 @@ import React from 'react';
 import { useStore } from '@/hooks/useStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import { openProject } from '@/stores/openProject';
-import { CustomCodeSurfaceContext } from '@/lib/renderer/customCode/customCodeElement';
+import { CustomCodeSurfaceContext } from '@/lib/renderer/customCode/customCodeSurfaceContext';
 import { STANDALONE_CUSTOM_CODE_SURFACE } from '@/components/CustomCodeSurface';
 
 const PreviewShell = dynamic(

@@ -36,18 +36,6 @@ import {
 
 export type CustomCodeSurface = 'editor' | 'preview' | 'standalone' | 'published';
 
-/**
- * What the editor surfaces tell a block about where it is drawn. The default is
- * the safe one: a tile, without a link. The editor gives the link to the page's
- * standalone preview; only the standalone preview route says `standalone`.
- */
-export interface CustomCodeSurfaceInfo {
-  standalone: boolean;
-  previewHref: string | null;
-}
-
-export const CustomCodeSurfaceContext = React.createContext<CustomCodeSurfaceInfo>({ standalone: false, previewHref: null });
-
 /** What the tile says. */
 export const CUSTOM_CODE_TILE_TEXT = 'Custom code, not run here';
 export const CUSTOM_CODE_PREVIEW_LINK_TEXT = 'Open the preview to run it';
@@ -215,15 +203,4 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
   const trace = parsed.ok && parsed.value.kind === 'block' ? { [CUSTOM_CODE_ATTR]: customCodeTrace(parsed.value.sha256) } : {};
   const own = tag === input.tag ? domProps : globalPropsOnly(domProps);
   return React.createElement(tag, { ...own, key: input.key, ...trace }, input.children);
-}
-
-/**
- * A block on the editor's surfaces, as createComponentElement draws it: the canvas
- * is always the tile; the preview is the tile too, unless the standalone preview
- * route says otherwise through CustomCodeSurfaceContext.
- */
-export function CustomCodeOnEditorSurface({ mode, ...input }: CustomCodeElementInput & { mode: 'editor' | 'preview' }): React.ReactElement | null {
-  const info = React.useContext(CustomCodeSurfaceContext);
-  const surface: CustomCodeSurface = mode === 'editor' ? 'editor' : info.standalone ? 'standalone' : 'preview';
-  return createCustomCodeElement(surface, { ...input, previewHref: info.previewHref });
 }

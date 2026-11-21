@@ -51,7 +51,7 @@ import { createStickyCtaElement } from '@/lib/renderer/stickyCta/stickyCtaElemen
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { createMapEmbedElement } from '@/lib/renderer/mapEmbed/mapEmbedElement';
 import { hasCustomCode } from '@/lib/customCode/customCode';
-import { CustomCodeOnEditorSurface } from '@/lib/renderer/customCode/customCodeElement';
+import { CustomCodeOnEditorSurface } from '@/lib/renderer/customCode/customCodeSurfaceContext';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { ShopPartElement } from '@/lib/commerce/shopRuntime';
 

@@ -332,6 +332,10 @@ describe('middleware: the report-only policy of published pages', () => {
       expect(policy(without)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
       expect(policy(declined)).toBe(PUBLISHED_REPORT_ONLY_POLICY);
       expect(policy(consented)).toBe(PUBLISHED_REPORT_ONLY_POLICY_MAPS);
+      // The page learns the policy of its own response from Server-Timing.
+      expect(without.headers.get('server-timing')).toBe('fc-maps;desc=0');
+      expect(declined.headers.get('server-timing')).toBe('fc-maps;desc=0');
+      expect(consented.headers.get('server-timing')).toBe('fc-maps;desc=1');
     }
     // The consent runtime writes the same cookie name the middleware reads.
     expect(CONSENT_MAPS_COOKIE).toBe(MAPS_CONSENT_COOKIE);

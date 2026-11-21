@@ -23,9 +23,9 @@ import HeadlessComponentRenderer from '@/lib/renderer/HeadlessComponentRenderer'
 import {
   CUSTOM_CODE_PREVIEW_LINK_TEXT,
   CUSTOM_CODE_TILE_TEXT,
-  CustomCodeSurfaceContext,
   createCustomCodeElement,
 } from '../customCodeElement';
+import { CustomCodeSurfaceContext } from '../customCodeSurfaceContext';
 
 const HASH = '0123456789abcdef'.repeat(4);
 const OTHER_SITES_HASH = 'f'.repeat(64);

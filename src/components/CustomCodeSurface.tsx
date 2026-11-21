@@ -10,7 +10,7 @@ import React, { useMemo } from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { customCodePreviewHref } from '@/lib/customCode/customCode';
-import { CustomCodeSurfaceContext, type CustomCodeSurfaceInfo } from '@/lib/renderer/customCode/customCodeElement';
+import { CustomCodeSurfaceContext, type CustomCodeSurfaceInfo } from '@/lib/renderer/customCode/customCodeSurfaceContext';
 
 const EditorCustomCodeSurface = observer(({ children }: { children: React.ReactNode }) => {
   const { editorUI } = useStore();

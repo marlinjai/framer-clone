@@ -40,7 +40,7 @@
 
 import { safeJson, type TrackerPayload } from '@/lib/renderer/publish/trackerSnippet';
 import { COOKIE_SETTINGS_HASH, legalLanguage, type LegalLanguage } from '@/lib/legal/legalPages';
-import { MAPS_CONSENT_COOKIE } from '@/lib/site/cspReportOnly';
+import { MAPS_CONSENT_COOKIE, MAPS_POLICY_TIMING } from '@/lib/site/cspReportOnly';
 
 /** The localStorage key holding the visitor's choice. */
 export const CONSENT_STORAGE_KEY = 'lumitra-consent';
@@ -286,6 +286,7 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     prefix: TRACKER_SESSION_PREFIX,
     cookie: TRACKER_COOKIE,
     mapsCookie: CONSENT_MAPS_COOKIE,
+    mapsTiming: MAPS_POLICY_TIMING,
     all: CONSENT_CATEGORIES,
     cats,
     site: known([...cats, ...(input.siteCategories ?? [])]),
@@ -310,7 +311,11 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     'function stored(){try{var raw=w.localStorage.getItem(C.key);if(!raw)return null;var r=JSON.parse(raw);' +
     "if(!r||typeof r!=='object'||r.v!==C.v)return null;return r;}catch(e){return null;}}" +
     // One category's answer: the stored one, else this page view's (storage that throws).
-    "function state(c){var r=stored(),x=r&&typeof r[c]==='boolean'?r[c]:(typeof mem[c]==='boolean'?mem[c]:null);return x===null?null:(x?'granted':'denied');}" +
+    // Storage that throws cannot hold the answer across the reload a maps "yes" offers, so the
+    // maps cookie it set carries it there: only while storage throws (cleared or other-version
+    // storage does not, and asks again) and only as a yes (a denial removes the cookie).
+    "function down(){try{w.localStorage.getItem(C.key);return false;}catch(e){return true;}}" +
+    "function state(c){var r=stored(),x=r&&typeof r[c]==='boolean'?r[c]:(typeof mem[c]==='boolean'?mem[c]:null);if(x===null&&c==='maps'&&down()&&mapsAllowed())x=true;return x===null?null:(x?'granted':'denied');}" +
     // Whether this page still has a question nobody answered.
     'function pending(){for(var i=0;i<C.cats.length;i++)if(state(C.cats[i])===null)return true;return false;}' +
     // Keeps every other category's answer: answering maps never touches analytics.
@@ -323,8 +328,11 @@ export function consentRuntimeScript(input: ConsentRuntimeConfig): string {
     // document's enforced frame-src, and a policy cannot widen after load: a map
     // allowed in a document served without it needs a new document.
     "function mapsAllowed(){var all=[];try{all=d.cookie.split(';');}catch(e){}for(var i=0;i<all.length;i++)if(all[i].replace(/^ +| +$/g,'')===C.mapsCookie+'=1')return true;return false;}" +
-    // Read once, as the page starts: the policy this document was served with.
-    'var mapsAtLoad=mapsAllowed();' +
+    // The policy this document was served with: the middleware says so in its response's
+    // Server-Timing, which no later cookie change (another tab) can alter. Without it
+    // (an engine that does not expose it), the cookie as the page starts.
+    "function servedMaps(){try{var n=w.performance.getEntriesByType('navigation')[0],t=n&&n.serverTiming;if(t)for(var i=0;i<t.length;i++)if(t[i].name===C.mapsTiming)return t[i].description==='1';}catch(e){}return null;}" +
+    'var mapsAtLoad=servedMaps();if(mapsAtLoad===null)mapsAtLoad=mapsAllowed();' +
     // Whether a "yes" survives a new document: storage that throws keeps it for this view only.
     "function kept(c){var r=stored();return !!r&&r[c]===true;}" +
     // Whether the visitor has edited a field still on this page (typed, ticked, chose):

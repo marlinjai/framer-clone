@@ -6,7 +6,7 @@ import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
 import { previewHostAllows, publishedHostAllows, routeFor } from '@/lib/hostRoutes';
 import { isPreviewHost } from '@/lib/sites/previewHost';
-import { CSP_ENFORCED_HEADER, CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, enforcedFramePolicy, reportOnlyPolicy } from '@/lib/site/cspReportOnly';
+import { CSP_ENFORCED_HEADER, CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, MAPS_POLICY_TIMING, enforcedFramePolicy, reportOnlyPolicy } from '@/lib/site/cspReportOnly';
 // Dependency-free too: it imports only the import-free box contract.
 import { boxFrameSource } from '@/lib/customCode/customCode';
 // The dependency-free bearer test, NOT src/lib/auth-machine.ts: that pulls the
@@ -186,6 +186,16 @@ function framePolicy(request: NextRequest): string {
 }
 
 /**
+ * Tells the page which maps policy its own response was served with, as a
+ * Server-Timing entry the consent runtime reads from the navigation timing: the
+ * cookie may change between the request and the script (another tab answers), the
+ * policy of this document cannot.
+ */
+function setMapsPolicyTiming(request: NextRequest, response: NextResponse): void {
+  response.headers.append('server-timing', `${MAPS_POLICY_TIMING};desc=${mapsConsented(request) ? '1' : '0'}`);
+}
+
+/**
  * A published page's response, carrying the report-only policy
  * (src/lib/site/cspReportOnly.ts), which never blocks anything, and the
  * enforced frame policy (framePolicy). Only a document on a published host
@@ -195,6 +205,7 @@ function framePolicy(request: NextRequest): string {
 function withPublishedPolicies(request: NextRequest, response: NextResponse): NextResponse {
   response.headers.set(CSP_REPORT_ONLY_HEADER, reportOnlyPolicy(mapsConsented(request)));
   response.headers.set(CSP_ENFORCED_HEADER, framePolicy(request));
+  setMapsPolicyTiming(request, response);
   return response;
 }
 
@@ -490,6 +501,7 @@ async function route(request: NextRequest) {
   if (isStandalonePreviewPath(request.nextUrl.pathname)) {
     const response = NextResponse.next(pass);
     response.headers.set(CSP_ENFORCED_HEADER, `frame-ancestors 'none'; ${framePolicy(request)}`);
+    setMapsPolicyTiming(request, response);
     return response;
   }
 

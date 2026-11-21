@@ -23,12 +23,30 @@ vi.mock('next/link', () => ({
 
 import PreviewPage from '../page';
 
+const realLocation = window.location;
+
 beforeEach(() => {
   store = createRootStore();
   replace.mockReset();
   window.history.replaceState(null, '', '/preview');
+  // The hand-off to a project's own preview is a full document load (location.replace),
+  // so the new route's response headers (its enforced frame policy) apply.
+  // Live getters: tests move the address with history.replaceState after this runs.
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: {
+      get search() { return realLocation.search; },
+      get pathname() { return realLocation.pathname; },
+      get hash() { return realLocation.hash; },
+      get href() { return realLocation.href; },
+      replace,
+    },
+  });
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  Object.defineProperty(window, 'location', { configurable: true, value: realLocation });
+  cleanup();
+});
 
 function seedDemo() {
   store.projectStore.createProject('Framer Clone Demo');

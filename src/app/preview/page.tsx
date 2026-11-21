@@ -13,7 +13,6 @@
 
 import dynamic from 'next/dynamic';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useStore } from '@/hooks/useStore';
 import { pageIdFromLocation, pickPage } from '@/stores/openProject';
 
@@ -25,7 +24,6 @@ type Mode =
   | { kind: 'empty' };
 
 function DemoPreview() {
-  const router = useRouter();
   const rootStore = useStore();
   const [mode, setMode] = useState<Mode>({ kind: 'pending' });
   const decided = useRef(false);
@@ -40,7 +38,10 @@ function DemoPreview() {
     // the demo only when it is what is open, or nothing else is.
     const current = editorUI.currentProject;
     if (current && current.id !== demo?.id) {
-      router.replace(`/projects/${encodeURIComponent(current.id)}/preview${window.location.search}`);
+      // A full document load, not router.replace: a client-side navigation keeps this
+      // document, so the new route's enforced frame policy (its response headers) would
+      // never be installed. That route loads the project from the server, as it did before.
+      window.location.replace(`/projects/${encodeURIComponent(current.id)}/preview${window.location.search}`);
       return;
     }
     if (demo) {
@@ -51,7 +52,7 @@ function DemoPreview() {
       return;
     }
     setMode({ kind: 'empty' });
-  }, [rootStore, router]);
+  }, [rootStore]);
 
   if (mode.kind === 'demo') return <PreviewShell missingPageId={mode.missingPageId} />;
   if (mode.kind === 'empty') {

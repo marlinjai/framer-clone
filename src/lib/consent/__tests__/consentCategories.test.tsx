@@ -147,6 +147,32 @@ describe('a site with one purpose', () => {
     expect(load(['maps']).mapsAtLoad).toBe(true);
   });
 
+  it('takes the policy of this document from its response, not from the cookie as it is now', () => {
+    mockReload();
+    const entry = { name: 'fc-maps', description: '0' };
+    vi.spyOn(performance, 'getEntriesByType').mockReturnValue([{ serverTiming: [entry] } as unknown as PerformanceEntry]);
+    // Another tab granted maps after the response was served: the policy still refuses Google.
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
+    const api = load(['maps']);
+    expect(api.mapsAtLoad).toBe(false);
+    expect(api.mapsAllowed?.()).toBe(true);
+  });
+
+  it('keeps an accepted maps answer across the offered reload when storage throws, from the cookie', () => {
+    mockReload();
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
+    expect(load(['maps']).get('maps')).toBe('granted');
+  });
+
+  it('does not read a maps yes from the cookie when storage works and holds nothing', () => {
+    mockReload();
+    document.cookie = `${CONSENT_MAPS_COOKIE}=1; path=/`;
+    expect(load(['maps']).get('maps')).toBeNull();
+  });
+
   it('says whether the maps cookie is set now, so a map can tell a browser that blocks cookies', () => {
     mockReload();
     const api = load(['maps']);

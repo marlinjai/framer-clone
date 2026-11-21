@@ -25,7 +25,8 @@
 // (FormUnavailableContext, CheckoutUnavailableContext): they need their props.
 
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
-import { withoutCustomCodeProp } from '@/lib/customCode/customCode';
+import { hasCustomCode, withoutCustomCodeProp } from '@/lib/customCode/customCode';
+import { isVoidTag } from '@/lib/drag/voidTags';
 
 interface SafeNode {
   type: string;
@@ -59,11 +60,15 @@ export function previewSafeTree<N extends SafeNode>(root: N): N {
       } as unknown as N;
     }
     const props = safeProps(node.props);
+    // A block stored on a void tag (an `img`) holds its fallback as children, which a
+    // void element cannot draw: the published page draws that block as a `span`, so the
+    // preview does too, and the fallback stays visible.
+    const type = hasCustomCode(node.props) && isVoidTag(node.type) ? 'span' : node.type;
     const children = Array.isArray(node.children) ? (node.children as N[]) : null;
     const nextChildren = children ? children.map(walk) : null;
     const changedChildren = !!children && nextChildren!.some((child, i) => child !== children[i]);
-    if (props === node.props && !changedChildren) return node;
-    return { ...node, ...(props !== node.props ? { props } : {}), ...(changedChildren ? { children: nextChildren } : {}) } as N;
+    if (props === node.props && !changedChildren && type === node.type) return node;
+    return { ...node, ...(type !== node.type ? { type } : {}), ...(props !== node.props ? { props } : {}), ...(changedChildren ? { children: nextChildren } : {}) } as N;
   };
   return walk(root);
 }
