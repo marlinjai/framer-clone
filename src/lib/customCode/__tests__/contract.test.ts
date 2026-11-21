@@ -271,25 +271,57 @@ describe('the shell', () => {
     expect(posted).toEqual([[{ fc: 1, kind: 'hello', shell: BOX_SHELL_VERSION }, '*']]);
   });
 
-  /** A model window with listeners, a parent that records posts, and a port pair to stand in for the broker. */
+  /**
+   * A model window with listeners, a parent that records posts, a port pair to stand in for the broker, and a
+   * clock and timers the test moves by hand (`advance`).
+   */
   function shellWindow() {
     const listeners: Record<string, ((event: unknown) => void)[]> = {};
     const parent = { postMessage: () => {} };
+    let time = 1_000_000;
+    let nextId = 1;
+    const timers = new Map<number, { at: number; fn: () => void }>();
     const window: Record<string, unknown> = {
       parent,
       addEventListener: (type: string, fn: (event: unknown) => void) => (listeners[type] ??= []).push(fn),
+      Date: { now: () => time },
+      setTimeout: (fn: () => void, ms: number) => {
+        timers.set(nextId, { at: time + Math.max(0, ms || 0), fn });
+        return nextId++;
+      },
+      clearTimeout: (id: number) => timers.delete(id),
+    };
+    /** Moves the clock on, running each timer when its time comes, in order. */
+    const advance = (ms: number) => {
+      const end = time + ms;
+      for (;;) {
+        const due = [...timers.entries()].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        time = Math.max(time, due[1].at);
+        due[1].fn();
+      }
+      time = end;
     };
     window.window = window;
     const context = vm.createContext(window);
     vm.runInContext(BOX_SHELL_SCRIPT, context);
     const sent: unknown[] = [];
-    const port = { onmessage: null as null | ((event: { data: unknown }) => void), postMessage: (message: unknown) => sent.push(JSON.parse(JSON.stringify(message))) };
+    /** When each message was sent, on the model clock. */
+    const times: number[] = [];
+    const port = {
+      onmessage: null as null | ((event: { data: unknown }) => void),
+      postMessage: (message: unknown) => {
+        times.push(time);
+        sent.push(JSON.parse(JSON.stringify(message)));
+      },
+    };
     const dispatch = (type: string, event: unknown) => (listeners[type] ?? []).forEach((fn) => fn(event));
     const connect = (declaration: unknown, from: unknown = parent, ports: unknown[] = [port]) =>
       dispatch('message', { source: from, data: { fc: 1, kind: 'connect', declaration }, ports });
     const toFrame = (data: unknown) => port.onmessage?.({ data });
     const run = (code: string) => vm.runInContext(code, context);
-    return { context, sent, port, connect, toFrame, dispatch, run };
+    return { context, sent, times, port, connect, toFrame, dispatch, run, advance };
   }
 
   it('gives the author a frozen lumitra client that queues until the page connects', async () => {
@@ -347,11 +379,63 @@ describe('the shell', () => {
     shell.connect({ reads: ['x'] });
     shell.run("lumitra.onState('x', function(){ throw new Error('boom'); })");
     shell.toFrame({ kind: 'state', id: 'x', value: 1 });
+    // A second error within the second is not reported: a frame that fails in a loop says so once a second.
+    shell.dispatch('error', { error: new Error('again') });
+    shell.advance(1000);
     shell.dispatch('error', { error: new Error('y'.repeat(900)) });
     expect(shell.sent).toEqual([
       { kind: 'error', message: 'boom' },
       { kind: 'error', message: 'y'.repeat(500) },
     ]);
+  });
+
+  it('coalesces writes and resizes: the latest of each, on the trailing edge, about one message per 50 ms', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    // A write from every animation frame at 120 Hz for two seconds, two states, and a growing height.
+    for (let frame = 1; frame <= 240; frame++) {
+      shell.run(`lumitra.setState('count', ${frame}); lumitra.setState('n', ${frame % 9}); lumitra.resize(${100 + frame})`);
+      shell.advance(1000 / 120);
+    }
+    shell.run("lumitra.setState('count', 777)");
+    shell.advance(1000);
+    const sent = shell.sent as { kind: string; id?: string; value?: unknown; height?: number }[];
+    // Never more than 20 messages in any second, though 721 calls were made (the page drops past 30).
+    const most = Math.max(...shell.times.map((at) => shell.times.filter((t) => t >= at && t < at + 1000).length));
+    expect(most).toBeLessThanOrEqual(21);
+    expect(sent.length).toBeGreaterThan(30);
+    // The last value of each arrives.
+    expect(sent.filter((m) => m.id === 'count').at(-1)).toEqual({ kind: 'setState', id: 'count', value: 777 });
+    expect(sent.filter((m) => m.id === 'n').at(-1)).toEqual({ kind: 'setState', id: 'n', value: 240 % 9 });
+    expect(sent.filter((m) => m.kind === 'resize').at(-1)).toEqual({ kind: 'resize', height: 340 });
+  });
+
+  it('sends the first write at once, and pending writes before an emit that follows them', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    shell.run("lumitra.setState('a', 1)");
+    shell.advance(0);
+    expect(shell.sent).toEqual([{ kind: 'setState', id: 'a', value: 1 }]);
+    shell.run("lumitra.setState('a', 2); lumitra.setState('__proto__', 3); lumitra.emit('done')");
+    expect(shell.sent).toEqual([
+      { kind: 'setState', id: 'a', value: 1 },
+      { kind: 'setState', id: 'a', value: 2 },
+      { kind: 'setState', id: '__proto__', value: 3 },
+      { kind: 'emit', name: 'custom:done' },
+    ]);
+    shell.advance(1000);
+    expect(shell.sent).toHaveLength(4);
+  });
+
+  it('keeps only the latest values while it waits for the page, however long', () => {
+    const shell = shellWindow();
+    for (let i = 1; i <= 500; i++) {
+      shell.run(`lumitra.setState('count', ${i})`);
+      shell.advance(4);
+    }
+    expect(shell.sent).toEqual([]);
+    shell.connect({ reads: [] });
+    expect(shell.sent).toEqual([{ kind: 'setState', id: 'count', value: 500 }]);
   });
 
   it('survives a window without a parent', () => {

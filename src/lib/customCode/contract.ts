@@ -20,7 +20,7 @@
 export const BOX_PROTOCOL_VERSION = 1;
 
 /** The version of the shell, sent in `hello`. The shell is in no hash, so it can change with a deploy. */
-export const BOX_SHELL_VERSION = 2;
+export const BOX_SHELL_VERSION = 3;
 
 /** Present in every served document: what the canary monitor looks for. */
 export const BOX_SHELL_MARKER = 'fc-box-shell';
@@ -271,15 +271,28 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
  *   lumitra.onState(id, fn)     calls fn with every new value of a declared read
  *                               (at once with the value it already has); returns
  *                               a function that stops it
- *   lumitra.setState(id, value) asks the page to set a declared write
+ *   lumitra.setState(id, value) asks the page to set a declared write; writes
+ *                               are coalesced (below), so the latest value of
+ *                               each state always arrives
  *   lumitra.emit(name)          fires a declared `custom:<name>` event (`name` or
- *                               `custom:name`)
- *   lumitra.resize(height)      asks for a height in pixels (sizing `content`)
+ *                               `custom:name`), at once, after any pending write
+ *   lumitra.resize(height)      asks for a height in pixels (sizing `content`);
+ *                               coalesced like writes
  *   lumitra.ready()             a promise, resolved once the page has connected
  *                               and sent every declared read its first value
  *
- * Until the page connects, what the client sends waits in a short queue (the
- * first 30 messages), so code that runs at once loses nothing. Nothing here is a
+ * Writes and resizes are coalesced (shell version 3, decision D65): the client
+ * keeps the latest value of each state and the latest height, and sends them on
+ * a timer, on the trailing edge, at most one message per 50 milliseconds on
+ * average (after a flush of `n` messages the next waits `n` times 50). An author
+ * may call `setState` from every animation frame: the page gets about 20
+ * messages a second, never past its limit of 30, and the last value always
+ * arrives. An `emit` goes at once, after flushing what is pending, so the page
+ * sees a write before an event that follows it. Errors are reported at most
+ * once a second. Until the page connects, the latest values wait, and what must
+ * keep its order (an emit and the writes before it, an error) waits in a short
+ * queue (the first 20 messages, which with `hello` stay within the page's 30 a
+ * second), so code that runs at once loses nothing. Nothing here is a
  * boundary for the page: the author's code shares this realm and can post
  * anything on the port, and the broker in the page checks every message
  * (src/lib/customCode/broker.ts). An uncaught error or rejection in the frame is
@@ -307,20 +320,29 @@ export const BOX_SHELL_SCRIPT = [
   // The bridge client. Everything below is the author's convenience; the broker trusts none of it.
   'try{',
   'var port=null,queue=[],values={},subs={},wait=[],reads=null,done=false,own=Object.prototype.hasOwnProperty;',
-  'var send=function(m){if(port){try{port.postMessage(m);}catch(e){}}else if(queue.length<30){queue.push(m);}};',
+  'var send=function(m){if(port){try{port.postMessage(m);}catch(e){}}else if(queue.length<20){queue.push(m);}};',
+  // Coalescing: the latest write per state and the latest height, sent on the trailing edge of a timer.
+  // No prototype, so a state id such as `__proto__` is a key like any other.
+  'var pend=Object.create(null),grow=null,timer=null,last=0,gap=50,errAt=-1e9;',
+  // Before the page connects, pending values wait as they are (the latest only), unless an emit needs them sent first.
+  'var flush=function(f){if(timer!==null){clearTimeout(timer);timer=null;}if(!port&&!f)return;var c=0;',
+  'for(var k in pend){if(own.call(pend,k)){send({kind:"setState",id:k,value:pend[k]});c++;}}pend=Object.create(null);',
+  'if(grow!==null){send({kind:"resize",height:grow});grow=null;c++;}',
+  'if(c){last=Date.now();gap=50*c;}};',
+  'var later=function(){if(timer===null)timer=setTimeout(flush,Math.max(0,last+gap-Date.now()));};',
   'var settle=function(){if(done||!reads)return;for(var j=0;j<reads.length;j++){if(!own.call(values,reads[j]))return;}',
   'done=true;for(var k=0;k<wait.length;k++){try{wait[k]();}catch(e){}}wait=[];};',
   'var onPort=function(e){var d=e.data;if(!d||typeof d!=="object")return;',
   'if(d.kind==="ping"){send({kind:"pong"});return;}',
   'if(d.kind==="state"&&typeof d.id==="string"){values[d.id]=d.value;var l=own.call(subs,d.id)?subs[d.id].slice():[];',
   'for(var j=0;j<l.length;j++){try{l[j](d.value);}catch(x){report(x);}}settle();}};',
-  'var report=function(x){var m;try{m=x&&x.message!==undefined?String(x.message):String(x);}catch(e){m="error";}',
+  'var report=function(x){var t=Date.now();if(t-errAt<1000)return;errAt=t;var m;try{m=x&&x.message!==undefined?String(x.message):String(x);}catch(e){m="error";}',
   'send({kind:"error",message:m.slice(0,500)});};',
   'w.addEventListener("message",function(e){var d=e.data;',
   'if(port||e.source!==w.parent||!d||d.fc!==1||d.kind!=="connect"||!e.ports||!e.ports[0])return;',
   'port=e.ports[0];port.onmessage=onPort;',
   'var r=d.declaration&&d.declaration.reads;reads=Object.prototype.toString.call(r)==="[object Array]"?r.slice():[];',
-  'for(var j=0;j<queue.length;j++){send(queue[j]);}queue=[];settle();});',
+  'for(var j=0;j<queue.length;j++){send(queue[j]);}queue=[];flush();settle();});',
   'w.addEventListener("error",function(e){report(e.error!==undefined&&e.error!==null?e.error:e.message);});',
   'w.addEventListener("unhandledrejection",function(e){report(e.reason);});',
   'var api={',
@@ -329,9 +351,9 @@ export const BOX_SHELL_SCRIPT = [
   '(own.call(subs,id)?subs[id]:(subs[id]=[])).push(fn);',
   'if(own.call(values,id)){try{fn(values[id]);}catch(x){report(x);}}',
   'return function(){var l=own.call(subs,id)?subs[id]:[];var at=l.indexOf(fn);if(at>=0)l.splice(at,1);};},',
-  'setState:function(id,value){send({kind:"setState",id:String(id),value:value});},',
-  'emit:function(name){name=String(name);send({kind:"emit",name:name.indexOf("custom:")===0?name:"custom:"+name});},',
-  'resize:function(height){send({kind:"resize",height:Number(height)});},',
+  'setState:function(id,value){pend[String(id)]=value;later();},',
+  'emit:function(name){name=String(name);flush(1);send({kind:"emit",name:name.indexOf("custom:")===0?name:"custom:"+name});},',
+  'resize:function(height){grow=Number(height);later();},',
   'ready:function(){return new Promise(function(resolve){if(done)resolve();else wait.push(resolve);});}',
   '};',
   'Object.defineProperty(w,"lumitra",{value:Object.freeze(api),writable:false,configurable:false,enumerable:false});',
