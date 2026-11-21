@@ -66,16 +66,20 @@ const INVISIBLE_CHARACTERS = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\ufff
  */
 const PRESENTATION_AFTER_PICTOGRAPH = /(\p{Extended_Pictographic})[\ufe0e\ufe0f]/gu;
 const KEYCAP = /([0-9#*])\ufe0f(?=\u20e3)/gu;
-/** The scripts whose spelling needs the zero-width non-joiner or joiner (Arabic and Syriac, the Indic scripts), by script extension, so a shared mark such as the shadda counts. */
-const JOINING_SCRIPT =
-  '\\p{scx=Arabic}\\p{scx=Syriac}\\p{scx=Devanagari}\\p{scx=Bengali}\\p{scx=Gurmukhi}\\p{scx=Gujarati}\\p{scx=Oriya}\\p{scx=Tamil}\\p{scx=Telugu}\\p{scx=Kannada}\\p{scx=Malayalam}\\p{scx=Sinhala}';
+/** The scripts whose spelling needs the zero-width non-joiner or joiner: Arabic and Syriac, and the Indic scripts. */
+const JOINING_SCRIPTS = ['Arabic', 'Syriac', 'Devanagari', 'Bengali', 'Gurmukhi', 'Gujarati', 'Oriya', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'Sinhala'];
 /**
  * The zero-width non-joiner and joiner where a word needs them (decision D97): one,
- * between two characters of a joining script, as Persian writes `\u06a9\u062a\u0627\u0628\u200c\u0647\u0627`
- * ("books") and Sinhala `\u0dc1\u0dca\u200d\u0dbb\u0dd3` ("Sri"). Taken out before the check above;
- * at a word's edge, doubled, or between Latin letters it is a hidden byte.
+ * between two letters of the same joining script, the left one optionally followed by
+ * its marks (a virama, a shadda), as Persian writes `\u06a9\u062a\u0627\u0628\u200c\u0647\u0627` ("books")
+ * and Sinhala `\u0dc1\u0dca\u200d\u0dbb\u0dd3` ("Sri"). Taken out before the check above; at a word's
+ * edge, doubled, across scripts, or next to anything but such a letter (a digit, a
+ * tatweel, a shared mark on a Latin letter) it is a hidden byte.
  */
-const SCRIPT_JOINER = new RegExp(`(?<=[${JOINING_SCRIPT}])[\\u200c\\u200d](?=[${JOINING_SCRIPT}])`, 'gu');
+const SCRIPT_JOINER = new RegExp(
+  JOINING_SCRIPTS.map((script) => `(?<=(?=\\p{sc=${script}})\\p{L}\\p{M}*)[\\u200c\\u200d](?=(?=\\p{sc=${script}})\\p{L})`).join('|'),
+  'gu',
+);
 /**
  * One zero-width joiner between two pictographs, which draws them as one emoji (a
  * technologist, a rainbow flag, a family); the left one may carry its presentation

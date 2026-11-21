@@ -895,17 +895,22 @@ margin: measured on Node 22 (Unicode 17, whose grapheme rules join an Indic conj
 nine code points in one character, ten with a joiner after its first virama, and a kiss emoji with two skin tones holds ten. Nothing
 measured exceeds ten, so twelve is margin, not need: raised after the sixth review (decided, say so if you disagree); a runtime on older Unicode data splits conjuncts smaller, which only lowers the count. The text and emoji
 presentation selectors U+FE0E and U+FE0F pass once, right after a pictograph, and in a keycap (`1`, U+FE0F, U+20E3); a digit with
-U+FE0F and no keycap is refused. The zero-width non-joiner U+200C and joiner U+200D pass in two places only: one between two characters
-of a script whose spelling needs them, read by script extension so a shared mark such as the Arabic shadda counts (Arabic and Syriac, Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada,
-Malayalam and Sinhala), as Persian writes `کتاب‌ها` ("books") and `می‌خواهم` ("I want"), Sinhala `ශ්‍රී ලංකා` and Marathi its eyelash ra; and
+U+FE0F and no keycap is refused. The zero-width non-joiner U+200C and joiner U+200D pass in two places only: one between two letters
+(Unicode category L) of the same script whose spelling needs them (Arabic, Syriac, Devanagari, Bengali, Gurmukhi, Gujarati, Oriya,
+Tamil, Telugu, Kannada, Malayalam or Sinhala), the left letter optionally followed by combining marks of any script (a virama, the
+Arabic shadda) and the right letter directly after the joiner, as Persian writes `کتاب‌ها` ("books") and `می‌خواهم` ("I want"), Sinhala `ශ්‍රී ලංකා` and Marathi its eyelash ra; and
 one zero-width joiner between two pictographs, the left one optionally carrying its presentation selector or a skin tone, which draws
 them as one emoji (a technologist, a rainbow flag, a family). That reverses the earlier refusal of joined emoji (decided by the
 coordinator with the sixth review): a single joiner between two visible pictographs carries no hidden payload. A joiner at a word's edge,
-doubled, between Latin letters or across scripts is still refused. The subdivision flags (England, Scotland, Wales) stay refused,
+doubled, between Latin letters, across two joining scripts (Bengali to Devanagari), before a mark, or next to a digit, a tatweel, a
+danda, a modifier apostrophe or a shared mark on a Latin letter is still refused (the sixth review's first version matched by script
+extension and let several of these through; the seventh review found it). Between two letters of the same script a joiner passes
+even where it changes nothing visible (after an alef, between two Devanagari consonants with no virama): one such byte hides no text. The subdivision flags (England, Scotland, Wales) stay refused,
 because their letters are tag characters, which are hidden text. Titles in any script, right-to-left ones included, single and joined
 emoji, an emoji with its presentation selector and a keycap pass. Found by the second review of pull request #450, widened from a
 hand-written list to the category after the third, to the variation selectors, U+FFFC and stacked marks after the fourth, and to the
-default-ignorables and the per-character cap after the fifth; the joiners were let back in after the sixth.
+default-ignorables and the per-character cap after the fifth; the joiners were let back in after the sixth and anchored to
+same-script letters after the seventh.
 
 **D98. Nothing is bound into a custom code block's value.** `applyBindings` (`src/lib/bindings/resolver/applyBindings.ts`) skips a
 binding into `customCode` or any path below it, as it does for `behaviour` and FX scenes, so page data and the address bar can neither
