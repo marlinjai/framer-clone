@@ -4,7 +4,7 @@
   "size": { "mode": "fill" },
   "background": "#04090b",
   "fps": 60,
-  "dpr": [1, 2],
+  "dpr": [1, 1.75],
   "layers": [
     {
       "id": "ring",

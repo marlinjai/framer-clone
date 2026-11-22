@@ -578,7 +578,8 @@ describe('effects that apply to one layer', () => {
     }, 240_000);
 
     it('every content layer in the registry changes the picture with add, screen, overlay and multiply compared with normal', async () => {
-      const types = listLayerSchemas().filter((schema) => schema.kind === 'content').map((schema) => schema.type);
+      // A kind with one fixed blend (the particle ring always adds) is held by the next test instead.
+      const types = listLayerSchemas().filter((schema) => schema.kind === 'content' && !schema.fixedBlend).map((schema) => schema.type);
       expect(types.length).toBeGreaterThanOrEqual(6);
       for (const type of types) {
         const normal = (await draw(only(type, 'normal'))).picture;
@@ -588,6 +589,20 @@ describe('effects that apply to one layer', () => {
         }
       }
     }, 600_000);
+
+    it('a content layer with a fixed blend draws the same picture whatever blend a scene stores for it', async () => {
+      const fixed = listLayerSchemas().filter((schema) => schema.kind === 'content' && schema.fixedBlend);
+      expect(fixed.map((schema) => schema.type)).toContain('particleRing');
+      const plain = (await draw(withBackground([]))).picture;
+      for (const schema of fixed) {
+        const own = (await draw(only(schema.type, schema.fixedBlend!))).picture;
+        expect(difference(own, plain).differing, `${schema.type} is on the picture`).toBeGreaterThan(200);
+        for (const blend of ['normal', 'screen', 'overlay', 'multiply']) {
+          const picture = (await draw(only(schema.type, blend))).picture;
+          expect.soft(difference(picture, own).differing, `${schema.type} stored as ${blend} draws as ${schema.fixedBlend}`).toBe(0);
+        }
+      }
+    }, 240_000);
   });
 
   it('on a phone the step down leaves out a heavy effect of a group, and the layer is drawn plainly', async () => {

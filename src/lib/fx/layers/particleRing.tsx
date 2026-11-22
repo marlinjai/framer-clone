@@ -19,22 +19,19 @@
  * BLEND: the ring is light, so it always adds; the layer's blend mode is not applied, and the reader
  * stores "add" for it (../format).
  *
- * POINTER: the canvas takes no pointer events, so the ring leans toward the window's pointer
- * (`useWindowPointer`, -1 to 1, halved to the component's -0.5 to 0.5) at the component's pace. With
- * pointer settings on the layer, the engine's interactivity drives the lean instead, as for the noise field.
+ * POINTER: the canvas takes no pointer events, so the ring leans through the engine's interactivity (the
+ * window's pointer, smoothed). Without pointer settings it starts from `pointerBaseOf`: it follows fully with
+ * the noise field's smoothing, a little calmer than the component's own 0.05 per frame lerp (only the moving
+ * picture differs; the still frame has no lean). The engine's -1 to 1 is halved to the component's -0.5 to 0.5.
  */
 
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
+import { useInteractivity, useInteractivitySpec } from "../interactivity";
+import { pointerBaseOf } from "../layerOps";
 import {
-  useInteractivity,
-  useInteractivitySpec,
-  useWindowPointer,
-} from "../interactivity";
-import {
-  RING_FOLLOW,
   RING_FRAGMENT,
   RING_START_TIME,
   RING_VERTEX,
@@ -142,8 +139,9 @@ function rawColour(hex: string | undefined, into: THREE.Color): THREE.Color {
 function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
   const v = values as unknown as RingValues;
   const interactivity = useInteractivity();
-  const spec = useInteractivitySpec(layer.interactivity);
-  const pointer = useWindowPointer();
+  // Without pointer settings of its own the ring leans as a first-time setting starts (layerOps
+  // `pointerBaseOf`): fully, with the noise field's smoothing, so a first edit never makes it jump.
+  const spec = useInteractivitySpec(layer.interactivity ?? pointerBaseOf(layer.type));
   const size = useThree((s) => s.size);
   const dpr = useThree((s) => s.viewport.dpr);
 
@@ -220,12 +218,8 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
   useFrame((state) => {
     const t = ctx.reduce ? RING_START_TIME : RING_START_TIME + state.clock.elapsedTime * v.speed;
     interactivity.step(spec, ctx.reduce);
-    if (layer.interactivity) {
-      lean.current.set(interactivity.mouse.x * 0.5, interactivity.mouse.y * 0.5);
-    } else if (!ctx.reduce) {
-      lean.current.x += (pointer.x * 0.5 - lean.current.x) * RING_FOLLOW;
-      lean.current.y += (pointer.y * 0.5 - lean.current.y) * RING_FOLLOW;
-    }
+    // The engine's pointer runs -1 to 1 over the window; the component's lean runs -0.5 to 0.5 over its box.
+    lean.current.set(interactivity.mouse.x * 0.5, interactivity.mouse.y * 0.5);
     const R = ringRadius(size.width, size.height);
     for (const m of [glowMaterial, coreMaterial]) {
       const u = m.uniforms;

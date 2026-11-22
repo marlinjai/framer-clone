@@ -23,6 +23,7 @@ import {
 } from 'three';
 
 import { applyContentBlend, isMultiplyBlend, premultiplyUniformOf, withPremultiplyUniform } from '../layers/contentBlend';
+import * as schemas from '../schemas';
 import type { BlendMode } from '../types';
 
 /** A content layer's material: transparent, with the `uPremultiply` uniform every layer's shader has. */
@@ -242,8 +243,28 @@ describe('a content layer cannot forget its blend', () => {
     expect(files.length).toBeGreaterThanOrEqual(6);
   });
 
+  /** The layer kind a source draws, by the schema its definition spreads. */
+  const fixedBlendOfSource = (source: string): string | undefined => {
+    const name = /\.\.\.(\w+Schema),/.exec(source)?.[1];
+    const schema = name ? (schemas as Record<string, { fixedBlend?: string } | undefined>)[name] : undefined;
+    return schema?.fixedBlend;
+  };
+
+  it('knows the kinds with one blend: the particle ring adds', () => {
+    expect(fixedBlendOfSource(fs.readFileSync(path.join(dir, 'particleRing.tsx'), 'utf8'))).toBe('add');
+    expect(fixedBlendOfSource(fs.readFileSync(path.join(dir, 'noiseFill.tsx'), 'utf8'))).toBeUndefined();
+  });
+
   it.each(files)('%s applies the blend and supports multiply', (file) => {
-    const source = fs.readFileSync(path.join(dir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const raw = fs.readFileSync(path.join(dir, file), 'utf8');
+    const source = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    if (fixedBlendOfSource(raw)) {
+      // A kind with one blend (the reader stores it whatever the scene says) sets that blend itself and
+      // never reads the stored one, so multiply cannot reach it.
+      expect(source, 'sets its own blend').toMatch(/blending\s*=\s*THREE\./);
+      expect(source, 'never applies a stored blend').not.toMatch(/applyContentBlend\(/);
+      return;
+    }
     expect(source, 'applies the blend').toMatch(/applyContentBlend\(/);
     const shaderLayer = /uniform float uPremultiply;/.test(source);
     const basicLayer = /withPremultiplyUniform\(/.test(source);

@@ -24,8 +24,6 @@ export const RING_STRANDS = 120;
 export const RING_POINTS_PER_STRAND = 760;
 /** The component's clock starts at 7 seconds; the still frame is drawn there. */
 export const RING_START_TIME = 7;
-/** How quickly the lean follows the pointer per frame, as in the component. */
-export const RING_FOLLOW = 0.05;
 
 /** mulberry32: a small, fast, well-spread 32-bit generator. Returns numbers in [0, 1). */
 export function mulberry32(seed: number): () => number {

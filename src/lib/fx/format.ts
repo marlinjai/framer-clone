@@ -57,6 +57,8 @@ export {
 export { layerReadsPointer, pointerBaseOf, settingGroupOf } from "./layerOps";
 export { PRESETS, findPreset, type PresetMeta } from "./presets";
 export { SCENE_SCHEMA_VERSION } from "./types";
+/** The particle ring's seeded generator: the ring's pixel oracle seeds the brand component with this same function. */
+export { mulberry32 } from "./particleRingCore";
 export type {
   BlendMode,
   InteractivitySpec,

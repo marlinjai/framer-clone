@@ -36,6 +36,7 @@ import {
   Video,
   WandSparkles,
   Waves,
+  Orbit,
 } from 'lucide-react';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import { COMPONENT_REGISTRY, FORM_COMPONENTS, type ComponentRegistryEntry, type DataComponentKind } from '@/lib/componentRegistry';
@@ -207,6 +208,7 @@ export function fxLayerIconOf(type: string, kind: 'content' | 'post' | null): Lu
     case 'image': return ImageIcon;
     case 'shape': return Shapes;
     case 'noiseFill': return Waves;
+    case 'particleRing': return Orbit;
     case 'gradient': return Blend;
     default: return Layers;
   }
