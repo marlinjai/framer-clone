@@ -65,6 +65,9 @@ importers:
       '@marlinjai/studio-scene-core':
         specifier: 0.3.0
         version: 0.3.0
+      '@marlinjai/suite-theme-core':
+        specifier: link:../../../../../../suite-theme
+        version: link:../../../../../../suite-theme
       '@marlinjai/tenant-db':
         specifier: ^0.3.1
         version: 0.3.1(postgres@3.4.9)

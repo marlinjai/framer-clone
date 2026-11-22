@@ -22,6 +22,58 @@
 @import "tw-animate-css";
 @import "./theme-tokens.css";
 
+/* The editor's own colours: Lumitra's suite tokens (dark only), pinned over the
+   shared light values for the editor sheet alone. The tokens file
+   (theme-tokens.css) is also what a published site's sheet imports, so a tenant
+   site never sees these: only the editor routes link globals.css (see the note at
+   the top). Names stay semantic: brand is the suite's primary, agent-presence its
+   accent. Mapping and rules: docs/plans/2026-11-22-lumitra-rebrand-mint-light.md in
+   the knowledge base. */
+@import "@marlinjai/suite-theme-core/tokens.css";
+:root {
+  --background: var(--suite-bg);
+  --foreground: var(--suite-text);
+  --card: var(--suite-surface);
+  --card-foreground: var(--suite-text);
+  --popover: var(--suite-surface);
+  --popover-foreground: var(--suite-text);
+  --primary: var(--suite-primary);
+  --primary-foreground: var(--suite-primary-ink);
+  --secondary: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
+  --secondary-foreground: var(--suite-text);
+  --muted: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
+  --muted-foreground: var(--suite-text-muted);
+  --accent: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
+  --accent-foreground: var(--suite-text);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: var(--suite-line);
+  --input: var(--suite-line);
+  --ring: var(--suite-primary-line);
+  --chart-1: var(--suite-accent);
+  --chart-2: var(--suite-primary);
+  --chart-3: oklch(0.8 0.15 80);
+  --chart-4: oklch(0.78 0.12 215);
+  --chart-5: oklch(0.7 0.19 22);
+  --sidebar: var(--suite-surface);
+  --sidebar-foreground: var(--suite-text);
+  --sidebar-primary: var(--suite-primary);
+  --sidebar-primary-foreground: var(--suite-primary-ink);
+  --sidebar-accent: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
+  --sidebar-accent-foreground: var(--suite-text);
+  --sidebar-border: var(--suite-line);
+  --sidebar-ring: var(--suite-primary-line);
+  --brand: var(--suite-primary);
+  --brand-foreground: var(--suite-primary-ink);
+  --agent-presence: var(--suite-accent);
+  --agent-presence-foreground: var(--suite-accent-ink);
+  /* Status colours stay distinct from the primary (mint) and the accent (light
+     blue): published is a yellow-leaning green, scheduled a cyan, draft amber. */
+  --status-published: oklch(0.78 0.17 135);
+  --status-draft: oklch(0.83 0.16 82);
+  --status-scheduled: oklch(0.78 0.12 215);
+  --warning: oklch(0.80 0.15 80);
+  --warning-foreground: var(--suite-primary-ink);
+}
 @custom-variant dark (&:is(.dark *));
 /* A phone: under 768px wide, or a touch screen held sideways (at most 500px
    high). The two queries must stay identical to the two halves of
@@ -39,37 +91,28 @@
 
 /* Glass: the frosted surface language of the Books editors (plan
    docs/plans/2026-10-25-books-invoice-editor-shell.md, after the owner's
-   reference of 2026-10-25). A soft neutral ground, panels of frosted
-   translucent white with a fine bright edge, an inner top highlight and a soft
-   deep shadow; near-black for emphasis. Defined once here, so any surface of
+   reference of 2026-10-25), now on the suite's dark palette: a near-black
+   ground, panels of frosted translucent surface colour with a fine edge, an
+   inner top highlight and a deep shadow. Defined once here, so any surface of
    the app can take it on by class.
    - glass-ground: the backdrop the panels float over (light falls in from the
      top left, so the blur has something to catch);
    - glass: a floating panel (bars, toolbars, menus, dialogs);
    - glass-inset: a sunken well inside a panel (a switch track, a search field). */
 :root {
-  --glass-ground: oklch(0.83 0.003 286);
-  --glass-ground-light: oklch(0.89 0.002 286);
-  --glass-fill: oklch(0.985 0.002 286 / 0.66);
-  --glass-edge: oklch(1 0 0 / 0.75);
-  --glass-highlight: oklch(1 0 0 / 0.9);
-  --glass-shade: oklch(0.2 0.01 286 / 0.12);
-  --glass-inset: oklch(0.2 0.01 286 / 0.05);
-}
-.dark {
-  --glass-ground: oklch(0.17 0.005 286);
-  --glass-ground-light: oklch(0.23 0.006 286);
-  --glass-fill: oklch(0.25 0.006 286 / 0.6);
+  --glass-ground: var(--suite-bg);
+  --glass-ground-light: color-mix(in oklab, var(--suite-bg), var(--suite-text) 6%);
+  --glass-fill: color-mix(in oklab, var(--suite-surface) 72%, transparent);
   --glass-edge: oklch(1 0 0 / 0.1);
   --glass-highlight: oklch(1 0 0 / 0.08);
-  --glass-shade: oklch(0 0 0 / 0.45);
+  --glass-shade: oklch(0 0 0 / 0.55);
   --glass-inset: oklch(1 0 0 / 0.05);
 }
 @utility glass-ground {
   background-color: var(--glass-ground);
   background-image:
     radial-gradient(ellipse 55% 45% at 10% 0%, var(--glass-ground-light), transparent 75%),
-    radial-gradient(ellipse 60% 50% at 100% 100%, oklch(0.82 0.004 286 / 0.7), transparent 70%);
+    radial-gradient(ellipse 60% 50% at 100% 100%, rgb(88 46 255 / 0.1), transparent 70%);
   background-attachment: fixed;
 }
 @utility glass {

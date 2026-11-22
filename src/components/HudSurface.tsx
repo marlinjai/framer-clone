@@ -1002,7 +1002,7 @@ const HudSurface = observer(() => {
           <div
             data-testid="state-badge"
             title={`Showing and editing ${editorUI.activeRuleLabel}. The handles come back on Normal.`}
-            className="absolute -top-6 right-0 max-w-[160px] truncate rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm"
+            className="absolute -top-6 right-0 max-w-[160px] truncate rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-brand-foreground shadow-sm"
           >
             {editorUI.activeRuleLabel}
           </div>

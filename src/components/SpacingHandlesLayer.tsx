@@ -325,7 +325,7 @@ const SpacingHandlesLayer = observer(() => {
     const active = activeId && m ? m.regions.find(r => r.id === activeId) : undefined;
     const pill = node('pill', () => {
       const el = document.createElement('div');
-      el.className = 'absolute left-0 top-0 pointer-events-none select-none whitespace-nowrap rounded-full px-1.5 py-px text-[10px] font-medium leading-4 tabular-nums text-white shadow-sm';
+      el.className = 'absolute left-0 top-0 pointer-events-none select-none whitespace-nowrap rounded-full px-1.5 py-px text-[10px] font-medium leading-4 tabular-nums text-brand-foreground shadow-sm';
       el.setAttribute('data-testid', 'spacing-value-pill');
       return el;
     });
@@ -334,7 +334,7 @@ const SpacingHandlesLayer = observer(() => {
     } else {
       const value = drag ? drag.value : active.value;
       pill.textContent = String(Math.round(value * 100) / 100);
-      pill.style.background = active.target.kind === 'margin' ? 'rgb(180 83 9)' : BRAND; // amber-700 keeps white text legible
+      pill.style.background = active.target.kind === 'margin' ? 'var(--warning)' : BRAND; // the warning amber, legible under the dark ink text
       pill.style.display = 'block';
       const h = m.handles.get(active.id);
       if (h && h.orientation === 'horizontal') {

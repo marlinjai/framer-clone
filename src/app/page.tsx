@@ -6,8 +6,8 @@
 // `/projects/*`, see `projects/layout.tsx`) — NOT to every published storefront
 // under `(site)`. Classes/vars are `dt-*`-namespaced. Order matters: the engine
 // stylesheets first, then `cms-grid-theme.css` pins the --dt-* tokens to the
-// light Studio-iris theme (the `.light` class on <html> opts out of the engine's
-// dark-glass auto-switch; the theme file re-pins as belt-and-suspenders).
+// dark suite palette (the `.light` class on <html> opts out of the engine's
+// own OS-theme switch; the theme file pins its values unconditionally).
 // The editor's own sheet comes first, as when the root layout carried it (a
 // published site's `/` is rewritten into `(site)` by src/middleware.ts, so this
 // route is only ever the editor).

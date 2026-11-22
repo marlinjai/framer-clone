@@ -66,7 +66,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
             title={`Undo (${modKey}+Z)`}
           >
             <PiArrowUUpLeft size={20} />
-            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
+            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-background text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
               Undo ({modKey}+Z)
               <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-foreground" />
             </div>
@@ -82,7 +82,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
             title={`Redo (${modKey}+Shift+Z)`}
           >
             <PiArrowUUpRight size={20} />
-            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
+            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-background text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
               Redo ({modKey}+Shift+Z)
               <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-foreground" />
             </div>
@@ -106,7 +106,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
                   flex items-center justify-center w-10 h-10 rounded-lg 
                   transition-all duration-200 group relative
                   ${isActive 
-                    ? 'bg-brand text-white shadow-sm scale-105' 
+                    ? 'bg-brand text-brand-foreground shadow-sm scale-105' 
                     : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                   }
                 `}
@@ -122,7 +122,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
                 )}
                 
                 {/* Tooltip */}
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
+                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-background text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
                   {toolInfo.name}
                   <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-foreground"></div>
                 </div>
@@ -141,7 +141,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
           >
             <PiMinus size={20} />
             {/* Tooltip */}
-            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
+            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-background text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
               Zoom out (5%)
               <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-foreground"></div>
             </div>
@@ -159,7 +159,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
           >
             <PiPlus size={20} />
             {/* Tooltip */}
-            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
+            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-background text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
               Zoom in (5%)
               <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-foreground"></div>
             </div>
@@ -173,7 +173,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
           >
             <PiHouse size={20} />
             {/* Tooltip */}
-            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
+            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-1.5 bg-foreground text-background text-xs rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap shadow-lg">
               Reset zoom and pan
               <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-foreground"></div>
             </div>
