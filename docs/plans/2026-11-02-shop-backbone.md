@@ -543,6 +543,46 @@ each result under the table row above; a result that differs changes section 2.1
 
 Sandbox objects made here use the prefix `b7-proof-` in their metadata, so they can be told apart from shop orders.
 
+**B7 proof as run (2026-11-23, run `b7-proof-20261122T231152-340145`).** Run through the secrets proxy with the framer-clone
+`prod` key, checked to be a test key (`sk_test_`) before the first call, against the test shop's connected sandbox account
+(`acct_1UUqY4ALvFySTV7v`, the one with charges enabled) with `Stripe-Account`. The proof objects carry only
+`metadata.b7proof`, no platform metadata, so the webhook ignores their events. No real money moved. The script and its JSON
+result stay in the proxy's scratch directory (`b7proof/`).
+
+1. **Key reuse: as assumed.** The same key with `expires_at` one minute later answers 400 `idempotency_error`. The same key
+   with a different `customer_email` answers the same, so a buyer change after pinning would also break the key (the
+   guard's refusal is needed). The original parameters again return the same session id with `Idempotent-Replayed: true`.
+2. **Expiry floor: as assumed.** 29 minutes is refused (`invalid_request_error`, "must be at least 30 minutes from
+   Checkout Session creation"); 30 and 31 minutes are accepted. The floor is measured from Stripe's own creation time: 29
+   minutes 55 seconds by our clock was accepted too, so 45 minutes leaves a wide margin.
+3. **A declined attempt: as assumed, proven on the PaymentIntent.** On one PaymentIntent of the connected account, two
+   declined confirmations (`card_declined`: `generic_decline`, then `insufficient_funds`) each emitted
+   `charge.failed` plus `payment_intent.payment_failed` and left it `requires_payment_method`; a third confirmation with a
+   good card succeeded (`charge.succeeded`, `payment_intent.succeeded`). Not run: the same on the hosted Checkout page
+   (whether the session stays `open` between attempts), because the proxy has no browser and the session address is
+   redacted from its output. That half is the operator's sandbox purchase this slice already requires (B7 "Needs Marlin").
+   Side result for B8: events listed with `Stripe-Account` carry the `account` field.
+4. **Retrieve statuses.** Open: `status: open`, `payment_status: unpaid`, `payment_intent: null` (the intent is created
+   only at payment, so the expiry job cannot read it from an open session), `url` present. After
+   `POST .../expire`: `status: expired`, `payment_status: unpaid`, `url: null`. **New:** the create call repeated with the
+   same key and parameters after the expiry still answers the cached first response (`status: open`, the old id): a
+   replayed create says nothing about the session's state, so a later pay must retrieve it (section 2.1 step 4 already
+   does) and a create replay must never be read as "open".
+5. **Second refund.** 400 `invalid_request_error`, code `charge_already_refunded`. The first refund's key replayed answers
+   the first refund again (`Idempotent-Replayed: true`).
+6. **Error replay and key lifetime.** A first call refused with 400 (an `expires_at` under 30 minutes) is stored under its
+   key: the same request again replays that error (`Idempotent-Replayed: true`), and a valid request under that key is
+   refused with `idempotency_error`. So a create that Stripe refused with a 4xx can never succeed under the same key.
+   Stripe documents that keys are kept at least 24 hours; not measured here.
+
+**What changes in section 2.1 (decided by the proof run, say so if you disagree).** Nothing in the contract is contradicted.
+Two additions: (a) a create answered with an error under the pinned key closes the payment, since every retry would replay the
+refusal and only a new key could pass, which section 2.1 rules out. Measured for a 400; Stripe documents the same for a 500
+(the stored result includes 500 errors) and that a 429 rate limit is not stored, so a 429 and a request with no answer at all
+(timeout, connection failure) keep the retry of step 3.
+(b) A create that returns a session is stored by id and the payment's state is read only by retrieve, never from a create
+replay.
+
 ### B5 deploy assessment (read from main `380da6c1` on 2026-11-12; nothing deployed, nothing run)
 
 Production still runs `7b32ea16` (last deploy 2026-11-09). B5 (#364) is in main and is not deployed. The image is one build of
