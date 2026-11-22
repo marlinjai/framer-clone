@@ -67,7 +67,7 @@
     "@marlinjai/mail-contract": "0.25.0",
     "@marlinjai/mail-sdk": "0.25.0",
     "@marlinjai/studio-scene-core": "0.3.0",
-    "@marlinjai/suite-theme-core": "link:../../../../../../suite-theme",
+    "@marlinjai/suite-theme-core": "0.1.2",
     "@marlinjai/tenant-db": "^0.3.1",
     "@pdf-lib/fontkit": "1.1.1",
     "@prisma/client": "^6.9.0",

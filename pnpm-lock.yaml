@@ -66,8 +66,8 @@ importers:
         specifier: 0.3.0
         version: 0.3.0
       '@marlinjai/suite-theme-core':
-        specifier: link:../../../../../../suite-theme
-        version: link:../../../../../../suite-theme
+        specifier: 0.1.2
+        version: 0.1.2
       '@marlinjai/tenant-db':
         specifier: ^0.3.1
         version: 0.3.1(postgres@3.4.9)
@@ -1530,6 +1530,9 @@ packages:
 
   '@marlinjai/studio-scene-core@0.3.0':
     resolution: {integrity: sha512-w1fEFJOPgpqL8mxLsCxzDczSQE4dBEWQE3qve7sspkaZHd6Jb0eiviUF/tyLuZmTVvN2DmcaDsky0EsYVW4/zg==}
+
+  '@marlinjai/suite-theme-core@0.1.2':
+    resolution: {integrity: sha512-XolUtD8SAtpZJWwCDWUGLYKWzUifpfqICBT/8eXhxyQ/wsxxnBX5ZNgHAtyDNwJBZYG5gl3jaOyJ/SgsY2fC4Q==}
 
   '@marlinjai/tenant-db@0.3.1':
     resolution: {integrity: sha512-BEJMhmNlF3NVpHkD+U0QgXkt1nc7ZkJuwrShn5dBaCpnS+PdlTE5EuaMSQKUFbQFwLeOJwgnV7upDb/YxSP6/g==}
@@ -7837,6 +7840,8 @@ snapshots:
   '@marlinjai/studio-scene-core@0.3.0':
     dependencies:
       zod: 4.6.7
+
+  '@marlinjai/suite-theme-core@0.1.2': {}
 
   '@marlinjai/tenant-db@0.3.1(postgres@3.4.9)':
     dependencies:
