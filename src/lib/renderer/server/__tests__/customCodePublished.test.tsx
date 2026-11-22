@@ -200,10 +200,11 @@ describe('applyCustomCode', () => {
     type, id, props: { customCode: { sha256: marked(c), title: `Block ${id}` } }, ...(children ? { children } : {}),
   });
 
-  it('draws an accepted void-tag block as a div island, and one in svg as a g with its fallback (customCodeBoxTag)', async () => {
+  // A span anywhere in HTML since C2's fifth review (D96): a div would close an open paragraph at any depth.
+  it('draws an accepted void-tag block as a span island, and one in svg as a g with its fallback (customCodeBoxTag)', async () => {
     const root = page([markedBlock('v1', 'a', 'wbr'), { type: 'svg', id: 's', children: [markedBlock('v2', 'b', 'wbr', [{ type: 'circle', id: 'c', props: { r: 4 } }])] }]);
     const { markup } = await html(root, liveMarked(['a', 'b']));
-    expect(markup).toMatch(/<div[^>]*data-fc-custom-code="aaaaaaaaaaaa"[^>]*data-fc-custom-code-state="waiting"/);
+    expect(markup).toMatch(/<span[^>]*data-fc-custom-code="aaaaaaaaaaaa"[^>]*data-fc-custom-code-state="waiting"/);
     expect(markup).toMatch(/<svg><g data-fc-custom-code="bbbbbbbbbbbb"><circle r="4"><\/circle><\/g><\/svg>/);
     expect(markup.match(/data-fc-custom-code-state=/g)).toHaveLength(1);
   });
