@@ -9,12 +9,15 @@ import 'server-only';
 //   payment_succeeded   pending -> paid. Closed (failed, cancelled, expired) -> paid when the stock can be
 //                       reserved again; when it cannot, the payment is refunded in full and the order stays
 //                       closed. Paid or refunded: nothing changes.
-//   payment_failed      pending -> failed, the reserved stock released.
+//   payment_failed      pending -> failed, the reserved stock released. While the payment's pinned checkout session is
+//                       still open (checkoutSession.ts), the buyer can try again on the same page, so the event is
+//                       recorded with its decline code and the payment stays pending; the session's end closes it.
 //   checkout_cancelled  pending -> cancelled, the reserved stock released.
 //   checkout_expired    pending -> expired, the reserved stock released. Besides a provider's own report, our clock
 //                       closes a payment: its job when its window ends (expiryJob.ts), and sweepExpiredPayments, which
 //                       runs before a new order reserves, before a payment starts, and on a schedule (expirySweep.ts).
-//                       Those set `requireDue`: a payment that is not due writes nothing, not even the event.
+//                       Those set `requireDue`: a payment that is not due writes nothing, not even the event. A payment
+//                       with a stored checkout session is left to its job, which asks the provider first.
 //
 // This row is the order's state. The order itself is append-only (005_minimal_orders revokes UPDATE from the
 // app role: a placed order is a bookkeeping record), so its `status` stays `confirmed`, meaning "placed",
@@ -178,6 +181,17 @@ async function readWindow(trx: Trx, tenantId: string, orderId: string, at: Date)
     .executeTakeFirstOrThrow();
 }
 
+/** Whether a locked payment's pinned checkout session is still open at `at`, decided by Postgres as readWindow is. */
+async function sessionOpen(trx: Trx, tenantId: string, orderId: string, at: Date): Promise<boolean> {
+  const row = await trx
+    .selectFrom('order_payment')
+    .select((eb) => eb('session_expires_at', '>', at).as('open'))
+    .where('tenant_id', '=', tenantId)
+    .where('order_id', '=', orderId)
+    .executeTakeFirstOrThrow();
+  return row.open === true;
+}
+
 /** Record the event; false when it was recorded before (a repeated delivery). */
 async function recordEvent(trx: Trx, event: PaymentEvent): Promise<boolean> {
   const inserted = await trx
@@ -316,6 +330,16 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
       };
       switch (event.type) {
         case 'payment_failed':
+          // One declined attempt on a hosted page the buyer can still retry: the decline is kept, the hold stays.
+          if (current === 'pending' && (await sessionOpen(trx, event.tenantId, event.orderId, at))) {
+            await trx
+              .updateTable('order_payment')
+              .set({ failure_code: event.failureCode ?? null, updated_at: at })
+              .where('tenant_id', '=', event.tenantId)
+              .where('order_id', '=', event.orderId)
+              .execute();
+            return current;
+          }
           return close('failed');
         case 'checkout_cancelled':
           return close('cancelled');
@@ -482,7 +506,8 @@ export function receiptFailure(err: unknown): string {
 }
 
 /**
- * Close every pending payment whose window ran out (checkout_expired, stock released). Idempotent and safe to
+ * Close every pending payment whose window ran out (checkout_expired, stock released), but for one with a stored checkout
+ * session, which its job closes after asking the provider (expiryJob.ts). Idempotent and safe to
  * run concurrently: the payment row is locked and each expiry recorded once per order, so a second sweep finds
  * the event and releases nothing. Answers the orders it closed. One payment that cannot be closed never keeps
  * the others holding their stock: it is logged, the rest are closed, then ExpirySweepError reports it. `only` narrows
@@ -499,7 +524,9 @@ export async function sweepExpiredPayments(
     .select(['order_id', 'provider'])
     .where('tenant_id', '=', tenantId)
     .where('status', '=', 'pending')
-    .where('expires_at', '<', at);
+    .where('expires_at', '<', at)
+    // A stored checkout session may have been paid with its webhook lost: its job asks the provider before closing it.
+    .where('provider_session_id', 'is', null);
   if (only) query = query.where('order_id', '=', only.orderId);
   const due = await query.execute();
   const closed: string[] = [];

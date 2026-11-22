@@ -114,8 +114,8 @@ const JSON_COLUMNS: Record<string, string> = {
   'collection.description_format': 'RichText',
   // 021_order_payment: the buyer given at checkout, parsed with zod on read (src/server/commerce/payment/buyer.ts).
   'order_payment.buyer': 'Record<string, unknown>',
-  // 028_checkout_request: the hosted checkout's request of the build before 031; neither read nor written since 031
-  // (src/server/commerce/payment/checkoutSession.ts holds the pinned session), dropped in slice B9.
+  // 028_checkout_request: the hosted checkout's request of the build before 031; unwritten since 031, read only for
+  // `confirmed` (src/server/commerce/payment/checkoutSession.ts holds the pinned session), dropped in slice B9.
   'order_payment.checkout_request': 'Record<string, unknown>',
   // 023_shop_mail: the template ids of the company's workspace, by name.
   'shop_mail_connection.template_ids': 'Record<string, string>',
@@ -212,7 +212,7 @@ const COLUMN_NOTES: Record<string, string> = {
   'order_payment.provider_session_id': '031_checkout_session: the Checkout Session id, set once after Stripe answered the create (BK018).',
   'order_payment.session_expires_at': '031_checkout_session: when Stripe ends the session, pinned once before Stripe is asked (BK018).',
   'order_payment.session_return_url': '031_checkout_session: where the hosted page returns the buyer, pinned with the end (BK018).',
-  'order_payment.checkout_request': '028_checkout_request: unread and unwritten since 031, kept for the cutover and dropped in slice B9.',
+  'order_payment.checkout_request': '028_checkout_request: unwritten since 031; read only to tell a payment whose session the build before confirmed (checkoutSession.ts), dropped in slice B9.',
 };
 
 // --- introspection -----------------------------------------------------------

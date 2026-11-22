@@ -32,7 +32,8 @@ import type { Migration } from '@marlinjai/tenant-db';
  * its triggers for the erasure, and replacing the function would mean copying the whole of 021's body.
  *
  * `checkout_request` (028) stays during the cutover: the build before this one still writes it while both run. This
- * build neither reads nor writes it, and slice B9 drops it.
+ * build never writes it and reads only its `confirmed`, to know a payment whose session the build before made under the
+ * same key (checkoutSession.ts); slice B9 drops the column, its trigger and its CHECK.
  *
  * Additive: three nullable columns, four CHECKs, one partial unique index and one trigger. House style as 007 to 030: BARE
  * names, functions `SET search_path FROM CURRENT`. Re-runnable.

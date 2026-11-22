@@ -8,18 +8,25 @@
 //     the company's Books exactly as with Stripe: through its job (receiptJob.ts), whose first attempt this route
 //     awaits, so the answer names the receipt or why it is not there yet. A failed attempt is retried by the job.
 //   - Stripe: a hosted Checkout Session on the company's own Stripe account (a direct charge with the 1%
-//     platform fee); the buyer is sent there and the outcome arrives through the webhook.
+//     platform fee); the buyer is sent there and the outcome arrives through the webhook. The session is pinned on
+//     the first click (its end, return address and buyer, checkoutSession.ts, slice B7 of
+//     docs/plans/2026-11-02-shop-backbone.md), so every later click asks Stripe how that one session stands.
 //
 //   200 { status: 'paid', receipt: { documentId, number } | null, receiptError }
 //         paid; the receipt, or why it could not be issued yet (the payment stands)
-//   200 { status: 'redirect', redirectUrl }   Stripe: send the buyer to its checkout page
+//   200 { status: 'paid' }   Stripe: the session was paid (its webhook may still be on the way); the receipt follows
+//   200 { status: 'redirect', redirectUrl }   Stripe: send the buyer to its checkout page, the same one on every click
 //   402 payment_declined     the (simulated) card was declined: the order is closed and its stock released
 //   404 not_found            no such order on this storefront (another shop's id answers the same)
-//   409 payment_closed       the order is no longer waiting for a payment (paid, failed, expired, ...)
-//   409 buyer_fixed          Stripe: a hosted checkout session is confirmed for this order with other buyer details;
-//                            it is made out to them, so this click changes nothing and starts nothing
-//                            (checkoutRequest.ts). Pressing Pay again with the same details answers the same page.
-//                            Before Stripe confirmed a session, other details simply replace the earlier ones
+//   409 payment_closed       the order is no longer waiting for a payment (paid, failed, expired, ...). Stripe: also when
+//                            its session expired, or Stripe refused to open it, which closes the order and releases its
+//                            stock; nothing was charged and the buyer checks out again
+//   409 buyer_fixed          Stripe: the order's checkout session is pinned to other buyer details; it is made out to
+//                            them, so this click changes nothing and starts nothing. The same details answer the same page
+//   409 payment_processing   Stripe: the session is complete and its money still on the way; nothing to do
+//   409 checkout_pending     Stripe: an earlier checkout page of this order, opened before the session was pinned, may
+//                            still be open; pay there, or check out again once the order has closed
+//   503 checkout_unavailable Stripe did not answer: nothing changed and nothing was charged; pressing Pay again is safe
 //   409 order_outdated       the company's tax status changed since a net-priced order was placed, so its total
 //                            is wrong: no money moves, the order is closed, its stock released, the buyer checks
 //                            out again
@@ -45,7 +52,7 @@ import {
 } from '@/server/commerce/payment/payments';
 import { buyerRefusal } from '@/server/commerce/payment/invoiceable';
 import { demoCheckoutAllowed } from '@/server/commerce/payment/demoCheckout';
-import { chooseCheckoutRequest, confirmCheckoutRequest } from '@/server/commerce/payment/checkoutRequest';
+import { openCheckoutSession, pinCheckoutSession } from '@/server/commerce/payment/checkoutSession';
 import { PAYMENTS_UNAVAILABLE_MESSAGE, receiptReadiness } from '@/server/commerce/payment/receiptReadiness';
 import { demoProvider, type ProviderId } from '@/server/commerce/payment/provider';
 import { runJobNow } from '@/server/commerce/jobs/run';
@@ -66,6 +73,9 @@ const payBody = z
   .strict();
 
 const FAILED_MESSAGE = 'the payment could not be completed, please try again later';
+
+/** How long a click waits for Stripe before it answers that Stripe did not answer. */
+const STRIPE_TIMEOUT_MS = 20_000;
 
 export async function POST(req: Request, { params }: { params: Promise<{ orderId: string }> }): Promise<Response> {
   const { orderId } = await params;
@@ -100,7 +110,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
         'order_payment.currency_code as currency',
         'order_payment.application_fee_amount as fee',
         'order_payment.buyer as buyer',
-        'order_payment.expires_at as expiresAt',
         'order.order_number as orderNumber',
         'order.kleinunternehmer as pricedWithoutVat',
         'order.net_or_gross as netOrGross',
@@ -156,24 +165,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
     if (payment.provider === 'stripe') {
       const host = req.headers.get('host') ?? '';
       const proto = req.headers.get('x-forwarded-proto') ?? 'https';
-      // The request the order holds for this buyer, or this click's (checkoutRequest.ts): every click with one buyer
-      // sends the same request, so Stripe answers the same session under the same key. The buyer is fixed only once
-      // Stripe has answered, so a first click that failed there locks nothing in.
-      const fixed = await chooseCheckoutRequest(db, companyId, orderId, stored, {
-        buyerEmail: stored.email,
-        returnUrl: `${proto}://${host}${returnPath ?? '/'}`,
-      });
-      if (!fixed.ok && fixed.reason === 'buyer_fixed') {
+      // The first click pins the session's end, return address and buyer; every later one answers that pin, whatever
+      // page it comes from, so Stripe is always sent the same request under the same key.
+      const pinned = await pinCheckoutSession(db, companyId, orderId, stored, `${proto}://${host}${returnPath ?? '/'}`, new Date());
+      if (!pinned.ok && pinned.reason === 'buyer_fixed') {
         return jsonError(
           'buyer_fixed',
           'This order is already waiting for its payment with other details. Pay it with those, or go back to the cart and check out again. Nothing has been charged.',
           409,
         );
       }
-      if (!fixed.ok) {
-        return jsonError('payment_closed', 'the order no longer takes a payment', 409);
-      }
-      const started = await deps.provider('stripe').start(
+      if (!pinned.ok) return jsonError('payment_closed', 'the order no longer takes a payment', 409);
+
+      const answer = await openCheckoutSession(
+        deps,
         {
           tenantId: companyId,
           orderId,
@@ -181,16 +186,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
           amount: payment.amount,
           currency: payment.currency,
           applicationFeeAmount: payment.fee,
-          buyerEmail: fixed.request.buyerEmail,
-          returnUrl: fixed.request.returnUrl,
-          expiresAt: new Date(payment.expiresAt),
         },
-        async () => {},
+        pinned.pin,
+        { now: new Date(), signal: AbortSignal.timeout(STRIPE_TIMEOUT_MS) },
       );
-      if (!started.redirectUrl) throw new Error(`Stripe answered no checkout page for order ${orderId}`);
-      // Stripe made the session out to this request: from here on the buyer is fixed.
-      await confirmCheckoutRequest(db, companyId, orderId, fixed.buyer, fixed.request);
-      return Response.json({ status: 'redirect', redirectUrl: started.redirectUrl });
+      switch (answer.kind) {
+        case 'redirect':
+          return Response.json({ status: 'redirect', redirectUrl: answer.url });
+        case 'paid':
+          // Started, not awaited, as the webhook does: the job exists already and the worker runs what this does not.
+          for (const jobId of answer.outcome.jobIds) {
+            void runJobNow({ id: tenantGroupId, db }, companyId, jobId).catch((err: unknown) => {
+              console.error(`[payments] order ${orderId}: the first attempt at job ${jobId} failed to run; the worker retries it:`, err);
+            });
+          }
+          if (answer.outcome.status === 'paid') return Response.json({ status: 'paid' });
+          return jsonError('payment_closed', `the order is ${answer.outcome.status} and takes no payment`, 409, {
+            status: answer.outcome.status,
+          });
+        case 'closed':
+          return jsonError(
+            'payment_closed',
+            'The checkout for this order has ended and nothing has been charged. Please check out again.',
+            409,
+            { status: answer.status },
+          );
+        case 'processing':
+          return jsonError('payment_processing', 'The payment for this order is being processed. Nothing more is needed.', 409);
+        case 'key_conflict':
+          return jsonError(
+            'checkout_pending',
+            'An earlier checkout page for this order may still be open. Finish the payment there, or check out again once this order has closed.',
+            409,
+          );
+        case 'unavailable':
+          return jsonError('checkout_unavailable', 'The payment page could not be opened just now. Nothing has been charged; please try again.', 503);
+      }
     }
 
     if (buyer) {

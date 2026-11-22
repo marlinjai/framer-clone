@@ -812,7 +812,7 @@ export interface OrderPaymentTable {
   version: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
-  // 028_checkout_request: unread and unwritten since 031, kept for the cutover and dropped in slice B9.
+  // 028_checkout_request: unwritten since 031; read only to tell a payment whose session the build before confirmed (checkoutSession.ts), dropped in slice B9.
   checkout_request: JsonColumn<Record<string, unknown>> | null;
   // 031_checkout_session: the Checkout Session id, set once after Stripe answered the create (BK018).
   provider_session_id: string | null;

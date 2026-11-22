@@ -9,12 +9,18 @@ import 'server-only';
 // status or date of its own, so it cannot act on one that changed: a payment paid or closed meanwhile writes nothing, and
 // one whose date moved answers the new date. A repeated run is harmless for the same reason, and `payment_event` holds
 // `expiry:<orderId>` once, the same key the sweep uses, so the job and the sweep cannot both close a payment.
+//
+// A payment with a stored checkout session is asked about first (checkoutSession.ts sessionAtExpiry, section 2.1 step 6),
+// once its hold is over: a session Stripe completed applies the success under `session:<id>`, an open one is asked about
+// again in 5 minutes, an expired one closes. While Stripe does not answer the job retries, and an hour past the hold it
+// closes anyway: the late path and reconciliation recover a payment taken meanwhile, and a hold must not depend on Stripe.
 
 import { z } from 'zod';
 
 import { scheduleJob } from '../jobs/schedule';
 import { defineJobKind, JobRefused, JobRetryLater, type EventConsumer } from '../jobs/types';
-import { DUE_LOCK_WAIT_MS, ExpiryRecordedError, PaymentBusyError, type PaymentOutcome } from './payments';
+import type { ExpiryDecision } from './checkoutSession';
+import { DUE_LOCK_WAIT_MS, ExpiryRecordedError, PaymentBusyError, PaymentMismatchError, type PaymentOutcome } from './payments';
 import type { ProviderId } from './provider';
 
 export const PAYMENT_EXPIRY_KIND = 'payment_expiry';
@@ -50,7 +56,7 @@ export const paymentExpiryKind = defineJobKind<PaymentExpiryPayload>({
     giveUpAfterMs: 3 * DAY_MS,
   },
   payload: z.object({ orderId: z.string().min(1) }).strict(),
-  async run({ company, payments, payload: { orderId } }) {
+  async run({ company, payments, payload: { orderId }, signal }) {
     const payment = await company
       .selectFrom('order_payment')
       .select('provider')
@@ -58,6 +64,19 @@ export const paymentExpiryKind = defineJobKind<PaymentExpiryPayload>({
       .executeTakeFirst();
     // A payment row is never deleted (BK018) and the job is written with it, so this job names something else.
     if (!payment) throw new JobRefused('unknown_payment');
+    let decision: ExpiryDecision;
+    try {
+      decision = await payments.sessionAtExpiry(orderId, signal);
+    } catch (err) {
+      if (err instanceof PaymentBusyError) throw new JobRetryLater('payment_busy');
+      // Stripe charged another amount than the payment's: only a person can say what this order is.
+      if (err instanceof PaymentMismatchError) throw new JobRefused('session_amount_mismatch');
+      throw err;
+    }
+    if (decision.kind === 'paid') return;
+    if (decision.kind === 'recheck') return { rerunAt: decision.at };
+    if (decision.kind === 'retry') throw new JobRetryLater('stripe_unreachable', decision.delayMs);
+
     let outcome: PaymentOutcome;
     try {
       outcome = await payments.handleEvent({

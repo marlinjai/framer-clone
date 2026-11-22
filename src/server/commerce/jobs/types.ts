@@ -17,6 +17,7 @@ import type {
 import type { ZodType } from 'zod';
 
 import type { CommerceDB, CommerceJobTable } from '../db-types';
+import type { ExpiryDecision } from '../payment/checkoutSession';
 import type { PaymentOutcome, ReceiptAttempt } from '../payment/payments';
 import type { PaymentEvent } from '../payment/provider';
 import type { ShopMailKind } from '../mail/templates';
@@ -157,6 +158,8 @@ export interface JobPayments {
   handleEvent(event: Omit<PaymentEvent, 'tenantId'>): Promise<PaymentOutcome>;
   /** Issue and link a paid order's receipt (payments.ts issueReceipt); throws what the Books refused. */
   issueReceipt(orderId: string): Promise<ReceiptAttempt>;
+  /** Ask the provider about a stored checkout session before a hold ends (checkoutSession.ts sessionAtExpiry). */
+  sessionAtExpiry(orderId: string, signal: AbortSignal): Promise<ExpiryDecision>;
 }
 
 /**
