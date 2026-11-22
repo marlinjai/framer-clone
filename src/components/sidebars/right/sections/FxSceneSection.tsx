@@ -799,7 +799,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
               <p className={HINT}>
                 {selected.interactivity
                   ? 'How much this layer follows the pointer. Track mouse at 0 is still.'
-                  : selected.type === 'noiseFill'
+                  : pointerBaseOf(selected.type).trackMouse > 0
                     ? 'This layer follows the pointer in its own plain way until you change a value here; the values shown are what it does now. Track mouse at 0 is still.'
                     : 'This layer stands still until you raise Track mouse (the spring and momentum shown are what it will move with).'}{' '}
                 With reduced motion asked for, the scene stays one still frame whatever is set here.
