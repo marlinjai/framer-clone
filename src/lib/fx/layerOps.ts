@@ -55,7 +55,7 @@ export function instantiateLayer(type: string, existing: Layer[]): Layer | null 
     type,
     name: def.label ?? type,
     visible: true,
-    blend: "normal",
+    blend: def.fixedBlend ?? "normal",
     params: cloneParams(def.defaultParams),
   };
 }

@@ -72,6 +72,28 @@ export const noiseFillSchema: LayerSchemaDefinition = {
   defaultParams: NOISE_DEFAULT_PARAMS,
 };
 
+// --- layers/particleRing.tsx
+
+const PARTICLE_RING_DEFAULT_PARAMS: ParamsSchema = {
+  // Passes of large faint points under the fine ones: 0 (none), 1 (the brand ring) or 2 (brighter).
+  glow: { type: "number", value: 1, min: 0, max: 2, step: 1 },
+  // Share of the points drawn along each strand (0.25 to 1); fewer points cost less on weak devices.
+  density: { type: "number", value: 1, min: 0.25, max: 1, step: 0.05 },
+  // Which particles: the same seed is the same ring on every load.
+  seed: { type: "number", value: 1, min: 1, max: 9999, step: 1 },
+  // Pace of the ring's motion; 1 is the brand ring's.
+  speed: { type: "number", value: 1, min: 0, max: 2, step: 0.05 },
+};
+
+export const particleRingSchema: LayerSchemaDefinition = {
+  type: "particleRing",
+  kind: "content",
+  label: "Particle Ring",
+  // The ring is light: it always adds (see layers/particleRing.tsx).
+  fixedBlend: "add",
+  defaultParams: PARTICLE_RING_DEFAULT_PARAMS,
+};
+
 // --- layers/image.tsx
 
 const IMAGE_DEFAULT_PARAMS: ParamsSchema = {
@@ -363,6 +385,7 @@ export const grainSchema: LayerSchemaDefinition = {
 export const LAYER_SCHEMAS: readonly LayerSchemaDefinition[] = [
   textSchema,
   noiseFillSchema,
+  particleRingSchema,
   imageSchema,
   shapeSchema,
   gradientSchema,

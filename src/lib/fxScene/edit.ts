@@ -311,7 +311,10 @@ export function renameFxLayer(current: unknown, layerId: string, name: string): 
 
 export function setFxLayerBlend(current: unknown, layerId: string, blend: BlendMode): FxEdit {
   return change(current, (fx) => {
-    if (!fx.scene.layers.some((l) => l.id === layerId)) return NO_LAYER;
+    const layer = fx.scene.layers.find((l) => l.id === layerId);
+    if (!layer) return NO_LAYER;
+    const fixed = getLayerSchema(layer.type)?.fixedBlend;
+    if (fixed && blend !== fixed) return `${layer.name} always blends as "${fixed}".`;
     return withLayers(fx, fx.scene.layers.map((l) => (l.id === layerId ? { ...l, blend } : l)));
   });
 }
@@ -336,7 +339,9 @@ export function setFxLayerType(current: unknown, layerId: string, type: string):
     nextId = fresh.id;
     const becomesContent = fxLayerKind(type) === 'content';
     const notes: string[] = [];
-    let replacement: Layer = { ...fresh, visible: layer.visible, blend: layer.blend };
+    // A kind with one blend takes it; leaving such a kind returns to "normal" (its blend meant nothing else).
+    const blend = getLayerSchema(type)?.fixedBlend ?? (getLayerSchema(layer.type)?.fixedBlend ? 'normal' : layer.blend);
+    let replacement: Layer = { ...fresh, visible: layer.visible, blend };
     // The new layer has a new id: whatever pointed at the old one (effects scoped to it, a god rays reading it) follows or goes.
     let layers = fx.scene.layers;
     if (isContent(layer)) {

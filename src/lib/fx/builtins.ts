@@ -14,6 +14,7 @@
 import { TextLayer } from "./layers/text";
 import { TextBoxLayer } from "./layers/textBox";
 import { NoiseFillLayer } from "./layers/noiseFill";
+import { ParticleRingLayer } from "./layers/particleRing";
 import { ImageLayer } from "./layers/image";
 import { ShapeLayer } from "./layers/shape";
 import { GradientLayer } from "./layers/gradient";
@@ -35,6 +36,7 @@ import { registerNode } from "./registry";
 // better there.
 registerNode(TextLayer);
 registerNode(NoiseFillLayer);
+registerNode(ParticleRingLayer);
 registerNode(ImageLayer);
 registerNode(ShapeLayer);
 registerNode(GradientLayer);

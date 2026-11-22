@@ -37,6 +37,7 @@ export function registerNode<P extends ParamsSchema>(def: LayerDefinition<P>): v
     kind: wide.kind,
     label: wide.label,
     heavy: wide.heavy,
+    ...(wide.fixedBlend ? { fixedBlend: wide.fixedBlend } : {}),
     defaultParams: wide.defaultParams,
   });
   definitions.set(def.type, wide);

@@ -297,21 +297,26 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
     setObjects((prev) => (prev[id] === obj ? prev : { ...prev, [id]: obj }));
   }, []);
 
-  const ctx: LayerContext = useMemo(
-    () => ({
-      registerObject,
-      getObject: (id: string) => objects[id] ?? null,
-      reduce,
-    }),
-    [registerObject, objects, reduce],
-  );
-
   // What to draw: visible layers, minus the heavy ones after the step down,
   // minus post passes whose source layer is not drawn (see ./pipeline).
   const { content: contentLayers, post: postLayers, postReady, groups } = planPipeline(
     config.layers,
     perfLow,
     (layerId) => objects[layerId] != null,
+  );
+
+  // The layer drawn first, onto the background, when it is drawn in the main picture (not through effects
+  // of its own): a layer that sums light (the particle ring) sums it onto the background there, exactly.
+  const bottomLayerId = groups.length === 0 ? (contentLayers[0]?.id ?? null) : null;
+  const ctx: LayerContext = useMemo(
+    () => ({
+      registerObject,
+      getObject: (id: string) => objects[id] ?? null,
+      reduce,
+      background: config.background,
+      bottomLayerId,
+    }),
+    [registerObject, objects, reduce, config.background, bottomLayerId],
   );
 
   // Content layers by id for the groups (only read when `groups` is not empty).

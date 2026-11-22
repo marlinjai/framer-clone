@@ -112,6 +112,16 @@ export interface LayerContext {
   registerObject: (layerId: string, obj: Object3D | null) => void;
   getObject: (layerId: string) => Object3D | null;
   reduce: boolean;
+  /**
+   * The scene's background colour (`SceneConfig.background`), for a layer that sums its own light onto
+   * it (the particle ring). Absent from hosts that do not draw a whole scene.
+   */
+  background?: string;
+  /**
+   * The id of the content layer drawn first, straight onto the background, when nothing else is drawn
+   * under it and it is not drawn through effects of its own; null otherwise.
+   */
+  bottomLayerId?: string | null;
 }
 
 export interface LayerComponentProps<P extends ParamsSchema = ParamsSchema> {
@@ -139,6 +149,11 @@ export interface LayerSchemaDefinition<P extends ParamsSchema = ParamsSchema> {
    * of the scene keeps running smoothly.
    */
   heavy?: boolean;
+  /**
+   * A layer whose drawing has one blend only (the particle ring is light and always adds). The reader
+   * stores this blend whatever the scene says, and the properties panel shows it instead of a choice.
+   */
+  fixedBlend?: BlendMode;
   defaultParams: P;
 }
 

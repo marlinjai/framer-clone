@@ -310,10 +310,12 @@ function parseLayer(raw: unknown, index: number, usedIds: Set<string>, notes: st
     type: def.type,
     name,
     visible: typeof raw.visible === "boolean" ? raw.visible : true,
-    blend: isBlend(raw.blend) ? raw.blend : "normal",
+    blend: def.fixedBlend ?? (isBlend(raw.blend) ? raw.blend : "normal"),
     params,
   };
-  if (raw.blend !== undefined && !isBlend(raw.blend)) notes.push(`${layerLabel}: the blend mode ${quote(raw.blend)} is unknown, so "normal" is used.`);
+  if (def.fixedBlend) {
+    if (raw.blend !== undefined && raw.blend !== def.fixedBlend) notes.push(`${layerLabel}: this layer always blends as ${quote(def.fixedBlend)}, so ${quote(raw.blend)} was not used.`);
+  } else if (raw.blend !== undefined && !isBlend(raw.blend)) notes.push(`${layerLabel}: the blend mode ${quote(raw.blend)} is unknown, so "normal" is used.`);
   if (isRecord(raw.animate) && Object.keys(raw.animate).length > 0) {
     // The engine has the hook (resolveAnimatedNumber) but no layer calls it, so a
     // stored `animate` would do nothing. Left out, and said so, until it does.
