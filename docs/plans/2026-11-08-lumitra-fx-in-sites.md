@@ -1020,3 +1020,61 @@ the closing section of `/services/angebot` is left as it is for Marlin (see belo
    where client mail goes.
 4. *"Tripwire (bezahlte Analyse)"* is the audit card's visible tag on both pages (live too): sales jargon in front of a
    buyer. Belongs to the copy pass carried over above.
+
+### Addendum: the particle ring as a built-in FX layer, and mint light on `/services` (2026-11-22)
+
+Asked by Marlin on 2026-11-22 (through the motion-design session): the `/services` pages of the new lumitra.co site carry
+the mint light brand (knowledge-base `docs/plans/2026-11-22-lumitra-rebrand-mint-light.md`: mint `#52FFA5` leads, light
+blue `#3B84FF` accents, indigo `#582EFF` only as depth, on `#04090B`, dark only), built fully in Sites, with the brand's
+particle ring as the hero.
+
+**Decided by the motion-design session, kept here (say so if you disagree):** the ring enters Sites as a built-in FX
+layer type `particleRing` inside `src/lib/fx`, with the brand ring as a preset, not as a custom code block. FX already
+has the scene node, the panel, the fallbacks and the one-context rule; no author shader code means the render gate stays
+as it is; and customers get the layer too. The stellated dodecahedron intro and the star loop (cards E and D of
+`decision-pages/2026-11-22-lumitra-logo-particles.html`) are later presets of the same layer, not this step.
+
+**Source of truth.** `@marlinjai/suite-theme-core` (repository `marlinjai/suite-theme`, owned by the rebrand session) at
+commit `2105604`: `tokens.json` for the colours and `light/lumitra-light.js` for the ring (includes the `highp` fix
+`83b41a1`). The package is not on npm yet, so Sites takes no dependency on it: the colours are read from `tokens.json`
+at that commit when the pages are written, and the component file is vendored for the proof with its checksum, as F4
+vendored lumitra-web's engine.
+
+**The layer** (`src/lib/fx/layers/particleRing.tsx`, schema in `schemas.ts`):
+
+- The component's two shaders, unchanged in what they compute, as a three.js `RawShaderMaterial` on `THREE.Points`:
+  120 strands of up to 760 points, a glow pass (large faint points, indigo mixed in) drawn `glow` times, then the core
+  pass, additive (`ONE, ONE`), no depth, positions written straight in clip space from the box size, so the ring sits
+  centred with radius `min(0.37 W, 0.47 H)` as in the component.
+- Parameters: `glow` (0 to 2), `density` (0.25 to 1), `seed` (which particles), `speed` (0 to 2, 1 is the component's
+  pace), `follow` (how much the ring leans toward the pointer, 0 to 1, 1 is the component's). The palette is the
+  component's decided 60/30/10 mix; colour parameters are a later preset concern, not this step.
+- **Repeatable:** the particles come from a seeded generator (mulberry32) in the component's order (per strand one phase,
+  per point one random), so the same seed is the same ring on every load. The component itself uses `Math.random`; the
+  proof seeds it with the same generator from outside.
+- **Colour space:** the ring writes the component's colours as they are, without three.js's output conversion, and adds
+  them in display space, exactly as the component's canvas does. This is the picture that matches pixel for pixel. A
+  post pass placed after the ring receives it in the composer's linear buffer, so there the sum is taken in linear light
+  and looks slightly brighter; the ring carries its own glow and needs no post pass.
+- Reduced motion: one still frame at the component's starting time (its clock begins at 7 seconds), no pointer lean.
+
+**The preset** `lumitra-light`: one `particleRing` layer at the component's defaults (glow 1, density 1), background
+`#04090B`, `calm: "frame"`, so a visitor who asks for reduced motion sees the still ring, not an empty box.
+
+**Proof (pixel for pixel):** a new spec beside `fxOracle.spec.ts`. The reference page loads the vendored, unchanged
+`lumitra-light.js` with `Math.random` replaced by the seeded generator and the clock stopped (`performance.now` fixed),
+under reduced motion, in a box of the same size; the candidate is the `lumitra-light` preset drawn by the published
+page's island. Compared with F4's tolerance (at most 0.5 percent of pixels differing by more than 2 in a channel), in
+Chromium and WebKit. It must be able to fail: each side reproduces itself from a fresh page, a different seed and one
+changed palette stop are both far over the tolerance.
+
+**Slices:**
+
+| # | Slice | What | Gate |
+|---|---|---|---|
+| P1 | `fx-particle-ring` | The layer, the preset, the schema and format rows, the panel controls (generated from the schema), the agent vocabulary, tests and the pixel proof | none (one pull request, land-pr) |
+| P2 | deploy | The layer reaches app.lumitra.co, so the editor and published pages know the new type | Marlin's yes to a production deploy |
+| P3 | `services-mint` | On the branch "Test new design": `/services` and `/services/angebot` restyled to the tokens (backgrounds, text, lines, buttons as primary with primary ink, accents for links), the hero box becomes an FX scene with the `lumitra-light` preset behind the headline, contrast checked against the plan's floors, screenshots at three widths | the branch only; publishing stays Marlin's |
+
+P3's colour restyle does not need P2 and can go first; only the hero scene waits for the deploy. The rest of the new
+site (the hub page) is still black and gold; it belongs to R1 and is not part of this request.
