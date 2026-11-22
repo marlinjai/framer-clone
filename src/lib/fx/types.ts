@@ -113,13 +113,8 @@ export interface LayerContext {
   getObject: (layerId: string) => Object3D | null;
   reduce: boolean;
   /**
-   * The scene's background colour (`SceneConfig.background`), for a layer that sums its own light onto
-   * it (the particle ring). Absent from hosts that do not draw a whole scene.
-   */
-  background?: string;
-  /**
-   * The id of the content layer drawn first, straight onto the background, when nothing else is drawn
-   * under it and it is not drawn through effects of its own; null otherwise.
+   * The id of the only content layer drawn, when it is drawn straight onto the background and not through
+   * effects of its own; null otherwise (a layer that sums light then sums it onto the background itself).
    */
   bottomLayerId?: string | null;
 }

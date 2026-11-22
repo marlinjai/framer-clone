@@ -264,7 +264,7 @@ export function deserializeLayer(raw: SerializedLayer): Layer | null {
     type: raw.type,
     name: raw.name ?? raw.id,
     visible: raw.visible ?? true,
-    blend: isValidBlend(raw.blend) ? raw.blend : "normal",
+    blend: def.fixedBlend ?? (isValidBlend(raw.blend) ? raw.blend : "normal"),
     params,
   };
   const animate = sanitizeAnimate(raw.animate);

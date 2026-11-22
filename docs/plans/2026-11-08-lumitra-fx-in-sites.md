@@ -1046,7 +1046,7 @@ vendored lumitra-web's engine.
   120 strands of up to 760 points, a glow pass (large faint points, indigo mixed in) drawn `glow` times, then the core
   pass, additive (`ONE, ONE`), no depth, positions written straight in clip space from the box size, so the ring sits
   centred with radius `min(0.37 W, 0.47 H)` as in the component.
-- Parameters: `glow` (0 to 2 whole glow passes; the component's loop already drew 0.5 and 1 alike), `density` (0.25
+- Parameters: `glow` (0 to 2; passes counted as the component's loop counts them, one per started whole number, so 0.4 draws one and 1.2 two), `density` (0.25
   to 1), `seed` (which particles), `speed` (0 to 2, 1 is the component's pace). The lean toward the pointer goes through
   the engine's shared pointer settings (track mouse, momentum, spring, axes), starting from the noise field's values, so
   it is set like every other layer's and needs no parameter of its own. The palette is the component's decided 60/30/10
@@ -1061,9 +1061,12 @@ vendored lumitra-web's engine.
   render target of its own (8 bits, no colour conversion, 4 samples, like the canvas's antialiasing), then a full-box
   quad decodes the sum and writes it through three.js's normal output conversion. Where the scene has no post pass the
   result is the component's byte for byte; where it has one, the composer's linear buffer receives the same picture
-  and encodes it back unchanged. As the bottom layer the target is cleared with the scene's background and replaces
-  what is under it, so the clamp at 255 happens after the background, as on the component's canvas; above other
-  layers it is cleared to black and added.
+  and encodes it back unchanged. As the only content layer the target is cleared with the scene's background and
+  replaces what is under it, so the clamp at 255 happens after the background, as on the component's canvas; with
+  other content layers it is cleared to black and added. three.js orders content layers by depth, so the ring's quad
+  sits at a depth of its own: over every fill (gradient, noise field, image, shape), under text, whatever the stored
+  order. It is not marked heavy: the step down for slow devices drops heavy layers whole, and the ring is the hero
+  itself, not an effect on it.
 - Reduced motion: one still frame at the component's starting time (its clock begins at 7 seconds), no pointer lean.
 - Pixel ratio: the format keeps a scene at 1.75 at most (the component draws at up to 2); the preset stores `[1, 1.75]`.
 
@@ -1073,11 +1076,16 @@ vendored lumitra-web's engine.
 **Proof (pixel for pixel):** `test/behaviour/fxRingOracle.spec.ts`, beside `fxOracle.spec.ts`. The reference page loads
 the vendored, unchanged `lumitra-light.js` (`test/fx-oracle/suite-theme-lumitra-light-2105604.js.gz`, both checksums
 checked) with `Math.random` replaced by the seeded generator and the clock stopped (`performance.now` and the time
-every animation frame is given are both 0),
-under reduced motion, in a box of the same size; the candidate is the `lumitra-light` preset drawn by the published
-page's island. Compared with F4's tolerance (at most 0.5 percent of pixels differing by more than 2 in a channel), in
-Chromium and WebKit. It must be able to fail: each side reproduces itself from a fresh page, a different seed and one
-changed palette stop are both far over the tolerance.
+every animation frame is given are both 0), under reduced motion, in a box of the same size; the candidate is the
+`lumitra-light` preset drawn by the published page's island. In Chromium and WebKit, for a wide box (960 by 540) and a
+tall phone box (390 by 700), each at pixel ratio 1 and 1.75 (the second gives a fractional size, 682.5 pixels), each
+also with a post pass after the ring: no pixel may differ by more than 2 in a channel (stricter than F4's 0.5 percent
+share, because the measured count is 0). It must be able to fail: each side reproduces itself from a fresh page, a
+different seed and one changed palette stop are both far over F4's tolerance. Behaviour tests in `fxScoped.spec.ts`
+hold the ring among other layers: under text whatever the stored order and after hide and show, adding over a fill, and
+inside a group.
+
+**Result (2026-11-22):** all cases pass, 0 pixels over the tolerance in every size and both browsers.
 
 **Slices:**
 

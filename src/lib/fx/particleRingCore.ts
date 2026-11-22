@@ -12,8 +12,7 @@
  *  - the particles come from a seeded generator (mulberry32) instead of `Math.random`, drawn in the
  *    component's order (per strand one phase, per point one random), so a stored scene is the same ring
  *    on every load;
- *  - the glow pass count is a whole number (the component loops `for (g = 0; g < glow; g += 1)`, so 0.5
- *    and 1 already drew the same).
+ *  - nothing else: the glow passes are counted as the component's loop counts them (`ringGlowPasses`).
  *
  * RENDER-FREE: no React, no three.js.
  */
@@ -67,9 +66,12 @@ export function ringRadius(width: number, height: number): number {
   return Math.min(width * 0.37, height * 0.47);
 }
 
-/** Glow passes for a stored value: a whole number from 0 to 2. */
+/**
+ * Glow passes for a stored value, as the component counts them: its loop `for (g = 0; g < glow; g += 1)` draws
+ * one pass for every started whole number, so 0.4 draws one pass and 1.2 two. Kept inside 0 to 2.
+ */
 export function ringGlowPasses(glow: number): number {
-  return Math.max(0, Math.min(2, Math.round(Number.isFinite(glow) ? glow : 1)));
+  return Math.max(0, Math.min(2, Math.ceil(Number.isFinite(glow) ? glow : 1)));
 }
 
 /** The decided 60/30/10 mix along the ring: mint leads, light blue rims, indigo only inside the glow. */

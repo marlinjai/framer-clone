@@ -91,6 +91,9 @@ export const particleRingSchema: LayerSchemaDefinition = {
   label: "Particle Ring",
   // The ring is light: it always adds (see layers/particleRing.tsx).
   fixedBlend: "add",
+  // Not heavy: the step down for slow devices drops heavy layers whole, and the ring is the picture itself (a
+  // hero without it is an empty box), not an effect on top of one. On a slow device it is drawn at a lower
+  // pixel ratio like every layer; its point count is set by `density`.
   defaultParams: PARTICLE_RING_DEFAULT_PARAMS,
 };
 

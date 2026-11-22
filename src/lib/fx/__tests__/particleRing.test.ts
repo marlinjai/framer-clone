@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { PRESETS, parseFxScene, serializeScene } from '@/lib/fx/format';
+import { PRESETS, deserializeScene, parseFxScene, serializeScene } from '@/lib/fx/format';
 import {
   RING_POINTS_PER_STRAND,
   RING_STRANDS,
@@ -70,8 +70,8 @@ describe('the radius and the glow', () => {
     expect(ringRadius(390, 700)).toBeCloseTo(144.3, 6); // the width decides
   });
 
-  it('draws whole glow passes from 0 to 2', () => {
-    expect([0, 0.4, 0.6, 1, 1.4, 1.6, 2, 5, -1].map(ringGlowPasses)).toEqual([0, 0, 1, 1, 1, 2, 2, 2, 0]);
+  it("draws the glow passes the component's loop draws: one per started whole number, 0 to 2", () => {
+    expect([0, 0.4, 0.6, 1, 1.2, 1.6, 2, 5, -1].map(ringGlowPasses)).toEqual([0, 1, 1, 1, 2, 2, 2, 2, 0]);
     expect(ringGlowPasses(Number.NaN)).toBe(1);
   });
 });
@@ -90,5 +90,11 @@ describe('the one blend of the ring', () => {
     if (!parsed.ok) throw new Error(parsed.message);
     expect(parsed.scene.layers[0].blend).toBe('add');
     expect(parsed.notes.join(' ')).toMatch(/always blends as "add"/);
+  });
+
+  it('is "add" through the preset loader too, whatever a scene says', () => {
+    const scene = ringScene();
+    scene.layers[0] = { ...scene.layers[0], blend: 'screen' };
+    expect(deserializeScene(scene).layers[0].blend).toBe('add');
   });
 });

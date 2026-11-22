@@ -305,18 +305,19 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
     (layerId) => objects[layerId] != null,
   );
 
-  // The layer drawn first, onto the background, when it is drawn in the main picture (not through effects
-  // of its own): a layer that sums light (the particle ring) sums it onto the background there, exactly.
-  const bottomLayerId = groups.length === 0 ? (contentLayers[0]?.id ?? null) : null;
+  // The one content layer, when it is the only one drawn and drawn in the main picture (no effects of its
+  // own): a layer that sums light (the particle ring) then sums it onto the background itself, exactly. With
+  // any other content layer it cannot know what is drawn before it (three.js orders layers by depth, not by
+  // the stored order), so it adds its light instead.
+  const bottomLayerId = groups.length === 0 && contentLayers.length === 1 ? contentLayers[0].id : null;
   const ctx: LayerContext = useMemo(
     () => ({
       registerObject,
       getObject: (id: string) => objects[id] ?? null,
       reduce,
-      background: config.background,
       bottomLayerId,
     }),
-    [registerObject, objects, reduce, config.background, bottomLayerId],
+    [registerObject, objects, reduce, bottomLayerId],
   );
 
   // Content layers by id for the groups (only read when `groups` is not empty).

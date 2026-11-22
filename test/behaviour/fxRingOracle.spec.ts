@@ -74,6 +74,8 @@ const SIZES: readonly Size[] = [
   { name: 'wide', width: 960, height: 540, dpr: 1 },
   { name: 'wide at 1.75', width: 960, height: 540, dpr: 1.75 },
   { name: 'tall', width: 390, height: 700, dpr: 1 },
+  // 390 x 1.75 is 682.5: both canvases are 682 pixels wide, and the ring's own buffer must be too.
+  { name: 'tall at 1.75', width: 390, height: 700, dpr: 1.75 },
 ];
 
 /** The brand preset as it is stored, with changes on its one layer. */
@@ -108,7 +110,8 @@ const PAGES: Readonly<Record<string, () => StoredNode>> = Object.fromEntries(
 async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
   const canvas = page.locator(selector);
   await canvas.waitFor({ state: 'attached', timeout: 30_000 });
-  const want = [Math.round(size.width * size.dpr), Math.round(size.height * size.dpr)];
+  // A canvas's size in pixels is the box times the ratio rounded down (the browser truncates it; three.js floors it).
+  const want = [Math.floor(size.width * size.dpr), Math.floor(size.height * size.dpr)];
   const deadline = Date.now() + 15_000;
   for (;;) {
     const got = await canvas.evaluate((element) => [(element as HTMLCanvasElement).width, (element as HTMLCanvasElement).height]);
@@ -163,7 +166,9 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
     const html =
       '<!doctype html><meta charset="utf-8"><title>Ring oracle</title>' +
       '<style>html,body{margin:0;background:#000}</style>' +
-      `<lumitra-light style="width:${size.width}px;height:${size.height}px"></lumitra-light>` +
+      // The element has the box's background, as the Sites box has: at a fractional size (682.5 pixels) the last
+      // column of the screenshot is half canvas and half what is behind it, on both sides alike.
+      `<lumitra-light style="display:block;width:${size.width}px;height:${size.height}px;background:#04090b"></lumitra-light>` +
       // Seeded just before the component loads, so nothing else draws from the generator first.
       `<script>Math.random = (${mulberry32.toString()})(${SEED});</script>` +
       '<script type="module" src="/lumitra-light.js"></script>';
@@ -201,13 +206,14 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       // Not a black or flat frame on either side.
       expect(colours(ours)).toBeGreaterThan(50);
       expect(colours(theirs)).toBeGreaterThan(50);
-      expect(result.share).toBeLessThanOrEqual(MAX_DIFFERING_SHARE);
+      // Measured: no pixel differs by more than the channel tolerance, so none may (stricter than F4's share).
+      expect(result.differing).toBe(0);
     }, 120_000);
 
     it('a post pass after the ring leaves it as it is', async () => {
       const result = difference(await sites(size, 'post'), await reference(size));
       console.info(`ring oracle (${name}, ${sizeName}, with a post pass): ${(result.share * 100).toFixed(4)} percent differ, largest ${result.largest}`);
-      expect(result.share).toBeLessThanOrEqual(MAX_DIFFERING_SHARE);
+      expect(result.differing).toBe(0);
     }, 120_000);
   });
 

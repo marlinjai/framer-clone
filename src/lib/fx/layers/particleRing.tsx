@@ -12,9 +12,14 @@
  * no colour conversion), the same kind of buffer the `<lumitra-light>` canvas is, so the sum, its rounding
  * and its clipping are the component's. A full-box quad then brings the buffer into the scene, decoded to
  * linear light and encoded by three.js's output step: the same bytes on the screen, and the same bytes
- * after a post pass's composer encodes its linear buffer. As the bottom layer (`ctx.bottomLayerId`) the
- * buffer starts from the scene's background and the quad replaces; over other layers it starts from
- * nothing and the quad adds. The pixel oracle holds all of this to the component's picture.
+ * after a post pass's composer encodes its linear buffer. As the only content layer (`ctx.bottomLayerId`) the
+ * buffer starts from the scene's background (as three.js parsed it for the canvas) and the quad replaces;
+ * with other content layers it starts from nothing and the quad adds. The pixel oracle holds all of this to
+ * the component's picture.
+ *
+ * ORDER: three.js draws content layers by depth, not by their stored order (gradient -3.2, noise field -3,
+ * image -2.6, shape -2.5, text 0). The quad sits at -2.4: over every fill, under text, whatever the order of
+ * mounting (a hidden and shown again ring is a new object, and object age must not decide what it covers).
  *
  * BLEND: the ring is light, so it always adds; the layer's blend mode is not applied, and the reader
  * stores "add" for it (../format).
@@ -100,7 +105,7 @@ const COMPOSITE_FRAGMENT = /* glsl */ `
 
 /**
  * The quad that brings the buffer into the scene. Over other layers it adds the buffer's light (ONE, ONE);
- * as the bottom layer the buffer already holds the background with the light summed onto it, exactly as the
+ * as the only content layer the buffer already holds the background with the light summed onto it, exactly as the
  * component's canvas holds it, and replaces what is there.
  */
 function compositeMaterial(texture: THREE.Texture): THREE.ShaderMaterial {
@@ -129,11 +134,17 @@ function setCompositeMode(material: THREE.ShaderMaterial, bottom: boolean): void
   material.needsUpdate = true;
 }
 
-/** A stored colour (#rrggbb) as the bytes it is, for a buffer that holds display-space colour. */
-function rawColour(hex: string | undefined, into: THREE.Color): THREE.Color {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
-  const n = m ? parseInt(m[1], 16) : 0;
-  return into.setRGB(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, THREE.LinearSRGBColorSpace);
+/** The ring quad's depth: over every fill layer, under text (see ORDER above). */
+const RING_DEPTH = -2.4;
+
+/**
+ * The scene's background as the display-space bytes the canvas shows, for a buffer that holds display-space
+ * colour: read from the background three.js parsed (any colour the reader accepts), black when there is none.
+ */
+function backgroundBytes(background: unknown, into: THREE.Color): THREE.Color {
+  if (!(background instanceof THREE.Color)) return into.setRGB(0, 0, 0, THREE.LinearSRGBColorSpace);
+  const srgb = background.getRGB({ r: 0, g: 0, b: 0 }, THREE.SRGBColorSpace);
+  return into.setRGB(srgb.r, srgb.g, srgb.b, THREE.LinearSRGBColorSpace);
 }
 
 function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
@@ -209,10 +220,11 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
     return () => ctx.registerObject(layer.id, null);
   }, [ctx, layer.id]);
 
-  const bottom = ctx.bottomLayerId === layer.id && ctx.background !== undefined;
+  const bottom = ctx.bottomLayerId === layer.id;
   useEffect(() => setCompositeMode(composite, bottom), [composite, bottom]);
 
   const lean = useRef(new THREE.Vector2(0, 0));
+  const drawing = useMemo(() => new THREE.Vector2(), []);
   const clear = useMemo(() => new THREE.Color(), []);
   const ground = useMemo(() => new THREE.Color(), []);
   useFrame((state) => {
@@ -232,16 +244,18 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
     }
 
     const gl = state.gl;
-    const w = Math.max(1, Math.round(size.width * dpr));
-    const h = Math.max(1, Math.round(size.height * dpr));
+    // The buffer has exactly the canvas's pixels (the canvas rounds its size down, never to the nearest).
+    gl.getDrawingBufferSize(drawing);
+    const w = Math.max(1, drawing.x);
+    const h = Math.max(1, drawing.y);
     if (target.width !== w || target.height !== h) target.setSize(w, h);
     const previousTarget = gl.getRenderTarget();
     const previousAlpha = gl.getClearAlpha();
     gl.getClearColor(clear);
     gl.setRenderTarget(target);
-    // As the bottom layer the light is summed onto the background itself (each sample clipped at full
+    // As the only content layer the light is summed onto the background itself (each sample clipped at full
     // brightness after the background, as on the component's canvas); over other layers onto nothing.
-    if (bottom) gl.setClearColor(rawColour(ctx.background, ground), 1);
+    if (bottom) gl.setClearColor(backgroundBytes(state.scene.background, ground), 1);
     else gl.setClearColor(0x000000, 0);
     gl.clear(true, false, false);
     gl.render(ringScene, state.camera);
@@ -250,7 +264,7 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
   });
 
   return (
-    <mesh ref={quad} material={composite} frustumCulled={false}>
+    <mesh ref={quad} material={composite} frustumCulled={false} position={[0, 0, RING_DEPTH]}>
       <planeGeometry args={[2, 2]} />
     </mesh>
   );

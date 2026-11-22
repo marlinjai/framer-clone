@@ -616,6 +616,39 @@ describe('effects that apply to one layer', () => {
     expect(difference(desktop, desktopPlain).differing).toBeGreaterThan(100);
   }, 180_000);
 
+  describe('the particle ring among other layers', () => {
+    const ring = (extra: Raw = {}) => layer('r', 'particleRing', {}, { blend: 'add', ...extra });
+    const vignette = (target: string) => layer('vg', 'vignette', { offset: 0.2, darkness: 0.9 }, { target });
+
+    it('stays under a text layer stored after it, after it is hidden and shown again, and whatever the stored order', async () => {
+      const ringText = scene([ring(), text()]);
+      const hidden = scene([ring({ visible: false }), text()]);
+      const fresh = { ringText: (await draw(ringText)).picture, hidden: (await draw(hidden)).picture, ringOnly: (await draw(scene([ring()]))).picture };
+      expect(difference(fresh.ringText, fresh.ringOnly).differing, 'the text is on the picture').toBeGreaterThan(200);
+      expect(difference(fresh.ringText, fresh.hidden).differing, 'the ring is on the picture').toBeGreaterThan(200);
+      // A ring shown again is a new object, newer than the text: what it covers must not depend on that.
+      const edits = await session(ringText);
+      for (const [name, next] of [['hidden', hidden], ['shown', ringText], ['hidden', hidden], ['shown', ringText]] as const) {
+        expect(difference(await edits.show(next), name === 'hidden' ? fresh.hidden : fresh.ringText).differing, name).toBe(0);
+      }
+      expect(difference((await draw(scene([text(), ring()]))).picture, fresh.ringText).differing, 'text stored first').toBe(0);
+    }, 240_000);
+
+    it('adds its light over a fill stored after it, and the fill stays visible', async () => {
+      const both = (await draw(scene([ring(), gradient()]))).picture;
+      expect(difference(both, (await draw(scene([ring()]))).picture).differing, 'the gradient is on the picture').toBeGreaterThan(200);
+      expect(difference(both, (await draw(scene([gradient()]))).picture).differing, 'the ring is on the picture').toBeGreaterThan(200);
+    }, 180_000);
+
+    it('is drawn inside a group, with an effect on the ring alone', async () => {
+      const plain = (await draw(scene([]))).picture;
+      const alone = (await draw(scene([ring()]))).picture;
+      const grouped = (await draw(scene([ring(), vignette('r')]))).picture;
+      expect(difference(grouped, plain).differing, 'the ring is on the picture').toBeGreaterThan(200);
+      expect(difference(grouped, alone).differing, 'the vignette changes the ring').toBeGreaterThan(200);
+    }, 180_000);
+  });
+
   it('edits in a mounted scene give the same picture as a fresh draw: scope, whole scene, scope again, hide, show', async () => {
     const scoped = scene([gradient(), text(), pixelate('t')]);
     const whole = scene([gradient(), text(), pixelate()]);
