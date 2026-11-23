@@ -267,7 +267,7 @@ describe.each(ENGINES)('on the real build\'s editor, in %s', (_name, engine) => 
     });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
-    await page.goto(`http://${EDITOR_HOST}:${PORT()}/`);
+    await page.goto(`http://${EDITOR_HOST}:${PORT()}/?demo=1`);
     await page.getByRole('button', { name: 'Site settings' }).first().waitFor();
     return page;
   }

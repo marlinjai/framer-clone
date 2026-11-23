@@ -59,6 +59,7 @@ import { namedSiteImages } from '@/lib/site/siteImages';
 import { fxSiteImagePaths } from '@/lib/fxScene/fxScene';
 import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { themeBoundsErrors } from '@/lib/site/theme';
+import { siteCardColors, type SiteCardColors } from '@/lib/site/cardColors';
 import { findProjectSlugProblem } from '@/lib/pages/slug';
 import { pickPrimaryHost } from './primaryHost';
 import { nextSiteRedirects, parseSiteRedirects } from '@/lib/pages/redirects';
@@ -185,6 +186,8 @@ export interface SiteSummary {
   customDomains: string[];
   /** Open branches of the site (docs/plans/2026-11-10-site-branches.md); a branch itself is never listed. */
   openBranches: number;
+  /** The site's own colours for its card on the projects home (src/lib/site/cardColors.ts), or null. */
+  cardColors: SiteCardColors | null;
 }
 
 /** One published revision for a listing (no document loaded). */
@@ -472,6 +475,7 @@ export class SiteRepository {
         lumitraEnabled: true,
         createdAt: true,
         updatedAt: true,
+        siteSettings: true,
         domains: {
           select: { subdomain: true, hostname: true },
           orderBy: { createdAt: 'asc' },
@@ -489,6 +493,7 @@ export class SiteRepository {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       openBranches: r._count.branchSites,
+      cardColors: siteCardColors(normalizeSiteSettings(r.siteSettings).theme),
     }));
   }
 

@@ -93,7 +93,7 @@ describe('Save as a new project', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save project' }));
     await screen.findByRole('alert');
     const link = screen.getByRole('link', { name: 'Choose a company' });
-    expect(link.getAttribute('href')).toBe('/projects?switch=1&next=/');
+    expect(link.getAttribute('href')).toBe('/projects?switch=1&next=%2F%3Fdemo%3D1');
     // Nothing is stashed until the person actually leaves through the link.
     expect(takeStashedDemoProject()).toBeNull();
     fireEvent.click(link);

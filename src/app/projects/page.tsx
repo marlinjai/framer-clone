@@ -25,24 +25,17 @@
 //   ?migrated=1 set by the cookie migration handler; never migrate again.
 
 import React from 'react';
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { safeEditorReturnPath } from '@/server/auth/activeCompany';
 import { loadDashboard } from './loader';
-import NewProjectButton from './NewProjectButton';
-import ProjectCard from './ProjectCard';
 import { siteBranchesEnabled } from '@/server/sites/branches/switch';
 import CompanyChooser from './CompanyChooser';
 import SitesNotEnabled from './SitesNotEnabled';
 import AuthUnavailable from './AuthUnavailable';
 import { chooseCompany } from './company-actions';
+import ProjectsHome from './ProjectsHome';
 
 export const dynamic = 'force-dynamic';
-
-/** Render a site's updated date in a stable, human-readable form. */
-function formatUpdated(value: Date): string {
-  return new Date(value).toISOString().slice(0, 10);
-}
 
 /** `<label>.<PUBLIC_SITE_BASE_HOST>` for a site's subdomain, or null. */
 function liveHostFor(subdomain: string | null): string | null {
@@ -125,83 +118,14 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
   const branchesOn = siteBranchesEnabled(activeCompany.id);
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-12">
-      {/* Persistent live region for list changes made on this page (a deleted
-          project's card is gone, so it cannot announce itself). Present and
-          empty from the first render, so screen readers pick up later text. */}
-      <p id="projects-status" role="status" aria-live="polite" className="sr-only" />
-      <header className="mb-8 flex items-center justify-between gap-4">
-        <div>
-          <h1 id="projects-heading" tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">
-            Projects
-          </h1>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-            <span>
-              Sites in <span className="font-medium text-foreground">{activeCompany.name}</span>
-            </span>
-            {companies.length > 1 ? (
-              <Link
-                href="/projects?switch=1"
-                className="underline underline-offset-4 hover:text-foreground"
-              >
-                Switch company
-              </Link>
-            ) : null}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* The catalogue and payments come with the `sites` grant every company on this page holds. */}
-          <Link
-            href="/projects/catalog"
-            className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
-          >
-            Catalog
-          </Link>
-          <Link
-            href="/projects/payments"
-            className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
-          >
-            Payments
-          </Link>
-          {booksEnabled ? (
-            <Link
-              href="/projects/books"
-              className="rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
-            >
-              Books
-            </Link>
-          ) : null}
-          <NewProjectButton />
-        </div>
-      </header>
-
-      {sites.length === 0 ? (
-        <section className="rounded-lg border border-dashed p-10 text-center">
-          <h2 className="text-base font-medium">No projects yet</h2>
-          <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-            Create your first project to start building.
-          </p>
-          <div className="mt-6 flex justify-center">
-            <NewProjectButton />
-          </div>
-        </section>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {sites.map((site) => (
-            <li key={site.siteId}>
-              <ProjectCard
-                siteId={site.siteId}
-                name={site.name}
-                status={site.status}
-                updatedLabel={formatUpdated(site.updatedAt)}
-                liveHost={liveHostFor(site.subdomain)}
-                customDomains={site.customDomains}
-                openBranches={branchesOn ? site.openBranches : null}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
+    <ProjectsHome
+      sites={sites}
+      companies={companies}
+      activeCompany={activeCompany}
+      booksEnabled={booksEnabled}
+      branchesOn={branchesOn}
+      accountHref={new URL('/', process.env.AUTH_BRAIN_URL ?? 'https://auth.lumitra.co').toString()}
+      liveHostFor={liveHostFor}
+    />
   );
 }

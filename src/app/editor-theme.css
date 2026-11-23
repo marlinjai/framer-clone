@@ -49,4 +49,14 @@
   --status-scheduled: oklch(0.78 0.12 215);
   --warning: oklch(0.80 0.15 80);
   --warning-foreground: var(--suite-primary-ink);
+  /* The home and the welcome page (docs/plans/2026-11-23-sites-home-and-light-mode.md). The interface
+     modes of suite-theme's ui.css take these over per mode (slice S2); until then, the dark values. */
+  --brand-mark: var(--suite-primary);
+  --brand-edge: transparent;
+  --link: var(--suite-accent);
+  /* Selection is a complete ring that blooms outward, never a one-sided edge (Marlin, 2026-11-23). */
+  --selection-ring: 0 0 0 1px rgb(82 255 165 / 0.75), 0 0 0 3px rgb(82 255 165 / 0.16), 0 0 14px 1px rgb(82 255 165 / 0.22);
+  --home-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 8px 24px rgb(0 0 0 / 0.35);
+  --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(88 46 255 / 0.22), rgb(59 132 255 / 0.08) 50%, transparent 80%);
+  --canvas-ground: color-mix(in oklab, var(--suite-bg), black 20%);
 }

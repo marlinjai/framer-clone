@@ -24,6 +24,22 @@
 @import "./editor-theme.css";
 
 @custom-variant dark (&:is(.dark *));
+
+/* Editor-only colour names (the shared theme-tokens.css also reaches published sites). */
+@theme inline {
+  --color-brand-mark: var(--brand-mark);
+  --color-brand-edge: var(--brand-edge);
+}
+@utility home-glow {
+  background: var(--home-glow);
+}
+/* Named, not `shadow-[var(...)]`: Tailwind reads a bare var() there as a shadow colour. */
+@utility shadow-selection {
+  box-shadow: var(--selection-ring);
+}
+@utility shadow-home {
+  box-shadow: var(--home-shadow);
+}
 /* A phone: under 768px wide, or a touch screen held sideways (at most 500px
    high). The two queries must stay identical to the two halves of
    PHONE_MEDIA_QUERY in src/hooks/use-mobile.ts (a test compares them); plan
