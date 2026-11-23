@@ -59,12 +59,16 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
   are in `RESERVED_SLUG_SEGMENTS` of `src/lib/pages/slug.ts`), and adding `demo` to that list would break existing
   pages. So `/` renders the demo editor when the query names it: `?demo=1`, or the demo's existing `?page=` and
   `?preview=1` (old bookmarks and the address sync keep working). The address sync keeps `demo=1`. "Keep as project"
-  sends a signed-out person to `/projects?next=/?demo=1`; `safeEditorReturnPath` accepts exactly `/` and `/?demo=1`, a
-  fixed list, so the stashed demo is restored on the way back and no work looks lost. The "Back to the editor" link
-  of `src/app/preview/page.tsx` and every "Try the demo" link use `/?demo=1`.
+  sends a signed-out person to `/projects?next=/?demo=1`; `safeEditorReturnPath` adds `/?demo=1` to its existing fixed
+  entries (`/`, `/projects`, `/projects/<id>`, `/projects/<id>/preview`), so the stashed demo is restored on the way
+  back and no work looks lost. The "Back to the editor" link (`editorHref` in `src/components/preview/PreviewShell.tsx`,
+  which today carries `?page=<id>`) becomes `/?demo=1&page=<id>`, keeping the previewed page. Every "Try the demo" link
+  carries no page and uses `/?demo=1`.
 - **`/projects` stays the address of the signed-in home**, because the login's `return_to`, the company chooser,
   `?switch=1`, `?next=` and every "Back to projects" link already use it. Signed-in `/` without a demo query redirects
-  there, so the home exists once.
+  there, so the home exists once. A `/projects?next=/` continuation that is already in flight (for example the "Sign in"
+  action in `src/lib/projects/saveDemoAsProject.ts`) resolves to `/?demo=1` before it is followed, so the stashed demo
+  is still restored.
 - **The list stays scoped to the active company.** "All projects" means all of this company's sites, with the company
   switcher on the home. Listing sites across companies on one page would mix tenants, which the multi-tenancy design
   forbids.
