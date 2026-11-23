@@ -442,6 +442,8 @@ describe('canInsertCustomCode (D101)', () => {
     reload: () => {},
     fallbackShown: new Set(),
     setFallbackShown: () => {},
+    draftOf: () => null,
+    keepDraft: () => {},
     ...over,
   });
 
@@ -454,5 +456,97 @@ describe('canInsertCustomCode (D101)', () => {
     expect(canInsertCustomCode(value({}, { branch: true }))).toBe(false);
     expect(canInsertCustomCode(value({ state: { phase: 'loading' } }))).toBe(false);
     expect(canInsertCustomCode(value({ state: { phase: 'failed', message: 'x' } }))).toBe(false);
+  });
+});
+
+describe('review 1 of #459', () => {
+  it('M1: freezes the fields while a save runs, so what is typed meanwhile is not lost, and says so', async () => {
+    mount();
+    const block = await insertBlock();
+    fill('Clock', '<p>one</p>');
+    server.hold = { release: () => {} };
+    act(() => {
+      fireEvent.click(section().getByRole('button', { name: 'Save code' }));
+    });
+    await waitFor(() => expect(server.posts).toHaveLength(1));
+    const field = section().getByLabelText('Code of Clock') as HTMLTextAreaElement;
+    expect(field.readOnly).toBe(true);
+    expect((section().getByLabelText('Title of the custom code block') as HTMLInputElement).readOnly).toBe(true);
+    expect(screen.getByText('Saving the code. The fields are locked until the server answers.')).toBeTruthy();
+    // A keystroke meanwhile is not taken: the field keeps what is being saved.
+    fireEvent.change(field, { target: { value: '<p>one and two</p>' } });
+    fireEvent.click(section().getByRole('checkbox', { name: 'Read Open' }));
+    expect(field.value).toBe('<p>one</p>');
+    await act(async () => { server.hold!.release(); });
+    await waitFor(() => expect(codeOf(block)).not.toBeNull());
+    expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).value).toBe('<p>one</p>');
+    expect((section().getByRole('checkbox', { name: 'Read Open' }) as HTMLInputElement).checked).toBe(false);
+    expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).readOnly).toBe(false);
+  });
+
+  it('M1: a failed save keeps the edits and unfreezes the fields', async () => {
+    mount();
+    await insertBlock();
+    fill('Clock', '<p>one</p>');
+    server.refuse = { status: 429, code: 'rate_limited', message: 'Try again in 50 minutes.' };
+    await save();
+    const field = section().getByLabelText('Code of Clock') as HTMLTextAreaElement;
+    expect(field.value).toBe('<p>one</p>');
+    expect(field.readOnly).toBe(false);
+    fireEvent.change(field, { target: { value: '<p>two</p>' } });
+    expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).value).toBe('<p>two</p>');
+  });
+
+  it('L3: keeps a block\'s draft while another element is selected, and says it is back', async () => {
+    mount();
+    const block = await insertBlock();
+    fill('Clock', '<p>draft</p>');
+    act(() => store.editorUI.selectComponent(main));
+    expect(screen.queryByTestId('custom-code-section')).toBeNull();
+    act(() => store.editorUI.selectComponent(block));
+    expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).value).toBe('<p>draft</p>');
+    expect(screen.getByText('Your unsaved edits to this block are back.')).toBeTruthy();
+    // An undo meanwhile still closes it (D109).
+    act(() => store.editorUI.selectComponent(main));
+    act(() => { block.setCustomCode({ sha256: 'cd'.repeat(32), title: 'Elsewhere' }); });
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(screen.getByText(/the unsaved edits were closed/)).toBeTruthy());
+    expect((section().getByLabelText('Title of the custom code block') as HTMLInputElement).value).toBe('Elsewhere');
+  });
+
+  it('L4: posts the code when this site does not hold the hash, even if it is the same code', async () => {
+    const declaration: CustomCodeDeclaration = { reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true };
+    const sha256 = await customCodeHash('<p>copied</p>', declaration);
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    block.setCustomCode({ sha256, title: 'Copied' });
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(screen.getByText(/holds no code under this block's hash/)).toBeTruthy());
+    fireEvent.change(section().getByLabelText('Code of Copied'), { target: { value: '<p>copied</p>' } });
+    await save();
+    expect(server.posts).toHaveLength(1);
+    expect(server.blobs.has(sha256)).toBe(true);
+    expect(screen.queryByText('Nothing changed.')).toBeNull();
+  });
+
+  it('L4: offers no Save while the stored code failed to load, and Retry loads it', async () => {
+    const declaration: CustomCodeDeclaration = { reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true };
+    const sha256 = await customCodeHash('<p>kept</p>', declaration);
+    server.blobs.set(sha256, { title: 'Kept', document: '<p>kept</p>', declaration });
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    block.setCustomCode({ sha256, title: 'Kept' });
+    let failBlob = true;
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (failBlob && String(input).includes('sha256=')) return json({ error: { code: 'custom_code_failed', message: 'The custom code could not be read.' } }, 500);
+      return fakeFetch(input, init);
+    });
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(screen.getByText(/cannot be saved over until it is loaded/)).toBeTruthy());
+    expect((section().getByRole('button', { name: 'Save code' }) as HTMLButtonElement).disabled).toBe(true);
+    failBlob = false;
+    fireEvent.click(section().getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect((section().getByLabelText('Code of Kept') as HTMLTextAreaElement).value).toBe('<p>kept</p>'));
+    expect((section().getByRole('button', { name: 'Save code' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

@@ -12,7 +12,10 @@
 // returned hash on the node through one model action, one undo step. The panel's edits are
 // a draft keyed to the node and the value it was loaded from (D109): an answer for a block
 // that changed meanwhile (an undo, another tab) is not applied, and such a change closes
-// the draft. A change of the title alone posts nothing (D105).
+// the draft. The draft is kept per block while another element is selected (the fallback,
+// D110), for this editor session. While a save runs the fields are frozen (read-only, still
+// focusable), so nothing typed meanwhile is lost; a failed save keeps the edits. A change of
+// the title alone posts nothing (D105), and only when this site holds the code.
 //
 // The code never runs here. Every refusal is shown with its reason, in an alert region.
 
@@ -111,6 +114,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   // --- the stored code -----------------------------------------------------------------
   const [loaded, setLoaded] = React.useState<{ key: string; value: Loaded }>({ key: '', value: { phase: 'loading' } });
   const savedHere = React.useRef<{ key: string; value: Loaded } | null>(null);
+  const [loadGeneration, setLoadGeneration] = React.useState(0);
   React.useEffect(() => {
     if (savedHere.current && savedHere.current.key === storedKey) {
       // What this panel just saved: no need to read it back.
@@ -144,14 +148,25 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
     };
     // block is derived from storedKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storedKey, projectId, authoring.available]);
+  }, [storedKey, projectId, authoring.available, loadGeneration]);
 
   // --- the draft (D109) ----------------------------------------------------------------
-  const [edits, setEdits] = React.useState<{ key: string; fields: Partial<Fields> } | null>(null);
-  const [announcement, setAnnouncement] = React.useState('');
+  // A draft left when another element was selected comes back (review 1 of #459, L3).
+  const [edits, setEdits] = React.useState<{ key: string; fields: Partial<Fields> } | null>(
+    () => authoring.draftOf(component.id) as { key: string; fields: Partial<Fields> } | null,
+  );
+  const [announcement, setAnnouncement] = React.useState(() =>
+    edits && edits.key === storedKey ? 'Your unsaved edits to this block are back.' : '',
+  );
   const [problem, setProblem] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  // Read synchronously by edit(): a keystroke between Save and the re-render is refused too.
+  const savingNow = React.useRef(false);
   const ownWrite = React.useRef<string | null>(null);
+  const { keepDraft } = authoring;
+  React.useEffect(() => {
+    keepDraft(component.id, edits && Object.keys(edits.fields).length > 0 ? edits : null);
+  }, [keepDraft, component.id, edits]);
 
   // The block changed underneath an open draft (an undo, another tab): the draft closes.
   React.useEffect(() => {
@@ -178,6 +193,8 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   const dirty = Object.keys(draft).length > 0;
 
   const edit = (patch: Partial<Fields>) => {
+    // Frozen while a save runs (review 1 of #459, M1): what the save sends is what the person sees.
+    if (savingNow.current) return;
     setProblem(null);
     setEdits((previous) => {
       const fieldsBefore = previous && previous.key === storedKey ? previous.fields : {};
@@ -216,11 +233,17 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
     if (!checked.ok) return setProblem(checked.refusal.message);
     if (draftProblem) return setProblem(draftProblem.message);
     if (!page || !projectId) return setProblem('Save the project first: a block\'s code is stored with its site.');
+    if (current.phase === 'failed' || current.phase === 'loading') {
+      return setProblem('The stored code is not loaded, so it cannot be saved over. Retry loading it first.');
+    }
     const keyAtStart = storedKey;
+    savingNow.current = true;
     setSaving(true);
+    setAnnouncement('Saving the code. The fields are locked until the server answers.');
     try {
       const sha256 = await customCodeHash(checked.value.document, checked.value.declaration);
-      if (block && block.sha256 === sha256) {
+      // Only when this site holds the code (review 1 of #459, L4): a block whose hash it does not hold posts it.
+      if (block && block.sha256 === sha256 && current.phase === 'ready') {
         // The same code and declaration (D105): only the title can have changed, and it lives on the node.
         if (block.title === checked.value.title) {
           setEdits(null);
@@ -265,6 +288,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
       console.error('[custom code] save failed', error instanceof Error ? error.name : error);
       setProblem('The code could not be saved. Nothing was changed; try again.');
     } finally {
+      savingNow.current = false;
       setSaving(false);
     }
   };
@@ -272,6 +296,8 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   const showsFallback = authoring.fallbackShown.has(component.id);
   const titleForName = fields.title.trim() || 'this block';
   const readOnly = !mayWrite || !!proposal;
+  // Read-only, and also while a save runs (M1); still focusable, so nobody loses their place.
+  const frozen = readOnly || saving;
 
   return (
     <CollapsibleSection title="Custom code" icon={<Code2 size={14} />} normalOnly>
@@ -292,7 +318,14 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
         {authoring.available && !proposal && (
           <>
             {current.phase === 'loading' && <p className={HINT} role="status">Loading the stored code…</p>}
-            {current.phase === 'failed' && <p className={REASON} role="alert">{current.message}</p>}
+            {current.phase === 'failed' && (
+              <div className="flex items-start gap-2">
+                <p className={REASON} role="alert">{current.message} The code cannot be saved over until it is loaded.</p>
+                {block && authoring.available && projectId && (
+                  <button type="button" className={SMALL_BUTTON} onClick={() => setLoadGeneration((n) => n + 1)}>Retry</button>
+                )}
+              </div>
+            )}
             {current.phase === 'missing' && (
               <p className={REASON} role="alert">
                 {status?.branch
@@ -315,7 +348,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
               <TextInput
                 value={fields.title}
                 maxLength={200}
-                readOnly={readOnly}
+                readOnly={frozen}
                 aria-label="Title of the custom code block"
                 placeholder="Opening hours clock"
                 onChange={(event) => edit({ title: event.target.value })}
@@ -327,7 +360,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
               value={fields.document}
               onChange={(document) => edit({ document })}
               label={`Code of ${titleForName}`}
-              readOnly={readOnly}
+              readOnly={frozen}
               placeholder={CODE_PLACEHOLDER}
             />
             <StatePicker
@@ -336,6 +369,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
               states={offered}
               chosen={fields.declaration.reads}
               readOnly={readOnly}
+              locked={saving}
               onToggle={(id, on) => toggleIn('reads', id, on)}
               verb="Read"
             />
@@ -345,13 +379,14 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
               states={offered}
               chosen={fields.declaration.writes}
               readOnly={readOnly}
+              locked={saving}
               onToggle={(id, on) => toggleIn('writes', id, on)}
               verb="Change"
             />
             <PropertyRow label="Events">
               <TextInput
                 value={fields.emitsText}
-                readOnly={readOnly}
+                readOnly={frozen}
                 mono
                 aria-label="Events it can fire, separated by commas"
                 aria-invalid={'reason' in emitsRead ? true : undefined}
@@ -399,7 +434,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
             )}
             {mayWrite && (
               <div className="flex items-center gap-2">
-                <button type="button" className={SMALL_BUTTON} disabled={saving || current.phase === 'loading'} onClick={() => void save()}>
+                <button type="button" className={SMALL_BUTTON} disabled={saving || current.phase === 'loading' || current.phase === 'failed'} onClick={() => void save()}>
                   {saving ? 'Saving code…' : 'Save code'}
                 </button>
                 {dirty && !saving && (
@@ -455,12 +490,14 @@ function Notices({ authoring, projectId, proposal, invalid }: {
   );
 }
 
-function StatePicker({ legend, hint, states, chosen, readOnly, onToggle, verb }: {
+function StatePicker({ legend, hint, states, chosen, readOnly, locked, onToggle, verb }: {
   legend: string;
   hint: string;
   states: readonly StateInReach[];
   chosen: readonly string[];
   readOnly: boolean;
+  /** While a save runs: focusable, but a change is not taken. */
+  locked: boolean;
   onToggle: (id: string, on: boolean) => void;
   verb: string;
 }) {
@@ -478,6 +515,7 @@ function StatePicker({ legend, hint, states, chosen, readOnly, onToggle, verb }:
             type="checkbox"
             checked={chosen.includes(state.id)}
             disabled={readOnly}
+            aria-disabled={locked || undefined}
             aria-label={`${verb} ${state.name}`}
             onChange={(event) => onToggle(state.id, event.target.checked)}
           />
