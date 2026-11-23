@@ -709,6 +709,9 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     // The fetch began while the box was still waiting for its start: before, it began only once the start had come.
     expect(timing.waiting).toBeDefined();
     expect(timing.engineStart).toBeLessThan(timing.loading);
+    // And the start comes in the first idle moment, not after a fixed wait: under a second from waiting (it was
+    // the load event plus 1.5 seconds, so at least 1.5 seconds after the box began to wait).
+    expect(timing.loading - timing.waiting).toBeLessThan(1000);
   });
 
   it('start visible: fetches nothing while the box is far below, and draws once it comes near', async () => {
