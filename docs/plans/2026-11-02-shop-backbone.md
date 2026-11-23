@@ -1330,3 +1330,21 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
     measured: the fields of a `complete` session on retrieve (the proof read open and expired only; `amount_total`, `currency` and
     `payment_intent` are Stripe's documented fields), that a 409 for a key in use is not stored, and the replay of a 500 (Stripe
     documents it). Nothing is deployed.
+- 2026-11-23: B7 after its independent review (2 blocking, 7 minor, all fixed; each fix proven by a test that fails with the fix
+  reverted). Blocking: (1) a close landing while a create is in flight (another click at the margin, a refused create, an
+  outdated order) no longer leaves a payable session behind a closed payment: the session id is stored only on a payment still
+  pending (the store's condition and the 031 guard, BK018), a session Stripe answers after the close is expired at Stripe
+  (`expireCheckoutSession`, loudly logged when that fails), every close decided by the click re-reads the stored session under
+  the row lock (`PaymentEvent.requireNoSession`) and reads that session instead, and a create is sent only while the margin
+  plus the click's 20-second wait remains. (2) A declined attempt never closes a payment with a pinned session, also when its
+  delivery arrives after the session ended: a later attempt in that session may have succeeded, and the session's own end
+  (its webhook or the expiry job's retrieve) closes it; this replaces the "while the session is open" rule above. Minor: a
+  closed answer carries the payment's real status, so a paid order answers paid and a refunded one says so; the account is
+  resolved before the click's catch, with its signal, so only the create is classified as Stripe's answer; the account is
+  pinned with the session (`session_account_id`, added to 031 in place since it is not deployed), so a session is read and
+  expired where it was made after a reconnect, and an answered 404 there closes the payment; the sweep takes a stored session
+  an hour past its hold by the expiry job's rule (never closing one Stripe reports paid); a cutover pin holds until the later
+  of the pin plus 50 minutes and the earlier build's session end plus the grace; a kept decline bumps `version` like every
+  other write of `payments.ts` (the pin and the store now bump it too). New answers of the pay route: 503
+  `payments_unavailable` for a company with no chargeable account at the pin, 503 `checkout_unavailable` when Stripe gave no
+  answer about the account.
