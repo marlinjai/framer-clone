@@ -1247,6 +1247,15 @@ also answers `created: false`; held code now passes at the hourly limit), the in
 reaches `ready` with the switch off; the rule is now tested directly), and the editor's name (the field was mounted once with
 its first name).
 
+**Review 1 of #459 (head `af46f267`), all six findings fixed.** M1 (typing during a save was lost) and M2 (a read-only code field
+was out of the tab order) in the panel, L1 (`replaces` taken on the request's word), L2 (the budget sentence), L3 (a draft dropped
+on another selection) and L4 (the title-only shortcut and Save after a failed load); also the rate limit's "1 minutes". New proof:
+5 panel cases (30 in all), 4 integration cases (23 in all), the read-only keyboard case in Chromium and WebKit for a field mounted
+and one made read-only (14 editor field cases in all). Weakening for these, each caught by a failed expectation: the fields not
+frozen while saving, read-only taking the field out of the tab order (when mounted read-only, and when made read-only), and
+`replaces` taken on the request's word. The first M2 weakening survived, because the case only made the field read-only after
+mounting, a path the mutation did not touch; the case now covers both.
+
 ## Decided in slice C4, say so if you disagree
 
 Numbering continues after D98, the last number in this plan.
@@ -1308,8 +1317,11 @@ counted under the lock of D104. The audit table already holds the time and the s
 reset the count. The refusal says when the next write is allowed.
 
 **D107. The site budget counts the code named by the stored working copy or a kept revision, plus the new blob.** That is D4's
-"live" exactly. A blob the request says it `replaces` is left out when no kept revision names it, so replacing a block of a full
-site's code is not refused for the version it replaces. A blob written and not yet named by any save is not counted. **Residual,
+"live" exactly. A blob the request says it `replaces` is left out when no kept revision and no other node of the working copy names
+it, so replacing a block of a full site's code is not refused for the version it replaces. `replaces` must be the hash the stored
+node names; any other value is refused with 409 `replaces_mismatch` and the reason, so it can neither lower the count nor enter the
+audit (review 1, L1). The refusal says what counts: the saved page and the last 30 published versions, and that a removed block
+stops counting once the page is saved if it was never published, otherwise once no kept published version holds it (L2). A blob written and not yet named by any save is not counted. **Residual,
 for C5:** several blobs written before a save names them can together take a site past 1 megabyte; the hourly limit bounds it (30
 writes of at most 256 kilobytes), and C5, which prunes blobs at every save and publish (D4), checks the budget there too.
 
@@ -1324,8 +1336,13 @@ later shows the fallback there, and the panel names the problem as soon as it ap
 **D109. The panel's draft is keyed to the node and the value it was loaded from.** The draft (code, declaration, title) remembers the
 node's id and the `customCode` it started from (a hash, or null for a new block). An answer from the route is applied only while the
 node still exists and still names that value; otherwise the blob stays stored (unnamed, harmless, pruned by C5) and the panel says
-"The block changed while saving, so nothing was applied to it". An undo, a live change from another tab or a selection of another block closes
-the draft. Saving again with nothing changed sends nothing.
+"The block changed while saving, so nothing was applied to it". An undo or a live change from another tab closes
+the draft and says so. Selecting another element keeps the draft, per block, for this editor session, and it comes back with a
+notice when the block is selected again (review 1, L3: the fallback switch of D110 leads straight to another element). While a save
+runs, every field is frozen, read-only and still focusable, and the live region says so, so nothing typed meanwhile is lost; a
+failed save keeps the edits (M1). Saving again with nothing changed sends nothing; a change of the title alone is applied on the
+node only when this site holds the code, and a block whose hash this site does not hold posts its code. While the stored code
+failed to load, Save is off and a Retry loads it (L4).
 
 **D110. The fallback is edited on the canvas behind a switch.** D42 left this to C4. The section has a switch "Show the fallback on
 the canvas": while it is on for a block, the canvas draws the block's box with its children instead of the tile, so the fallback is
@@ -1340,7 +1357,9 @@ is wider than this slice's row. It joins C5's row, beside the publish dialog tha
 JavaScript and CSS highlighting, line numbers and history. Tab is not bound, so Tab and Shift+Tab move the focus out as from any
 field; indenting is done with the editor's Mod-] and Mod-[. The content carries an accessible name ("Code of <title>") and a
 description saying how to leave and indent. Until the chunk loads, and if it fails to load, the same field is a plain labelled
-`textarea`, so the section always works.
+`textarea`, so the section always works. Read-only (a reader, a site switched off, a branch, a save running) is CodeMirror's
+read-only state with `aria-readonly`, never `editable: false`, which took the content out of the tab order: a reader reaches the code
+with Tab and moves through and scrolls it with the keyboard (review 1, M2).
 
 ## For Marlin
 
