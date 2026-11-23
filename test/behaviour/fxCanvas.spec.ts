@@ -209,6 +209,9 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     // The frames differ in width, so do their pictures.
     expect(new Set(all.map((still) => still.width)).size).toBeGreaterThan(1);
     expect(await page.locator('[data-fc-fx-layer]').count()).toBe(0);
+    // Every still frame of the page from ONE context (a scene is set up once, not once per frame), released a
+    // moment after the last.
+    expect(await madeContexts()).toBe(1);
     expect(await mostContexts()).toBe(1);
     await expect.poll(liveContexts, { timeout: 60_000 }).toBe(0);
     expect(await status()).toBe('idle');
@@ -254,6 +257,7 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     const frames = await page.locator('[data-viewport-content-id]').count();
     await stillsSettled(frames * 2);
     const before = await fingerprint(1, 'fxa');
+    const befores = await Promise.all([0, 1, 2].map((frame) => fingerprint(frame, 'fxa')));
     const made = await madeContexts();
     // A burst of edits 60 ms apart, as a slider sends them: drawn again once, after the last.
     let scene: unknown = SCENE;
@@ -271,11 +275,11 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     }, burst);
     // Never a blank frame in between: the old picture is shown until the new one is there.
     expect(await fingerprint(1, 'fxa')).toBe(before);
-    // Every frame of the changed box gets its new picture: one new context per frame, the burst drawn once.
-    await expect.poll(async () => (await madeContexts()) - made, { timeout: 60_000 }).toBe(frames);
-    await expect.poll(() => fingerprint(1, 'fxa'), { timeout: 30_000 }).not.toBe(before);
+    // Every frame of the changed box gets its new picture, the burst drawn once, all of them in ONE still context
+    // (setting a scene up in a context is a long task on the main thread: paid once per edit, not once per frame).
+    for (const frame of [0, 1, 2].slice(0, frames)) await expect.poll(() => fingerprint(frame, 'fxa'), { timeout: 60_000 }).not.toBe(befores[frame]);
     await page.waitForTimeout(1500);
-    expect((await madeContexts()) - made).toBe(frames);
+    expect((await madeContexts()) - made).toBeLessThanOrEqual(1);
     expect(await mostContexts()).toBe(1);
     await expect.poll(liveContexts, { timeout: 60_000 }).toBe(0);
     expect(crashes).toEqual([]);

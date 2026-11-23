@@ -295,7 +295,7 @@ export const FxCanvasLayer = observer(function FxCanvasLayer({ stored, ownPositi
 });
 
 /** How long a changed scene or size waits before its still frame is drawn again: edits come in bursts. */
-export const FX_STILL_DEBOUNCE_MS = 300;
+export const FX_STILL_DEBOUNCE_MS = 800;
 /** A still frame that failed for a reason that may pass is tried again this often, this long after. */
 const FX_STILL_RETRIES = 2;
 /** How long a first size must hold before its picture is asked for. */

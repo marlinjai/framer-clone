@@ -1121,11 +1121,11 @@ the effect to appear as quickly as possible, and for a tasteful loading indicati
    times the GPU work while editing), and one shared context drawing every frame (option C; the right shape for
    motion in all frames later, but a renderer rewrite).
 2. **Bounded resources.** One still is made at a time (`src/lib/fxScene/stillQueue.ts`), so the canvas never holds more
-   than the live context plus one short-lived one; each starts in idle time; requests for the same picture (scene,
+   than the live context plus one still context, which one shared still renderer keeps while stills are asked for and releases four seconds after the last (so a scene is set up once for all the frames of a row, not once per frame); each starts in idle time; requests for the same picture (scene,
    size, pixel ratio) share one job; a request whose box left is dropped before it starts or aborted while it runs;
    six pictures nobody shows are kept, so a frame Live moves away from has its picture at once; a scene that cannot
    be drawn is not tried again for the same key. A box never on or near the screen asks for nothing.
-3. **Edits.** A changed scene or size draws the stills again 300 ms after the last change; the old picture stays until
+3. **Edits.** A changed scene or size draws the stills again 800 ms after the last change (setting a changed scene up is one main-thread task of about 0.4 s on a laptop, so it waits until tuning pauses; all frames are drawn in one shared still context, so it is paid once per edit, not once per frame); the old picture stays until
    the new one is there, so nothing blinks. The live frame keeps its still under the live scene until the live one has
    faded in, so switching frames never shows an empty box.
 4. **Faster published start** (the second pull request, stacked on the first). `settled` now starts in the browser's first idle moment after `load` (at most 500 ms),
