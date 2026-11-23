@@ -995,13 +995,24 @@ after the first review of pull request #452 (C3), which proved in all three engi
   `input` send 120 to 240 messages a second while dragged, and it was removed in all three engines): an emit of a name already
   pending is merged into it, and emits go after the pending writes and height, in the order of their first call, so the page
   still sees a write before an event that followed it. A merged emit runs the page's handlers once where the author called it
-  several times within about 50 ms; handlers set state, so that is the same end state. The shell also never sends more than 25
+  several times within about 50 ms. For a handler that sets a state that is the same end state, but not for one that toggles or
+  steps it: two emits merged leave a toggle flipped instead of back, and a step advanced by one instead of two (review 4, L4).
+  At a person's pace the first emit leaves at once, so this needs a programmatic burst or a key repeating faster than about 20 a
+  second; the shell's documentation tells authors to write a count as a number state when they need one. The shell also never sends more than 25
   messages in any second, counted as they leave (review 3, L1: a flush of 31 states at once passed 30 and lost the 31st); what
   does not fit waits, latest only, for the next flush. Errors are reported at most once a second. The broker's ceiling is then
   left for code that bypasses the client on purpose. The gate proves it in three engines: two writes per animation frame and a
   4 ms timer keep the block and end on their last values, a block growing to 400 pixels ends at 400, a slider dragged with the
   mouse (a write and an emit on every input) is kept and ends on its last value, and 31 states written at once all arrive at
   their last values.
+- What remains (review 4 of pull request #452): with the frame in its own process (Chromium's site isolation), a frame keeps
+  sending while the page's own main thread is stalled, and the queue is handled back to back once the page frees up. After a
+  stall of the page of more than about 3.5 seconds, an honest animating block's backlog arrives as one burst past 90 and the block
+  is removed as `flooded` (the review measured kept at 1.5 seconds, removed at 4.5). A hostile frame cannot cause such a stall,
+  since the window route is read once and the port is bounded, and the visitor already sees a frozen page; no grace period is
+  added (decided by the orchestrator). And since a frame's first window message must be its `hello`, a browser extension that
+  injects a script into every frame at document start and posts to the parent before the shell runs would remove an honest
+  block (`no hello`), where earlier versions ignored such a message; no common extension is known to do this.
 - One warning a frame: the first wrong message or reported error says `dropped a message or error, then silent`, and every later
   one is silent, so a frame cannot fill the page's console with text of its choosing (review 1, L2). Removal is always said. The
   frame's own errors stay in its own console, where the developer tools show them.
@@ -1013,8 +1024,8 @@ D95), inside a shop part, the sticky bar, a map, a void or unnamed tag or a refu
 `svg` or `math`, itself stored as `svg` or `math`, or stored as a void tag under a parent where `customCodeBoxTag` draws no box (a
 table part, a select, an option), is refused with a reason, takes no slot, and brings no broker and no `<meta>`. So is a block on or
 inside a tag that draws no element child as a box (`FRAMELESS_TAGS` in `applyCustomCode.ts`: `select`, `option`, `optgroup`,
-`datalist`, `textarea`, `canvas`, `video`, `audio`, `template`, `noscript`, `colgroup`; review 3 of pull request #452, L2): a frame
-there measures 0 by 0 in all three engines (a `canvas` draws it in Firefox only), and only Chromium loads it, so its hello would
+`datalist`, `textarea`, `canvas`, `video`, `audio`, `template`, `noscript`, `colgroup`, and since review 4 `progress`, `meter` and
+`rp`, compared in any case; review 3 of pull request #452, L2): a frame there measures 0 by 0 in all three engines (a `canvas` draws it in Firefox only), and only Chromium loads it, so its hello would
 replace a visible fallback, such as a select's options, with a frame nobody sees, while in WebKit and Firefox the block would take
 a slot for nothing.
 An HTML element directly under an SVG or MathML element is outside what those formats render (HTML belongs in a `foreignObject`, or

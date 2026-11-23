@@ -277,7 +277,10 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
  *   lumitra.emit(name)          fires a declared `custom:<name>` event (`name` or
  *                               `custom:name`); coalesced too: emits of one name
  *                               within one flush (about 50 ms) arrive as one,
- *                               after the writes pending with them
+ *                               after the writes pending with them, so a page
+ *                               handler that toggles or steps a state runs once
+ *                               for them; to count, write the count as a number
+ *                               state instead
  *   lumitra.resize(height)      asks for a height in pixels (sizing `content`);
  *                               coalesced like writes
  *   lumitra.ready()             a promise, resolved once the page has connected
