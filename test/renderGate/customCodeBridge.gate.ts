@@ -1249,11 +1249,12 @@ describe('the custom code bridge in chromium with site isolation', () => {
       // second clock for a missing hello: removed within 5 seconds of the frame's appearing.
       const appeared = Date.now();
       await until(page, "document.querySelector('#pre iframe')", 10_000);
-      await until(page, removed('pre'), 3_000);
+      // The bound is 4.5 s, under the 5 s hello clock it must beat: a loaded CI runner measured 3.09 s here.
+      await until(page, removed('pre'), 4_500);
       const gone = Date.now() - appeared;
       record(`costly first message without hello, site isolation: removed ${gone} ms after the frame was made`);
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
-      expect(gone).toBeLessThan(3_000);
+      expect(gone).toBeLessThan(4_500);
       const click = await clickToState(page);
       // No bound on the page's freeze here: the broker reads a frame's first window message once, by design, and this
       // frame makes that message its costly one (1.5 s in CI run 45119357537). The variant below bounds the freeze.
