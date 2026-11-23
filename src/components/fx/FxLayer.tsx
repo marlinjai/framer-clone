@@ -418,6 +418,8 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
   const latestStored = useRef(stored);
   // The stored value each wanted key was formed from, so a request draws the scene its key names (a later edit may land first).
   const storedByWanted = useRef(new Map<string, typeof stored>());
+  // The stored value the settled key was first requested with: a retry draws that scene even after its map entry is evicted.
+  const settledPair = useRef<{ key: string; stored: typeof stored } | null>(null);
   useBeforePaint(() => {
     latestStored.current = stored;
     if (wanted) {
@@ -444,7 +446,12 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
     if (!settledWanted || !size || !scene) return;
     const pixelRatio = stillPixelRatio(size.width, size.height, scene.dpr[1], window.devicePixelRatio || 1);
     const key = `${pixelRatio}|${settledWanted}`;
-    const requestStored = storedByWanted.current.get(settledWanted) ?? latestStored.current;
+    if (settledPair.current?.key !== settledWanted) {
+      settledPair.current = { key: settledWanted, stored: storedByWanted.current.get(settledWanted) ?? latestStored.current };
+    }
+    const requestStored = settledPair.current.stored;
+    const keyedWidth = size.width;
+    const keyedHeight = size.height;
     let retryTimer: number | undefined;
     // The old picture stays shown until the new one is there.
     setState((prev) => (prev === 'live' ? prev : 'loading'));
@@ -453,6 +460,8 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
       () => {
         const layer = layerRef.current;
         if (!layer || !layer.isConnected) return null;
+        // The picture must have the size its key names: a box resized while the job waited is asked again (no-host, retried).
+        if (layer.offsetWidth !== keyedWidth || layer.offsetHeight !== keyedHeight) return null;
         return {
           host: layer,
           stored: requestStored,

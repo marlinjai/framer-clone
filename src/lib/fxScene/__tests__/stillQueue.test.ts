@@ -192,6 +192,24 @@ describe('still queue', () => {
   });
 });
 
+describe('a retired no-host entry', () => {
+  it('does not take its replacement with it when its last asker leaves', async () => {
+    const h = harness();
+    const first = h.queue.request('k', () => null, () => {});
+    const second = h.queue.request('k', () => null, () => {});
+    h.runIdle();
+    expect(h.jobs).toHaveLength(0);
+    first();
+    const again = h.ask('k');
+    second();
+    h.runIdle();
+    expect(h.jobs).toHaveLength(1);
+    h.jobs[0].resolve(h.picture());
+    await h.settle();
+    expect(again.into).toHaveLength(1);
+  });
+});
+
 describe('stillPixelRatio', () => {
   it('is the live scene ratio on this screen, up to the scene highest', () => {
     expect(stillPixelRatio(400, 300, 1.75, 2)).toBe(1.75);
@@ -204,5 +222,11 @@ describe('stillPixelRatio', () => {
     const huge = stillPixelRatio(20000, 20000, 2, 2);
     expect(huge).toBeGreaterThanOrEqual(STILL_MIN_PIXEL_RATIO);
     expect(20000 * 20000 * huge * huge).toBeLessThanOrEqual(STILL_PIXEL_BUDGET);
+  });
+  it('lets the budget win over the floor for a box so large the floor would exceed it', () => {
+    const ratio = stillPixelRatio(200000, 200000, 2, 2);
+    expect(ratio).toBeGreaterThan(0);
+    expect(ratio).toBeLessThan(STILL_MIN_PIXEL_RATIO);
+    expect(200000 * 200000 * ratio * ratio).toBeLessThanOrEqual(STILL_PIXEL_BUDGET);
   });
 });

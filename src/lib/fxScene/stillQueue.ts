@@ -81,7 +81,7 @@ export const LASTING_FAILURES: ReadonlySet<string> = new Set(['refused', 'no-web
 
 /** The most pixels one still frame is drawn with: about a 1400 x 1400 picture, a bounded moment of GPU work and memory. Takes precedence over the ratio floor. */
 export const STILL_PIXEL_BUDGET = 2_000_000;
-/** The least pixel ratio a still frame is drawn at (a degenerate ratio of 0 is never asked for); the pixel budget wins over it, so a huge box is drawn small. */
+/** The least pixel ratio a still frame is drawn at (a degenerate ratio of 0 is never asked for); the pixel budget wins over it, so a huge box is drawn below the floor. */
 export const STILL_MIN_PIXEL_RATIO = 0.01;
 
 /**
@@ -93,7 +93,11 @@ export function stillPixelRatio(width: number, height: number, sceneMax: number,
   let ratio = Math.min(device, sceneMax);
   const area = width * height;
   if (area > 0 && area * ratio * ratio > STILL_PIXEL_BUDGET) ratio = Math.sqrt(STILL_PIXEL_BUDGET / area);
-  return Math.max(STILL_MIN_PIXEL_RATIO, Math.floor(ratio * 100) / 100);
+  const rounded = Math.floor(ratio * 100) / 100;
+  if (area <= 0) return Math.max(STILL_MIN_PIXEL_RATIO, rounded);
+  // The floor keeps a degenerate ratio of 0 out, but never lifts a picture over the budget: a huge box is drawn smaller than the floor.
+  const budgetRatio = Math.floor(Math.sqrt(STILL_PIXEL_BUDGET / area) * 1e6) / 1e6;
+  return Math.min(Math.max(STILL_MIN_PIXEL_RATIO, rounded), budgetRatio);
 }
 
 export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQueueOptions): StillQueue {
@@ -201,7 +205,8 @@ export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQ
     return () => {
       if (!known.askers.delete(asker) || known.askers.size > 0) return;
       if (known.state === 'queued') {
-        entries.delete(known.key);
+        // Only its own entry: a retired one (told no-host) may have been replaced under the same key.
+        if (entries.get(known.key) === known) entries.delete(known.key);
       } else if (known.state === 'running') {
         known.abort?.abort();
       } else {
