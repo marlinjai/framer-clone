@@ -12,17 +12,19 @@
 //     before the address, and the address is the server's (built from the
 //     rendering site's id and the hash), which the page's policy alone admits;
 //   - accepts `hello` only from that frame's own window (`source`), with the
-//     opaque origin a sandboxed frame has, once; a second `hello` or a second
-//     `load` of the frame removes it, and so does no `hello` within 5 seconds of
-//     the frame's `load`;
+//     opaque origin a sandboxed frame has, as its first window message: anything
+//     else first removes the frame, and so does a second `load` or no `hello`
+//     within 5 seconds of the frame's `load`. After `hello` the frame's window
+//     messages (and its nested frames') are only counted, never read: reading
+//     `event.data` is what costs the page (review 3 of pull request #452, M1);
 //   - transfers one port of a MessageChannel with `connect`, and from then on
 //     reads only that port, under every rule of the protocol: plain data of at
 //     most 64 kilobytes as JSON, 30 messages a second (counted with the frame's
 //     window messages; past 90 the frame is removed), a declared write of the
 //     right type within `min`, `max` and `options`, never `text` state, a declared
 //     `custom:<name>` (which runs state verbs only, Kit.emit), `resize` only for
-//     `sizing: 'content'`, among the second's first 10 messages, up to 10,000
-//     pixels; anything else is dropped, with one console warning a frame;
+//     `sizing: 'content'`, up to 10,000 pixels; anything else is dropped, with one
+//     console warning a frame;
 //   - sends each declared read at `connect` and on every change, read from the
 //     `data-fcs-<id>` attribute the runtime reflects on the state's scope, which
 //     is never written for `text` state;
@@ -36,7 +38,7 @@
 // leaves the fallback, for good. At most 4 blocks per page.
 //
 // PURE and client-safe: no React. Imports leaves only, for the size limit
-// (2 kilobytes gzipped on Next's real chunk, test/behaviour/runtime.spec.ts).
+// (2.2 kilobytes gzipped on Next's real chunk, test/behaviour/runtime.spec.ts; decision D73).
 
 import type { Kit } from '@/lib/behaviour/program';
 import { stateAttribute } from '@/lib/behaviour/names';
@@ -44,10 +46,9 @@ import { serveBlocks, type BlockHandle, type BlockState } from './registry';
 
 // The protocol's numbers, as contract.ts (BOX_LIMITS) states them, are written where they are
 // used: at most 4 blocks a page; `hello` within 5 s of `load`; a ping every 5 s, 3 missed remove
-// the frame; 64 KB and 30 messages a second, 90 remove the frame; resizes among a second's first 10
-// messages, up to 10,000 pixels; 3 thefts of the keyboard; a Tab in the page within 1 s explains a
+// the frame; 64 KB and 30 messages a second, 90 remove the frame; a height up to 10,000 pixels; 3 thefts of the keyboard; a Tab in the page within 1 s explains a
 // move, typing in it within 0.5 s does not. Literals, not names: esbuild
-// keeps a module's constants as variables, and every byte counts against the 2 kilobyte limit.
+// keeps a module's constants as variables, and every byte counts against the size limit.
 // The bridge tests in the browser hold each number.
 
 /** True when `value` may be written to a state of this definition. Strict: no coercion, no clamping, never `text`. */
@@ -220,8 +221,10 @@ export const createBroker = (kit: Kit): (() => void) => {
     };
 
     /** One message on the port, under every rule of the protocol. */
-    const onPort = ({ data }: MessageEvent): void => {
+    const onPort = (event: MessageEvent): void => {
+      // Counted before its data is read: a dropped message is never deserialised.
       if (over()) return note();
+      const data = event.data;
       // Its size as JSON, when it is plain data: primitives, arrays and plain objects only. A buffer, a typed
       // array, a Map or a Set says nothing as JSON however large it is, so such a message is refused.
       const size = sizeOf(data);
@@ -238,14 +241,15 @@ export const createBroker = (kit: Kit): (() => void) => {
     };
 
     const onMessage = (event: MessageEvent): void => {
-      const data = event.data;
       if (!frame) return;
       // Every window message of the frame counts against the same ceiling as its port, before hello and after,
-      // and so does one from a frame nested in it at any depth (a parent is readable across sites).
+      // and so does one from a frame nested in it at any depth (a parent is readable across sites). Only
+      // `source` is read: the data is read once per frame at most, below, since the frame chooses its cost.
       for (let at = event.source as Window | null; at; at = at == at.parent ? null : at.parent) if (at == frame.contentWindow) over();
-      if (event.source !== frame.contentWindow) return;
-      if (gone || event.origin !== 'null' || !data || data.fc !== 1 || data.kind !== 'hello') return;
-      if (hello) return end('a second hello');
+      if (event.source !== frame.contentWindow || hello || gone) return;
+      // The frame's first window message must be its hello: the shell sends it before any author code runs.
+      const data = event.data;
+      if (event.origin !== 'null' || !data || data.fc !== 1 || data.kind !== 'hello') return end('no hello');
       hello = true;
       clearTimeout(timer);
       const channel = new MessageChannel();
