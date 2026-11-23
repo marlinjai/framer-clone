@@ -670,8 +670,11 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       const seen = await bounded(page.evaluate(() => {
         const w = window as unknown as { __gap: number; __probes: { sent?: number }[]; __settled: unknown[] };
         return { gap: w.__gap, sent: w.__probes.find((p) => typeof p.sent === 'number')?.sent, settled: w.__settled, n: document.querySelector('[data-fc-scope]')?.getAttribute('data-fcs-n') };
-      }), 5_000);
-      if (seen === 'stuck') throw new Error('the page did not answer');
+      }).catch(() => 'crashed' as const), 5_000);
+      // A page that never answers, or whose process crashed (an unbounded walk of the array does that in WebKit), fails here.
+      expect(seen).not.toBe('stuck');
+      expect(seen).not.toBe('crashed');
+      if (seen === 'stuck' || seen === 'crashed') return;
       record(`one huge sparse array in ${engine}: the frame's send took ${seen.sent} ms, the page's longest loop gap ${Math.round(seen.gap)} ms`);
       expect(seen.n).toBe('2');
       expect(seen.settled).toEqual([{ id: 'huge', shown: true }]);
