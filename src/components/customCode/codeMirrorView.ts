@@ -5,7 +5,9 @@
 // docs/plans/2026-11-02-sandboxed-custom-code.md, D10 and D112).
 //
 // Keyboard: Tab is NOT bound, so Tab and Shift+Tab leave the editor as they leave any
-// field, and nobody is trapped in it. Indenting is Mod-] and Mod-[ (the default keymap),
+// field, and nobody is trapped in it. Read-only is CodeMirror's read-only state alone: the
+// content stays editable to the browser, so Tab still reaches it and the arrow keys and
+// PageDown move through it, while no edit goes in (`aria-readonly` says so). Indenting is Mod-] and Mod-[ (the default keymap),
 // undo and redo the editor's own history. The content carries the field's accessible
 // name and description. No linting, no formatting, no completion: it never runs the code.
 
@@ -46,10 +48,13 @@ const theme = EditorView.theme({
 export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions): CodeMirrorHandle {
   const editable = new Compartment();
   const named = new Compartment();
-  const attributesFor = (label: string) => {
-    const attributes: Record<string, string> = { 'aria-label': label, 'aria-multiline': 'true' };
-    if (options.describedBy) attributes['aria-describedby'] = options.describedBy;
-    return EditorView.contentAttributes.of(attributes);
+  let label = options.label;
+  let readOnly = options.readOnly;
+  const attributes = () => {
+    const values: Record<string, string> = { 'aria-label': label, 'aria-multiline': 'true' };
+    if (options.describedBy) values['aria-describedby'] = options.describedBy;
+    if (readOnly) values['aria-readonly'] = 'true';
+    return EditorView.contentAttributes.of(values);
   };
   let applying = false;
   const view = new EditorView({
@@ -69,9 +74,10 @@ export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions)
         // No indentWithTab: Tab moves the focus on (D112).
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping,
-        named.of(attributesFor(options.label)),
+        named.of(attributes()),
         options.placeholder ? placeholder(options.placeholder) : [],
-        editable.of([EditorState.readOnly.of(options.readOnly), EditorView.editable.of(!options.readOnly)]),
+        // Never `EditorView.editable.of(false)`: that takes the content out of the tab order (review 1 of #459, M2).
+        editable.of(EditorState.readOnly.of(readOnly)),
         theme,
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !applying) options.onChange(update.state.doc.toString());
@@ -90,11 +96,13 @@ export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions)
         applying = false;
       }
     },
-    setReadOnly(readOnly: boolean) {
-      view.dispatch({ effects: editable.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]) });
+    setReadOnly(next: boolean) {
+      readOnly = next;
+      view.dispatch({ effects: [editable.reconfigure(EditorState.readOnly.of(readOnly)), named.reconfigure(attributes())] });
     },
-    setLabel(label: string) {
-      view.dispatch({ effects: named.reconfigure(attributesFor(label)) });
+    setLabel(next: string) {
+      label = next;
+      view.dispatch({ effects: named.reconfigure(attributes()) });
     },
     focus() {
       view.focus();

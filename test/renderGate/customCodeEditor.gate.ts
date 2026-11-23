@@ -115,7 +115,8 @@ describe.each([
   it('takes no typing while read-only, and does again after', async () => {
     await open();
     await page.evaluate(() => (window as unknown as { __handle: { setReadOnly(v: boolean): void } }).__handle.setReadOnly(true));
-    expect(await page.locator('.cm-content').getAttribute('contenteditable')).toBe('false');
+    // Read-only by CodeMirror's state, announced; never taken out of the tab order (review 1 of #459, M2).
+    expect(await page.locator('.cm-content').getAttribute('aria-readonly')).toBe('true');
     await page.click('.cm-content');
     await page.keyboard.type('zzz');
     expect(await page.evaluate(() => (window as unknown as { __changes: string[] }).__changes)).toEqual([]);
@@ -123,6 +124,35 @@ describe.each([
     await page.click('.cm-content');
     await page.keyboard.type('y');
     expect(await page.evaluate(() => (window as unknown as { __changes: string[] }).__changes.length)).toBe(1);
+    expect(await page.locator('.cm-content').getAttribute('aria-readonly')).toBeNull();
+    await page.close();
+  });
+
+  it('read-only, is still reached with Tab and moved through and scrolled with the keyboard', async () => {
+    await open();
+    const lines = Array.from({ length: 200 }, (_, i) => `<p>line ${i}</p>`).join('\n');
+    await page.evaluate((value) => {
+      const handle = (window as unknown as { __handle: { setValue(v: string): void; setReadOnly(v: boolean): void } }).__handle;
+      handle.setValue(value);
+      handle.setReadOnly(true);
+    }, lines);
+    await page.focus('#before');
+    await page.keyboard.press(tab(_name));
+    expect(await focused(page)).toBe('editor');
+    const scrollTop = () => page.locator('.cm-scroller').evaluate((el) => el.scrollTop);
+    // The line the cursor is on (the editor marks it).
+    const head = () => page.locator('.cm-content .cm-activeLine').first().textContent();
+    expect(await scrollTop()).toBe(0);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    expect(await head()).toBe('<p>line 2</p>');
+    for (let i = 0; i < 4; i++) await page.keyboard.press('PageDown');
+    await expect.poll(scrollTop, { timeout: 2000 }).toBeGreaterThan(100);
+    // Nothing typed went in, and Tab still leaves.
+    await page.keyboard.type('zzz');
+    expect(await page.evaluate(() => (window as unknown as { __changes: string[] }).__changes)).toEqual([]);
+    await page.keyboard.press(tab(_name));
+    expect(await focused(page)).toBe('after');
     await page.close();
   });
 });
