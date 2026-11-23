@@ -114,6 +114,25 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 | 2026-11-23 | Approved as drawn: the editor chrome, the proposed dark and light, the phone layout | Marlin |
 | 2026-11-23 | Selection is a complete ring that blooms outward (`--ui-selection-ring`), never a one-sided edge such as the left bar on the selected Layers row or the selected page. Applied to every selection treatment in the editor and the home, consistently | Marlin |
 
+| 2026-11-23 | Publishing `@marlinjai/suite-theme-core` 0.2.0 to npm. Tagged `v0.2.0` on suite-theme `e477bb7`, published by the Trusted Publisher workflow; `tokens.css` byte-identical to 0.1.2 | Marlin, relayed by the coordinator |
+
+### Decided while building S2 (say so if you disagree)
+
+- **The switch is a radio group, not three pressed buttons.** Inside a menu, one of three is the menu's own radio pattern
+  (`menuitemradio` with `aria-checked`), which screen readers announce as a choice; choosing keeps the menu open.
+- **The editor's More menu now shows on the wide bar at every fold level.** It was hidden there until the last fold, so
+  Appearance would have been unreachable on a desktop. Unfolded, it holds only Appearance; the bar's own controls appear
+  in it only once they folded away (the compact bar keeps everything), so nothing shows twice. The fold measures the bar
+  as before, now with the More button in it from the start.
+- **Mint splits into `brand` and `brand-fill`.** `brand` is the primary as text, line, ring, dot and wash, dark green
+  `#06764a` in light. `brand-fill` is the mint fill of a button with dark ink (13 places, every `bg-brand` that carried
+  `text-brand-foreground`); the shared `Button` gets a dark green edge on it in light. Thin indicators (dots, slider
+  fills, drop lines) stay `brand`, which keeps 3 : 1 in light where mint would not.
+- **A site that cannot be resolved counts as a site**, so the root layout writes no `data-ui-theme` then: a database
+  hiccup must never put the editor's choice on a published page.
+- **`ColorModeSwitch`'s `tone` moves to S3**, together with the hard-coded grays of the preview toolbar it sits in;
+  switching only the switch would leave it mismatched with its bar.
+
 The welcome copy is the visual direction's ("Build and run your website in one place." and its two sentences), which he
 approved with the page.
 

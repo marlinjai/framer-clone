@@ -287,7 +287,8 @@ describe('the wide top bar, folding', () => {
     const badge = document.querySelector('[title^="A branch of"]') as HTMLElement;
     expect(badge.classList.contains('hidden')).toBe(expected >= 2);
 
-    // 3. Site settings, theme and history move into More at level 3; More shows on the wide bar only then.
+    // 3. Site settings, theme and history move into More at level 3. More shows at every level (it holds
+    //    Appearance), and holds the bar's controls only once they folded into it.
     for (const name of ['Site settings', 'Theme']) {
       const trigger = screen.getByRole('button', { name });
       if (expected >= 3) expect(trigger).toHaveClass('hidden');
@@ -296,7 +297,7 @@ describe('the wide top bar, folding', () => {
     const historyButton = screen.getByRole('button', { name: /^History \d+\/\d+$/ });
     // The history menu's own box, inside the wrapper that hides it at the last fold.
     expect(foldedBox(historyButton)).toBe(expected >= 3 ? historyButton.parentElement?.parentElement : null);
-    expect(moreButton().className.includes('lg:hidden')).toBe(expected < 3);
+    expect(moreButton().className).not.toContain('lg:hidden');
 
     // 4. Never folded: undo, redo, preview, the save status and the agent chip.
     for (const name of ['Undo', 'Redo', 'Preview', 'Agent editing']) {
@@ -337,6 +338,17 @@ describe('the wide top bar, folding', () => {
     expect(level()).toBe(0);
     resizeTo(1024);
     expect(level()).toBe(3);
+  });
+
+  it('unfolded, the More menu holds only Appearance (this browser), never a control the bar shows', () => {
+    renderBar(branch, 2400);
+    expect(level()).toBe(0);
+    act(() => {
+      fireEvent.keyDown(moreButton(), { key: 'Enter' });
+    });
+    const menu = screen.getByRole('menu');
+    expect(within(menu).queryAllByRole('menuitem')).toEqual([]);
+    expect(within(menu).getAllByRole('menuitemradio').map((el) => el.textContent?.trim())).toEqual(['System', 'Light', 'Dark']);
   });
 
   it('at the last fold, the More menu opens with the keyboard and holds only what folded into it, each a menu item', () => {

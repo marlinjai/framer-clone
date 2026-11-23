@@ -48,6 +48,7 @@ import { isRootStyleKey } from '@/lib/rules/rootProperties';
 import { findRuleIndex, moveRuleTo, namedState, namedStateOf, orderRules, stateRuleId } from '@/lib/rules/states';
 import type { StateDefinition } from '@/lib/components/definition';
 import { compactBehaviour } from '@/lib/behaviour/format';
+import { CUSTOM_CODE_PROP, hasCustomCode, parseCustomCode } from '@/lib/customCode/customCode';
 
 export type PropsRecord = Record<string, any>;
 
@@ -808,6 +809,21 @@ const ComponentModel: any = ComponentBase
       const clash = [...incoming].find((id) => !inside.has(id) && outside.has(id));
       if (clash) return { ok: false, reason: `${clash} is already an element elsewhere on the page.` };
       applySnapshot(self, snapshot as never);
+      return { ok: true };
+    },
+
+    // A custom code block names the code the guarded route stored (docs/plans/
+    // 2026-11-02-sandboxed-custom-code.md, slice C4): its hash and its title, one action so
+    // one undo step. Only a node that already is a block (it holds `customCode`, null before
+    // its first save) and only a value the renderers read as a block; anything else is refused
+    // with the reason and changes nothing.
+    setCustomCode(value: { sha256: string; title: string }): RuleWrite {
+      if (!hasCustomCode(self.props)) return { ok: false, reason: 'This element is not a custom code block.' };
+      const parsed = parseCustomCode({ sha256: value.sha256, title: value.title });
+      if (!parsed.ok || parsed.value.kind !== 'block') return { ok: false, reason: parsed.ok ? 'A block names a hash.' : parsed.reason };
+      const current = (self.props as Record<string, unknown>)[CUSTOM_CODE_PROP] as { sha256?: unknown; title?: unknown } | null;
+      if (current && current.sha256 === parsed.value.sha256 && current.title === parsed.value.title) return { ok: true };
+      self.props = { ...(self.props as Record<string, unknown>), [CUSTOM_CODE_PROP]: { sha256: parsed.value.sha256, title: parsed.value.title } };
       return { ok: true };
     },
 

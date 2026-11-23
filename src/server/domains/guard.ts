@@ -17,7 +17,7 @@ import 'server-only';
 //      session's companies holding the `sites` app grant, and the session's
 //      tenant group for it must be the site's                -> else 403
 //   4. the auth-brain permission on that workspace: `viewSite` to read, `editSite` to upload site images,
-//      `manageDomain` (workspace admin) to change            -> else 403
+//      `manageCustomCode` to write custom code, `manageDomain` (workspace admin) to change            -> else 403
 //      (OpenFGA not answering                   -> 503 authz_unavailable)
 //   5. with `requireCompanyOwner`, the session's role on the company that holds
 //      the workspace must be `owner`             -> else 403 owner_required
@@ -58,7 +58,7 @@ function forbidden(): DomainProjectResult {
 export async function authorizeDomainProject(
   req: Request,
   projectId: string,
-  action: Extract<FramerAction, 'viewSite' | 'editSite' | 'manageDomain' | 'publishSite' | 'eraseSiteData'>,
+  action: Extract<FramerAction, 'viewSite' | 'editSite' | 'manageDomain' | 'publishSite' | 'eraseSiteData' | 'manageCustomCode'>,
   prisma: PrismaClient = getPrismaClient(),
   options: { requireCompanyOwner?: boolean } = {},
 ): Promise<DomainProjectResult> {

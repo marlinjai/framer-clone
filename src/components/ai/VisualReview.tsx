@@ -241,7 +241,7 @@ export function ReviewReport({ state, onUndo }: { state: ReviewState; onUndo?: (
         </details>
       )}
       {result.notes.length > 0 && (
-        <ul className="list-disc pl-4 text-amber-700 dark:text-amber-400">
+        <ul className="list-disc pl-4 text-warning">
           {result.notes.map((n) => (
             <li key={n}>{n}</li>
           ))}
@@ -394,7 +394,7 @@ export const PolishPageDialog = observer(function PolishPageDialog({ open, onOpe
               <>
                 <FindingsList findings={audit.findings} />
                 {audit.missing.length > 0 && (
-                  <p className="text-xs text-amber-700 dark:text-amber-400">Not on the canvas, not measured: {audit.missing.join(', ')}.</p>
+                  <p className="text-xs text-warning">Not on the canvas, not measured: {audit.missing.join(', ')}.</p>
                 )}
               </>
             ) : null}

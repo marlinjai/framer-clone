@@ -18,6 +18,10 @@ vi.mock('@/server/sites/requestSite', () => ({
   getRequestLanguage: async () => 'en',
   getPrimaryHostForRequest: async () => null,
 }));
+const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
+vi.mock('next/headers', () => ({
+  cookies: async () => ({ get: (name: string) => (name === 'lumitra_ui_theme' && cookie.value !== undefined ? { value: cookie.value } : undefined) }),
+}));
 vi.mock('next/font/google', () => ({ Geist: () => ({ variable: 'geist' }), Geist_Mono: () => ({ variable: 'geist-mono' }) }));
 // The site sheet, which a build compiles; nothing here reads it.
 vi.mock('../(site)/site.css', () => ({}));
@@ -33,11 +37,18 @@ const withSite = (t: SiteTheme) => {
 
 afterEach(() => {
   site.current = null;
+  cookie.value = undefined;
 });
 
 async function siteLayout(): Promise<string> {
   const { default: SiteLayout } = await import('@/app/(site)/layout');
   return renderToStaticMarkup(await SiteLayout({ children: <p>page</p> }));
+}
+
+async function rootHtml(): Promise<string> {
+  (globalThis as { React?: typeof React }).React = React;
+  const { default: RootLayout } = await import('@/app/layout');
+  return /<html[^>]*>/.exec(renderToStaticMarkup(await RootLayout({ children: null })))![0];
 }
 
 async function rootClass(): Promise<string | undefined> {
@@ -96,6 +107,35 @@ describe('the root layout', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await rootClass()).toBe('light');
     expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+});
+
+describe('the interface mode on <html> (data-ui-theme)', () => {
+  it('the editor host gets the chosen mode from the cookie, and none without one (System)', async () => {
+    cookie.value = 'light';
+    expect(await rootHtml()).toContain('data-ui-theme="light"');
+    cookie.value = 'dark';
+    expect(await rootHtml()).toContain('data-ui-theme="dark"');
+    cookie.value = undefined;
+    expect(await rootHtml()).not.toContain('data-ui-theme');
+    cookie.value = 'purple';
+    expect(await rootHtml()).not.toContain('data-ui-theme');
+  });
+
+  it('a published site never gets it, whatever the cookie says, and keeps its own class', async () => {
+    cookie.value = 'light';
+    withSite(theme('dark'));
+    const html = await rootHtml();
+    expect(html).not.toContain('data-ui-theme');
+    expect(html).toContain('class="dark"');
+  });
+
+  it('a site that cannot be resolved counts as a site, never as the editor', async () => {
+    cookie.value = 'dark';
+    site.current = new Error('database down');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await rootHtml()).not.toContain('data-ui-theme');
     error.mockRestore();
   });
 });

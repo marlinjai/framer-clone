@@ -38,6 +38,8 @@ import { expandPage, literalPageRoots, type PageExpansion } from '@/lib/componen
 import { extractBreakpoints, type ComponentSnapshotLike } from '@/lib/renderer/server/componentSnapshot';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { getComponentEntry } from '@/lib/componentRegistry';
+import { CUSTOM_CODE_PROP } from '@/lib/customCode/customCode';
+import { CUSTOM_CODE_FALLBACK_TEXT } from '@/lib/customCode/fallbackText';
 import { CLOSED_SHOP_PART_MESSAGE, INTERACTIVE_SHOP_PART_MESSAGE, LABEL_SHOP_PART_MESSAGE, REQUIRED_SHOP_PART_MESSAGE, buildShopParts, shopPartRefusal, holdsOutsidePart, holdsRequiredShopPart, nearestShopControlId, shopControlKindOf, withoutOutsideRoles, shopLocaleOf, withShopParts, type ShopTreeNode } from '@/lib/commerce/parts';
 import type { ApplyOutcome, GenerationUndoRecord } from '@/lib/ai/pageGen/apply';
 import { isVoidTag } from '@/lib/drag/voidTags';
@@ -590,6 +592,36 @@ const PageModel = PageWithComponents
     parent.addChild(child, index);
     self.updatedAt = new Date();
     return child;
+  },
+
+  // A sandboxed custom code block (docs/plans/2026-11-02-sandboxed-custom-code.md, slice C4,
+  // D101 and D102): a `div` whose `customCode` is null until its code is saved through the
+  // guarded route, holding one paragraph of fallback in the site language. One action, so one
+  // undo step. In the page's tree only, inside or after the selection: never floating, and never
+  // where a shop control would refuse it. Returns the block so the caller can select it.
+  insertCustomCodeBlock(target: InsertTarget): ComponentInstance | undefined {
+    if (target.kind === 'floating') return undefined;
+    const { parent, index } = insertPlace(self, target);
+    if (isTextNodeType(parent.type) || isPlacementType(parent.type) || isVoidTag(String(parent.type))) {
+      console.warn('[PageModel] a custom code block needs a parent that holds children');
+      return undefined;
+    }
+    const locale = shopLocaleOf(siteLanguageOf(self));
+    const id = uuidv4();
+    const block = createIntrinsicComponent(`custom-code-${id}`, 'div', {
+      [CUSTOM_CODE_PROP]: null,
+      style: { width: '100%', minHeight: '240px', position: 'relative' },
+    });
+    block.setLabel('Custom code');
+    block.addChild(createIntrinsicComponent(`custom-code-fallback-${id}`, 'p', { children: CUSTOM_CODE_FALLBACK_TEXT[locale] }));
+    const refusal = shopPartRefusal(getSnapshot(block) as never, ancestorChain(self, parent), definitionTreeOf(self));
+    if (refusal) {
+      refuseShopEdit(self, refusal);
+      return undefined;
+    }
+    parent.addChild(block, index);
+    self.updatedAt = new Date();
+    return block;
   },
 
   // Place a reusable component. The caller, ProjectModel.placeComponent, has the

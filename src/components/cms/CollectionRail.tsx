@@ -217,7 +217,7 @@ const CollectionRail: React.FC<CollectionRailProps> = ({
               type="button"
               onClick={startCreate}
               disabled={busy}
-              className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md bg-brand px-3 text-[13px] font-semibold text-brand-foreground shadow-xs transition-colors hover:bg-brand/90 disabled:opacity-50"
+              className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md bg-brand-fill px-3 text-[13px] font-semibold text-brand-foreground shadow-xs transition-colors hover:bg-brand-fill/90 disabled:opacity-50"
             >
               <Plus className="size-4" />
               New collection

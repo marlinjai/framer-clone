@@ -293,7 +293,7 @@ export function SiteImageField({ projectId, kind, inputId, inputRef, label, valu
         </div>
       )}
       {warnings.length > 0 && (
-        <ul id={`${inputId}-warnings`} className="flex flex-col gap-0.5 text-[11px] text-amber-700 dark:text-amber-400" data-testid={`site-image-warnings-${kind}`}>
+        <ul id={`${inputId}-warnings`} className="flex flex-col gap-0.5 text-[11px] text-warning" data-testid={`site-image-warnings-${kind}`}>
           {warnings.map((w) => (
             <li key={w}>{w}</li>
           ))}

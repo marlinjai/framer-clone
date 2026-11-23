@@ -159,7 +159,7 @@ describe('the activity feed', () => {
     );
     const panel = screen.getByRole('region', { name: 'Agent activity' });
     fireEvent.click(within(panel).getByRole('button', { name: /Agent activity/ }));
-    expect(within(panel).getByRole('img', { name: 'Needs your approval' })).toHaveClass('text-amber-700');
+    expect(within(panel).getByRole('img', { name: 'Needs your approval' })).toHaveClass('text-warning');
     expect(within(panel).getByRole('img', { name: 'Done' })).toBeInTheDocument();
     const meta = within(panel).getAllByTitle(/· Claude$/)[0];
     expect(meta).toHaveClass('text-[11px]');

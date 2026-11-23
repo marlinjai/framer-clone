@@ -45,6 +45,10 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
     uses: 1, kind: 'mains-only',
     why: 'the stored 3D models belong to a main site, as images do: one read of the site row stamps the isolation columns and REFUSES a branch id (callers resolve a branch to its main first); every other query is on site_models, keyed by the site',
   },
+  'src/server/customCode/authoring.ts': {
+    uses: 15, kind: 'sees-branches',
+    why: 'the custom code write locks the site row by id and REFUSES a branch (its blobs would not exist for main after a merge, D100); the status read says whether the id is a branch; the budget reads the named hashes from the site\'s pages, definitions and revisions, all keyed by that one site',
+  },
   'src/server/customCode/liveBlocks.ts': {
     uses: 2, kind: 'mains-only',
     why: 'the live blobs a published page names, keyed by the published site and its switch; never called on a branch preview (it answers null first), and a branch is never published',
