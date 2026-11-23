@@ -14,7 +14,8 @@
 //
 //   200 { status: 'paid', receipt: { documentId, number } | null, receiptError }
 //         paid; the receipt, or why it could not be issued yet (the payment stands)
-//   200 { status: 'paid' }   Stripe: the session was paid (its webhook may still be on the way); the receipt follows
+//   200 { status: 'paid', provider: 'stripe', receipt: null }   Stripe: the session was paid (its webhook may still be
+//                            on the way); the receipt follows
 //   200 { status: 'redirect', redirectUrl }   Stripe: send the buyer to its checkout page, the same one on every click
 //   402 payment_declined     the (simulated) card was declined: the order is closed and its stock released
 //   404 not_found            no such order on this storefront (another shop's id answers the same)
@@ -200,7 +201,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
               console.error(`[payments] order ${orderId}: the first attempt at job ${jobId} failed to run; the worker retries it:`, err);
             });
           }
-          if (answer.outcome.status === 'paid') return Response.json({ status: 'paid' });
+          if (answer.outcome.status === 'paid') return Response.json({ status: 'paid', provider: 'stripe', receipt: null });
           return jsonError('payment_closed', `the order is ${answer.outcome.status} and takes no payment`, 409, {
             status: answer.outcome.status,
           });

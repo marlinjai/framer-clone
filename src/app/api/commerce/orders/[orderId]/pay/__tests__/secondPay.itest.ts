@@ -220,7 +220,7 @@ describe('pressing Pay again on a Stripe order', () => {
     await payOrder(paidOrder, { buyer: buyer() });
     const session = stripe.only();
     Object.assign(session, { status: 'complete', paid: true });
-    expect(await payOrder(paidOrder, {})).toEqual({ status: 200, body: { status: 'paid' } });
+    expect(await payOrder(paidOrder, {})).toEqual({ status: 200, body: { status: 'paid', provider: 'stripe', receipt: null } });
     expect((await paymentOf(paidOrder)).status).toBe('paid');
     expect(await payOrder(paidOrder, {})).toMatchObject({ status: 409, body: { error: { code: 'payment_closed' } } });
 
