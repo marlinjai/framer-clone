@@ -224,9 +224,9 @@ describe('reading a checkout session and telling an answer from none (slice B7)'
   });
 
   it('a message of a request without an answer names the path, never an id or the request', async () => {
-    const err = await httpStripeApi(CONFIG, (async () => Promise.reject(new TypeError('fetch failed to cs_secret'))) as unknown as typeof fetch)
+    const err = (await httpStripeApi(CONFIG, (async () => Promise.reject(new TypeError('fetch failed to cs_secret'))) as unknown as typeof fetch)
       .retrieveCheckoutSession({ accountId: 'acct_123', sessionId: 'cs_secret' })
-      .catch((e: unknown) => e as Error);
+      .catch((e: unknown) => e)) as Error;
     expect(err.message).toBe('Stripe gave no answer to GET /v1/checkout (TypeError)');
   });
 });
