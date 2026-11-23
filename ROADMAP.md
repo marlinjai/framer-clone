@@ -114,7 +114,7 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
 - [ ] Scroll-driven page type (later): an opt-in page type for scrollytelling pages, the only place
   GSAP ScrollTrigger pinning and scrubbing is used, because there the scroll is the requested
   interaction (the sanctioned exception to the scroll-jacking rule, as the scroll-craft skill
-  defines it). Not a general editor feature. Needs a plan. (2026-10-23)
+  defines it). Not a general editor feature. Needs a plan. (2026-11-23)
 - [x] Published site essentials, the rest of the owner's 19-point checklist of 2026-10-23. Built by
   2026-10-24 (plan sections "as built"): Site settings, lang, favicon set, Open Graph defaults, title
   template, robots.txt, sitemap.xml, canonical, noindex, JSON-LD, the designable 404 page, loading
@@ -136,7 +136,7 @@ build wave and stays outside this file's scope (`type: roadmap`, exempt from the
   version", so a builder that offers them to its customers cannot ship them. Instead build the
   few worth having ourselves (a text reveal, a marquee, a logo loop) or take them from MIT sources
   (Magic UI, Motion), avoiding the vibe-coded tells in the round 2 plan
-  (docs/plans/2026-10-23-ai-design-quality-round-2.md). (2026-10-23)
+  (docs/plans/2026-10-23-ai-design-quality-round-2.md). (2026-11-23)
 - [x] Custom domains (Option B): a site owner connects their own domain to a published site
   (TXT ownership check, per-domain Let's Encrypt certificates through Traefik's file provider,
   a Domains panel in the editor; code in #103). Live since 2026-10-20: `domains.lumitra.co`
@@ -321,21 +321,21 @@ connections to the suite. The four lines below are in that order.
 - [ ] 8c. A discount on the whole invoice ("Gesamtrabatt", as sevdesk), split across the tax rates
   in proportion and printed so the tax per rate stays right (section 14 UStG): needs its own small
   plan touching the tax engine, the totals block and the completeness check. Decided 2026-10-23 as
-  later work, after the in-place editor. (2026-10-23)
+  later work, after the in-place editor. (2026-11-23)
 - [ ] 8d. Text snippets and placeholders for intro and closing texts (sevdesk's "Textvorlage" and
   "Platzhalter", for example the customer's name), with placeholders resolved to frozen data at
-  issue: after the in-place editor is in daily use. Decided 2026-10-23 as later work. (2026-10-23)
+  issue: after the in-place editor is in daily use. Decided 2026-10-23 as later work. (2026-11-23)
 - [ ] 9. E-invoicing for Books documents (XRechnung and ZUGFeRD profile EN 16931, built from the
   frozen document data, ZUGFeRD as a PDF/A-3 with the XML embedded): write its own plan in the
   first half of 2027, so every regular-taxed company using the Books can issue e-invoices before
   the German business-to-business obligation of 1 January 2028 (section 19 small businesses such
   as Whiz-Art Media are exempt). Decided 2026-10-22 as phase 7 of the completed visual template
   composer plan of 2026-10-21 (in docs/plans, decision 14 has the background; the roadmap check
-  refuses an open line naming a completed plan's path). (2026-10-23)
+  refuses an open line naming a completed plan's path). (2026-11-23)
 - [ ] 10. English documents in the Books (phase 6 of the completed visual template composer plan,
   "not now", decided 2026-10-22): an `en-GB` label dictionary, date and number formats, the locale
   on the template and the completeness check per locale. Built when a client needs an English
-  invoice; about 3 agent days. (2026-10-23)
+  invoice; about 3 agent days. (2026-11-23)
 - [x] The framer-clone Coolify Postgres database with the published port 5439: checked on
   2026-10-15, there is no framer-clone database or app in Coolify any more and port 5439 is closed
   on both servers, so nothing is left to restart. Done 2026-10-15.
