@@ -37,6 +37,8 @@ interface Server {
   saves: Record<string, unknown>[];
   posts: Record<string, unknown>[];
   refuse: boolean;
+  /** While set, the custom code post waits for it. */
+  hold?: Promise<void>;
 }
 
 /** True when the saved project holds a node of this id on any page. */
@@ -47,6 +49,8 @@ function holds(saved: Record<string, unknown> | undefined, nodeId: string): bool
 async function open(browser: Browser, server: Server): Promise<Page> {
   const { page, crashes } = await openBundle(browser, bundle, {}, async (p) => {
     let version = 1;
+    // What the route stored, by hash, read back as the blob read answers it.
+    const blobs = new Map<string, { title: string; document: string; declaration: CustomCodeDeclaration }>();
     // The open editor's live stream (another tab's saves): open, and quiet.
     await p.route('**/api/projects/*/events?*', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': quiet\n\n' }));
     await p.route('**/api/projects/save', async (route) => {
@@ -58,18 +62,26 @@ async function open(browser: Browser, server: Server): Promise<Page> {
     await p.route('**/api/projects/*/custom-code**', async (route) => {
       const request = route.request();
       if (request.method() === 'GET') {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STATUS) });
+        const sha256 = new URL(request.url()).searchParams.get('sha256');
+        const blob = sha256 ? blobs.get(sha256) : undefined;
+        const json = !sha256 ? STATUS : blob ? { sha256, ...blob, createdAt: '2026-11-23T00:00:00.000Z', blocked: false } : null;
+        await route.fulfill(json
+          ? { status: 200, contentType: 'application/json', body: JSON.stringify(json) }
+          : { status: 404, contentType: 'application/json', body: JSON.stringify({ error: { code: 'blob_not_found', message: 'No such code.' } }) });
         return;
       }
-      const body = JSON.parse(request.postData() ?? '{}') as { nodeId: string; document: string; declaration: CustomCodeDeclaration };
+      const body = JSON.parse(request.postData() ?? '{}') as { nodeId: string; title: string; document: string; declaration: CustomCodeDeclaration };
       server.posts.push(body);
+      if (server.hold) await server.hold;
       const answer = (status: number, json: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(json) });
       if (server.refuse) return answer(429, { error: { code: 'rate_limited', message: RATE_LIMITED } });
       const saved = server.saves.at(-1);
       if (!holds(saved, body.nodeId)) {
         return answer(409, { error: { code: 'node_not_saved', message: 'The saved page does not hold this block yet.' } });
       }
-      return answer(201, { sha256: await customCodeHash(body.document, body.declaration), created: true });
+      const sha256 = await customCodeHash(body.document, body.declaration);
+      blobs.set(sha256, { title: body.title, document: body.document, declaration: body.declaration });
+      return answer(201, { sha256, created: true });
     });
   // The editor runs on https, where the panel's hash (Web Crypto) is available.
   }, 'https://canvas-probe.local');
@@ -157,6 +169,43 @@ describe.each([
     expect(await customCodeOf(page, id)).toBeNull();
     // The draft is kept for the next try.
     expect(await section.locator('.cm-content').textContent()).toBe('tick');
+    await page.close();
+  }, 180_000);
+
+  it('takes no typing in the real code field while a save runs, also after selecting away and back', async () => {
+    let release = () => {};
+    const server: Server = { saves: [], posts: [], refuse: false, hold: new Promise<void>((resolve) => { release = resolve; }) };
+    const page = await open(browser, server);
+    const id = await insertBlock(page);
+    await write(page, 'Clock', 'tick');
+    const section = page.getByTestId('custom-code-section');
+    await section.getByRole('button', { name: 'Save code' }).click();
+    await expect.poll(() => server.posts.length, { timeout: 15_000 }).toBe(1);
+    const field = section.locator('.cm-content');
+    await expect.poll(() => field.getAttribute('aria-readonly')).toBe('true');
+    await field.click();
+    await page.keyboard.type(' tock');
+    expect(await field.textContent()).toBe('tick');
+
+    // Away and back while the post is still held (review 2 of #459, M1): still locked.
+    await page.evaluate(() => (window as unknown as { __select(id: string): void }).__select('root'));
+    await section.waitFor({ state: 'detached' });
+    await page.evaluate((nodeId) => (window as unknown as { __select(id: string): void }).__select(nodeId), id);
+    await section.locator('[data-custom-code-editor="rich"] .cm-content').waitFor();
+    await expect.poll(() => field.getAttribute('aria-readonly')).toBe('true');
+    expect(await section.getByRole('button', { name: 'Saving code…' }).isDisabled()).toBe(true);
+    await field.click();
+    await page.keyboard.type(' tock');
+    expect(await field.textContent()).toBe('tick');
+
+    release();
+    await expect.poll(() => customCodeOf(page, id), { timeout: 15_000 }).not.toBeNull();
+    await expect.poll(() => section.locator('[data-custom-code-notice]').textContent()).toBe('Code saved. Publish the page to put it live.');
+    await expect.poll(() => field.getAttribute('aria-readonly')).toBeNull();
+    expect(await field.textContent()).toBe('tick');
+    expect(await page.locator('[data-custom-code-announcement]').textContent()).toBe('Code saved. Publish the page to put it live.');
+    expect(server.posts).toHaveLength(1);
+    expect((page as unknown as { __crashes: string[] }).__crashes).toEqual([]);
     await page.close();
   }, 180_000);
 });

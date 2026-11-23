@@ -15,6 +15,8 @@ interface GateWindow {
   __customCodeOf(nodeId: string): unknown;
   __selectedId(): string | undefined;
   __pageId(): string | undefined;
+  /** Selects a node by id ('root' for the page's root), as a click in Layers would. */
+  __select(nodeId: string): void;
 }
 
 const w = window as unknown as GateWindow;
@@ -44,3 +46,9 @@ w.__customCodeOf = (nodeId) => {
 };
 w.__selectedId = () => editorStore().editorUI.selectedComponent?.id;
 w.__pageId = () => editorStore().editorUI.currentPage?.id;
+w.__select = (nodeId) => {
+  const ui = editorStore().editorUI;
+  const root = ui.currentPage?.appComponentTree as unknown as { id: string } | undefined;
+  const node = nodeId === 'root' ? root : find(root as never, nodeId);
+  ui.selectComponent(node as never);
+};
