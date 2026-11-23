@@ -109,7 +109,11 @@ async function write(page: Page, title: string, code: string) {
   await section.getByLabel('Title of the custom code block').fill(title);
   const field = section.locator('.cm-content');
   await expect.poll(() => field.getAttribute('aria-label')).toBe(`Code of ${title}`);
-  await field.click();
+  // The editor can remount once more after the title settles (webkit), so retry until the click lands on a live, focused field.
+  await expect(async () => {
+    await field.click({ timeout: 3_000 });
+    expect(await field.evaluate((el) => el === document.activeElement || el.contains(document.activeElement))).toBe(true);
+  }).toPass({ timeout: 20_000 });
   await page.keyboard.type(code);
 }
 
