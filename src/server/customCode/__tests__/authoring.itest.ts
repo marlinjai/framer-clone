@@ -330,7 +330,7 @@ describe('the site budget (live code: named by the working copy or a kept revisi
     if (!refused.ok && 'refusal' in refused) {
       // It says what counts and what frees space (review 1, L2).
       expect(refused.refusal.message).toMatch(/1 MB/);
-      expect(refused.refusal.message).toContain('last 30 published versions');
+      expect(refused.refusal.message).toContain('saved pages and components and its last 30 published versions');
       expect(refused.refusal.message).toContain('stops counting once the page is saved if it was never published');
     }
   });
@@ -371,7 +371,7 @@ describe('the site budget (live code: named by the working copy or a kept revisi
       for (const spoof of [hashes[1], 'e'.repeat(64)]) {
         const refused = await writeCustomCodeBlob(input({ code: addition, replaces: spoof }));
         await expectRefusal(refused, 'replaces_mismatch', 409);
-        if (!refused.ok && 'refusal' in refused) expect(refused.refusal.message).toMatch(/Reload the editor/);
+        if (!refused.ok && 'refusal' in refused) expect(refused.refusal.message).toMatch(/Copy your code first.*reload the editor/);
       }
       expect(await audits()).toHaveLength(before);
       expect(await prisma.customCodeBlob.count({ where: { siteId: SITE_ID, title: 'Greeting', document: addition.document } })).toBe(0);

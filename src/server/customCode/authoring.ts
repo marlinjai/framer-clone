@@ -227,7 +227,7 @@ export async function writeCustomCodeBlob(
         if (named !== input.replaces) {
           return {
             ok: false,
-            refusal: refusal('replaces_mismatch', 'The saved page names other code for this block than the request replaces. Reload the editor so it shows the block as saved, then save the code again.'),
+            refusal: refusal('replaces_mismatch', 'The saved page names other code for this block than the request replaces. Copy your code first, because a reload closes unsaved edits; then reload the editor so it shows the block as saved, and save the code again.'),
           } as const;
         }
       }
@@ -269,7 +269,7 @@ export async function writeCustomCodeBlob(
           ok: false,
           refusal: refusal(
             'site_budget',
-            `This site's saved page and its last ${REVISIONS_KEPT} published versions hold ${sizeInWords(used)} of code, and this block adds ${sizeInWords(code.bytes)}; a site holds at most ${sizeInWords(BOX_LIMITS.siteBytes)}. Make the code smaller. A block removed from the page stops counting once the page is saved if it was never published, and otherwise only once none of the last ${REVISIONS_KEPT} published versions holds it.`,
+            `This site's saved pages and components and its last ${REVISIONS_KEPT} published versions hold ${sizeInWords(used)} of code, and this block adds ${sizeInWords(code.bytes)}; a site holds at most ${sizeInWords(BOX_LIMITS.siteBytes)}. Make the code smaller. A block removed from a page stops counting once the page is saved if it was never published, and otherwise only once none of the last ${REVISIONS_KEPT} published versions holds it.`,
           ),
         } as const;
       }
