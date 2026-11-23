@@ -21,6 +21,7 @@ import {
 } from '@/lib/componentRegistry';
 import { useDragSource } from '@/lib/drag';
 import { SiteComponents } from './SiteComponents';
+import { CustomCodeInsertItem } from '@/components/customCode/CustomCodeInsertItem';
 
 const ComponentItem = ({ entry, onTapInsert }: { entry: ComponentRegistryEntry; onTapInsert?: (registryId: string) => void }) => {
   const IconComponent = entry.icon;
@@ -61,9 +62,11 @@ export interface ComponentsPanelProps {
   onTapInsert?: (registryId: string) => void;
   /** Place one of the site's components on tap instead of drag (the phone sheet). */
   onTapPlace?: (definitionId: string) => void;
+  /** A custom code block was added (its item is always a button; the phone sheet closes). */
+  onCustomCodeInserted?: () => void;
 }
 
-const ComponentsPanel = observer(({ onTapInsert, onTapPlace }: ComponentsPanelProps = {}) => {
+const ComponentsPanel = observer(({ onTapInsert, onTapPlace, onCustomCodeInserted }: ComponentsPanelProps = {}) => {
   const basicComponents = listComponentsByCategory('basic');
   const layoutComponents = listComponentsByCategory('layout');
   const dataComponents = listComponentsByCategory('data');
@@ -142,6 +145,9 @@ const ComponentsPanel = observer(({ onTapInsert, onTapPlace }: ComponentsPanelPr
           </div>
         </div>
       )}
+
+      {/* Shows only where a block can be written (sandboxed custom code, slice C4). */}
+      <CustomCodeInsertItem onInserted={onCustomCodeInserted} />
 
       {commerceComponents.length > 0 && (
         <div>

@@ -16,6 +16,7 @@ import AuthUnavailable from '../AuthUnavailable';
 import ClosedBranch from '../ClosedBranch';
 import { loadProjectSnapshot } from './loader';
 import EditorMount from './EditorMount';
+import { isCustomCodeAvailable } from '@/lib/customCode/authoring';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,5 +57,7 @@ export default async function ProjectEditorPage({
     return <ClosedBranch notice={result.notice} />;
   }
 
-  return <EditorMount projectSnapshot={result.snapshot} projectVersion={result.version} site={result.site} branch={result.branch} />;
+  return <EditorMount projectSnapshot={result.snapshot} projectVersion={result.version} site={result.site} branch={result.branch}
+      // Sandboxed custom code authoring (slice C4, D99): read on the server, handed down as a boolean.
+      customCodeAvailable={isCustomCodeAvailable(process.env.CUSTOM_CODE_AVAILABLE)} />;
 }

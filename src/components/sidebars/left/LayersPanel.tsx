@@ -66,6 +66,7 @@ import { ContextMenu, type MenuItem, type MenuCloseReason } from './ContextMenu'
 import { derivedRowsOf } from '@/lib/layers/fxRows';
 import { breakpointRefsOf, layerIconOf, viewportIconOf } from '../layerIcon';
 import { FxSceneRows } from './FxSceneRows';
+import { CUSTOM_CODE_PROP, hasCustomCode, parseCustomCode } from '@/lib/customCode/customCode';
 
 // Touch screens (no hover): the selected row keeps its action cluster visible
 // and its name makes room for it (plan docs/plans/2026-10-24-editor-on-phones.md).
@@ -664,6 +665,8 @@ const LayerNode = observer(({ component, depth, breakpointId, breakpoints, hidde
           {name}
         </span>
 
+        <CustomCodeBadge props={component.props} />
+
         <RowActions
           component={component}
           isTextRow={isTextRow}
@@ -698,6 +701,33 @@ const LayerNode = observer(({ component, depth, breakpointId, breakpoints, hidde
 });
 
 LayersPanel.displayName = 'LayersPanel';
+
+/**
+ * A sandboxed custom code block's mark in its row (plan docs/plans/2026-11-02-sandboxed-custom-code.md,
+ * slice C4): its tag reads as a plain box, so the badge says what it is and whether it has code that
+ * runs. The words are visible, so a screen reader reads them with the row's name.
+ */
+function CustomCodeBadge({ props }: { props: unknown }) {
+  if (!hasCustomCode(props)) return null;
+  const value = (props as Record<string, unknown>)[CUSTOM_CODE_PROP];
+  const parsed = value === null ? null : parseCustomCode(value);
+  const text = parsed === null ? 'No code' : parsed.ok && parsed.value.kind === 'block' ? 'Code' : parsed.ok ? 'Proposed' : 'Fallback';
+  const title = parsed === null
+    ? 'Custom code block, no code saved yet'
+    : parsed.ok && parsed.value.kind === 'block'
+      ? 'Custom code block'
+      : parsed.ok ? 'Custom code block, proposed and not active' : 'Custom code block, not valid: shows its fallback';
+  return (
+    <span
+      data-layer-custom-code-badge=""
+      title={title}
+      className="flex-none rounded-[4px] border border-border px-1 text-[10px] leading-[14px] text-muted-foreground group-hover:hidden group-focus-within:hidden"
+    >
+      <span className="sr-only">{title}: </span>
+      <span aria-hidden="true">{text}</span>
+    </span>
+  );
+}
 LayerNode.displayName = 'LayerNode';
 BreakpointRow.displayName = 'BreakpointRow';
 

@@ -41,3 +41,4 @@ Uses MobX State Tree with a `RootStore` containing:
 
 - [Architecture](/projects/framer-clone/architecture) — Ground wrapper system and state management
 - [Transform System](/projects/framer-clone/transform-system) — Zero-React-render canvas transforms
+- [Custom code author API](/projects/framer-clone/custom-code-author-api): writing a sandboxed custom code block, the `lumitra` bridge, limits and refusals

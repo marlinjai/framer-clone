@@ -143,6 +143,8 @@ export async function openBundle(
   bundle: string,
   contextOptions: Parameters<Browser['newPage']>[0] = {},
   beforeLoad?: (page: Page) => Promise<void>,
+  /** Where the page pretends to be. `https:` for code that needs a secure context (Web Crypto's `subtle`). */
+  origin = 'http://canvas-probe.local',
 ): Promise<{ page: Page; crashes: string[] }> {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, ...contextOptions });
   page.setDefaultTimeout(1500);
@@ -150,7 +152,7 @@ export async function openBundle(
   page.on('pageerror', (error) => crashes.push(error.message));
   await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await beforeLoad?.(page);
-  await page.goto('http://canvas-probe.local/');
+  await page.goto(`${origin}/`);
   // The bundle leaves CSS out. The real editor sits under the same root layout as a
   // published page (its fonts and html and body classes, from the published base) and
   // links the editor sheet, globals.css. Without that sheet a comparison would hold a page

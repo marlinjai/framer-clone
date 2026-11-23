@@ -114,6 +114,11 @@ describe('attributes', () => {
     expect(isAttributeProp('onClick')).toBe(false);
   });
 
+  it('never lists a custom code block\'s value as an attribute (sandboxed custom code, slice C4)', () => {
+    expect(isAttributeProp('customCode')).toBe(false);
+    expect(isAttributeProp('behaviour')).toBe(false);
+  });
+
   it('refuses an unsafe address and script text', () => {
     for (const [name, value] of [['href', 'javascript:alert(1)'], ['src', 'data:text/html,x'], ['formaction', '//evil.example'], ['title', 'javascript:alert(1)']]) {
       expect(attributeValueError(name, value), name).not.toBeNull();

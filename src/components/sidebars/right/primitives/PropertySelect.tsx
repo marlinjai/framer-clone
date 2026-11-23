@@ -14,6 +14,8 @@ interface PropertySelectProps {
   placeholder?: string;
   /** Accessible name when the field has no visible label of its own. */
   'aria-label'?: string;
+  /** Focusable but taking no change (a save is running): said to assistive technology. */
+  'aria-disabled'?: boolean;
 }
 
 export function PropertySelect({
@@ -24,6 +26,7 @@ export function PropertySelect({
   className,
   placeholder = 'Select...',
   'aria-label': ariaLabelProp,
+  'aria-disabled': ariaDisabled,
 }: PropertySelectProps) {
   const { id, ariaLabel, showLabel } = useFieldIdentity(label, ariaLabelProp);
 
@@ -40,6 +43,7 @@ export function PropertySelect({
         <select
           id={id}
           aria-label={ariaLabel}
+          aria-disabled={ariaDisabled || undefined}
           value={value || ''}
           onChange={(e) => onChange(e.target.value)}
           className={cn(FIELD_CONTROL, 'cursor-pointer appearance-none truncate pr-6')}
