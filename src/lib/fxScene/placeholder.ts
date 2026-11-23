@@ -17,7 +17,7 @@
 // the motion is the Web Animations API, so no style sheet is added to the page.
 
 import { FX_FADE_MS, holdFxBox } from './box';
-import { FX_PLACEHOLDER_ATTR } from './marker';
+import { FX_LAYER_ATTR, FX_PLACEHOLDER_ATTR } from './marker';
 
 /** How long a scene may take before the placeholder shows: below this, a load reads as instant. */
 export const FX_PLACEHOLDER_DELAY_MS = 400;
@@ -72,7 +72,9 @@ export function showFxPlaceholder(box: HTMLElement, { reduce }: { reduce: boolea
   const timer = window.setTimeout(() => {
     if (removed) return;
     release = holdFxBox(box);
-    box.insertBefore(element, box.firstChild);
+    // The scene's layer is always the box's first child (./mount.tsx): a placeholder that comes after it sits behind it in the tree.
+    const first = box.firstElementChild;
+    box.insertBefore(element, first?.hasAttribute(FX_LAYER_ATTR) ? first.nextSibling : box.firstChild);
     // Laid out once at opacity 0, so the change to 1 is a transition and not a jump.
     void element.offsetWidth;
     element.style.opacity = '1';

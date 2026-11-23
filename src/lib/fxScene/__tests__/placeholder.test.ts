@@ -51,6 +51,16 @@ describe('showFxPlaceholder', () => {
     expect(box.style.position).toBe('');
   });
 
+  it('a placeholder that comes after the scene layer sits behind it in the tree: the layer stays the first child', () => {
+    const layer = document.createElement('div');
+    layer.setAttribute('data-fc-fx-layer', '');
+    box.appendChild(layer);
+    showFxPlaceholder(box, { reduce: false });
+    vi.advanceTimersByTime(FX_PLACEHOLDER_DELAY_MS);
+    expect(box.firstElementChild).toBe(layer);
+    expect(layer.nextElementSibling?.hasAttribute('data-fc-fx-placeholder')).toBe(true);
+  });
+
   it('removed now (the page is put away): gone at once, and the box is its own again at once', () => {
     const placeholder = showFxPlaceholder(box, { reduce: false });
     vi.advanceTimersByTime(FX_PLACEHOLDER_DELAY_MS);
