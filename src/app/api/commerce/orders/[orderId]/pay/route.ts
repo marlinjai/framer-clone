@@ -27,15 +27,18 @@
 //   409 payment_processing   Stripe: the session is complete and its money still on the way; nothing to do
 //   409 checkout_pending     Stripe: an earlier checkout page of this order, opened before the session was pinned, may
 //                            still be open; pay there, or check out again once the order has closed
-//   503 checkout_unavailable Stripe did not answer: nothing changed and nothing was charged; pressing Pay again is safe
+//   503 checkout_unavailable Stripe did not answer (about the session or the company's account): nothing changed and
+//                            nothing was charged; pressing Pay again is safe
 //   409 order_outdated       the company's tax status changed since a net-priced order was placed, so its total
 //                            is wrong: no money moves, the order is closed, its stock released, the buyer checks
-//                            out again
+//                            out again. Stripe: once a session is stored for the order it is read instead (a click's
+//                            answer above), since the buyer may still pay it
 //   422 buyer_required       neither the order nor this request carries the buyer's name and address
 //   422 buyer_not_invoiceable  this order cannot get a correct invoice for this buyer (invoiceable.ts): no money
 //                            moves, the order keeps waiting, and { field } names what the buyer can correct
 //   503 payments_unavailable Stripe: the company's Books cannot issue the receipt yet (receiptReadiness.ts): no
 //                            money moves, no checkout page opens, the order keeps waiting and pays once they can.
+//                            Also when the company has no Stripe account that can take payments at the first click.
 //                            Demo: the company is not the demo company (demoCheckout.ts), so nothing is marked paid
 //
 // The tenant, the company and the site come from the request host only, as for every storefront route.
