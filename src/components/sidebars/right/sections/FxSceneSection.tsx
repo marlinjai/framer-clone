@@ -49,7 +49,7 @@ import {
   toggleFxLayer,
   type FxEdit,
 } from '@/lib/fxScene/edit';
-import { FX_LIMITS, FX_SOURCE_LAYER_PARAM, layerReadsPointer, listAddableTypes, pointerBaseOf, settingGroupOf, type BlendMode, type FxCalm, type FxStart, type InteractivitySpec, type Layer, type ParamSchema } from '@/lib/fx/format';
+import { FX_LIMITS, FX_SOURCE_LAYER_PARAM, getLayerSchema, layerReadsPointer, listAddableTypes, pointerBaseOf, settingGroupOf, type BlendMode, type FxCalm, type FxStart, type InteractivitySpec, type Layer, type ParamSchema } from '@/lib/fx/format';
 import { editorSiteImageUrl, MAX_SITE_IMAGE_BYTES, formatBytes } from '@/lib/site/siteImages';
 import { uploadFailureMessage } from '@/components/site/SiteImageField';
 
@@ -59,6 +59,9 @@ interface FxSceneSectionProps {
 }
 
 const HINT = 'text-[11px] leading-snug text-muted-foreground';
+
+/** The one blend a layer kind always draws with, when it has one (the particle ring adds). */
+const fixedBlendOf = (type: string): BlendMode | undefined => getLayerSchema(type)?.fixedBlend;
 const ERROR = 'text-[11px] leading-snug text-destructive';
 const TEXT_BUTTON =
   'h-7 flex-none rounded-[6px] border border-border px-2.5 text-[11px] text-foreground transition-colors ' +
@@ -744,7 +747,11 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
           ) : (
             <p className={HINT}>Another kind starts from that kind&apos;s own settings: you are asked before they are replaced.</p>
           )}
-          <PropertySelect label="Blend" value={selected.blend} options={BLEND_OPTIONS} onChange={(blend) => apply(setFxLayerBlend(stored, selected.id, blend as BlendMode))} />
+          {fixedBlendOf(selected.type) ? (
+            <p className={HINT}>Blend: always {fixedBlendOf(selected.type)} (this layer is light and adds to what lies under it).</p>
+          ) : (
+            <PropertySelect label="Blend" value={selected.blend} options={BLEND_OPTIONS} onChange={(blend) => apply(setFxLayerBlend(stored, selected.id, blend as BlendMode))} />
+          )}
           {isEffect && !readsOwnLayer ? (
             <>
               <PropertySelect
@@ -792,7 +799,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
               <p className={HINT}>
                 {selected.interactivity
                   ? 'How much this layer follows the pointer. Track mouse at 0 is still.'
-                  : selected.type === 'noiseFill'
+                  : pointerBaseOf(selected.type).trackMouse > 0
                     ? 'This layer follows the pointer in its own plain way until you change a value here; the values shown are what it does now. Track mouse at 0 is still.'
                     : 'This layer stands still until you raise Track mouse (the spring and momentum shown are what it will move with).'}{' '}
                 With reduced motion asked for, the scene stays one still frame whatever is set here.

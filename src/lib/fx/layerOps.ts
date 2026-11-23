@@ -55,7 +55,7 @@ export function instantiateLayer(type: string, existing: Layer[]): Layer | null 
     type,
     name: def.label ?? type,
     visible: true,
-    blend: "normal",
+    blend: def.fixedBlend ?? "normal",
     params: cloneParams(def.defaultParams),
   };
 }
@@ -99,7 +99,7 @@ function groupOf(layer: Layer): string | null {
  * `parallax` / strength settings instead and ignore it. A test reads the layer sources and
  * fails when this list drifts from them.
  */
-const POINTER_KINDS: ReadonlySet<string> = new Set(["noiseFill", "shape", "image", "gradient"]);
+const POINTER_KINDS: ReadonlySet<string> = new Set(["noiseFill", "particleRing", "shape", "image", "gradient"]);
 
 /**
  * What a layer of this kind does with its pointer BEFORE it has pointer settings of its own, as
@@ -110,12 +110,14 @@ const POINTER_KINDS: ReadonlySet<string> = new Set(["noiseFill", "shape", "image
  *    wobble. Momentum 1 (damping 0.15) with spring 0.225 puts its dominant eigenvalue at the lerp's
  *    0.96 with no overshoot: the same trajectory within 0.3% (pinned by a side-by-side test in
  *    src/lib/fx/__tests__/interactivityReduce.test.tsx);
+ *  - the particle ring leans toward the pointer from the start, as the brand component does, so it
+ *    starts from the noise field's values (layers/particleRing.tsx);
  *  - shape, image and gradient stand still: track mouse 0, but with the soft spring and momentum
  *    the gold preset uses, so raising Track mouse alone makes the layer move (the engine's
  *    smoothing is driven by the spring: a spring of 0 never moves).
  */
 export function pointerBaseOf(type: string): { trackMouse: number; momentum: number; spring: number; axes: "x" | "y" | "both" } {
-  if (type === "noiseFill") return { trackMouse: 1, momentum: 1, spring: 0.225, axes: "both" };
+  if (type === "noiseFill" || type === "particleRing") return { trackMouse: 1, momentum: 1, spring: 0.225, axes: "both" };
   return { trackMouse: 0, momentum: 0.85, spring: 0.05, axes: "both" };
 }
 

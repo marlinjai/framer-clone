@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "id": "lumitra-preset-lumitra-light",
+  "size": { "mode": "fill" },
+  "background": "#04090b",
+  "fps": 60,
+  "dpr": [1, 1.75],
+  "layers": [
+    {
+      "id": "ring",
+      "type": "particleRing",
+      "name": "Lumitra light",
+      "visible": true,
+      "blend": "add",
+      "params": {
+        "glow": 1,
+        "density": 1,
+        "seed": 1,
+        "speed": 1
+      }
+    }
+  ]
+}

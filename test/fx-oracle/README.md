@@ -13,3 +13,22 @@ commit the engine in `src/lib/fx` was copied from.
 It is an archive and not a folder of source on purpose: as loose `.ts` files the frozen copy would be typechecked,
 linted and searched as if it were this app's code. Never edit it. It can be deleted, with the test, once lumitra.co
 itself runs on Lumitra Sites and lumitra-web is retired (steps R3 and R5 of the plan).
+
+## The particle ring's reference
+
+`suite-theme-lumitra-light-2105604.js.gz` is Lumitra's brand light, the `<lumitra-light>` web component of
+`@marlinjai/suite-theme-core`: `light/lumitra-light.js` of the `marlinjai/suite-theme` repository at commit `2105604`
+(it includes the `highp` fix `83b41a1`), unchanged.
+
+- Made with `git show 2105604:light/lumitra-light.js | gzip -n -9`.
+- SHA-256 of the archive: `12d21c5b37e747aed787f3d7b5f380a8ca0e02584f87fc097456515dfc78b13b`; of the file inside it:
+  `babca5425511d1c8a3eebc240cd24f8ee5f48e68de20307ab7fd9b80f419545b` (both checked by the test before use).
+- Read only by `test/behaviour/fxRingOracle.spec.ts`, which draws it on a blank page and the `lumitra-light` preset
+  through this app's published page, then compares the pixels (plan `docs/plans/2026-11-08-lumitra-fx-in-sites.md`,
+  addendum "the particle ring as a built-in FX layer").
+
+The component draws from `Math.random` and from the clock, so its frame is not repeatable as shipped. The test
+makes it repeatable from outside, without changing the file: `Math.random` is replaced, just before the component
+loads, by the same seeded generator the layer uses (`mulberry32`, seed 1), and the clock is stopped
+(`performance.now` and the time each animation frame is given are both 0). It can be deleted with the test if the
+ring's reference ever moves into this repository.

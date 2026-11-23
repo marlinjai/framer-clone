@@ -186,6 +186,9 @@ Presets (each layer: id, kind, then its settings with the range and, in brackets
 - "vignette" (vignette): offset 0 to 1 (0.4); darkness 0 to 1 (0.65)
 - "grain" (grain): opacity 0 to 1 (0.14); premultiply true or false (false)
 
+### FX preset "lumitra-light" (Lumitra Light): A ring of fine light particles in mint, light blue and indigo on near-black, leaning toward the pointer.
+- "ring" (particleRing): glow 0 to 2 (1); density 0.25 to 1 (1); seed 1 to 9999 (1); speed 0 to 2 (1)
+
 ## Fonts
 
 The self-hosted font library (no other web font is available). Write fontFamily exactly as quoted, the

@@ -81,7 +81,8 @@ describe('the composite quad blend', () => {
     const problems = (source: string): string[] => {
       const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
       const out: string[] = [];
-      if (!/^\s*transparent\s*$/m.test(code)) out.push('no bare transparent prop');
+      // A JSX material takes the bare prop; a material made in code (the particle ring's) the option `transparent: true`.
+      if (!/^\s*transparent\s*$/m.test(code) && !/\btransparent\s*:\s*true\b/.test(code)) out.push('no bare transparent prop');
       if (/\btransparent\b\s*[:=]\s*\{?\s*false/.test(code)) out.push('transparent is set to false');
       return out;
     };

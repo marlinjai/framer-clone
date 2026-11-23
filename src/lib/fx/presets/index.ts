@@ -6,13 +6,14 @@
  * Export writes) so the gallery doubles as a self-documenting set of
  * examples a future site can copy and tweak.
  *
- * Four presets. The first is the lumitra.co hero; the others each highlight a
+ * Five presets. The first is the lumitra.co hero; the others each highlight a
  * different headline effect:
  *
  *   - gold-noise-gradient  the lumitra.co hub hero (gold noise field, grain)
  *   - godrays-hero       the v7 hero (rays + bloom + chromatic + vignette)
  *   - noise-gradient     calm mesh gradient + noise field + grain
  *   - bokeh-focuspull    the Phase 3 depth showcase (animated radius -> 0)
+ *   - lumitra-light      the Lumitra brand ring (particle ring layer)
  *
  * Adding a preset = drop a JSON file alongside this index and append an
  * entry. The runtime deserializes lazily (only the active preset is
@@ -26,6 +27,7 @@ import goldNoiseGradient from "./preset-gold-noise-gradient.json";
 import godraysHero from "./preset-godrays-hero.json";
 import noiseGradient from "./preset-noise-gradient.json";
 import bokehFocuspull from "./preset-bokeh-focuspull.json";
+import lumitraLight from "./preset-lumitra-light.json";
 
 export interface PresetMeta {
   /** Stable identifier the editor stores in localStorage / URL. */
@@ -64,6 +66,15 @@ export const PRESETS: PresetMeta[] = [
     label: "Bokeh Focus-Pull",
     blurb: "Two soft orbs and centred words that come into focus out of a blur, over a violet and blue gradient.",
     load: () => deserializeScene(bokehFocuspull),
+  },
+  {
+    // Lumitra's brand light (mint light, decided 2026-11-22): the `<lumitra-light>` component of
+    // @marlinjai/suite-theme-core at commit 2105604, drawn by the particle ring layer. The ring
+    // oracle (test/behaviour/fxRingOracle.spec.ts) compares this scene with that component.
+    id: "lumitra-light",
+    label: "Lumitra Light",
+    blurb: "A ring of fine light particles in mint, light blue and indigo on near-black, leaning toward the pointer.",
+    load: () => deserializeScene(lumitraLight),
   },
 ];
 

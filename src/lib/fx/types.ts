@@ -112,6 +112,11 @@ export interface LayerContext {
   registerObject: (layerId: string, obj: Object3D | null) => void;
   getObject: (layerId: string) => Object3D | null;
   reduce: boolean;
+  /**
+   * The id of the only content layer drawn, when it is drawn straight onto the background and not through
+   * effects of its own; null otherwise (a layer that sums light then sums it onto the background itself).
+   */
+  bottomLayerId?: string | null;
 }
 
 export interface LayerComponentProps<P extends ParamsSchema = ParamsSchema> {
@@ -139,6 +144,11 @@ export interface LayerSchemaDefinition<P extends ParamsSchema = ParamsSchema> {
    * of the scene keeps running smoothly.
    */
   heavy?: boolean;
+  /**
+   * A layer whose drawing has one blend only (the particle ring is light and always adds). The reader
+   * stores this blend whatever the scene says, and the properties panel shows it instead of a choice.
+   */
+  fixedBlend?: BlendMode;
   defaultParams: P;
 }
 
