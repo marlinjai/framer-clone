@@ -14,7 +14,7 @@ const PLATFORM_NAMES: ReadonlySet<string> = new Set([
   'data-add-action', 'data-add-interaction', 'data-add-item', 'data-add-line', 'data-add-value', 'data-cart-empty', 'data-cart-lines', 'data-cart-remove', 'data-cart-subtotal', 'data-delete-value', 'data-discard-row', 'data-drag-handle', 'data-escape-local', 'data-focus-key', 'data-fold-gap', 'data-fold-needs', 'data-fold-reserve', 'data-haptics', 'data-import-all',
   'data-import-row', 'data-item-picker', 'data-layer-breakpoint', 'data-layer-row', 'data-live-reveal', 'data-logo-choose', 'data-menu-item', 'data-notice-action',
   'data-outline-select', 'data-page-overlay', 'data-page-settings-button', 'data-pan-cursor', 'data-placement', 'data-placement-root', 'data-pointer',
-  'data-radius-corner', 'data-resize-direction', 'data-resume-offer', 'data-shown', 'data-spacing-band', 'data-spacing-handle', 'data-state-id', 'data-text-node-row', 'data-trigger-index',
+  'data-radius-corner', 'data-resize-direction', 'data-resume-offer', 'data-shown', 'data-spacing-band', 'data-spacing-handle', 'data-state-id', 'data-text-node-row', 'data-trigger-index', 'data-ui-theme',
 ]);
 
 /** An attribute the platform reads as an instruction, in any case. A source may not set it. */

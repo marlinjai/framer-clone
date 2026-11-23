@@ -9,6 +9,7 @@ import React from 'react';
 import Link from 'next/link';
 import LumitraStar from '@/components/brand/LumitraStar';
 import { DEMO_PATH } from '@/lib/projects/demoAddress';
+import AppearanceMenu from '@/components/appearance/AppearanceMenu';
 
 interface WelcomeProps {
   signInHref: string;
@@ -26,6 +27,7 @@ export default function Welcome({ signInHref, authUnavailable = false }: Welcome
           Lumitra Sites
         </Link>
         <div className="flex-1" />
+        <AppearanceMenu />
         <a
           href={signInHref}
           className="inline-flex h-8 items-center rounded-lg border border-input bg-card px-3 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:shadow-selection"
@@ -46,7 +48,7 @@ export default function Welcome({ signInHref, authUnavailable = false }: Welcome
           <div className="mt-6 flex flex-wrap gap-2.5">
             <a
               href={DEMO_PATH}
-              className="inline-flex h-10 items-center rounded-lg border border-brand-edge bg-brand px-[18px] text-sm font-semibold text-brand-foreground transition-[filter] hover:brightness-95 focus-visible:outline-none focus-visible:shadow-selection"
+              className="inline-flex h-10 items-center rounded-lg border border-brand-edge bg-brand-fill px-[18px] text-sm font-semibold text-brand-foreground transition-[filter] hover:brightness-95 focus-visible:outline-none focus-visible:shadow-selection"
             >
               Try the editor
             </a>

@@ -1,27 +1,28 @@
 /* src/app/cms-grid-theme.css
  *
  * Loaded AFTER the data-table-react stylesheets so these :root overrides win.
- * Pins the grid to Lumitra's dark suite palette (the editor is dark only) and
- * aligns the engine accent + selection with the suite's primary. The pins are
- * unconditional, so the engine's own OS-theme switch cannot change them. The
- * suite variables come from the tokens file globals.css imports.
+ * Pins the grid to the editor's interface mode (suite-theme's ui.css, Light or
+ * Dark by `data-ui-theme`, else the system) and aligns the engine accent and
+ * selection with the primary. The pins are unconditional, so the engine's own
+ * OS-theme switch cannot disagree with the editor. The --ui-* variables come
+ * from editor-theme.css, which globals.css imports.
  */
 
 :root {
-  --dt-bg-primary: var(--suite-bg);
-  --dt-bg-secondary: var(--suite-surface);
-  --dt-bg-tertiary: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
-  --dt-bg-hover: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
-  --dt-bg-selected: var(--suite-primary-wash);
-  --dt-border-color: var(--suite-line);
-  --dt-border-color-strong: color-mix(in oklab, var(--suite-line), var(--suite-text) 15%);
-  --dt-text-primary: var(--suite-text);
-  --dt-text-secondary: var(--suite-text-muted);
-  --dt-text-muted: var(--suite-text-muted);
-  --dt-text-placeholder: var(--suite-text-muted);
-  --dt-accent-primary: var(--suite-primary);
-  --dt-accent-primary-hover: color-mix(in oklab, var(--suite-primary), white 15%);
-  --dt-glass-bg: color-mix(in oklab, var(--suite-surface) 80%, transparent);
-  --dt-glass-bg-subtle: color-mix(in oklab, var(--suite-surface) 60%, transparent);
+  --dt-bg-primary: var(--ui-bg);
+  --dt-bg-secondary: var(--ui-surface);
+  --dt-bg-tertiary: color-mix(in oklab, var(--ui-surface), var(--ui-text) 8%);
+  --dt-bg-hover: color-mix(in oklab, var(--ui-surface), var(--ui-text) 8%);
+  --dt-bg-selected: var(--ui-primary-wash);
+  --dt-border-color: var(--ui-line);
+  --dt-border-color-strong: color-mix(in oklab, var(--ui-line), var(--ui-text) 15%);
+  --dt-text-primary: var(--ui-text);
+  --dt-text-secondary: var(--ui-text-muted);
+  --dt-text-muted: var(--ui-text-muted);
+  --dt-text-placeholder: var(--ui-text-muted);
+  --dt-accent-primary: var(--ui-primary-text);
+  --dt-accent-primary-hover: color-mix(in oklab, var(--ui-primary-text), var(--ui-text) 15%);
+  --dt-glass-bg: color-mix(in oklab, var(--ui-surface) 80%, transparent);
+  --dt-glass-bg-subtle: color-mix(in oklab, var(--ui-surface) 60%, transparent);
   --dt-border-radius: 8px;
 }

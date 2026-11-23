@@ -7,6 +7,7 @@ import React from 'react';
 import Link from 'next/link';
 import LumitraStar from '@/components/brand/LumitraStar';
 import { DEMO_PATH } from '@/lib/projects/demoAddress';
+import AppearanceMenu from '@/components/appearance/AppearanceMenu';
 
 const PILL =
   'inline-flex h-8 items-center gap-1.5 rounded-lg border border-input bg-card px-3 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:shadow-selection';
@@ -35,6 +36,7 @@ export default function HomeTopBar({ companyName, canSwitchCompany, accountHref 
         <span className="min-w-0 truncate rounded-lg px-1 text-sm text-muted-foreground">{companyName}</span>
       )}
       <div className="flex-1" />
+      <AppearanceMenu />
       <a href={DEMO_PATH} className={`${PILL} max-sm:hidden`}>
         Try the demo
       </a>

@@ -136,7 +136,7 @@ const SaveStatus = observer(() => {
   const failed = state.phase === 'failed' || state.phase === 'retrying';
   // A refusal held for a replay about to resolve it (or the person's open edit) is not shown as one yet.
   const conflict = state.phase === 'conflict' && !state.held;
-  const tone = failed ? 'text-destructive' : conflict ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground';
+  const tone = failed ? 'text-destructive' : conflict ? 'text-warning' : 'text-muted-foreground';
   const reasonHidden = failed && state.hidden === true;
 
   return (

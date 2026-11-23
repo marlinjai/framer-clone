@@ -276,7 +276,7 @@ function CmsGridContent({
           <button
             type="button"
             onClick={newItem}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand px-3 text-[13px] font-semibold text-brand-foreground shadow-xs transition-colors hover:bg-brand/90"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand-fill px-3 text-[13px] font-semibold text-brand-foreground shadow-xs transition-colors hover:bg-brand-fill/90"
           >
             <Plus className="size-4" />
             New item

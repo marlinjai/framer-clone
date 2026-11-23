@@ -81,7 +81,7 @@ export default function LiveConnectionStatus({ projectId }: { projectId: string 
       className={
         tone === 'none'
           ? 'sr-only'
-          : `flex min-w-0 items-center gap-1 text-xs ${tone === 'paused' ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'} animate-in fade-in duration-200 ease-out motion-reduce:animate-none`
+          : `flex min-w-0 items-center gap-1 text-xs ${tone === 'paused' ? 'text-warning' : 'text-muted-foreground'} animate-in fade-in duration-200 ease-out motion-reduce:animate-none`
       }
     >
       {tone !== 'none' ? <Radio size={14} aria-hidden className="shrink-0" /> : null}
