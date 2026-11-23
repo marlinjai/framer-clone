@@ -265,7 +265,7 @@ export const AltTextControls = observer(({ component }: { component: ComponentIn
         </PropertyRow>
       )}
       {problem && (
-        <p role="status" data-testid="alt-warning" className="text-[11px] leading-snug text-amber-600 dark:text-amber-400">
+        <p role="status" data-testid="alt-warning" className="text-[11px] leading-snug text-warning">
           {ALT_WARNINGS[problem]}
         </p>
       )}

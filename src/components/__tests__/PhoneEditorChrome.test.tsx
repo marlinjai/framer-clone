@@ -177,7 +177,7 @@ describe('selection on a phone', () => {
     expect(store.editorUI.selectedComponent).toBeTruthy();
     render(<TransformProvider><PhoneEditorChrome editorUI={store.editorUI} /></TransformProvider>);
     const edit = barButton(/^Edit /);
-    expect(edit.className).not.toContain('bg-brand text-brand-foreground');
+    expect(edit.className).not.toContain('bg-brand-fill text-brand-foreground');
   });
 
   it('a new selection highlights Edit, named after it, and does not open the sheet', () => {
@@ -186,13 +186,13 @@ describe('selection on a phone', () => {
     const child = someChild();
     act(() => store.editorUI.selectComponent(child));
     const edit = barButton(`Edit ${child.displayName}`);
-    expect(edit.className).toContain('bg-brand text-brand-foreground');
+    expect(edit.className).toContain('bg-brand-fill text-brand-foreground');
     expect(screen.queryByRole('dialog')).toBeNull();
     // Opening it marks the selection as seen.
     fireEvent.click(edit);
     expect(screen.getByRole('dialog', { name: 'Properties' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Close Properties' }));
-    expect(barButton(`Edit ${child.displayName}`).className).not.toContain('bg-brand text-brand-foreground');
+    expect(barButton(`Edit ${child.displayName}`).className).not.toContain('bg-brand-fill text-brand-foreground');
   });
 
   it('with nothing selected the button reads Properties', () => {

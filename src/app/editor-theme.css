@@ -83,9 +83,9 @@
 [data-ui-theme="light"] {
   --destructive: oklch(0.55 0.2 25);
   --status-published: oklch(0.5 0.14 140);
-  --status-draft: oklch(0.55 0.13 70);
+  --status-draft: oklch(0.52 0.13 70);
   --status-scheduled: oklch(0.5 0.1 220);
-  --warning: oklch(0.55 0.13 70);
+  --warning: oklch(0.52 0.13 70);
   --warning-foreground: #ffffff;
   --brand-edge: var(--ui-primary-text);
   --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(82 255 165 / 0.18), rgb(59 132 255 / 0.06) 50%, transparent 80%);
@@ -94,9 +94,9 @@
   :root:not([data-ui-theme]) {
     --destructive: oklch(0.55 0.2 25);
     --status-published: oklch(0.5 0.14 140);
-    --status-draft: oklch(0.55 0.13 70);
+    --status-draft: oklch(0.52 0.13 70);
     --status-scheduled: oklch(0.5 0.1 220);
-    --warning: oklch(0.55 0.13 70);
+    --warning: oklch(0.52 0.13 70);
     --warning-foreground: #ffffff;
     --brand-edge: var(--ui-primary-text);
     --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(82 255 165 / 0.18), rgb(59 132 255 / 0.06) 50%, transparent 80%);
