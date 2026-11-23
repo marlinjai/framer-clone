@@ -13,6 +13,7 @@ describe('the demo address', () => {
     [{ preview: '1' }, true],
     [{ demo: ['1', '2'] }, true],
     [{}, false],
+    [{ page: '' }, false],
     [{ demo: '0' }, false],
     [{ preview: '0' }, false],
     [{ switch: '1' }, false],

@@ -18,6 +18,7 @@ import {
   themeColorMode,
   type SiteTheme,
 } from './theme';
+import { cssColorToRgba, parseCssColor } from '@/lib/color/cssColor';
 
 export interface SiteCardColors {
   background: string;
@@ -51,9 +52,24 @@ export function siteCardColors(raw: SiteTheme | undefined): SiteCardColors | nul
     }
   }
   if (background === null && text === null && accent === null) return null;
+  const ground = background ?? FALLBACK[scheme].background;
   return {
-    background: background ?? FALLBACK[scheme].background,
-    text: text ?? FALLBACK[scheme].text,
+    background: ground,
+    // No text colour of its own: the fallback follows the drawn background, not the scheme, so a dark
+    // background on a light (or system) site never gets dark text.
+    text: text ?? FALLBACK[isDark(ground) ? 'dark' : 'light'].text,
     accent,
   };
+}
+
+/** True for a colour darker than mid grey (relative luminance under 0.18); false when it cannot be read. */
+function isDark(value: string): boolean {
+  const parsed = parseCssColor(value);
+  const rgba = parsed ? cssColorToRgba(parsed) : undefined;
+  if (!rgba) return false;
+  const lin = (c: number) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(rgba.r) + 0.7152 * lin(rgba.g) + 0.0722 * lin(rgba.b) < 0.18;
 }

@@ -24,5 +24,5 @@ function first(value: string | string[] | undefined): string | undefined {
  * `?page=` and `?preview=1`, which links and bookmarks from before the home carried.
  */
 export function wantsDemo(query: Query): boolean {
-  return first(query.demo) === '1' || first(query.page) !== undefined || first(query.preview) === '1';
+  return first(query.demo) === '1' || Boolean(first(query.page)) || first(query.preview) === '1';
 }

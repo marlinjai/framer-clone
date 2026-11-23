@@ -18,7 +18,7 @@ interface WelcomeProps {
 
 export default function Welcome({ signInHref, authUnavailable = false }: WelcomeProps) {
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
+    <div className="relative min-h-svh overflow-hidden bg-background text-foreground">
       <div aria-hidden="true" className="home-glow pointer-events-none absolute inset-0" />
       <header className="relative flex h-14 items-center gap-3 border-b border-border px-4 sm:px-6">
         <Link href="/" className="flex items-center gap-2 rounded-md font-semibold tracking-tight focus-visible:outline-none focus-visible:shadow-selection">

@@ -153,7 +153,8 @@ export default function ProjectCard({
           />
           <span className="truncate">
             {statusLabel}
-            {liveHost ? ` · ${liveHost}` : null}
+            {/* The address only while it is live: a draft keeps its reserved subdomain, but nobody reaches it. */}
+            {published && liveHost ? ` · ${liveHost}` : null}
           </span>
         </span>
         <span className="mt-0.5 block text-xs text-muted-foreground">

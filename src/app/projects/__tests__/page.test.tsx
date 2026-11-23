@@ -94,7 +94,7 @@ describe('ProjectsPage', () => {
     const result = await run({});
     expect(result.redirect).toBeNull();
     const page = html(result.element as React.ReactElement);
-    expect(page).toContain('No projects yet');
+    expect(page).toMatch(/No projects yet in <span[^>]*>Acme<\/span>/);
     expect(page).toMatch(/<h1[^>]*id="projects-heading"[^>]*>Projects<\/h1>/);
     expect(page).toContain('href="/projects/catalog"');
     expect(page).toContain('href="/projects/payments"');
@@ -116,6 +116,13 @@ describe('ProjectsPage', () => {
     expect(page).toContain('href="/projects/site_1"');
     expect(page).toContain('background:#102030');
     expect(page).toContain('Published');
+    // A draft never shows its reserved subdomain as an address.
+    mockLoadDashboard.mockResolvedValue({ ...OK, sites: [{ ...site, status: 'draft', subdomain: 'bakery' }] });
+    process.env.PUBLIC_SITE_BASE_HOST = 'sites.lumitra.co';
+    const draft = html((await run({})).element as React.ReactElement);
+    delete process.env.PUBLIC_SITE_BASE_HOST;
+    expect(draft).toContain('Draft');
+    expect(draft).not.toContain('bakery.sites.lumitra.co');
     expect(page).not.toContain('No projects yet');
   });
 

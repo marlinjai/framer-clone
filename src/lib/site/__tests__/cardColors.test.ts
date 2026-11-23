@@ -24,6 +24,15 @@ describe('siteCardColors', () => {
     expect(siteCardColors(theme)).toEqual({ background: '#000000', text: '#f5f5f5', accent: '#88aaff' });
   });
 
+  it('a dark background with no text colour gets light text, also on a light or system site', () => {
+    const theme: SiteTheme = {
+      tokens: [color('bgbgbgbg', '#0a0a0a')],
+      document: { backgroundColor: tokenReference('bgbgbgbg') },
+    };
+    expect(siteCardColors(theme)).toEqual({ background: '#0a0a0a', text: '#f5f5f5', accent: null });
+    expect(siteCardColors({ ...theme, mode: 'system' })?.text).toBe('#f5f5f5');
+  });
+
   it('a theme with no colour at all draws the neutral picture (null)', () => {
     expect(siteCardColors({ tokens: [], document: {} })).toBeNull();
     expect(siteCardColors(undefined)).toBeNull();

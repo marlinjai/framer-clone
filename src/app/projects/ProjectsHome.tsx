@@ -49,7 +49,7 @@ export default function ProjectsHome({
   // by Marlin on 2026-11-23): a top bar, the projects as cards with a "New project" card, and the
   // company's tools as a quiet row below.
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
+    <div className="relative min-h-svh overflow-x-hidden bg-background text-foreground">
       <div aria-hidden="true" className="home-glow pointer-events-none absolute inset-0" />
       <HomeTopBar companyName={activeCompany.name} canSwitchCompany={companies.length > 1} accountHref={accountHref} />
       <main className="relative mx-auto w-full max-w-5xl px-4 pb-12 pt-6 sm:px-6 sm:pt-8">
@@ -59,10 +59,8 @@ export default function ProjectsHome({
         <p id="projects-status" role="status" aria-live="polite" className="sr-only" />
         <Greeting className="text-2xl font-semibold tracking-tight sm:text-[26px]" />
         <p className="mb-6 mt-1 text-sm text-muted-foreground">
-          {sites.length === 0
-            ? 'No projects yet. Create your first one, or try the demo editor first.'
-            : `${sites.length} ${sites.length === 1 ? 'project' : 'projects'} in `}
-          {sites.length === 0 ? null : <span className="font-medium text-foreground">{activeCompany.name}</span>}
+          {sites.length === 0 ? 'No projects yet in ' : `${sites.length} ${sites.length === 1 ? 'project' : 'projects'} in `}
+          <span className="font-medium text-foreground">{activeCompany.name}</span>
           {companies.length > 1 ? (
             <>
               {' · '}

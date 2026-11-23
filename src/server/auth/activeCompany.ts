@@ -83,9 +83,10 @@ export function safeEditorReturnPath(raw: unknown): string {
   if (raw.startsWith('/projects/migrate-company')) return '/projects';
   // The browser-only demo editor (src/lib/projects/demoAddress.ts): "Keep as
   // project" sends a person without a chosen company or session through the
-  // chooser or the login and back to it. Exact strings only. `/` itself is
-  // the home and stays a valid destination.
-  if (raw === DEMO_PATH) return DEMO_PATH;
-  if (raw === '/') return '/';
+  // chooser or the login and back to it. Exact strings only. `/` was the
+  // demo's address before `/` became the home, and only the demo flow ever
+  // sent it: a continuation already in flight still lands on the demo, where
+  // its stashed work is restored (a signed-in `/` would go to the projects).
+  if (raw === DEMO_PATH || raw === '/') return DEMO_PATH;
   return /^\/projects(\/[A-Za-z0-9_-]+(\/preview)?)?$/.test(raw) ? raw : '/projects';
 }
