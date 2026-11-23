@@ -116,13 +116,13 @@ async function namedHashes(tx: Tx, siteId: string): Promise<{ workingCopy: Set<s
   // `$.**` reaches every depth of the stored JSON; the hash is checked for its shape below, so
   // anything else stored under a key of that name is ignored.
   const rows = await tx.$queryRaw<{ origin: string; sha256: unknown }[]>`
-    SELECT 'w' AS origin, jsonb_path_query(p.snapshot, 'lax $.**.customCode.sha256') #>> '{}' AS sha256
+    SELECT 'w' AS origin, pg_catalog.jsonb_path_query(p.snapshot, 'lax $.**.customCode.sha256') #>> '{}' AS sha256
       FROM public.site_pages p WHERE p.site_id = ${siteId}
     UNION ALL
-    SELECT 'w', jsonb_path_query(s.components, 'lax $.**.customCode.sha256') #>> '{}'
+    SELECT 'w', pg_catalog.jsonb_path_query(s.components, 'lax $.**.customCode.sha256') #>> '{}'
       FROM public.sites s WHERE s.id = ${siteId}
     UNION ALL
-    SELECT 'r', jsonb_path_query(r.document, 'lax $.**.customCode.sha256') #>> '{}'
+    SELECT 'r', pg_catalog.jsonb_path_query(r.document, 'lax $.**.customCode.sha256') #>> '{}'
       FROM public.site_revisions r WHERE r.site_id = ${siteId}`;
   const workingCopy = new Set<string>();
   const revisions = new Set<string>();
@@ -149,7 +149,7 @@ export async function liveCustomCodeBytes(tx: Tx, siteId: string, replaces?: str
   if (counted.size === 0) return 0;
   const hashes = [...counted];
   const rows = await tx.$queryRaw<{ sha256: string; document_bytes: number; declaration: unknown }[]>`
-    SELECT b.sha256, octet_length(b.document)::int AS document_bytes, b.declaration
+    SELECT b.sha256, pg_catalog.octet_length(b.document)::int AS document_bytes, b.declaration
       FROM public.custom_code_blobs b
      WHERE b.site_id = ${siteId} AND b.blocked_at IS NULL AND b.sha256 = ANY(${hashes}::text[])`;
   return rows.reduce((sum, row) => sum + storedBlobBytes(Number(row.document_bytes), row.declaration), 0);
