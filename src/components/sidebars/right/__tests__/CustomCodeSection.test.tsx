@@ -13,6 +13,7 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import { customCodeHash, type CustomCodeDeclaration } from '@/lib/customCode/contract';
 import { CustomCodeAuthoringProvider, canInsertCustomCode, type CustomCodeAuthoringValue } from '@/components/customCode/CustomCodeAuthoring';
+import { CUSTOM_CODE_READ_TIMEOUT_MS, CUSTOM_CODE_SAVE_TIMEOUT_MS } from '@/components/customCode/customCodeClient';
 
 // A whole sidebar on a real store, hashing in the browser's crypto: slow when the suite runs in parallel.
 vi.setConfig({ testTimeout: 30_000 });
@@ -54,6 +55,8 @@ let server: {
   network: boolean;
   /** Holds the POST answer until released, to change the block meanwhile. */
   hold: { release: () => void } | null;
+  /** Never answers these requests ('post' or 'blob'); only the client's time limit ends them. */
+  hang: 'post' | 'blob' | null;
 };
 let project: ProjectModelType;
 let page: PageModelType;
@@ -66,6 +69,14 @@ function json(body: unknown, status = 200) {
 async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = new URL(String(input), 'http://editor.test');
   if (server.network) throw new TypeError('Failed to fetch');
+  const isPost = init?.method === 'POST';
+  if ((server.hang === 'post' && isPost) || (server.hang === 'blob' && !isPost && url.searchParams.has('sha256'))) {
+    if (isPost) server.posts.push(JSON.parse(String(init!.body)) as Record<string, unknown>);
+    // Like a real fetch: it ends only when its signal aborts it.
+    return new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
+    });
+  }
   if (!init?.method || init.method === 'GET') {
     const sha = url.searchParams.get('sha256');
     if (!sha) return json(server.status);
@@ -84,7 +95,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
 }
 
 beforeEach(() => {
-  server = { status: { ...STATUS }, blobs: new Map(), posts: [], refuse: null, network: false, hold: null };
+  server = { status: { ...STATUS }, blobs: new Map(), posts: [], refuse: null, network: false, hold: null, hang: null };
   autosave = undefined;
   vi.stubGlobal('fetch', vi.fn(fakeFetch));
   store = createRootStore();
@@ -724,6 +735,74 @@ describe('review 2 of #459', () => {
     fireEvent.click(settings);
     await waitFor(() => expect(section().queryByRole('button', { name: /reading the custom code settings/ })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(section().getByLabelText('Title of the custom code block')));
+    fireEvent.click(section().getByRole('button', { name: 'Retry loading the stored code' }));
+    await waitFor(() => expect((section().getByLabelText('Code of Kept') as HTMLTextAreaElement).value).toBe('<p>kept</p>'));
+  });
+});
+
+describe('review 2 of #459, Info 5: a request that hangs', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a save the server never answers ends after the time limit: unlocked, edits kept, block unchanged, and saves on the next try', async () => {
+    mount();
+    const block = await insertBlock();
+    fill('Clock', '<p>one</p>');
+    server.hang = 'post';
+    act(() => {
+      fireEvent.click(section().getByRole('button', { name: 'Save code' }));
+    });
+    await waitFor(() => expect(server.posts).toHaveLength(1));
+    expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).readOnly).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(CUSTOM_CODE_SAVE_TIMEOUT_MS - 1000); });
+    expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).readOnly).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    await waitFor(() => expect(section().getByRole('alert').textContent).toMatch(/did not answer in time, so the block was not changed and your edits are kept/));
+    const field = section().getByLabelText('Code of Clock') as HTMLTextAreaElement;
+    expect(field.readOnly).toBe(false);
+    expect(field.value).toBe('<p>one</p>');
+    expect(codeOf(block)).toBeNull();
+    server.hang = null;
+    await save();
+    expect(server.posts).toHaveLength(2);
+    expect(codeOf(block)).not.toBeNull();
+  });
+
+  it('a page save that never finishes ends after the time limit and sends no code', async () => {
+    mount();
+    const block = await insertBlock();
+    fill('Clock', '<p>one</p>');
+    autosave = { flush: vi.fn(() => new Promise<void>(() => {})), hasUnsavedWork: vi.fn(() => false) };
+    act(() => {
+      fireEvent.click(section().getByRole('button', { name: 'Save code' }));
+    });
+    await waitFor(() => expect(autosave!.flush).toHaveBeenCalledTimes(1));
+    await act(async () => { vi.advanceTimersByTime(CUSTOM_CODE_SAVE_TIMEOUT_MS); });
+    await waitFor(() => expect(section().getByRole('alert').textContent).toMatch(/did not finish saving in time, so the code was not sent/));
+    expect(server.posts).toHaveLength(0);
+    expect(codeOf(block)).toBeNull();
+    const field = section().getByLabelText('Code of Clock') as HTMLTextAreaElement;
+    expect(field.readOnly).toBe(false);
+    expect(field.value).toBe('<p>one</p>');
+  });
+
+  it('a read of the stored code the server never answers ends after the time limit with a Retry', async () => {
+    const declaration: CustomCodeDeclaration = { reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true };
+    const sha256 = await customCodeHash('<p>kept</p>', declaration);
+    server.blobs.set(sha256, { title: 'Kept', document: '<p>kept</p>', declaration });
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    block.setCustomCode({ sha256, title: 'Kept' });
+    server.hang = 'blob';
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(section().getByText('Loading the stored code…')).toBeTruthy());
+    await act(async () => { vi.advanceTimersByTime(CUSTOM_CODE_READ_TIMEOUT_MS); });
+    await waitFor(() => expect(section().getByText(/did not answer in time\. Nothing was changed; try again\. The code cannot be saved over/)).toBeTruthy());
+    server.hang = null;
     fireEvent.click(section().getByRole('button', { name: 'Retry loading the stored code' }));
     await waitFor(() => expect((section().getByLabelText('Code of Kept') as HTMLTextAreaElement).value).toBe('<p>kept</p>'));
   });

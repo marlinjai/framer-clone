@@ -41,7 +41,7 @@ import {
 import { existingAutosave } from '@/lib/projects/autosave';
 import { useCustomCodeAuthoring } from '@/components/customCode/CustomCodeAuthoring';
 import { CustomCodeEditor } from '@/components/customCode/CustomCodeEditor';
-import { fetchCustomCodeBlob, postCustomCode } from '@/components/customCode/customCodeClient';
+import { CUSTOM_CODE_SAVE_TIMEOUT_MS, fetchCustomCodeBlob, postCustomCode } from '@/components/customCode/customCodeClient';
 
 interface CustomCodeSectionProps {
   component: ComponentInstance;
@@ -96,6 +96,17 @@ function readEmits(text: string): { emits: string[] } | { reason: string } {
  * (review 2 of #459, L2). It settles once the read it started has run: on success, focus moves to
  * `focusAfter` if the button held it; on another failure the button, still focused, is offered again.
  */
+/** True when the promise settles within the time, false when the time runs out first. */
+async function withinTime(work: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), ms); });
+  try {
+    return await Promise.race([work.then(() => true as const), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function useRetry(phase: string, retry: () => void, focusAfter: () => void) {
   const [stage, setStage] = React.useState<'idle' | 'asked' | 'reading'>('idle');
   const hadFocus = React.useRef(false);
@@ -322,7 +333,11 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
       // D108: the server must hold the block before it can check the declaration against it.
       const autosave = existingAutosave(projectId);
       if (autosave) {
-        await autosave.flush();
+        // A page save that hangs must not hold the fields locked (review 2 of #459, Info 5).
+        const flushed = await withinTime(autosave.flush(), CUSTOM_CODE_SAVE_TIMEOUT_MS);
+        if (!flushed) {
+          return end('refused', 'The page did not finish saving in time, so the code was not sent and your edits are kept. Once the page shows Saved, save the code again.');
+        }
         if (autosave.hasUnsavedWork()) {
           return end('refused', 'The page is not saved yet (see the save status at the top), so the code was not sent. Once the page shows Saved, save the code again.');
         }

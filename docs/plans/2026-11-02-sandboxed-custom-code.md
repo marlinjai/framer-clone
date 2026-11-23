@@ -1331,7 +1331,7 @@ reset the count. The refusal says when the next write is allowed.
 "live" exactly. A blob the request says it `replaces` is left out when no kept revision and no other node of the working copy names
 it, so replacing a block of a full site's code is not refused for the version it replaces. `replaces` must be the hash the stored
 node names; any other value is refused with 409 `replaces_mismatch` and the reason, so it can neither lower the count nor enter the
-audit (review 1, L1). The refusal says what counts: the saved page and the last 30 published versions, and that a removed block
+audit (review 1, L1). The refusal says what counts: the saved pages and components and the last 30 published versions (review 2, Info 4), and that a removed block
 stops counting once the page is saved if it was never published, otherwise once no kept published version holds it (L2). A blob written and not yet named by any save is not counted. **Residual,
 for C5:** several blobs written before a save names them can together take a site past 1 megabyte; the hourly limit bounds it (30
 writes of at most 256 kilobytes), and C5, which prunes blobs at every save and publish (D4), checks the budget there too.
