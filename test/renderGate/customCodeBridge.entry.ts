@@ -20,7 +20,9 @@ interface GateWindow {
 const w = window as unknown as GateWindow;
 w.__settled = [];
 w.__probes = [];
+// A quiet page (`__quiet`) never reads a window message's data, so only the broker can pay for it.
 addEventListener('message', (event) => {
+  if ((window as unknown as { __quiet?: boolean }).__quiet) return;
   if (event.data && typeof event.data === 'object' && 'probe' in event.data) w.__probes.push(event.data);
 });
 

@@ -146,6 +146,37 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
     shell: false,
     body: raw("for (var i = 0; i < 3; i++) port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(40000).join('\"') });"),
   },
+  // Review 3, M1: costly window messages, after hello and without one. 300,000 small objects each.
+  winHeavy: {
+    shell: false,
+    body: raw(`
+      var pad = []; for (var i = 0; i < 300000; i++) pad.push({ a: i });
+      var stop = Date.now() + 6000;
+      (function send() { parent.postMessage({ kind: 'nothing', pad: pad }, '*'); if (Date.now() < stop) setTimeout(send, 0); })();
+    `),
+  },
+  preHeavy: {
+    shell: false,
+    body: raw(`
+      var pad = []; for (var i = 0; i < 300000; i++) pad.push({ a: i });
+      var stop = Date.now() + 6000;
+      (function send() { parent.postMessage({ kind: 'nothing', pad: pad }, '*'); if (Date.now() < stop) setTimeout(send, 0); })();
+    `, false),
+  },
+  // Review 3, M2: an honest slider, a write and an emit on every input.
+  slider: {
+    shell: true,
+    body: `<input id="r" type="range" min="0" max="900" value="0" style="position:absolute;left:0;top:50px;width:400px;margin:0">
+      <script>document.getElementById('r').addEventListener('input', function (e) { lumitra.setState('count', Number(e.target.value)); lumitra.emit('done'); });</script>`,
+  },
+  // Review 3, L1: 31 states changed at once, twice; each must end on its last value.
+  wide: {
+    shell: true,
+    body: `<script>lumitra.ready().then(function () {
+      for (var i = 0; i < 31; i++) lumitra.setState('w' + i, 5);
+      setTimeout(function () { for (var i = 0; i < 31; i++) lumitra.setState('w' + i, 7); }, 300);
+    });</script>`,
+  },
   // L2: a message that is not an object.
   nulls: { shell: false, body: raw("for (var i = 0; i < 5; i++) port.postMessage(null);") },
   // L1: a nested frame of the block floods the page's window.
@@ -218,6 +249,8 @@ const STATES: Record<string, BlockState | { type: 'text' }> = {
   tab: { type: 'choice', options: ['a', 'b'] },
   n: { type: 'number', min: 0, max: 9 },
   count: { type: 'number', min: 0, max: 1000 },
+  // Review 3, L1: 31 states one block writes together.
+  ...Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`w${i}`, { type: 'number', min: 0, max: 1000 }])),
   done: { type: 'boolean' },
   went: { type: 'boolean' },
 };
@@ -229,6 +262,7 @@ const PROGRAM: BehaviourProgram = {
         { id: 'tab', type: 'choice', initial: 'a', options: ['a', 'b'] },
         { id: 'n', type: 'number', initial: 0, min: 0, max: 9 },
         { id: 'count', type: 'number', initial: 0, min: 0, max: 1000 },
+        ...Array.from({ length: 31 }, (_, i) => ({ id: `w${i}`, type: 'number', initial: 0, min: 0, max: 1000 })),
         { id: 'done', type: 'boolean', initial: false },
         { id: 'went', type: 'boolean', initial: false },
         { id: 'name', type: 'text', initial: '' },
@@ -296,7 +330,7 @@ interface Opened {
   errors: string[];
 }
 
-async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?: boolean } = {}): Promise<Opened> {
+async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?: boolean; quiet?: boolean } = {}): Promise<Opened> {
   const context = await browser.newContext({ hasTouch: options.hasTouch === true, viewport: { width: 900, height: 700 } });
   const page = await context.newPage();
   const consoleLines: string[] = [];
@@ -308,7 +342,8 @@ async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?:
     const url = route.request().url();
     requests.push(url);
     if (url === PAGE_URL) {
-      return route.fulfill({ status: 200, contentType: 'text/html', headers: { 'content-security-policy': `frame-src ${BOX}/box/` }, body: pageHtml(blocks) });
+      const html = pageHtml(blocks);
+      return route.fulfill({ status: 200, contentType: 'text/html', headers: { 'content-security-policy': `frame-src ${BOX}/box/` }, body: options.quiet ? html.replace('<script>', '<script>window.__quiet = true;</script><script>') : html });
     }
     const name = url.startsWith(`${BOX}/box/${SITE}/`) ? HASHES[url.slice(-64)] : undefined;
     if (name) {
@@ -405,18 +440,20 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
     }
   }, 60_000);
 
-  it('removes a frame that says hello twice, and one that loads a second time', async () => {
+  // Review 3 of pull request #452, M1: after hello a window message of the frame is only counted, never read, so a
+  // second hello is ignored like any other; a reload still ends the frame by its second load.
+  it('ignores a second hello, and removes a frame that loads a second time', async () => {
     const { page, context, console: lines } = await open(browser, [{ id: 'twice', doc: 'double' }, { id: 'again', doc: 'reload' }]);
     try {
-      await until(page, `${removed('twice')} && ${removed('again')}`, 10_000);
-      expect(await settled(page)).toEqual(expect.arrayContaining([{ id: 'twice', shown: true }, { id: 'twice', shown: false }, { id: 'again', shown: true }, { id: 'again', shown: false }]));
-      for (const id of ['twice', 'again']) {
-        expect(await frameOf(page, id)).toBeNull();
-        expect(await fallbackShown(page, id)).toBe(true);
-      }
-      expect(lines.join('\n')).toContain('Custom code "Block twice": a second hello: removed');
-      // A reloaded frame says hello again, and an engine may deliver that before the second load: either removes it.
-      expect(lines.join('\n')).toMatch(/Custom code "Block again": (loaded twice|a second hello): removed/);
+      await until(page, removed('again'), 10_000);
+      await page.waitForTimeout(300);
+      expect(await settled(page)).toEqual(expect.arrayContaining([{ id: 'twice', shown: true }, { id: 'again', shown: true }, { id: 'again', shown: false }]));
+      expect(await settled(page)).not.toContainEqual({ id: 'twice', shown: false });
+      expect(await frameOf(page, 'twice')).not.toBeNull();
+      expect(await frameOf(page, 'again')).toBeNull();
+      expect(await fallbackShown(page, 'again')).toBe(true);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block twice"'))).toEqual([]);
+      expect(lines.join('\n')).toContain('Custom code "Block again": loaded twice: removed');
     } finally {
       await context.close();
     }
@@ -636,6 +673,51 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       expect((await frameOf(page, 'grow'))?.height).toBe('400px');
       expect(await settled(page)).toEqual([{ id: 'grow', shown: true }]);
       expect(lines.filter((line) => line.startsWith('Custom code "Block grow"'))).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  // Review 3 of pull request #452, M2: emits are coalesced with writes, so a dragged slider is not a flood.
+  it('keeps an honest slider dragged with the mouse, a write and an emit on every input, and ends on its last value', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'sl', doc: 'slider' }]);
+    try {
+      await until(page, shownOnce('sl'), 10_000);
+      const box = await page.locator('#sl iframe').boundingBox();
+      if (!box) throw new Error('no frame');
+      const input = page.frameLocator('#sl iframe').locator('#r');
+      await input.waitFor({ timeout: 10_000 });
+      await page.mouse.move(box.x + 2, box.y + 58);
+      await page.mouse.down();
+      for (let step = 1; step <= 90; step++) {
+        await page.mouse.move(box.x + 2 + (396 * step) / 90, box.y + 58);
+        await page.waitForTimeout(16);
+      }
+      await page.mouse.up();
+      const last = await input.inputValue();
+      await until(page, `document.querySelector('[data-fc-scope]').getAttribute('data-fcs-count') === ${JSON.stringify(last)}`, 5_000);
+      await page.waitForTimeout(300);
+      record(`slider in ${engine}: ended at ${last}`);
+      expect(Number(last)).toBeGreaterThan(800);
+      expect(await stateOf(page, 'count')).toBe(last);
+      expect(await stateOf(page, 'done')).toBe('true');
+      expect(await settled(page)).toEqual([{ id: 'sl', shown: true }]);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block sl"'))).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  // Review 3, L1: the shell sends at most 25 a second, so 31 states changed at once all arrive, at their last values.
+  it('takes 31 states written in one flush, each at its last value', async () => {
+    const ids = Array.from({ length: 31 }, (_, i) => `w${i}`);
+    const { page, context, console: lines } = await open(browser, [{ id: 'wd', doc: 'wide', block: { writes: ids } }]);
+    try {
+      const all = ids.map((id) => `document.querySelector('[data-fc-scope]').getAttribute('data-fcs-${id}') === '7'`).join(' && ');
+      await until(page, all, 10_000);
+      for (const id of ids) expect(await stateOf(page, id), id).toBe('7');
+      expect(await settled(page)).toEqual([{ id: 'wd', shown: true }]);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block wd"'))).toEqual([]);
     } finally {
       await context.close();
     }
@@ -923,7 +1005,8 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
         await page.click('#outside');
         await page.keyboard.type('abc');
         await page.waitForTimeout(700);
-        await inside.click();
+        // Short and caught: a frame wrongly removed fails on the expectations below, not on a click's timeout.
+        await inside.click({ timeout: 2_000 }).catch(() => {});
         await page.keyboard.type('x');
       }
       await page.waitForTimeout(300);
@@ -945,7 +1028,7 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
         await page.keyboard.press('ArrowDown');
         await page.keyboard.press('ArrowUp');
         await page.waitForTimeout(250);
-        await inside.click();
+        await inside.click({ timeout: 2_000 }).catch(() => {});
       }
       await page.waitForTimeout(300);
       expect(await settled(page)).toEqual([{ id: 'calm', shown: true }]);
@@ -954,4 +1037,55 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       await context.close();
     }
   }, 60_000);
+});
+
+// Review 3 of pull request #452, M1: under site isolation, as desktop Chrome ships it, the frame runs in its own
+// process, so only the broker stands between its window messages and the page. The page reads no message's data
+// itself here (`quiet`), so whatever the click costs is the broker's.
+describe('the custom code bridge in chromium with site isolation', () => {
+  let browser: Browser;
+  beforeAll(async () => {
+    browser = await chromium.launch({ args: ['--site-per-process'] });
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+
+  // Each message costs the frame itself tens of milliseconds to send, so it stays under 90 a second and is kept:
+  // what matters is that the page, which only counts them, does not pay.
+  it('answers a click while a frame floods the window with costly messages after hello', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'heavy', doc: 'winHeavy' }], { quiet: true });
+    try {
+      await until(page, shownOnce('heavy'), 10_000);
+      await page.waitForTimeout(500);
+      const started = Date.now();
+      await page.click('#toB', { timeout: 30_000 });
+      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
+      const click = Date.now() - started;
+      record(`costly window flood after hello, site isolation: click answered in ${click} ms; ${lines.filter((line) => line.startsWith('Custom code "Block heavy"')).join(' | ') || 'no line'}`);
+      expect(await stateOf(page, 'tab')).toBe('b');
+      expect(click).toBeLessThan(2_000);
+      // Never anything but a count's outcome: kept, or removed as a flood.
+      expect(lines.filter((line) => line.startsWith('Custom code "Block heavy"')).every((line) => line.endsWith('flooded: removed'))).toBe(true);
+    } finally {
+      await context.close();
+    }
+  }, 90_000);
+
+  it('removes a frame whose first window message is not a hello, at that message, and answers a click', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'pre', doc: 'preHeavy' }], { quiet: true });
+    try {
+      await until(page, removed('pre'), 10_000);
+      const started = Date.now();
+      await page.click('#toB', { timeout: 30_000 });
+      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
+      const click = Date.now() - started;
+      record(`costly window flood without hello, site isolation: click answered in ${click} ms`);
+      expect(click).toBeLessThan(2_000);
+      expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block pre"'))).toEqual(['Custom code "Block pre": no hello: removed']);
+    } finally {
+      await context.close();
+    }
+  }, 90_000);
 });
