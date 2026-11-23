@@ -139,7 +139,7 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
         let scene = false;
         if (picture.width > 0 && picture.height > 0) {
           const data = picture.getContext('2d')!.getImageData(0, 0, picture.width, picture.height).data;
-          for (let i = 0; i < data.length && !scene; i += 4 * 97) scene = !(data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 255);
+          for (let i = 0; i < data.length && !scene; i += 4 * 97) scene = data[i + 3] > 0 && !(data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 255);
         }
         return {
           frame: frames.findIndex((frame) => frame.contains(layer)),
@@ -277,7 +277,7 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     expect(await fingerprint(1, 'fxa')).toBe(before);
     // Every frame of the changed box gets its new picture, the burst drawn once, all of them in ONE still context
     // (setting a scene up in a context is a long task on the main thread: paid once per edit, not once per frame).
-    for (const frame of [0, 1, 2].slice(0, frames)) await expect.poll(() => fingerprint(frame, 'fxa'), { timeout: 60_000 }).not.toBe(befores[frame]);
+    for (const frame of [0, 1, 2].slice(0, frames)) await expect.poll(async () => { const now = await fingerprint(frame, 'fxa'); return now !== 'none' && now !== befores[frame]; }, { timeout: 60_000 }).toBe(true);
     await page.waitForTimeout(1500);
     expect((await madeContexts()) - made).toBeLessThanOrEqual(1);
     expect(await mostContexts()).toBe(1);

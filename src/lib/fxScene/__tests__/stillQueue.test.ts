@@ -197,10 +197,12 @@ describe('stillPixelRatio', () => {
     expect(stillPixelRatio(400, 300, 1.75, 2)).toBe(1.75);
     expect(stillPixelRatio(400, 300, 2, 1)).toBe(1);
   });
-  it('stays inside the pixel budget for a large box, and never below the floor', () => {
+  it('stays inside the pixel budget for any box, and never below the floor', () => {
     const ratio = stillPixelRatio(1600, 1600, 2, 2);
     expect(1600 * 1600 * ratio * ratio).toBeLessThanOrEqual(STILL_PIXEL_BUDGET);
     expect(ratio).toBeGreaterThan(0.8);
-    expect(stillPixelRatio(20000, 20000, 2, 2)).toBe(STILL_MIN_PIXEL_RATIO);
+    const huge = stillPixelRatio(20000, 20000, 2, 2);
+    expect(huge).toBeGreaterThanOrEqual(STILL_MIN_PIXEL_RATIO);
+    expect(20000 * 20000 * huge * huge).toBeLessThanOrEqual(STILL_PIXEL_BUDGET);
   });
 });

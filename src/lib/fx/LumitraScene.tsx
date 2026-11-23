@@ -374,7 +374,8 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   // A host that picks layers holds every content layer in its group from the start.
   const wrapped = scoped || onProbe !== undefined;
 
-  const dprClamp = perfLow ? ([1, 1] as [number, number]) : config.dpr;
+  // A still frame is drawn at exactly the ratio it was asked for (its size is checked against it); only a live scene steps down.
+  const dprClamp = perfLow && !still ? ([1, 1] as [number, number]) : config.dpr;
 
   return (
     <div

@@ -384,7 +384,8 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) setNear(true);
     }, { rootMargin: '50%' });
-    observer.observe(layer);
+    // The box itself: its still layer is absolute and may cover the viewport while the box is static and far away.
+    observer.observe(layer.parentElement ?? layer);
     return () => observer.disconnect();
   }, [near]);
 
@@ -415,8 +416,16 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
   // out has another size a moment later, measured: 1280 x 800 then 1280 x 240); a change waits until the edits settle.
   const settledWanted = useSettled(wanted, hasPicture ? FX_STILL_DEBOUNCE_MS : FX_STILL_FIRST_MS);
   const latestStored = useRef(stored);
+  // The stored value each wanted key was formed from, so a request draws the scene its key names (a later edit may land first).
+  const storedByWanted = useRef(new Map<string, typeof stored>());
   useBeforePaint(() => {
     latestStored.current = stored;
+    if (wanted) {
+      const map = storedByWanted.current;
+      map.delete(wanted);
+      map.set(wanted, stored);
+      while (map.size > 16) map.delete(map.keys().next().value as string);
+    }
   });
 
   const clearPicture = () => {
@@ -435,6 +444,8 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
     if (!settledWanted || !size || !scene) return;
     const pixelRatio = stillPixelRatio(size.width, size.height, scene.dpr[1], window.devicePixelRatio || 1);
     const key = `${pixelRatio}|${settledWanted}`;
+    const requestStored = storedByWanted.current.get(settledWanted) ?? latestStored.current;
+    let retryTimer: number | undefined;
     // The old picture stays shown until the new one is there.
     setState((prev) => (prev === 'live' ? prev : 'loading'));
     const leave = stillQueueOf(editorUI).request(
@@ -444,7 +455,7 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
         if (!layer || !layer.isConnected) return null;
         return {
           host: layer,
-          stored: latestStored.current,
+          stored: requestStored,
           pixelRatio,
           resolveImage: (src: string) => (projectId ? editorSiteImageUrl(projectId, src) : null),
         };
@@ -456,7 +467,7 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
           // The box's own background, as on the published page (warned once per picture, above).
           clearPicture();
           setState('off');
-          if (!LASTING_FAILURES.has(outcome.reason) && attempt < FX_STILL_RETRIES) window.setTimeout(() => setAttempt((n) => n + 1), FX_STILL_RETRY_MS);
+          if (!LASTING_FAILURES.has(outcome.reason) && attempt < FX_STILL_RETRIES) retryTimer = window.setTimeout(() => setAttempt((n) => n + 1), FX_STILL_RETRY_MS);
           return;
         }
         picture.width = outcome.picture.width;
@@ -466,7 +477,10 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
         setState('live');
       },
     );
-    return leave;
+    return () => {
+      leave();
+      window.clearTimeout(retryTimer);
+    };
     // `read`, `scene` and `size` are captured through `settledWanted`, which is keyed on all of them.
   }, [settledWanted, editorUI, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
 

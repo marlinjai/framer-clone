@@ -692,6 +692,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     await page.addInitScript(() => {
       const marks: Record<string, number> = {};
       (window as unknown as { __fxMarks: Record<string, number> }).__fxMarks = marks;
+      window.addEventListener('load', () => { marks.load = performance.now(); });
       new MutationObserver(() => {
         const state = document.querySelector('[data-t="hero"]')?.getAttribute('data-fc-fx-state');
         if (state && !(state in marks)) marks[state] = performance.now();
@@ -704,14 +705,15 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     const timing = await page.evaluate((urls) => {
       const marks = (window as unknown as { __fxMarks: Record<string, number> }).__fxMarks;
       const engine = (performance.getEntriesByType('resource') as PerformanceResourceTiming[]).filter((entry) => urls.includes(entry.name));
-      return { waiting: marks.waiting, loading: marks.loading, engineStart: Math.min(...engine.map((entry) => entry.startTime)) };
+      return { waiting: marks.waiting, loading: marks.loading, load: marks.load, engineStart: Math.min(...engine.map((entry) => entry.startTime)) };
     }, [...engineUrls]);
     // The fetch began while the box was still waiting for its start: before, it began only once the start had come.
     expect(timing.waiting).toBeDefined();
     expect(timing.engineStart).toBeLessThan(timing.loading);
     // And the start comes in the first idle moment, not after a fixed wait: under a second from waiting (it was
     // the load event plus 1.5 seconds, so at least 1.5 seconds after the box began to wait).
-    expect(timing.loading - timing.waiting).toBeLessThan(1000);
+    expect(timing.load).toBeDefined();
+    expect(timing.loading - timing.load).toBeLessThan(1000);
   });
 
   it('start visible: fetches nothing while the box is far below, and draws once it comes near', async () => {

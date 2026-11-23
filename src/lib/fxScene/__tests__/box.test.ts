@@ -56,6 +56,22 @@ describe('holdFxBox', () => {
     expect(b.style.isolation).toBe('');
   });
 
+  it('rehold twice in one commit never records the hold own footing as the box position', () => {
+    const b = box();
+    b.style.position = 'absolute';
+    const a = holdFxBox(b);
+    const c = holdFxBox(b);
+    // The author removes the position: the renderer writes it, and each hold reholds.
+    b.style.position = '';
+    reholdFxBox(b);
+    reholdFxBox(b);
+    expect(b.style.position).toBe('relative');
+    a();
+    c();
+    expect(b.style.position).toBe('');
+    expect(b.style.isolation).toBe('');
+  });
+
   it('a position the renderer owns at the last undo is left alone', () => {
     const b = box();
     const undo = holdFxBox(b);

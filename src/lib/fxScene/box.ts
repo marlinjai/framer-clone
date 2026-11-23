@@ -70,6 +70,8 @@ export function holdFxBox(box: HTMLElement): (positionIsOwned?: boolean) => void
 export function reholdFxBox(box: HTMLElement): void {
   const held = holds.get(box);
   if (!held) return;
+  // Our own footing (written by this hold or another on the box) is not the box's position: nothing changed.
+  if (held.positioned && box.style.position === 'relative') return;
   held.position = box.style.position;
   box.style.isolation = 'isolate';
   held.positioned = getComputedStyle(box).position === 'static';

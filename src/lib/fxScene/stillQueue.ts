@@ -79,10 +79,10 @@ export const STILL_KEEP = 6;
 /** Failures that do not pass by trying again with the same scene on the same browser: kept, never redrawn. */
 export const LASTING_FAILURES: ReadonlySet<string> = new Set(['refused', 'no-webgl']);
 
-/** The most pixels one still frame is drawn with: about a 1400 x 1400 picture, a bounded moment of GPU work and memory. */
+/** The most pixels one still frame is drawn with: about a 1400 x 1400 picture, a bounded moment of GPU work and memory. Takes precedence over the ratio floor. */
 export const STILL_PIXEL_BUDGET = 2_000_000;
-/** The least pixel ratio a still frame is drawn at, however large its box. */
-export const STILL_MIN_PIXEL_RATIO = 0.25;
+/** The least pixel ratio a still frame is drawn at (a degenerate ratio of 0 is never asked for); the pixel budget wins over it, so a huge box is drawn small. */
+export const STILL_MIN_PIXEL_RATIO = 0.01;
 
 /**
  * The pixel ratio a still frame of a `width` x `height` box is drawn at: the one the live scene would use on
