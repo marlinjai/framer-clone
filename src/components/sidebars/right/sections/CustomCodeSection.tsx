@@ -91,6 +91,45 @@ function readEmits(text: string): { emits: string[] } | { reason: string } {
   return { emits: [...new Set(names)].map((name) => `custom:${name}`) };
 }
 
+/**
+ * A Retry that stays mounted while it retries, so keyboard focus is not dropped to the page
+ * (review 2 of #459, L2). It settles once the read it started has run: on success, focus moves to
+ * `focusAfter` if the button held it; on another failure the button, still focused, is offered again.
+ */
+function useRetry(phase: string, retry: () => void, focusAfter: () => void) {
+  const [stage, setStage] = React.useState<'idle' | 'asked' | 'reading'>('idle');
+  const hadFocus = React.useRef(false);
+  React.useEffect(() => {
+    if (stage === 'asked' && phase === 'loading') setStage('reading');
+    if (stage === 'reading' && phase !== 'loading') {
+      setStage('idle');
+      if (phase !== 'failed' && hadFocus.current) focusAfter();
+      hadFocus.current = false;
+    }
+  }, [stage, phase, focusAfter]);
+  const start = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (stage !== 'idle') return;
+    hadFocus.current = document.activeElement === event.currentTarget;
+    setStage('asked');
+    retry();
+  };
+  return { retrying: stage !== 'idle', start };
+}
+
+function RetryButton({ name, retrying, onClick }: { name: string; retrying: boolean; onClick: (event: React.MouseEvent<HTMLButtonElement>) => void }) {
+  return (
+    <button
+      type="button"
+      className={`${SMALL_BUTTON} self-start`}
+      aria-label={retrying ? `Retrying: ${name}` : `Retry ${name}`}
+      aria-disabled={retrying || undefined}
+      onClick={onClick}
+    >
+      {retrying ? 'Retrying…' : 'Retry'}
+    </button>
+  );
+}
+
 export const CustomCodeSection = observer(({ component }: CustomCodeSectionProps) => (
   // Keyed by node, so a draft never moves to another block.
   <CustomCodeSectionBody key={component.id} component={component} />
@@ -155,15 +194,19 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   const [edits, setEdits] = React.useState<{ key: string; fields: Partial<Fields> } | null>(
     () => authoring.draftOf(component.id) as { key: string; fields: Partial<Fields> } | null,
   );
-  const [announcement, setAnnouncement] = React.useState(() =>
-    edits && edits.key === storedKey ? 'Your unsaved edits to this block are back.' : '',
-  );
+  // Spoken through the provider's live region, which exists before this section does, so a sentence
+  // set as the section opens is a change a screen reader announces (review 2 of #459, L1).
+  const { keepDraft, announce, updateSave, saveNow } = authoring;
+  const [restored] = React.useState(() => !!edits && edits.key === storedKey);
+  React.useEffect(() => {
+    if (restored) announce('Your unsaved edits to this block are back.');
+  }, [restored, announce]);
   const [problem, setProblem] = React.useState<string | null>(null);
-  const [saving, setSaving] = React.useState(false);
-  // Read synchronously by edit(): a keystroke between Save and the re-render is refused too.
-  const savingNow = React.useRef(false);
-  const ownWrite = React.useRef<string | null>(null);
-  const { keepDraft } = authoring;
+  // What a save that ended said, kept visible here (a save can end while another element is selected).
+  const [notice, setNotice] = React.useState<string | null>(null);
+  // The running save lives in the provider, not here (review 2 of #459, M1): this section is rebuilt when
+  // another element is selected, and the save outlives it. A section that comes back mid-save stays locked.
+  const saving = authoring.saveOf(component.id)?.running === true;
   React.useEffect(() => {
     keepDraft(component.id, edits && Object.keys(edits.fields).length > 0 ? edits : null);
   }, [keepDraft, component.id, edits]);
@@ -172,13 +215,28 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   React.useEffect(() => {
     if (!edits || edits.key === storedKey) return;
     setEdits(null);
-    if (ownWrite.current === storedKey) {
-      ownWrite.current = null;
+    // This panel's own save, perhaps started by an earlier copy of this section, is no foreign change.
+    if (saveNow(component.id)?.ownWrite === storedKey) {
+      updateSave(component.id, { ownWrite: null });
       return;
     }
     setProblem(null);
-    setAnnouncement('The block changed, so the unsaved edits were closed. The panel shows its current code.');
-  }, [storedKey, edits]);
+    setNotice(null);
+    announce('The block changed, so the unsaved edits were closed. The panel shows its current code.');
+  }, [storedKey, edits, saveNow, updateSave, announce, component.id]);
+
+  // How the save ended, said once by whichever copy of this section is open, then cleared.
+  const outcome = authoring.saveOf(component.id)?.outcome ?? null;
+  React.useEffect(() => {
+    if (!outcome) return;
+    if (outcome.kind === 'refused') {
+      setProblem(outcome.message);
+    } else {
+      setNotice(outcome.message);
+      announce(outcome.message);
+    }
+    updateSave(component.id, { outcome: null });
+  }, [outcome, announce, updateSave, component.id]);
 
   const current: Loaded = loaded.key === storedKey ? loaded.value : { phase: 'loading' };
   const baseDeclaration = current.phase === 'ready' ? current.declaration : DEFAULT_DECLARATION;
@@ -194,8 +252,9 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
 
   const edit = (patch: Partial<Fields>) => {
     // Frozen while a save runs (review 1 of #459, M1): what the save sends is what the person sees.
-    if (savingNow.current) return;
+    if (saveNow(component.id)?.running) return;
     setProblem(null);
+    setNotice(null);
     setEdits((previous) => {
       const fieldsBefore = previous && previous.key === storedKey ? previous.fields : {};
       return { key: storedKey, fields: { ...fieldsBefore, ...patch } };
@@ -227,8 +286,9 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
 
   // --- Save ------------------------------------------------------------------------------
   const save = async () => {
-    setAnnouncement('');
+    if (saveNow(component.id)?.running) return;
     setProblem(null);
+    setNotice(null);
     if ('reason' in emitsRead) return setProblem(emitsRead.reason);
     if (!checked.ok) return setProblem(checked.refusal.message);
     if (draftProblem) return setProblem(draftProblem.message);
@@ -237,9 +297,11 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
       return setProblem('The stored code is not loaded, so it cannot be saved over. Retry loading it first.');
     }
     const keyAtStart = storedKey;
-    savingNow.current = true;
-    setSaving(true);
-    setAnnouncement('Saving the code. The fields are locked until the server answers.');
+    const nodeId = component.id;
+    updateSave(nodeId, { running: true, ownWrite: null, outcome: null });
+    announce('Saving the code. The fields are locked until the server answers.');
+    // Every end goes through the provider, so a section rebuilt meanwhile says it (review 2 of #459, M1).
+    const end = (kind: 'done' | 'refused', message: string) => updateSave(nodeId, { running: false, outcome: { kind, message } });
     try {
       const sha256 = await customCodeHash(checked.value.document, checked.value.declaration);
       // Only when this site holds the code (review 1 of #459, L4): a block whose hash it does not hold posts it.
@@ -247,49 +309,51 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
         // The same code and declaration (D105): only the title can have changed, and it lives on the node.
         if (block.title === checked.value.title) {
           setEdits(null);
-          setAnnouncement('Nothing changed.');
-          return;
+          keepDraft(nodeId, null);
+          return end('done', 'Nothing changed.');
         }
+        const ownKey = keyOf({ sha256, title: checked.value.title });
+        updateSave(nodeId, { ownWrite: ownKey });
         const write = component.setCustomCode({ sha256, title: checked.value.title });
-        if (!write.ok) return setProblem(write.reason);
-        ownWrite.current = keyOf({ sha256, title: checked.value.title });
-        savedHere.current = { key: ownWrite.current, value: current };
-        setAnnouncement('Title saved.');
-        return;
+        if (!write.ok) return end('refused', write.reason);
+        savedHere.current = { key: ownKey, value: current };
+        return end('done', 'Title saved.');
       }
       // D108: the server must hold the block before it can check the declaration against it.
       const autosave = existingAutosave(projectId);
       if (autosave) {
         await autosave.flush();
         if (autosave.hasUnsavedWork()) {
-          return setProblem('The page is not saved yet (see the save status at the top), so the code was not sent. Once the page shows Saved, save the code again.');
+          return end('refused', 'The page is not saved yet (see the save status at the top), so the code was not sent. Once the page shows Saved, save the code again.');
         }
       }
       const result = await postCustomCode(projectId, {
         pageId: page.id,
-        nodeId: component.id,
+        nodeId,
         title: checked.value.title,
         document: checked.value.document,
         declaration: checked.value.declaration,
         ...(block ? { replaces: block.sha256 } : {}),
       });
-      if (!result.ok) return setProblem(result.message);
+      if (!result.ok) return end('refused', result.message);
       // D109: applied only to the block as it was when Save was pressed.
       if (!isAlive(component) || keyOf(storedValueOf(component)) !== keyAtStart) {
-        return setProblem('The block changed while saving, so nothing was applied to it. The code is stored; save it again to use it.');
+        return end('refused', 'The block changed while saving, so nothing was applied to it. The code is stored; save it again to use it.');
       }
+      // Recorded before the write, so the section that sees the new value knows it as this save's own.
+      const ownKey = keyOf({ sha256: result.value.sha256, title: checked.value.title });
+      updateSave(nodeId, { ownWrite: ownKey });
       const write = component.setCustomCode({ sha256: result.value.sha256, title: checked.value.title });
-      if (!write.ok) return setProblem(write.reason);
-      ownWrite.current = keyOf({ sha256: result.value.sha256, title: checked.value.title });
-      savedHere.current = { key: ownWrite.current, value: { phase: 'ready', document: checked.value.document, declaration: checked.value.declaration } };
-      setAnnouncement(result.value.created ? 'Code saved. Publish the page to put it live.' : 'Code saved; this exact code was already stored.');
+      if (!write.ok) {
+        updateSave(nodeId, { ownWrite: null });
+        return end('refused', write.reason);
+      }
+      savedHere.current = { key: ownKey, value: { phase: 'ready', document: checked.value.document, declaration: checked.value.declaration } };
+      end('done', result.value.created ? 'Code saved. Publish the page to put it live.' : 'Code saved; this exact code was already stored.');
       authoring.reload();
     } catch (error) {
       console.error('[custom code] save failed', error instanceof Error ? error.name : error);
-      setProblem('The code could not be saved. Nothing was changed; try again.');
-    } finally {
-      savingNow.current = false;
-      setSaving(false);
+      end('refused', 'The code could not be saved. Nothing was changed; try again.');
     }
   };
 
@@ -299,14 +363,23 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   // Read-only, and also while a save runs (M1); still focusable, so nobody loses their place.
   const frozen = readOnly || saving;
 
+  // Where focus goes once a Retry it was on succeeds: the first field, or the section itself.
+  const sectionRef = React.useRef<HTMLDivElement>(null);
+  const focusFirstField = React.useCallback(() => {
+    const root = sectionRef.current;
+    (root?.querySelector<HTMLElement>('[data-custom-code-first-field]') ?? root)?.focus();
+  }, []);
+  const codeRetry = useRetry(current.phase, () => setLoadGeneration((n) => n + 1), focusFirstField);
+  const settingsRetry = useRetry(authoring.state.phase, authoring.reload, focusFirstField);
+
   return (
     <CollapsibleSection title="Custom code" icon={<Code2 size={14} />} normalOnly>
-      <div data-testid="custom-code-section" className="flex flex-col gap-2">
+      <div ref={sectionRef} tabIndex={-1} data-testid="custom-code-section" className="flex flex-col gap-2 outline-none">
         <p className={HINT}>
           Your own HTML and JavaScript, run in an isolated frame on the published page. It never runs in the editor: the canvas
           shows a tile, and the standalone preview shows the fallback, the elements inside this block.
         </p>
-        <Notices authoring={authoring} projectId={projectId} proposal={!!proposal} invalid={!!parsed && !parsed.ok} />
+        <Notices authoring={authoring} projectId={projectId} proposal={!!proposal} invalid={!!parsed && !parsed.ok} retry={settingsRetry} />
         {authoring.available && (
           <SwitchRow
             label="Show the fallback on the canvas"
@@ -318,11 +391,13 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
         {authoring.available && !proposal && (
           <>
             {current.phase === 'loading' && <p className={HINT} role="status">Loading the stored code…</p>}
-            {current.phase === 'failed' && (
+            {(current.phase === 'failed' || codeRetry.retrying) && (
               <div className="flex items-start gap-2">
-                <p className={REASON} role="alert">{current.message} The code cannot be saved over until it is loaded.</p>
+                {current.phase === 'failed' && (
+                  <p className={REASON} role="alert">{current.message} The code cannot be saved over until it is loaded.</p>
+                )}
                 {block && authoring.available && projectId && (
-                  <button type="button" className={SMALL_BUTTON} onClick={() => setLoadGeneration((n) => n + 1)}>Retry</button>
+                  <RetryButton name="loading the stored code" retrying={codeRetry.retrying} onClick={codeRetry.start} />
                 )}
               </div>
             )}
@@ -349,6 +424,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
                 value={fields.title}
                 maxLength={200}
                 readOnly={frozen}
+                data-custom-code-first-field=""
                 aria-label="Title of the custom code block"
                 placeholder="Opening hours clock"
                 onChange={(event) => edit({ title: event.target.value })}
@@ -405,6 +481,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
                   label=""
                   value={fields.declaration.sizing}
                   aria-label="Height of the frame"
+                  aria-disabled={saving}
                   options={[{ value: 'fixed', label: SIZING_LABEL.fixed }, { value: 'content', label: SIZING_LABEL.content }]}
                   onChange={(sizing) => editDeclaration({ sizing: sizing === 'content' ? 'content' : 'fixed' })}
                 />
@@ -421,6 +498,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
                 label="Visitors can click into it"
                 hint="Off: clicks, scrolling and the keyboard pass through it, for a scene behind the page's content."
                 checked={fields.declaration.interactive}
+                locked={saving}
                 onCheckedChange={(interactive) => editDeclaration({ interactive })}
               />
             )}
@@ -437,36 +515,40 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
                 <button type="button" className={SMALL_BUTTON} disabled={saving || current.phase === 'loading' || current.phase === 'failed'} onClick={() => void save()}>
                   {saving ? 'Saving code…' : 'Save code'}
                 </button>
+                {dirty && restored && (
+                  <span className={HINT} data-custom-code-restored="">Unsaved edits from earlier</span>
+                )}
                 {dirty && !saving && (
-                  <button type="button" className={SMALL_BUTTON} onClick={() => { setEdits(null); setProblem(null); setAnnouncement('Edits discarded.'); }}>
+                  <button type="button" className={SMALL_BUTTON} onClick={() => { setEdits(null); setProblem(null); setNotice(null); announce('Edits discarded.'); }}>
                     Discard edits
                   </button>
                 )}
               </div>
             )}
             {problem && <p className={REASON} role="alert" data-custom-code-problem="">{problem}</p>}
+            {notice && !problem && <p className={HINT} data-custom-code-notice="">{notice}</p>}
           </>
         )}
-        <p className="sr-only" role="status" aria-live="polite" data-custom-code-announcement="">{announcement}</p>
       </div>
     </CollapsibleSection>
   );
 });
 CustomCodeSectionBody.displayName = 'CustomCodeSectionBody';
 
-function Notices({ authoring, projectId, proposal, invalid }: {
+function Notices({ authoring, projectId, proposal, invalid, retry }: {
   authoring: ReturnType<typeof useCustomCodeAuthoring>;
   projectId: string | null;
   proposal: boolean;
   invalid: boolean;
+  retry: ReturnType<typeof useRetry>;
 }) {
-  const lines: { text: string; alert?: boolean; retry?: boolean }[] = [];
+  const lines: { text: string; alert?: boolean }[] = [];
   if (!authoring.available) {
     lines.push({ text: 'Custom code is not available on this server yet. The block shows its fallback on every page.' });
   } else if (authoring.state.phase === 'loading') {
     lines.push({ text: 'Checking custom code for this site…' });
   } else if (authoring.state.phase === 'failed') {
-    lines.push({ text: `The custom code settings could not be read: ${authoring.state.message}`, alert: true, retry: true });
+    lines.push({ text: `The custom code settings could not be read: ${authoring.state.message}`, alert: true });
   } else if (authoring.state.phase === 'ready') {
     const status = authoring.state.status;
     if (!projectId) lines.push({ text: 'Save the project first: a block\'s code is stored with its site.' });
@@ -477,15 +559,15 @@ function Notices({ authoring, projectId, proposal, invalid }: {
   }
   if (proposal) lines.push({ text: 'Proposed by an import or an agent, not active: it shows its fallback until a person accepts it, which comes with a later release.' });
   if (invalid) lines.push({ text: 'The stored value of this block is not valid, so it shows its fallback. Saving code repairs it.', alert: true });
-  if (lines.length === 0) return null;
+  const offersRetry = authoring.available && (authoring.state.phase === 'failed' || retry.retrying);
+  if (lines.length === 0 && !offersRetry) return null;
   return (
     <>
       {lines.map((line) => (
-        <div key={line.text} className="flex items-start gap-2">
-          <p className={line.alert ? REASON : HINT} role={line.alert ? 'alert' : undefined}>{line.text}</p>
-          {line.retry && <button type="button" className={SMALL_BUTTON} onClick={authoring.reload}>Retry</button>}
-        </div>
+        <p key={line.text} className={line.alert ? REASON : HINT} role={line.alert ? 'alert' : undefined}>{line.text}</p>
       ))}
+      {/* Outside the lines, so it is the same button while the lines change under a retry. */}
+      {offersRetry && <RetryButton name="reading the custom code settings" retrying={retry.retrying} onClick={retry.start} />}
     </>
   );
 }

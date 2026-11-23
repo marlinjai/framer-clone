@@ -12,7 +12,12 @@
 //   - which blocks show their fallback on the canvas instead of the tile (D110), editor
 //     state only, never stored;
 //   - each block's unsaved draft in the Custom code section, kept while another element is
-//     selected (review 1 of #459, L3), for this editor session only.
+//     selected (review 1 of #459, L3), for this editor session only;
+//   - each block's running save and how it ended (review 2 of #459, M1): the section is rebuilt
+//     when another element is selected, and a save outlives it, so a section that comes back
+//     mid-save stays locked and then says how the save ended;
+//   - the polite live region the section speaks through, which exists before any section does,
+//     so a sentence set when a section opens is a change a screen reader announces (R2-L1).
 //
 // Without the provider (the browser-only demo at `/`, the tests' harness) the context
 // says unavailable, and nothing reads the route.
@@ -26,6 +31,15 @@ export type CustomCodeStatusState =
   | { phase: 'ready'; status: CustomCodeStatus }
   | { phase: 'failed'; message: string };
 
+/** A block's save as the provider keeps it, beyond the life of the section that started it. */
+export interface CustomCodeSaveRecord {
+  running: boolean;
+  /** The stored value the save itself wrote, so the section does not report it as someone else's change. */
+  ownWrite: string | null;
+  /** How the save ended, shown once by the section, then cleared. */
+  outcome: { kind: 'done' | 'refused'; message: string } | null;
+}
+
 export interface CustomCodeAuthoringValue {
   available: boolean;
   projectId: string | null;
@@ -38,6 +52,13 @@ export interface CustomCodeAuthoringValue {
   draftOf: (nodeId: string) => unknown;
   /** Keeps (or, with null, forgets) a block's draft. Not state: nothing renders from it. */
   keepDraft: (nodeId: string, draft: unknown) => void;
+  /** A block's save record, for rendering. */
+  saveOf: (nodeId: string) => CustomCodeSaveRecord | undefined;
+  /** The record as it is this instant, outside rendering (a keystroke right after Save). */
+  saveNow: (nodeId: string) => CustomCodeSaveRecord | undefined;
+  updateSave: (nodeId: string, patch: Partial<CustomCodeSaveRecord>) => void;
+  /** Says a sentence in the polite live region. */
+  announce: (text: string) => void;
 }
 
 const NOTHING: ReadonlySet<string> = new Set();
@@ -51,7 +72,13 @@ export const CustomCodeAuthoringContext = React.createContext<CustomCodeAuthorin
   setFallbackShown: () => {},
   draftOf: () => null,
   keepDraft: () => {},
+  saveOf: () => undefined,
+  saveNow: () => undefined,
+  updateSave: () => {},
+  announce: () => {},
 });
+
+const NO_SAVE: CustomCodeSaveRecord = { running: false, ownWrite: null, outcome: null };
 
 export function useCustomCodeAuthoring(): CustomCodeAuthoringValue {
   return React.useContext(CustomCodeAuthoringContext);
@@ -67,6 +94,18 @@ export function CustomCodeAuthoringProvider({ available, projectId, children }: 
   const [fallbackShown, setShown] = React.useState<ReadonlySet<string>>(NOTHING);
   const [generation, setGeneration] = React.useState(0);
   const drafts = React.useRef(new Map<string, unknown>());
+  const savesNow = React.useRef(new Map<string, CustomCodeSaveRecord>());
+  const [saves, setSaves] = React.useState<ReadonlyMap<string, CustomCodeSaveRecord>>(new Map());
+  const [spoken, setSpoken] = React.useState('');
+  const saveOf = React.useCallback((nodeId: string) => saves.get(nodeId), [saves]);
+  const saveNow = React.useCallback((nodeId: string) => savesNow.current.get(nodeId), []);
+  const updateSave = React.useCallback((nodeId: string, patch: Partial<CustomCodeSaveRecord>) => {
+    const next = { ...(savesNow.current.get(nodeId) ?? NO_SAVE), ...patch };
+    savesNow.current.set(nodeId, next);
+    setSaves(new Map(savesNow.current));
+  }, []);
+  // The same sentence twice is still a change for the region: a no-break space tells them apart.
+  const announce = React.useCallback((text: string) => setSpoken((previous) => (previous === text ? `${text}\u00a0` : text)), []);
   const draftOf = React.useCallback((nodeId: string) => drafts.current.get(nodeId) ?? null, []);
   const keepDraft = React.useCallback((nodeId: string, draft: unknown) => {
     if (draft === null || draft === undefined) drafts.current.delete(nodeId);
@@ -102,8 +141,13 @@ export function CustomCodeAuthoringProvider({ available, projectId, children }: 
   }, []);
 
   const value = React.useMemo<CustomCodeAuthoringValue>(
-    () => ({ available, projectId, state, reload, fallbackShown, setFallbackShown, draftOf, keepDraft }),
-    [available, projectId, state, reload, fallbackShown, setFallbackShown, draftOf, keepDraft],
+    () => ({ available, projectId, state, reload, fallbackShown, setFallbackShown, draftOf, keepDraft, saveOf, saveNow, updateSave, announce }),
+    [available, projectId, state, reload, fallbackShown, setFallbackShown, draftOf, keepDraft, saveOf, saveNow, updateSave, announce],
   );
-  return <CustomCodeAuthoringContext.Provider value={value}>{children}</CustomCodeAuthoringContext.Provider>;
+  return (
+    <CustomCodeAuthoringContext.Provider value={value}>
+      {children}
+      <p className="sr-only" role="status" aria-live="polite" data-custom-code-announcement="">{spoken}</p>
+    </CustomCodeAuthoringContext.Provider>
+  );
 }

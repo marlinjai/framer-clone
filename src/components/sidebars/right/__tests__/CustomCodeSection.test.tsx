@@ -157,7 +157,7 @@ describe('forward: insert, write, save', () => {
     expect(server.posts).toEqual([{ pageId: page.id, nodeId: block.id, title: 'Clock', document: '<p>tick</p>', declaration }]);
     const sha256 = await customCodeHash('<p>tick</p>', declaration as CustomCodeDeclaration);
     expect(codeOf(block)).toEqual({ sha256, title: 'Clock' });
-    expect(screen.getByText('Code saved. Publish the page to put it live.')).toBeTruthy();
+    expect(section().getByText('Code saved. Publish the page to put it live.')).toBeTruthy();
     act(() => getHistoryStore()!.undo());
     expect(codeOf(block)).toBeNull();
   });
@@ -221,7 +221,7 @@ describe('backtrack and revise', () => {
     expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).value).toBe('<p>one</p>');
     await save();
     expect(server.posts).toHaveLength(1);
-    expect(screen.getByText('Nothing changed.')).toBeTruthy();
+    expect(section().getByText('Nothing changed.')).toBeTruthy();
   });
 
   it('a draft is closed when the block changes underneath it (an undo), and says so (D109)', async () => {
@@ -352,7 +352,7 @@ describe('who may write, and where', () => {
     act(() => store.editorUI.selectComponent(block));
     await waitFor(() => expect(screen.getByText(/could not be read/)).toBeTruthy());
     server.network = false;
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry reading the custom code settings' }));
     await waitFor(() => expect(screen.getByTestId('insert-custom-code')).toBeTruthy());
   });
 
@@ -443,6 +443,10 @@ describe('canInsertCustomCode (D101)', () => {
     fallbackShown: new Set(),
     setFallbackShown: () => {},
     draftOf: () => null,
+    saveOf: () => undefined,
+    saveNow: () => undefined,
+    updateSave: () => {},
+    announce: () => {},
     keepDraft: () => {},
     ...over,
   });
@@ -473,6 +477,15 @@ describe('review 1 of #459', () => {
     expect(field.readOnly).toBe(true);
     expect((section().getByLabelText('Title of the custom code block') as HTMLInputElement).readOnly).toBe(true);
     expect(screen.getByText('Saving the code. The fields are locked until the server answers.')).toBeTruthy();
+    // Every field, the Height dropdown and the pointer switch too (review 2 of #459, L3).
+    const height = section().getByLabelText('Height of the frame') as HTMLSelectElement;
+    const pointer = section().getByRole('switch', { name: 'Visitors can click into it' });
+    expect(height.getAttribute('aria-disabled')).toBe('true');
+    expect(pointer.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.change(height, { target: { value: 'content' } });
+    fireEvent.click(pointer);
+    expect(height.value).toBe('fixed');
+    expect(pointer.getAttribute('aria-checked')).toBe('true');
     // A keystroke meanwhile is not taken: the field keeps what is being saved.
     fireEvent.change(field, { target: { value: '<p>one and two</p>' } });
     fireEvent.click(section().getByRole('checkbox', { name: 'Read Open' }));
@@ -545,8 +558,173 @@ describe('review 1 of #459', () => {
     await waitFor(() => expect(screen.getByText(/cannot be saved over until it is loaded/)).toBeTruthy());
     expect((section().getByRole('button', { name: 'Save code' }) as HTMLButtonElement).disabled).toBe(true);
     failBlob = false;
-    fireEvent.click(section().getByRole('button', { name: 'Retry' }));
+    fireEvent.click(section().getByRole('button', { name: 'Retry loading the stored code' }));
     await waitFor(() => expect((section().getByLabelText('Code of Kept') as HTMLTextAreaElement).value).toBe('<p>kept</p>'));
     expect((section().getByRole('button', { name: 'Save code' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe('review 2 of #459', () => {
+  /** Fills the block, presses Save with the post held, and waits for the post to be sent. */
+  async function saveHeld(block: ComponentInstance) {
+    fill('Clock', '<p>one</p>');
+    server.hold = { release: () => {} };
+    act(() => {
+      fireEvent.click(section().getByRole('button', { name: 'Save code' }));
+    });
+    await waitFor(() => expect(server.posts).toHaveLength(1));
+    // Away to another element (the fallback switch leads there) and back.
+    act(() => store.editorUI.selectComponent(main));
+    expect(screen.queryByTestId('custom-code-section')).toBeNull();
+    act(() => store.editorUI.selectComponent(block));
+  }
+
+  it('M1: a section opened again mid-save stays locked, keeps no lost typing, and then says Code saved', async () => {
+    mount();
+    const block = await insertBlock();
+    await saveHeld(block);
+    const field = section().getByLabelText('Code of Clock') as HTMLTextAreaElement;
+    expect(field.readOnly).toBe(true);
+    expect((section().getByLabelText('Title of the custom code block') as HTMLInputElement).readOnly).toBe(true);
+    expect(section().getByRole('button', { name: 'Saving code…' })).toBeTruthy();
+    fireEvent.change(field, { target: { value: '<p>one and later</p>' } });
+    expect(field.value).toBe('<p>one</p>');
+    await act(async () => { server.hold!.release(); });
+    await waitFor(() => expect(codeOf(block)).not.toBeNull());
+    await waitFor(() => expect(section().getByText('Code saved. Publish the page to put it live.')).toBeTruthy());
+    expect(screen.queryByText(/the unsaved edits were closed/)).toBeNull();
+    expect(section().queryByRole('alert')).toBeNull();
+    const after = section().getByLabelText('Code of Clock') as HTMLTextAreaElement;
+    expect(after.value).toBe('<p>one</p>');
+    expect(after.readOnly).toBe(false);
+  });
+
+  it('M1: Save cannot be pressed again while the first save runs, so one post goes out', async () => {
+    mount();
+    const block = await insertBlock();
+    await saveHeld(block);
+    const button = section().getByRole('button', { name: 'Saving code…' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    await act(async () => { server.hold!.release(); });
+    await waitFor(() => expect(section().getByRole('button', { name: 'Save code' })).toBeTruthy());
+    expect(server.posts).toHaveLength(1);
+    server.hold = null;
+    expect(section().queryByText(/save it again to use it/)).toBeNull();
+    // The next save from this section replaces the hash the first one wrote.
+    const first = (codeOf(block) as { sha256: string }).sha256;
+    fireEvent.change(section().getByLabelText('Code of Clock'), { target: { value: '<p>two</p>' } });
+    await save();
+    expect(server.posts).toHaveLength(2);
+    expect(server.posts[1].replaces).toBe(first);
+  });
+
+  it('M1: a save that ends while another element is selected says so when the block is selected again', async () => {
+    mount();
+    const block = await insertBlock();
+    await saveHeld(block);
+    act(() => store.editorUI.selectComponent(main));
+    await act(async () => { server.hold!.release(); });
+    await waitFor(() => expect(codeOf(block)).not.toBeNull());
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(section().getByText('Code saved. Publish the page to put it live.')).toBeTruthy());
+    expect(screen.queryByText(/the unsaved edits were closed/)).toBeNull();
+    expect(screen.queryByText('Your unsaved edits to this block are back.')).toBeNull();
+    await waitFor(() => expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).value).toBe('<p>one</p>'));
+  });
+
+  it('M1: a refusal that arrives while another element is selected is shown with its reason on return', async () => {
+    mount();
+    const block = await insertBlock();
+    server.refuse = { status: 429, code: 'rate_limited', message: 'Try again in 50 minutes.' };
+    await saveHeld(block);
+    act(() => store.editorUI.selectComponent(main));
+    await act(async () => { server.hold!.release(); });
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(section().getByRole('alert').textContent).toBe('Try again in 50 minutes.'));
+    expect(codeOf(block)).toBeNull();
+    const field = section().getByLabelText('Code of Clock') as HTMLTextAreaElement;
+    expect(field.value).toBe('<p>one</p>');
+    expect(field.readOnly).toBe(false);
+    expect(section().getByRole('button', { name: 'Save code' })).toBeTruthy();
+  });
+
+  it('L1: the restored-draft notice is a change in a live region that existed before, and shows on screen', async () => {
+    mount();
+    const block = await insertBlock();
+    const region = document.querySelector('[data-custom-code-announcement]');
+    expect(region).not.toBeNull();
+    fill('Clock', '<p>draft</p>');
+    expect(section().queryByText('Unsaved edits from earlier')).toBeNull();
+    act(() => store.editorUI.selectComponent(main));
+    expect(document.querySelector('[data-custom-code-announcement]')).toBe(region);
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(region!.textContent).toBe('Your unsaved edits to this block are back.'));
+    expect(document.querySelector('[data-custom-code-announcement]')).toBe(region);
+    expect(region!.getAttribute('aria-live')).toBe('polite');
+    expect(section().getByText('Unsaved edits from earlier')).toBeTruthy();
+    fireEvent.click(section().getByRole('button', { name: 'Discard edits' }));
+    expect(section().queryByText('Unsaved edits from earlier')).toBeNull();
+  });
+
+  it('L2: Retry stays focused while it retries and hands focus to the first field once the code loads', async () => {
+    const declaration: CustomCodeDeclaration = { reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true };
+    const sha256 = await customCodeHash('<p>kept</p>', declaration);
+    server.blobs.set(sha256, { title: 'Kept', document: '<p>kept</p>', declaration });
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    block.setCustomCode({ sha256, title: 'Kept' });
+    let fails = true;
+    let held = false;
+    let releaseBlob = () => {};
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('sha256=')) {
+        if (held) await new Promise<void>((resolve) => { releaseBlob = resolve; });
+        if (fails) return json({ error: { code: 'custom_code_failed', message: 'The custom code could not be read.' } }, 500);
+      }
+      return fakeFetch(input, init);
+    });
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    const retry = await waitFor(() => section().getByRole('button', { name: 'Retry loading the stored code' }));
+    // Fails again: the same button keeps focus.
+    held = true;
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(retry.getAttribute('aria-disabled')).toBe('true'));
+    expect(retry.getAttribute('aria-label')).toBe('Retrying: loading the stored code');
+    expect(document.activeElement).toBe(retry);
+    await act(async () => { releaseBlob(); });
+    await waitFor(() => expect(retry.getAttribute('aria-disabled')).toBeNull());
+    expect(retry.getAttribute('aria-label')).toBe('Retry loading the stored code');
+    expect(document.activeElement).toBe(retry);
+    // Succeeds: focus goes to the first field, never to the page body.
+    fails = false;
+    fireEvent.click(retry);
+    await waitFor(() => expect(retry.getAttribute('aria-disabled')).toBe('true'));
+    expect(document.activeElement).toBe(retry);
+    await act(async () => { releaseBlob(); });
+    await waitFor(() => expect((section().getByLabelText('Code of Kept') as HTMLTextAreaElement).value).toBe('<p>kept</p>'));
+    await waitFor(() => expect(document.activeElement).toBe(section().getByLabelText('Title of the custom code block')));
+  });
+
+  it('L2: with the network down, the two Retry buttons have distinct names and each reads again', async () => {
+    const declaration: CustomCodeDeclaration = { reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true };
+    const sha256 = await customCodeHash('<p>kept</p>', declaration);
+    server.blobs.set(sha256, { title: 'Kept', document: '<p>kept</p>', declaration });
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    block.setCustomCode({ sha256, title: 'Kept' });
+    server.network = true;
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    const settings = await waitFor(() => section().getByRole('button', { name: 'Retry reading the custom code settings' }));
+    const code = await waitFor(() => section().getByRole('button', { name: 'Retry loading the stored code' }));
+    expect(settings).not.toBe(code);
+    server.network = false;
+    settings.focus();
+    fireEvent.click(settings);
+    await waitFor(() => expect(section().queryByRole('button', { name: /reading the custom code settings/ })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(section().getByLabelText('Title of the custom code block')));
+    fireEvent.click(section().getByRole('button', { name: 'Retry loading the stored code' }));
+    await waitFor(() => expect((section().getByLabelText('Code of Kept') as HTMLTextAreaElement).value).toBe('<p>kept</p>'));
   });
 });
