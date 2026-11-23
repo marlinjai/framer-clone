@@ -27,11 +27,12 @@ beforeAll(async () => {
   bundle = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
 });
 
-const PAGE = () => `<!doctype html><html><head><meta charset="utf-8"></head><body>
+const PAGE = (readOnly = false) => `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <button id="before">Before</button>
 <div id="editor"></div>
 <p id="hint">Tab moves on to the next field.</p>
 <button id="after">After</button>
+<script>window.__readOnly = ${readOnly};</script>
 <script>${bundle}</script>
 </body></html>`;
 
@@ -58,9 +59,9 @@ describe.each([
     await browser?.close();
   });
 
-  async function open() {
+  async function open(readOnly = false) {
     page = await browser.newPage();
-    await page.setContent(PAGE());
+    await page.setContent(PAGE(readOnly));
     await page.waitForSelector('.cm-content');
   }
 
@@ -128,14 +129,18 @@ describe.each([
     await page.close();
   });
 
-  it('read-only, is still reached with Tab and moved through and scrolled with the keyboard', async () => {
-    await open();
+  it.each([
+    ['mounted read-only, as a reader gets it', true],
+    ['made read-only after mounting', false],
+  ])('%s, is still reached with Tab and moved through and scrolled with the keyboard', async (_case, mountedReadOnly) => {
+    await open(mountedReadOnly);
     const lines = Array.from({ length: 200 }, (_, i) => `<p>line ${i}</p>`).join('\n');
-    await page.evaluate((value) => {
+    await page.evaluate(({ value, toggle }) => {
       const handle = (window as unknown as { __handle: { setValue(v: string): void; setReadOnly(v: boolean): void } }).__handle;
       handle.setValue(value);
-      handle.setReadOnly(true);
-    }, lines);
+      if (toggle) handle.setReadOnly(true);
+    }, { value: lines, toggle: !mountedReadOnly });
+    expect(await page.locator('.cm-content').getAttribute('aria-readonly')).toBe('true');
     await page.focus('#before');
     await page.keyboard.press(tab(_name));
     expect(await focused(page)).toBe('editor');

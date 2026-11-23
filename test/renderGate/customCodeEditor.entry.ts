@@ -5,6 +5,8 @@
 import { mountCodeMirror, type CodeMirrorHandle } from '@/components/customCode/codeMirrorView';
 
 interface GateWindow {
+  /** Set by the page before this script: mount the field read-only, as a reader gets it. */
+  __readOnly?: boolean;
   __changes: string[];
   __handle: CodeMirrorHandle;
 }
@@ -17,5 +19,5 @@ w.__handle = mountCodeMirror(host, {
   onChange: (value) => w.__changes.push(value),
   label: 'Code of Clock',
   describedBy: 'hint',
-  readOnly: false,
+  readOnly: w.__readOnly === true,
 });
