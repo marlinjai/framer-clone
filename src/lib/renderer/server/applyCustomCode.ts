@@ -12,7 +12,9 @@
 //     inside a form or a shop control, whose islands get the node without its value
 //     (D95), not inside a sticky bar, a map, a void or unnamed tag or a refused tag,
 //     which draw no children, and not on or inside `svg` or `math`, where an HTML
-//     frame is not drawn (D66);
+//     frame is not drawn, nor on or inside a tag that draws no element child (a
+//     select, an option, a textarea, a canvas, a video, a template, FRAMELESS_TAGS)
+//     (D66);
 //   - fewer than BOX_LIMITS.blocksPerPage blocks were accepted before it;
 //   - every state its declaration reads or writes stands on the node's path as
 //     the runtime will hold it (the parsed behaviour, readBehaviourTree), and is
@@ -124,6 +126,15 @@ function blockState(state: StateValue): BlockState | null {
   return null;
 }
 
+/**
+ * Tags whose element children are not drawn as boxes on the page (review 3 of pull request #452, L2): a frame in
+ * one measures 0 by 0 in Chromium, WebKit and Firefox (a canvas draws it in Firefox only), and only Chromium loads
+ * it, so its hello would hide a fallback that was showing while nobody sees the frame. As D66 refuses svg and math.
+ */
+export const FRAMELESS_TAGS: ReadonlySet<string> = new Set([
+  'select', 'option', 'optgroup', 'datalist', 'textarea', 'canvas', 'video', 'audio', 'template', 'noscript', 'colgroup',
+]);
+
 export function applyCustomCode(root: ComponentNode, live: LiveCustomCode | null): CustomCodeResult {
   const problems: CustomCodeProblem[] = [];
   const hashes = customCodeHashes(root);
@@ -201,13 +212,16 @@ export function applyCustomCode(root: ComponentNode, live: LiveCustomCode | null
     const boxTag = isBlock ? customCodeBoxTag(tag, foreign, parentTag) : tag;
     // A box that is itself `svg` or `math` holds its frame in foreign content as much as one inside them.
     const ownContent = contentBelow(tag, false);
+    // A box, or any element, of a tag that draws no element child: a frame in it is never seen (D66).
+    const frameless = boxTag !== null && FRAMELESS_TAGS.has(boxTag) ? `a ${boxTag}` : null;
     const where = self
       ? `${outside ? 'inside' : 'on'} ${self}`
       : foreign !== false ? `inside ${foreign}` : isBlock && ownContent !== false ? `on ${ownContent}`
-      : boxTag === null ? `under a ${parentTag}, where a void tag gets no box` : null;
+      : boxTag === null ? `under a ${parentTag}, where a void tag gets no box`
+      : isBlock && frameless ? `on ${frameless}, which draws no frame inside it` : null;
     const run = running && isBlock ? accept(node, states, running, where) : null;
     // The custom code branch draws a block's children in its box; any other node as its kind says.
-    const below = self ?? (boxTag === null ? 'a block drawn as nothing' : running && !isBlock ? childrenApart(node) : null);
+    const below = self ?? (boxTag === null ? 'a block drawn as nothing' : frameless ?? (running && !isBlock ? childrenApart(node) : null));
     // A void block's box stands in what its own tag would: neither is svg or math. Its children stand in the box.
     const children = node.children?.map((child) => visit(child, states, contentBelow(tag, foreign), isBlock ? boxTag : tagOf(node), below));
     const same = !children || children.every((child, index) => child === node.children?.[index]);

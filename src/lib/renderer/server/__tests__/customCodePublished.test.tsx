@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import type { CustomCodeDeclaration } from '@/lib/customCode/contract';
-import { applyCustomCode, customCodeHashes, type LiveCustomCode } from '../applyCustomCode';
+import { FRAMELESS_TAGS, applyCustomCode, customCodeHashes, type LiveCustomCode } from '../applyCustomCode';
 import { renderPublishedPage } from '../renderPublishedPage';
 import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 
@@ -181,6 +181,35 @@ describe('applyCustomCode', () => {
     expect(reasons.ownMath).toContain('on math');
   });
 
+  // Review 3 of pull request #452, L2: tags whose element children are not drawn as boxes.
+  it.each([
+    ['form controls', ['select', 'option', 'optgroup', 'datalist', 'textarea']],
+    ['media', ['canvas', 'video', 'audio']],
+    ['inert content', ['template', 'noscript']],
+    ['a table column group', ['colgroup']],
+  ])('refuses a block on or inside %s, where a frame is never seen, and gives it no slot (D66)', (_group, tags) => {
+    const root = page([
+      ...tags.flatMap((tag, i) => [
+        { ...block(`on-${tag}`, 2 * i + 1), type: tag },
+        { type: tag, id: `${tag}-host`, children: [block(`in-${tag}`, 2 * i + 2)] },
+      ]),
+      block('after', 99),
+    ]);
+    const result = applyCustomCode(root, live([...Array.from({ length: 2 * tags.length }, (_, i): [number, CustomCodeDeclaration] => [i + 1, declaration()]), [99, declaration()]]));
+    for (const tag of tags) {
+      expect(runOf(result.root, `on-${tag}`), tag).toBeUndefined();
+      expect(runOf(result.root, `in-${tag}`), tag).toBeUndefined();
+    }
+    expect(runOf(result.root, 'after')).toBeDefined();
+    expect(result.blocks).toBe(1);
+    expect(FRAMELESS_TAGS.size).toBe(11);
+    const reasons = Object.fromEntries(result.problems.map((p) => [p.node, p.reason]));
+    for (const tag of tags) {
+      expect(reasons[`on-${tag}`], tag).toMatch(new RegExp(`on a (${tag}|refused tag)`));
+      expect(reasons[`in-${tag}`], tag).toMatch(new RegExp(`inside a (${tag}|refused tag)`));
+    }
+  });
+
   it('brings no broker for a page whose only block stands inside a form or svg', async () => {
     const root = page([
       { type: 'div', id: 'f', props: { 'data-form-kind': 'form' }, children: [block('b1', 1)] },
@@ -222,7 +251,8 @@ describe('applyCustomCode', () => {
     expect(result.blocks).toBe(1);
     expect(result.problems.map((p) => p.reason)).toEqual([
       'a frame is not drawn under a table, where a void tag gets no box; this block shows its fallback',
-      'a frame is not drawn under a select, where a void tag gets no box; this block shows its fallback',
+      // A select draws no element child at all (FRAMELESS_TAGS), which is said before the void tag's missing box.
+      'a frame is not drawn inside a select; this block shows its fallback',
     ]);
     const { markup } = await html(root, liveMarked(['a', 'b', 'c']));
     expect(markup).not.toContain('aaaaaaaaaaaa');
