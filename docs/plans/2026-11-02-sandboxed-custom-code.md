@@ -1124,7 +1124,10 @@ merged oversize branch gave back. Cutting a fix to fit would cost correctness, s
 inside the brief's ceiling of 2,400; say so if you disagree). esbuild measured 2107 bytes and Next's real chunk 2122. The third
 review's fixes made it smaller, with no raise needed: the window route now reads data once per frame and drops the second-hello
 rule (M1), and the coalescing of emits and the 25-a-second cap (M2, L1) live in the shell, which has no size limit. esbuild now
-measures 2096 bytes and Next's real chunk 2108, 92 under the limit of 2,200 (the core's stays at 4968 of 5000). It is
+measured 2096 bytes and Next's real chunk 2108 after that review. The walk's budget then came to charge characters (a property
+name's and a string's length, not one per call, so a small shared graph with long keys is refused before its JSON is built),
+which costs 37 bytes: esbuild now measures 2131 bytes and Next's real chunk 2145, 55 under the limit of 2,200 (the core's stays
+at 4968 of 5000). It is
 held on esbuild's measure in the unit suite and on Next's real chunk in the behaviour suite. Next compiles `?.`, `??` and template strings into longer code than esbuild does
 (its first real chunk came to 2037 bytes against esbuild's 1990), so the broker is written without them, and its numbers are
 literals at their use, since a bundler keeps a module's constants as variables. The registry it shares with the island and the
