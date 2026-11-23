@@ -1266,6 +1266,11 @@ and refusal while away, the live region, Retry focus, the two names; the M1 case
 case in Chromium and WebKit types into the real CodeMirror during a held save, before and after selecting away and back (6
 end-to-end cases in all), which also closes review 2's Info 3. Weakening: 8 of 9 caught by a failed expectation; the ninth (the
 save's own write not recognised) is equivalent, because the outcome is shown in the same commit and replaces the false sentence.
+Review 2's informational points were closed too. Info 5: every read gives up after 20 seconds and a save, and the page flush before
+it, after 30, with a sentence that keeps the edits (a timed-out save may or may not be stored; saving again stores the same code
+once), so a hung request can never keep the fields locked; three jsdom cases, and three weakenings caught. Info 4: the budget
+refusal names the saved pages and components, and `replaces_mismatch` asks to copy the code before reloading. Info 8: the field
+leaves `aria-readonly` to CodeMirror, which sets it from its read-only state; the gates pin CodeMirror's own.
 
 ## Decided in slice C4, say so if you disagree
 
