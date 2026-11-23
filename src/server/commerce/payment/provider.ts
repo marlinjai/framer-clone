@@ -106,6 +106,12 @@ export interface PaymentEvent {
    * provider's own `checkout_expired` never sets it.
    */
   requireDue?: true;
+  /**
+   * Close only a payment with no stored checkout session, decided under the row lock: a close decided here (the margin,
+   * a refused create, an outdated order) must not end a payment whose session another click stored meanwhile, which the
+   * buyer may still pay. With a session stored, nothing is written and the outcome names it (`sessionStored`).
+   */
+  requireNoSession?: true;
 }
 
 /** What starting a payment answers: the provider reference, and for a hosted page where to send the buyer. */
@@ -138,6 +144,13 @@ export interface StartPaymentArgs {
   simulateDecline?: boolean;
 }
 
+/** A hosted checkout session and the account it lives on, as pinned (checkoutSession.ts). */
+export interface SessionRef {
+  sessionId: string;
+  accountId: string;
+  signal?: AbortSignal;
+}
+
 /** How a hosted checkout session stands, as the provider reports it. */
 export interface CheckoutSessionState {
   status: 'open' | 'complete' | 'expired';
@@ -161,8 +174,15 @@ export interface PaymentProvider {
   start(args: StartPaymentArgs, emit: (event: PaymentEvent) => Promise<void>): Promise<StartedPayment>;
   /** Refund a payment in full (the platform fee returns with it). Answers the provider's refund id. */
   refund(args: { providerPaymentId: string; amount: number; connectedAccountId?: string }): Promise<{ refundId: string }>;
-  /** A hosted provider: how a session it created stands. The demo provider has no session. */
-  retrieveSession?(sessionId: string, signal?: AbortSignal): Promise<CheckoutSessionState>;
+  /**
+   * A hosted provider: the account a new session is made on (Stripe: the company's connected account, once it can take
+   * charges), or null when it cannot take payments. Pinned with the session (checkoutSession.ts).
+   */
+  chargeableAccount?(signal?: AbortSignal): Promise<string | null>;
+  /** A hosted provider: how a session it created on `accountId` stands. The demo provider has no session. */
+  retrieveSession?(args: SessionRef): Promise<CheckoutSessionState>;
+  /** A hosted provider: end an open session now, so it can no longer be paid. */
+  expireSession?(args: SessionRef): Promise<CheckoutSessionState>;
 }
 
 /** A short random reference for the demo provider (no network, no money). */

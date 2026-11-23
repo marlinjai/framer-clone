@@ -53,7 +53,14 @@ import {
 } from '@/server/commerce/payment/payments';
 import { buyerRefusal } from '@/server/commerce/payment/invoiceable';
 import { demoCheckoutAllowed } from '@/server/commerce/payment/demoCheckout';
-import { openCheckoutSession, pinCheckoutSession } from '@/server/commerce/payment/checkoutSession';
+import {
+  openCheckoutSession,
+  pinCheckoutSession,
+  readStoredSession,
+  STRIPE_CALL_TIMEOUT_MS,
+  type CheckoutAnswer,
+  type CheckoutOrder,
+} from '@/server/commerce/payment/checkoutSession';
 import { PAYMENTS_UNAVAILABLE_MESSAGE, receiptReadiness } from '@/server/commerce/payment/receiptReadiness';
 import { demoProvider, type ProviderId } from '@/server/commerce/payment/provider';
 import { runJobNow } from '@/server/commerce/jobs/run';
@@ -75,8 +82,6 @@ const payBody = z
 
 const FAILED_MESSAGE = 'the payment could not be completed, please try again later';
 
-/** How long a click waits for Stripe before it answers that Stripe did not answer. */
-const STRIPE_TIMEOUT_MS = 20_000;
 
 export async function POST(req: Request, { params }: { params: Promise<{ orderId: string }> }): Promise<Response> {
   const { orderId } = await params;
@@ -144,14 +149,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
     const tax = await shopTaxProfile(db, companyId);
     // A net price has VAT added on top, so the total depends on the tax status it was placed under; the receipt
     // is issued under today's. A gross total stays the same either way. Without Books there is no status to differ.
+    const checkoutOrder: CheckoutOrder = {
+      tenantId: companyId,
+      orderId,
+      orderNumber: payment.orderNumber,
+      amount: payment.amount,
+      currency: payment.currency,
+      applicationFeeAmount: payment.fee,
+    };
     if (payment.netOrGross === 'net' && tax.booksReady && payment.pricedWithoutVat !== tax.kleinunternehmer) {
-      await handlePaymentEvent(deps, {
+      const outdated = await handlePaymentEvent(deps, {
         provider: payment.provider as ProviderId,
         eventId: `order-outdated:${orderId}`,
         type: 'checkout_cancelled',
         tenantId: companyId,
         orderId,
+        // A Stripe session stored meanwhile may still be paid: it is read instead of being closed behind the buyer's back.
+        ...(payment.provider === 'stripe' ? { requireNoSession: true as const } : {}),
       });
+      if (outdated.sessionStored) {
+        const answer = await readStoredSession(deps, checkoutOrder, AbortSignal.timeout(STRIPE_CALL_TIMEOUT_MS));
+        return stripeResponse(answer, { orderId, tenantGroupId, db, companyId });
+      }
       return jsonError('order_outdated', 'the total of this order is out of date and nothing has been charged', 409);
     }
     const stored = buyer ?? readBuyer(payment.buyer as Record<string, unknown>);
@@ -166,63 +185,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
     if (payment.provider === 'stripe') {
       const host = req.headers.get('host') ?? '';
       const proto = req.headers.get('x-forwarded-proto') ?? 'https';
-      // The first click pins the session's end, return address and buyer; every later one answers that pin, whatever
-      // page it comes from, so Stripe is always sent the same request under the same key.
-      const pinned = await pinCheckoutSession(db, companyId, orderId, stored, `${proto}://${host}${returnPath ?? '/'}`, new Date());
-      if (!pinned.ok && pinned.reason === 'buyer_fixed') {
-        return jsonError(
-          'buyer_fixed',
-          'This order is already waiting for its payment with other details. Pay it with those, or go back to the cart and check out again. Nothing has been charged.',
-          409,
-        );
+      // The first click pins the session's end, return address, account and buyer; every later one answers that pin,
+      // whatever page it comes from, so Stripe is always sent the same request under the same key.
+      const signal = AbortSignal.timeout(STRIPE_CALL_TIMEOUT_MS);
+      const stripe = deps.provider('stripe');
+      const pinned = await pinCheckoutSession(db, companyId, orderId, stored, `${proto}://${host}${returnPath ?? '/'}`, new Date(), async () => {
+        if (!stripe.chargeableAccount) throw new Error('the Stripe provider names no account');
+        return stripe.chargeableAccount(signal);
+      });
+      if (!pinned.ok) {
+        switch (pinned.reason) {
+          case 'buyer_fixed':
+            return jsonError(
+              'buyer_fixed',
+              'This order is already waiting for its payment with other details. Pay it with those, or go back to the cart and check out again. Nothing has been charged.',
+              409,
+            );
+          case 'no_account':
+            console.warn(`[payments] order ${orderId}: the payment was refused, the company has no Stripe account that can take payments`);
+            return jsonError('payments_unavailable', PAYMENTS_UNAVAILABLE_MESSAGE, 503);
+          case 'stripe_unavailable':
+            return jsonError('checkout_unavailable', CHECKOUT_UNAVAILABLE_MESSAGE, 503);
+          case 'not_pending':
+          case 'window_over':
+            return jsonError('payment_closed', 'the order no longer takes a payment', 409);
+        }
       }
-      if (!pinned.ok) return jsonError('payment_closed', 'the order no longer takes a payment', 409);
-
-      const answer = await openCheckoutSession(
-        deps,
-        {
-          tenantId: companyId,
-          orderId,
-          orderNumber: payment.orderNumber,
-          amount: payment.amount,
-          currency: payment.currency,
-          applicationFeeAmount: payment.fee,
-        },
-        pinned.pin,
-        { now: new Date(), signal: AbortSignal.timeout(STRIPE_TIMEOUT_MS) },
-      );
-      switch (answer.kind) {
-        case 'redirect':
-          return Response.json({ status: 'redirect', redirectUrl: answer.url });
-        case 'paid':
-          // Started, not awaited, as the webhook does: the job exists already and the worker runs what this does not.
-          for (const jobId of answer.outcome.jobIds) {
-            void runJobNow({ id: tenantGroupId, db }, companyId, jobId).catch((err: unknown) => {
-              console.error(`[payments] order ${orderId}: the first attempt at job ${jobId} failed to run; the worker retries it:`, err);
-            });
-          }
-          if (answer.outcome.status === 'paid') return Response.json({ status: 'paid', provider: 'stripe', receipt: null });
-          return jsonError('payment_closed', `the order is ${answer.outcome.status} and takes no payment`, 409, {
-            status: answer.outcome.status,
-          });
-        case 'closed':
-          return jsonError(
-            'payment_closed',
-            'The checkout for this order has ended and nothing has been charged. Please check out again.',
-            409,
-            { status: answer.status },
-          );
-        case 'processing':
-          return jsonError('payment_processing', 'The payment for this order is being processed. Nothing more is needed.', 409);
-        case 'key_conflict':
-          return jsonError(
-            'checkout_pending',
-            'An earlier checkout page for this order may still be open. Finish the payment there, or check out again once this order has closed.',
-            409,
-          );
-        case 'unavailable':
-          return jsonError('checkout_unavailable', 'The payment page could not be opened just now. Nothing has been charged; please try again.', 503);
-      }
+      const answer = await openCheckoutSession(deps, checkoutOrder, pinned.pin, { now: new Date(), signal });
+      return stripeResponse(answer, { orderId, tenantGroupId, db, companyId });
     }
 
     if (buyer) {
@@ -288,4 +278,51 @@ export async function POST(req: Request, { params }: { params: Promise<{ orderId
   } catch (err) {
     return commerceServerFault('commerce_payment_failed', FAILED_MESSAGE, 'pay order', err);
   }
+}
+
+const CHECKOUT_UNAVAILABLE_MESSAGE = 'The payment page could not be opened just now. Nothing has been charged; please try again.';
+
+/** A Stripe click's answer (checkoutSession.ts) as the route's response. */
+function stripeResponse(
+  answer: CheckoutAnswer,
+  ctx: { orderId: string; tenantGroupId: string; db: Parameters<typeof runJobNow>[0]['db']; companyId: string },
+): Response {
+  switch (answer.kind) {
+    case 'redirect':
+      return Response.json({ status: 'redirect', redirectUrl: answer.url });
+    case 'paid':
+      // Started, not awaited, as the webhook does: the job exists already and the worker runs what this does not.
+      for (const jobId of answer.outcome.jobIds) {
+        void runJobNow({ id: ctx.tenantGroupId, db: ctx.db }, ctx.companyId, jobId).catch((err: unknown) => {
+          console.error(`[payments] order ${ctx.orderId}: the first attempt at job ${jobId} failed to run; the worker retries it:`, err);
+        });
+      }
+      return paidOrClosed(answer.outcome.status);
+    case 'closed':
+      return paidOrClosed(answer.status);
+    case 'processing':
+      return jsonError('payment_processing', 'The payment for this order is being processed. Nothing more is needed.', 409);
+    case 'key_conflict':
+      return jsonError(
+        'checkout_pending',
+        'An earlier checkout page for this order may still be open. Finish the payment there, or check out again once this order has closed.',
+        409,
+      );
+    case 'unavailable':
+      return jsonError('checkout_unavailable', CHECKOUT_UNAVAILABLE_MESSAGE, 503);
+  }
+}
+
+/** How a Stripe payment stands once a click is done with it: paid, or closed with the words that are true for it. */
+function paidOrClosed(status: string): Response {
+  if (status === 'paid') return Response.json({ status: 'paid', provider: 'stripe', receipt: null });
+  if (status === 'refunded') {
+    return jsonError('payment_closed', 'This order was paid and then refunded in full. Please check out again.', 409, { status });
+  }
+  return jsonError(
+    'payment_closed',
+    'The checkout for this order has ended and nothing has been charged. Please check out again.',
+    409,
+    { status },
+  );
 }

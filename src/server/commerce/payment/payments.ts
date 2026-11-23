@@ -9,9 +9,11 @@ import 'server-only';
 //   payment_succeeded   pending -> paid. Closed (failed, cancelled, expired) -> paid when the stock can be
 //                       reserved again; when it cannot, the payment is refunded in full and the order stays
 //                       closed. Paid or refunded: nothing changes.
-//   payment_failed      pending -> failed, the reserved stock released. While the payment's pinned checkout session is
-//                       still open (checkoutSession.ts), the buyer can try again on the same page, so the event is
-//                       recorded with its decline code and the payment stays pending; the session's end closes it.
+//   payment_failed      pending -> failed, the reserved stock released. A payment with a pinned checkout session
+//                       (checkoutSession.ts) never closes on it: the buyer can try again on the same page, and a decline
+//                       delivered late or out of order says nothing about a later attempt that succeeded. The event is
+//                       recorded with its decline code and the payment stays pending; the session's own end closes it
+//                       (checkout.session.expired, or the expiry job asking the provider).
 //   checkout_cancelled  pending -> cancelled, the reserved stock released.
 //   checkout_expired    pending -> expired, the reserved stock released. Besides a provider's own report, our clock
 //                       closes a payment: its job when its window ends (expiryJob.ts), and sweepExpiredPayments, which
@@ -40,6 +42,8 @@ import type { CommerceEvent } from '../jobs/types';
 import { applyInventoryEffect, ReservationOverflowError, reserve, RESERVE_ISOLATION_LEVEL } from '../inventory/reserve';
 import { isLockTimeout } from '../provisioning/ownerSql';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
+// A cycle (checkoutSession.ts imports this module): both only call each other's functions, never at load time.
+import { sessionAtExpiry, STRIPE_WAIT_PAST_HOLD_MS } from './checkoutSession';
 import { demoCheckoutAllowed } from './demoCheckout';
 
 /** How long a pending payment holds its stock (the design: 30 minutes). */
@@ -149,6 +153,8 @@ export interface PaymentOutcome {
    * payment still pending; null for one that closed or was paid.
    */
   notDue?: { expiresAt: Date | null };
+  /** `requireNoSession` found a stored checkout session (its id) and nothing was written. */
+  sessionStored?: string;
 }
 
 type Trx = Transaction<CommerceDB>;
@@ -179,17 +185,6 @@ async function readWindow(trx: Trx, tenantId: string, orderId: string, at: Date)
     .where('tenant_id', '=', tenantId)
     .where('order_id', '=', orderId)
     .executeTakeFirstOrThrow();
-}
-
-/** Whether a locked payment's pinned checkout session is still open at `at`, decided by Postgres as readWindow is. */
-async function sessionOpen(trx: Trx, tenantId: string, orderId: string, at: Date): Promise<boolean> {
-  const row = await trx
-    .selectFrom('order_payment')
-    .select((eb) => eb('session_expires_at', '>', at).as('open'))
-    .where('tenant_id', '=', tenantId)
-    .where('order_id', '=', orderId)
-    .executeTakeFirstOrThrow();
-  return row.open === true;
 }
 
 /** Record the event; false when it was recorded before (a repeated delivery). */
@@ -285,6 +280,7 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
   const now = deps.now ?? (() => new Date());
   let duplicate = false;
   let notDue: PaymentOutcome['notDue'];
+  let sessionStored: string | undefined;
   let status: PaymentStatus;
   let jobIds: string[] = [];
   try {
@@ -304,6 +300,11 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
           notDue = { expiresAt: current === 'pending' ? window.expiresAt : null };
           return current;
         }
+      }
+      // Under the lock, so a session stored by a concurrent click is seen: then the caller reads it instead of closing.
+      if (event.requireNoSession && payment.provider_session_id !== null) {
+        sessionStored = payment.provider_session_id;
+        return current;
       }
       if (!(await recordEvent(trx, event))) {
         if (event.requireDue) throw new ExpiryRecordedError(event.orderId);
@@ -330,11 +331,11 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
       };
       switch (event.type) {
         case 'payment_failed':
-          // One declined attempt on a hosted page the buyer can still retry: the decline is kept, the hold stays.
-          if (current === 'pending' && (await sessionOpen(trx, event.tenantId, event.orderId, at))) {
+          // A declined attempt on a pinned hosted session: the decline is kept, the hold stays (see the top of the file).
+          if (current === 'pending' && payment.session_expires_at !== null) {
             await trx
               .updateTable('order_payment')
-              .set({ failure_code: event.failureCode ?? null, updated_at: at })
+              .set({ failure_code: event.failureCode ?? null, version: payment.version + 1, updated_at: at })
               .where('tenant_id', '=', event.tenantId)
               .where('order_id', '=', event.orderId)
               .execute();
@@ -387,7 +388,7 @@ export async function handlePaymentEvent(deps: PaymentDeps, event: PaymentEvent)
     if (!(err instanceof LateStockGoneError)) throw err;
     status = await refundLatePayment(deps, event, now());
   }
-  return { status, duplicate, jobIds, ...(notDue ? { notDue } : {}) };
+  return { status, duplicate, jobIds, ...(notDue ? { notDue } : {}), ...(sessionStored ? { sessionStored } : {}) };
 }
 
 /** The late success whose stock is gone: refund in full, the order stays closed. */
@@ -506,8 +507,10 @@ export function receiptFailure(err: unknown): string {
 }
 
 /**
- * Close every pending payment whose window ran out (checkout_expired, stock released), but for one with a stored checkout
- * session, which its job closes after asking the provider (expiryJob.ts). Idempotent and safe to
+ * Close every pending payment whose window ran out (checkout_expired, stock released). A payment with a stored checkout
+ * session is left to its job, which asks the provider first (expiryJob.ts), until it is STRIPE_WAIT_PAST_HOLD_MS past its
+ * hold: then the sweep applies the job's own rule (checkoutSession.ts sessionAtExpiry), so the hold never depends on the
+ * job alone and a session the provider reports paid is never closed. Idempotent and safe to
  * run concurrently: the payment row is locked and each expiry recorded once per order, so a second sweep finds
  * the event and releases nothing. Answers the orders it closed. One payment that cannot be closed never keeps
  * the others holding their stock: it is logged, the rest are closed, then ExpirySweepError reports it. `only` narrows
@@ -525,14 +528,23 @@ export async function sweepExpiredPayments(
     .where('tenant_id', '=', tenantId)
     .where('status', '=', 'pending')
     .where('expires_at', '<', at)
-    // A stored checkout session may have been paid with its webhook lost: its job asks the provider before closing it.
-    .where('provider_session_id', 'is', null);
+    // A stored checkout session may have been paid with its webhook lost: its job asks the provider before closing it,
+    // and the sweep only takes it once the job's wait for an answer is over.
+    .where((eb) =>
+      eb.or([eb('provider_session_id', 'is', null), eb('expires_at', '<', new Date(at.getTime() - STRIPE_WAIT_PAST_HOLD_MS))]),
+    )
+    .select('provider_session_id');
   if (only) query = query.where('order_id', '=', only.orderId);
   const due = await query.execute();
   const closed: string[] = [];
   const failed: string[] = [];
   for (const row of due) {
     try {
+      if (row.provider_session_id !== null) {
+        const decision = await sessionAtExpiry(deps, tenantId, row.order_id, undefined);
+        // Paid after all (applied there), or not to be closed yet: nothing for the sweep to do.
+        if (decision.kind !== 'close') continue;
+      }
       const outcome = await handlePaymentEvent(deps, {
         provider: row.provider as ProviderId,
         eventId: `expiry:${row.order_id}`,

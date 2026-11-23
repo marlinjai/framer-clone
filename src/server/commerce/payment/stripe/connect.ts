@@ -23,8 +23,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Kysely } from 'kysely';
 
 import type { CommerceDB } from '../../db-types';
-import type { PaymentProvider } from '../provider';
-import type { StripeApi, StripeConfig } from './client';
+import type { CheckoutSessionState, PaymentProvider } from '../provider';
+import type { StripeApi, StripeCheckoutSessionState, StripeConfig } from './client';
 
 export type AccountStatus = 'not_connected' | 'pending' | 'ready' | 'restricted';
 
@@ -50,10 +50,15 @@ function statusFrom(flags: { charges_enabled: boolean }, previous: AccountStatus
 }
 
 /** Ask Stripe how the company's account stands and store it. */
-export async function refreshAccount(db: Kysely<CommerceDB>, api: StripeApi, tenantId: string): Promise<CompanyPaymentAccount> {
+export async function refreshAccount(
+  db: Kysely<CommerceDB>,
+  api: StripeApi,
+  tenantId: string,
+  signal?: AbortSignal,
+): Promise<CompanyPaymentAccount> {
   const current = await readAccount(db, tenantId);
   if (!current.accountId) return current;
-  const account = await api.retrieveAccount(current.accountId);
+  const account = await api.retrieveAccount(current.accountId, signal);
   const status = statusFrom(account, current.status);
   await db
     .updateTable('payment_account')
@@ -146,13 +151,29 @@ export async function completeOauth(
 }
 
 /** The company's account id, refreshed from Stripe when it is not ready yet; null when it cannot take charges. */
-export async function chargeableAccount(db: Kysely<CommerceDB>, api: StripeApi, tenantId: string): Promise<string | null> {
+export async function chargeableAccount(
+  db: Kysely<CommerceDB>,
+  api: StripeApi,
+  tenantId: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
   let account = await readAccount(db, tenantId);
-  if (account.accountId && account.status !== 'ready') account = await refreshAccount(db, api, tenantId);
+  if (account.accountId && account.status !== 'ready') account = await refreshAccount(db, api, tenantId, signal);
   return account.status === 'ready' ? account.accountId : null;
 }
 
 // --- the provider -------------------------------------------------------------------------------------------
+
+function sessionState(session: StripeCheckoutSessionState): CheckoutSessionState {
+  return {
+    status: session.status,
+    paid: session.status === 'complete' && session.payment_status === 'paid',
+    url: session.url,
+    amount: session.amount_total,
+    currency: session.currency ? session.currency.toUpperCase() : null,
+    providerPaymentId: session.payment_intent,
+  };
+}
 
 /**
  * The Stripe payment provider for one company. `start` creates the hosted Checkout Session (the outcome
@@ -191,19 +212,13 @@ export function stripeProvider(
       });
       return { providerPaymentId: session.id, redirectUrl: session.url };
     },
-    async retrieveSession(sessionId, signal) {
-      // The stored account, ready or not: a session made while it could take charges is read whatever it says now.
-      const { accountId } = await readAccount(ctx.db, ctx.tenantId);
-      if (!accountId) throw new Error(`company ${ctx.tenantId} has no Stripe account to read session ${sessionId} on`);
-      const session = await api.retrieveCheckoutSession({ accountId, sessionId, signal });
-      return {
-        status: session.status,
-        paid: session.status === 'complete' && session.payment_status === 'paid',
-        url: session.url,
-        amount: session.amount_total,
-        currency: session.currency ? session.currency.toUpperCase() : null,
-        providerPaymentId: session.payment_intent,
-      };
+    chargeableAccount: (signal) => chargeableAccount(ctx.db, api, ctx.tenantId, signal),
+    // The pinned account, whatever the company's account is now: a session is read and ended where it was made.
+    async retrieveSession({ sessionId, accountId, signal }) {
+      return sessionState(await api.retrieveCheckoutSession({ accountId, sessionId, signal }));
+    },
+    async expireSession({ sessionId, accountId, signal }) {
+      return sessionState(await api.expireCheckoutSession({ accountId, sessionId, signal }));
     },
     async refund({ providerPaymentId, connectedAccountId }) {
       const accountId = connectedAccountId ?? (await readAccount(ctx.db, ctx.tenantId)).accountId;

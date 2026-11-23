@@ -44,6 +44,8 @@ import {
 } from '@/server/commerce/__tests__/storefrontFixtures';
 import { StripeApiError, type StripeApi } from '@/server/commerce/payment/stripe/client';
 import { refreshAccount, startOnboarding } from '@/server/commerce/payment/stripe/connect';
+import { paymentDeps } from '@/server/commerce/payment/deps';
+import { handlePaymentEvent } from '@/server/commerce/payment/payments';
 import { POST as placeOrder } from '../../../route';
 import { POST as pay } from '../route';
 
@@ -103,8 +105,12 @@ class IdempotentStripe {
     this.byKey.set(idempotencyKey, { body, answer: session });
     return session;
   };
+  /** Runs before the next retrieve is answered (a webhook landing meanwhile). */
+  beforeRetrieve: Array<() => Promise<void>> = [];
   retrieveCheckoutSession = async ({ sessionId }: { sessionId: string }) => {
     this.retrieved += 1;
+    const between = this.beforeRetrieve.shift();
+    if (between) await between();
     const session = this.sessions.get(sessionId);
     if (!session) throw new StripeApiError(404, 'resource_missing', 'No such checkout session', true, 'invalid_request_error');
     return {
@@ -116,6 +122,12 @@ class IdempotentStripe {
       currency: session.currency,
       payment_intent: session.paid ? `pi_${session.id}` : null,
     };
+  };
+  expireCheckoutSession = async ({ sessionId }: { sessionId: string }) => {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new StripeApiError(404, 'resource_missing', 'No such checkout session', true, 'invalid_request_error');
+    session.status = 'expired';
+    return this.retrieveCheckoutSession({ sessionId });
   };
   only() {
     const all = [...this.sessions.values()];
@@ -230,6 +242,27 @@ describe('pressing Pay again on a Stripe order', () => {
     Object.assign(stripe.only(), { status: 'expired' });
     expect(await payOrder(expiredOrder, {})).toMatchObject({ status: 409, body: { error: { code: 'payment_closed', status: 'expired' } } });
     expect((await paymentOf(expiredOrder)).status).toBe('expired');
+  });
+
+  it('a session found expired on an order paid meanwhile answers paid, never "nothing has been charged"', async () => {
+    const orderId = await stripeOrder();
+    await payOrder(orderId, { buyer: buyer() });
+    const session = stripe.only();
+    Object.assign(session, { status: 'expired' });
+    stripe.beforeRetrieve.push(async () => {
+      await handlePaymentEvent(paymentDeps(tenant.db, tenant.tgId, DEMO_COMPANY_ID), {
+        provider: 'stripe',
+        eventId: `evt_${randomBytes(6).toString('hex')}`,
+        type: 'payment_succeeded',
+        tenantId: DEMO_COMPANY_ID,
+        orderId,
+        amount: session.amount,
+        currency: session.currency.toUpperCase(),
+        providerPaymentId: 'pi_meanwhile',
+      });
+    });
+    expect(await payOrder(orderId, {})).toEqual({ status: 200, body: { status: 'paid', provider: 'stripe', receipt: null } });
+    expect((await paymentOf(orderId)).status).toBe('paid');
   });
 
   it('backtrack: another buyer after the pin is refused, the first stays, Stripe is not asked', async () => {

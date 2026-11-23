@@ -820,6 +820,8 @@ export interface OrderPaymentTable {
   session_expires_at: Timestamp | null;
   // 031_checkout_session: where the hosted page returns the buyer, pinned with the end (BK018).
   session_return_url: string | null;
+  // 031_checkout_session: the connected account the session is made on, pinned with the end (BK018).
+  session_account_id: string | null;
 }
 
 /** 021_order_payment: a provider event, recorded once (append-only, BK019). */

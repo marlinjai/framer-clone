@@ -212,6 +212,7 @@ const COLUMN_NOTES: Record<string, string> = {
   'order_payment.provider_session_id': '031_checkout_session: the Checkout Session id, set once after Stripe answered the create (BK018).',
   'order_payment.session_expires_at': '031_checkout_session: when Stripe ends the session, pinned once before Stripe is asked (BK018).',
   'order_payment.session_return_url': '031_checkout_session: where the hosted page returns the buyer, pinned with the end (BK018).',
+  'order_payment.session_account_id': '031_checkout_session: the connected account the session is made on, pinned with the end (BK018).',
   'order_payment.checkout_request': '028_checkout_request: unwritten since 031; read only to tell a payment whose session the build before confirmed (checkoutSession.ts), dropped in slice B9.',
 };
 

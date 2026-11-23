@@ -27,6 +27,7 @@ import type { BuyerInput } from '../buyer';
 import {
   CREATE_MARGIN_MS,
   openCheckoutSession,
+  STRIPE_CALL_TIMEOUT_MS,
   pinCheckoutSession,
   SESSION_EVENT,
   type CheckoutOrder,
@@ -66,6 +67,8 @@ interface StoredAnswer {
 
 interface SandboxSession {
   id: string;
+  /** The connected account it lives on (the Stripe-Account header of its create). */
+  account: string;
   status: 'open' | 'complete' | 'expired';
   payment_status: 'paid' | 'unpaid';
   url: string | null;
@@ -79,6 +82,7 @@ interface SeenRequest {
   path: string;
   headers: Record<string, string>;
   body: string | undefined;
+  signal: AbortSignal | undefined;
 }
 
 /** Stripe's sandbox as the proof run found it, at the fetch level. */
@@ -94,17 +98,28 @@ class StripeSandbox {
   nextCreate: Array<'lost' | 'unreachable' | 'refuse' | 'fail500' | 'rateLimit' | 'inUse'> = [];
   /** What the next retrieve meets. */
   nextRetrieve: Array<'unreachable' | 'gateway'> = [];
+  /** What the next expire meets. */
+  nextExpire: Array<'unreachable'> = [];
+  /** What the next account lookup meets. */
+  nextAccount: Array<'fail500'> = [];
+  /** Runs after Stripe made a session and before its answer reaches the caller: another click, a close, in between. */
+  beforeCreateAnswer: Array<() => Promise<void>> = [];
+  /** Runs before a retrieve is answered. */
+  beforeRetrieveAnswer: Array<() => Promise<void>> = [];
 
   readonly fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
     const headers = { ...(init?.headers as Record<string, string>) };
     const method = init?.method ?? 'GET';
     const body = init?.body === undefined ? undefined : String(init.body);
-    this.requests.push({ method, path: url.pathname, headers, body });
+    this.requests.push({ method, path: url.pathname, headers, body, signal: init?.signal ?? undefined });
     if (method === 'POST' && url.pathname === '/v1/checkout/sessions') return this.create(headers, body ?? '');
     const retrieve = /^\/v1\/checkout\/sessions\/([^/]+)$/.exec(url.pathname);
-    if (method === 'GET' && retrieve) return this.retrieve(decodeURIComponent(retrieve[1]));
+    if (method === 'GET' && retrieve) return this.retrieve(headers['stripe-account'], decodeURIComponent(retrieve[1]));
+    const expire = /^\/v1\/checkout\/sessions\/([^/]+)\/expire$/.exec(url.pathname);
+    if (method === 'POST' && expire) return this.expireCall(headers['stripe-account'], decodeURIComponent(expire[1]));
     if (method === 'GET' && url.pathname.startsWith('/v1/accounts/')) {
+      if (this.nextAccount.shift() === 'fail500') return stripeError(500, 'api_error', null);
       return Response.json({ id: url.pathname.split('/')[3], charges_enabled: true, details_submitted: true });
     }
     throw new Error(`the sandbox has no route for ${method} ${url.pathname}`);
@@ -118,6 +133,10 @@ class StripeSandbox {
     return this.requests.filter((r) => r.method === 'GET' && r.path.startsWith('/v1/checkout/sessions/'));
   }
 
+  expires(): SeenRequest[] {
+    return this.requests.filter((r) => r.method === 'POST' && r.path.endsWith('/expire'));
+  }
+
   /** The session Stripe made for an order (its metadata is in the stored request). */
   only(): SandboxSession {
     const all = [...this.sessions.values()];
@@ -125,7 +144,7 @@ class StripeSandbox {
     return all[0];
   }
 
-  private create(headers: Record<string, string>, body: string): Response {
+  private async create(headers: Record<string, string>, body: string): Promise<Response> {
     const key = headers['idempotency-key'];
     const mode = this.nextCreate.shift();
     if (mode === 'unreachable') throw new TypeError('fetch failed');
@@ -153,6 +172,7 @@ class StripeSandbox {
       const id = `cs_test_${randomBytes(8).toString('hex')}`;
       const session: SandboxSession = {
         id,
+        account: headers['stripe-account'],
         status: 'open',
         payment_status: 'unpaid',
         url: `https://checkout.stripe.test/c/pay/${id}`,
@@ -165,15 +185,29 @@ class StripeSandbox {
     }
     if (key) this.byKey.set(key, answer);
     if (mode === 'lost') throw new TypeError('fetch failed');
+    const between = this.beforeCreateAnswer.shift();
+    if (between) await between();
     return new Response(JSON.stringify(answer.json), { status: answer.status });
   }
 
-  private retrieve(id: string): Response {
+  private async retrieve(account: string, id: string): Promise<Response> {
     const mode = this.nextRetrieve.shift();
     if (mode === 'unreachable') throw new TypeError('fetch failed');
     if (mode === 'gateway') return new Response('<html>Bad gateway</html>', { status: 502 });
+    const between = this.beforeRetrieveAnswer.shift();
+    if (between) await between();
+    // A session lives on one account: asked on another, Stripe does not know it.
     const session = this.sessions.get(id);
-    if (!session) return stripeError(404, 'invalid_request_error', 'resource_missing');
+    if (!session || session.account !== account) return stripeError(404, 'invalid_request_error', 'resource_missing');
+    return Response.json(session);
+  }
+
+  private expireCall(account: string, id: string): Response {
+    if (this.nextExpire.shift() === 'unreachable') throw new TypeError('fetch failed');
+    const session = this.sessions.get(id);
+    if (!session || session.account !== account) return stripeError(404, 'invalid_request_error', 'resource_missing');
+    if (session.status !== 'open') return stripeError(400, 'invalid_request_error', 'checkout_session_not_open');
+    this.expire(id);
     return Response.json(session);
   }
 
@@ -312,16 +346,19 @@ async function checkoutOrder(orderId: string): Promise<CheckoutOrder> {
   return { tenantId: shop.company, orderId, orderNumber: row.orderNumber, amount: row.amount, currency: row.currency, applicationFeeAmount: row.fee };
 }
 
+/** The account a new session is made on, as the route asks it (with the click's signal). */
+const account = (signal?: AbortSignal) => () => shop.deps.provider('stripe').chargeableAccount!(signal);
+
 /** A Pay click as the route makes it: pin (or read the pin), then open. */
 async function click(orderId: string, buyer: BuyerInput = BUYER, returnUrl = RETURN_URL) {
-  const pinned = await pinCheckoutSession(env.appDb, shop.company, orderId, buyer as never, returnUrl, clock.now);
+  const pinned = await pinCheckoutSession(env.appDb, shop.company, orderId, buyer as never, returnUrl, clock.now, account());
   if (!pinned.ok) return { pinned };
   const answer = await openCheckoutSession(shop.deps, await checkoutOrder(orderId), pinned.pin, { now: clock.now });
   return { pinned, answer };
 }
 
 async function pinOf(orderId: string): Promise<PinnedSession> {
-  const pinned = await pinCheckoutSession(env.appDb, shop.company, orderId, BUYER as never, RETURN_URL, clock.now);
+  const pinned = await pinCheckoutSession(env.appDb, shop.company, orderId, BUYER as never, RETURN_URL, clock.now, account());
   if (!pinned.ok) throw new Error(`no pin: ${pinned.reason}`);
   return pinned.pin;
 }
@@ -421,13 +458,16 @@ describe('B: the buyer comes back', () => {
     expect(await reserved(ring.item)).toBe(1);
   });
 
-  it('a decline after the session ended closes at once, and an unpinned or demo payment closes at once as before', async () => {
+  it('a decline delivered after the session ended still leaves a pinned payment pending; an unpinned or demo one closes at once', async () => {
     const ring = await stockedRing(3);
     const pinned = await placeOrder(ring);
     await click(pinned);
+    const before = await payment(pinned);
     clock.now = at(46 * MINUTE);
     await handlePaymentEvent(shop.deps, webhookEvent(pinned, 'payment_failed', { failureCode: 'card_declined' }));
-    expect((await payment(pinned)).status).toBe('failed');
+    // The decline is kept and counted as a write (version), the hold and the stock stay: the session's own end closes it.
+    expect(await payment(pinned)).toMatchObject({ status: 'pending', failure_code: 'card_declined', closed_at: null, version: before.version + 1 });
+    expect(await reserved(ring.item)).toBe(1);
 
     clock.now = T0;
     const unpinned = await placeOrder(ring);
@@ -437,7 +477,23 @@ describe('B: the buyer comes back', () => {
     const demo = await placeOrder(ring, 'demo');
     await handlePaymentEvent(shop.deps, { ...webhookEvent(demo, 'payment_failed', { failureCode: 'card_declined' }), provider: 'demo' });
     expect((await payment(demo)).status).toBe('failed');
-    expect(await reserved(ring.item)).toBe(0);
+    expect(await reserved(ring.item)).toBe(1);
+  });
+
+  it('redelivery order: a decline processed after the session ended, then the success of a later attempt pays normally', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    await click(orderId);
+    // Stripe: attempt one declined, attempt two paid; the decline's delivery arrives late, after the session's end.
+    clock.now = at(47 * MINUTE);
+    await handlePaymentEvent(shop.deps, webhookEvent(orderId, 'payment_failed', { failureCode: 'insufficient_funds' }));
+    expect((await payment(orderId)).status).toBe('pending');
+    const paid = await handlePaymentEvent(shop.deps, webhookEvent(orderId, 'payment_succeeded', { amount: 4900, currency: 'EUR', providerPaymentId: 'pi_second' }));
+    // Not the late path: no reservation again, no refund, the stock held all along.
+    expect(paid.status).toBe('paid');
+    expect(await payment(orderId)).toMatchObject({ status: 'paid', refund_id: null, closed_at: null, failure_code: null });
+    expect(await reserved(ring.item)).toBe(1);
+    expect(shop.sandbox.requests.filter((r) => r.path.startsWith('/v1/refunds'))).toEqual([]);
   });
 });
 
@@ -486,8 +542,9 @@ describe('R: an answer lost between the pin and the store', () => {
     const orderId = await placeOrder(ring);
     shop.sandbox.nextCreate.push('lost');
     await click(orderId);
-    // 45 minutes pinned: with 31 or fewer left, the stored end would be refused and a new key would open a second session.
-    clock.now = new Date(at(45 * MINUTE).getTime() - CREATE_MARGIN_MS);
+    // 45 minutes pinned: with 31 or fewer left, the stored end would be refused and a new key would open a second session;
+    // the click's own wait for Stripe is added, so an answer still on its way lands before the margin.
+    clock.now = new Date(at(45 * MINUTE).getTime() - CREATE_MARGIN_MS - STRIPE_CALL_TIMEOUT_MS);
     const answer = await openCheckoutSession(shop.deps, await checkoutOrder(orderId), await pinOf(orderId), { now: clock.now });
     expect(answer).toEqual({ kind: 'closed', status: 'expired' });
     expect(shop.sandbox.creates()).toHaveLength(1);
@@ -598,13 +655,29 @@ describe('E: a later click, an error Stripe stored, and the order past its windo
 
     const same = await click(orderId);
     expect(same.answer).toEqual({ kind: 'key_conflict' });
-    expect(await payment(orderId)).toMatchObject({ status: 'pending', buyer: { email: BUYER.email }, expires_at: at(50 * MINUTE) });
+    // The hold outlasts the earlier build's session too: its window (30 minutes) plus its 31, plus the grace.
+    expect(await payment(orderId)).toMatchObject({ status: 'pending', buyer: { email: BUYER.email }, expires_at: at(66 * MINUTE) });
     // Past the margin too: no close while that session may still be paid; the hold ends it.
     clock.now = at(20 * MINUTE);
     expect((await click(orderId)).answer).toEqual({ kind: 'key_conflict' });
     expect(shop.sandbox.requests).toHaveLength(0);
-    clock.now = at(51 * MINUTE);
+    clock.now = at(65 * MINUTE);
+    expect(await sweepExpiredPayments(shop.deps, shop.company, { orderId })).toEqual([]);
+    clock.now = at(67 * MINUTE);
     expect(await sweepExpiredPayments(shop.deps, shop.company, { orderId })).toEqual([orderId]);
+  });
+
+  it('cutover, a late click: the hold still ends no earlier than the pin plus 50 minutes', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    await env.ownerDb
+      .updateTable('order_payment')
+      .set({ checkout_request: toJsonb({ buyerEmail: BUYER.email, returnUrl: RETURN_URL, confirmed: true }) })
+      .where('order_id', '=', orderId)
+      .execute();
+    clock.now = at(29 * MINUTE);
+    await click(orderId);
+    expect((await payment(orderId)).expires_at).toEqual(at(79 * MINUTE));
   });
 
   it('no pin on a payment past its window, nor on one no longer pending', async () => {
@@ -700,6 +773,145 @@ describe('E: the expiry job asks Stripe before it closes a payment with a stored
   });
 });
 
+describe('review fixes: a close racing a create, closes under the lock, the pinned account, the sweep', () => {
+  it('B1: a click closing at the margin while another click\'s create is in flight: the late session is expired, not stored', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    const pinA = await pinOf(orderId);
+    // Click A's create reaches Stripe at 13:30, before the margin; its answer comes back only after click B closed.
+    clock.now = at(13 * MINUTE + 30_000);
+    let closedByB: unknown;
+    shop.sandbox.beforeCreateAnswer.push(async () => {
+      clock.now = at(14 * MINUTE);
+      closedByB = await openCheckoutSession(shop.deps, await checkoutOrder(orderId), await pinOf(orderId), { now: clock.now });
+    });
+    const answerA = await openCheckoutSession(shop.deps, await checkoutOrder(orderId), pinA, { now: at(13 * MINUTE + 30_000) });
+    expect(closedByB).toEqual({ kind: 'closed', status: 'expired' });
+    expect(answerA).toEqual({ kind: 'closed', status: 'expired' });
+    const session = shop.sandbox.only();
+    expect(session.status).toBe('expired');
+    expect(shop.sandbox.expires()).toHaveLength(1);
+    expect(await payment(orderId)).toMatchObject({ status: 'expired', provider_session_id: null });
+    expect(await reserved(ring.item)).toBe(0);
+  });
+
+  it('B1: an outdated order closed while a create is in flight: the session is expired; if Stripe cannot, it is logged loudly', async () => {
+    const ring = await stockedRing(2);
+    for (const expireFails of [false, true]) {
+      const orderId = await placeOrder(ring);
+      const pin = await pinOf(orderId);
+      if (expireFails) shop.sandbox.nextExpire.push('unreachable');
+      shop.sandbox.beforeCreateAnswer.push(async () => {
+        await handlePaymentEvent(shop.deps, { ...webhookEvent(orderId, 'checkout_cancelled'), eventId: `order-outdated:${orderId}`, requireNoSession: true });
+      });
+      const errors = vi.mocked(console.error);
+      errors.mockClear();
+      expect(await openCheckoutSession(shop.deps, await checkoutOrder(orderId), pin, { now: clock.now })).toEqual({ kind: 'closed', status: 'cancelled' });
+      expect((await payment(orderId)).provider_session_id).toBeNull();
+      const created = [...shop.sandbox.sessions.values()].at(-1)!;
+      expect(created.status).toBe(expireFails ? 'open' : 'expired');
+      expect(errors.mock.calls.some((c) => String(c[0]).includes('could NOT be expired'))).toBe(expireFails);
+    }
+  });
+
+  it('B1: a close decided here finds a session stored under the lock and reads it instead (the outdated order, the margin)', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    await click(orderId);
+    const outdated = await handlePaymentEvent(shop.deps, { ...webhookEvent(orderId, 'checkout_cancelled'), requireNoSession: true });
+    expect(outdated).toMatchObject({ status: 'pending', sessionStored: shop.sandbox.only().id });
+    expect(await eventIds(orderId)).toEqual([]);
+    expect(await reserved(ring.item)).toBe(1);
+  });
+
+  it('B1 hardening: no create once less than the margin plus the click\'s wait is left; it closes instead', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    const pin = await pinOf(orderId);
+    clock.now = at(13 * MINUTE + 50_000);
+    expect(await openCheckoutSession(shop.deps, await checkoutOrder(orderId), pin, { now: clock.now })).toEqual({ kind: 'closed', status: 'expired' });
+    expect(shop.sandbox.creates()).toHaveLength(0);
+  });
+
+  it('M1: a session found expired on a payment paid meanwhile answers its real status, never "nothing charged"', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    await click(orderId);
+    const session = shop.sandbox.only();
+    shop.sandbox.expire(session.id);
+    shop.sandbox.beforeRetrieveAnswer.push(async () => {
+      await handlePaymentEvent(shop.deps, webhookEvent(orderId, 'payment_succeeded', { amount: 4900, currency: 'EUR', providerPaymentId: 'pi_x' }));
+    });
+    expect((await click(orderId)).answer).toEqual({ kind: 'closed', status: 'paid' });
+    expect((await payment(orderId)).status).toBe('paid');
+  });
+
+  it('M2: Stripe failing on the account lookup pins nothing and closes nothing; the lookup gets the click\'s signal', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    await env.ownerDb.updateTable('payment_account').set({ status: 'pending', charges_enabled: false }).where('tenant_id', '=', shop.company).execute();
+    shop.sandbox.nextAccount.push('fail500');
+    const signal = new AbortController().signal;
+    const pinned = await pinCheckoutSession(env.appDb, shop.company, orderId, BUYER as never, RETURN_URL, clock.now, account(signal));
+    expect(pinned).toEqual({ ok: false, reason: 'stripe_unavailable' });
+    expect(await payment(orderId)).toMatchObject({ status: 'pending', session_expires_at: null });
+    const lookup = shop.sandbox.requests.find((r) => r.path.startsWith('/v1/accounts/'))!;
+    expect(lookup.signal).toBe(signal);
+    // The account answers now: the pin goes through on it, and the create is the only call inside the click's catch.
+    expect((await click(orderId)).answer).toMatchObject({ kind: 'redirect' });
+  });
+
+  it('M2: a company without an account that can take payments gets no pin', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    await env.ownerDb.deleteFrom('payment_account').where('tenant_id', '=', shop.company).execute();
+    expect((await click(orderId)).pinned).toEqual({ ok: false, reason: 'no_account' });
+    expect((await payment(orderId)).session_expires_at).toBeNull();
+  });
+
+  it('M3: a company that connects another account later still reads its session on the account it was made on', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    const first = await click(orderId);
+    expect((await payment(orderId)).session_account_id).toBe(shop.accountId);
+    // An operator disconnects the account and the company connects another one.
+    await env.ownerDb.deleteFrom('payment_account').where('tenant_id', '=', shop.company).execute();
+    await env.ownerDb
+      .insertInto('payment_account')
+      .values({ tenant_id: shop.company, provider: 'stripe', account_id: `acct_${randomBytes(8).toString('hex')}`, status: 'ready', charges_enabled: true, details_submitted: true, updated_at: T0 })
+      .execute();
+    expect((await click(orderId)).answer).toEqual(first.answer);
+    expect(shop.sandbox.retrieves()[0].headers['stripe-account']).toBe(shop.accountId);
+  });
+
+  it('M6: a stored session Stripe does not know on its account closes the payment on a click', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    await click(orderId);
+    shop.sandbox.sessions.clear();
+    expect((await click(orderId)).answer).toEqual({ kind: 'closed', status: 'expired' });
+    expect(await payment(orderId)).toMatchObject({ status: 'expired', failure_code: 'session_missing' });
+    expect(await reserved(ring.item)).toBe(0);
+  });
+
+  it('M4: the sweep takes a stored session an hour past its hold by the job\'s rule: closes an expired one, applies a paid one', async () => {
+    const ring = await stockedRing(2);
+    const expiredOrder = await placeOrder(ring);
+    await click(expiredOrder);
+    const paidOrder = await placeOrder(ring);
+    await click(paidOrder);
+    const [expiredSession, paidSession] = [...shop.sandbox.sessions.values()];
+    shop.sandbox.expire(expiredSession.id);
+    shop.sandbox.pay(paidSession.id);
+    clock.now = at(109 * MINUTE);
+    expect(await sweepExpiredPayments(shop.deps, shop.company)).toEqual([]);
+    clock.now = at(111 * MINUTE);
+    expect(await sweepExpiredPayments(shop.deps, shop.company)).toEqual([expiredOrder]);
+    expect((await payment(expiredOrder)).status).toBe('expired');
+    expect(await payment(paidOrder)).toMatchObject({ status: 'paid', provider_payment_id: paidSession.payment_intent });
+  });
+});
+
 describe('031_checkout_session guarantees (BK018 and the checks)', () => {
   const update = (orderId: string, set: Record<string, unknown>) =>
     env.appDb.updateTable('order_payment').set(set).where('order_id', '=', orderId).execute();
@@ -710,6 +922,7 @@ describe('031_checkout_session guarantees (BK018 and the checks)', () => {
     await pinOf(orderId);
     expect(await rejectionCode(update(orderId, { session_expires_at: at(60 * MINUTE) }))).toBe('BK018');
     expect(await rejectionCode(update(orderId, { session_return_url: 'https://elsewhere.example/' }))).toBe('BK018');
+    expect(await rejectionCode(update(orderId, { session_account_id: 'acct_other' }))).toBe('BK018');
     expect(await rejectionCode(update(orderId, { expires_at: at(90 * MINUTE) }))).toBe('BK018');
     expect(await rejectionCode(update(orderId, { buyer: toJsonb(OTHER_BUYER) }))).toBe('BK018');
     await update(orderId, { provider_session_id: 'cs_test_first' });
@@ -721,11 +934,12 @@ describe('031_checkout_session guarantees (BK018 and the checks)', () => {
     const ring = await stockedRing(4);
     const closed = await placeOrder(ring);
     await handlePaymentEvent(shop.deps, webhookEvent(closed, 'checkout_cancelled'));
-    const pin = { session_expires_at: at(45 * MINUTE), session_return_url: RETURN_URL, expires_at: at(50 * MINUTE) };
+    const pin = { session_expires_at: at(45 * MINUTE), session_return_url: RETURN_URL, session_account_id: shop.accountId, expires_at: at(50 * MINUTE) };
     expect(await rejectionCode(update(closed, pin))).toBe('BK018');
 
     const open = await placeOrder(ring);
     expect(await rejectionCode(update(open, { session_expires_at: at(45 * MINUTE), expires_at: at(50 * MINUTE) }))).toBe('23514');
+    expect(await rejectionCode(update(open, { ...pin, session_account_id: null }))).toBe('23514');
     expect(await rejectionCode(update(open, { provider_session_id: 'cs_test_unpinned' }))).toBe('23514');
     expect(await rejectionCode(update(open, { ...pin, expires_at: at(45 * MINUTE) }))).toBe('23514');
 
@@ -735,6 +949,14 @@ describe('031_checkout_session guarantees (BK018 and the checks)', () => {
     await update(open, { ...pin, provider_session_id: 'cs_test_shared' });
     const second = await placeOrder(ring);
     expect(await rejectionCode(update(second, { ...pin, provider_session_id: 'cs_test_shared' }))).toBe('23505');
+  });
+
+  it('a session id is stored only on a pending payment, never on one that closed (BK018)', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await placeOrder(ring);
+    await pinOf(orderId);
+    await handlePaymentEvent(shop.deps, webhookEvent(orderId, 'checkout_cancelled'));
+    expect(await rejectionCode(update(orderId, { provider_session_id: 'cs_test_late' }))).toBe('BK018');
   });
 
   it('a payment starts without a session', async () => {

@@ -94,6 +94,10 @@ class FakeStripe implements StripeApi {
       payment_intent: null,
     };
   }
+  async expireCheckoutSession(args: { accountId: string; sessionId: string }) {
+    this.calls.push({ op: 'expireCheckoutSession', args });
+    return { ...(await this.retrieveCheckoutSession(args)), status: 'expired' as const, url: null };
+  }
   async createRefund(args: { accountId: string; paymentIntentId: string; idempotencyKey: string }) {
     this.calls.push({ op: 'createRefund', args });
     return { id: `re_${randomBytes(6).toString('hex')}` };
@@ -283,7 +287,7 @@ describe('Stripe Connect through the webhook (fake Stripe)', () => {
   it('a declined attempt on a pinned session that is still open keeps the order and its stock; the retry pays it', async () => {
     const ring = await stockedRing(1);
     const orderId = await stripeOrder(ring);
-    const pinned = await pinCheckoutSession(env.appDb, company, orderId, BUYER, 'https://shop.example/cart', new Date());
+    const pinned = await pinCheckoutSession(env.appDb, company, orderId, BUYER, 'https://shop.example/cart', new Date(), async () => accountId);
     expect(pinned.ok).toBe(true);
     const declined = await deliver('payment_intent.payment_failed', {
       id: `pi_${orderId}`,

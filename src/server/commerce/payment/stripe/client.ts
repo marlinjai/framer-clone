@@ -66,7 +66,7 @@ export interface StripeCheckoutSessionState {
 /** What the platform asks of Stripe. */
 export interface StripeApi {
   createAccount(args: { email?: string; country: string }): Promise<StripeAccount>;
-  retrieveAccount(accountId: string): Promise<StripeAccount>;
+  retrieveAccount(accountId: string, signal?: AbortSignal): Promise<StripeAccount>;
   createAccountLink(args: { accountId: string; refreshUrl: string; returnUrl: string }): Promise<{ url: string }>;
   /** Exchange an OAuth code for the connected account id (connecting an existing account). */
   oauthToken(code: string): Promise<{ stripeUserId: string }>;
@@ -89,6 +89,8 @@ export interface StripeApi {
   }): Promise<StripeCheckoutSession>;
   /** How a Checkout Session on the connected account stands. The only way to read its state: a replayed create is not. */
   retrieveCheckoutSession(args: { accountId: string; sessionId: string; signal?: AbortSignal }): Promise<StripeCheckoutSessionState>;
+  /** End an open Checkout Session now (`POST /v1/checkout/sessions/<id>/expire`): it can no longer be paid. */
+  expireCheckoutSession(args: { accountId: string; sessionId: string; signal?: AbortSignal }): Promise<StripeCheckoutSessionState>;
   createRefund(args: { accountId: string; paymentIntentId: string; idempotencyKey: string }): Promise<{ id: string }>;
 }
 
@@ -185,7 +187,7 @@ export function httpStripeApi(config: StripeConfig, fetchImpl: typeof fetch = (.
   return {
     createAccount: ({ email, country }) =>
       call<StripeAccount>('POST', '/v1/accounts', { params: { type: 'standard', email, country } }),
-    retrieveAccount: (accountId) => call<StripeAccount>('GET', `/v1/accounts/${encodeURIComponent(accountId)}`),
+    retrieveAccount: (accountId, signal) => call<StripeAccount>('GET', `/v1/accounts/${encodeURIComponent(accountId)}`, { signal }),
     createAccountLink: ({ accountId, refreshUrl, returnUrl }) =>
       call<{ url: string }>('POST', '/v1/account_links', {
         params: { account: accountId, refresh_url: refreshUrl, return_url: returnUrl, type: 'account_onboarding' },
@@ -228,6 +230,8 @@ export function httpStripeApi(config: StripeConfig, fetchImpl: typeof fetch = (.
       }),
     retrieveCheckoutSession: ({ accountId, sessionId, signal }) =>
       call<StripeCheckoutSessionState>('GET', `/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, { account: accountId, signal }),
+    expireCheckoutSession: ({ accountId, sessionId, signal }) =>
+      call<StripeCheckoutSessionState>('POST', `/v1/checkout/sessions/${encodeURIComponent(sessionId)}/expire`, { account: accountId, signal }),
     createRefund: ({ accountId, paymentIntentId, idempotencyKey }) =>
       call<{ id: string }>('POST', '/v1/refunds', {
         account: accountId,
