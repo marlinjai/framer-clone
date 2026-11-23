@@ -332,11 +332,12 @@ describe('the shell', () => {
     shell.run("lumitra.setState('open', true); lumitra.emit('done'); lumitra.emit('custom:other'); lumitra.resize('320')");
     expect(shell.sent).toEqual([]);
     shell.connect({ reads: [], writes: ['open'], emits: ['custom:done'], sizing: 'content', interactive: true });
+    // Writes, then the height, then the emits in the order of their first call.
     expect(shell.sent).toEqual([
       { kind: 'setState', id: 'open', value: true },
+      { kind: 'resize', height: 320 },
       { kind: 'emit', name: 'custom:done' },
       { kind: 'emit', name: 'custom:other' },
-      { kind: 'resize', height: 320 },
     ]);
   });
 
@@ -410,13 +411,15 @@ describe('the shell', () => {
     expect(sent.filter((m) => m.kind === 'resize').at(-1)).toEqual({ kind: 'resize', height: 340 });
   });
 
-  it('sends the first write at once, and pending writes before an emit that follows them', () => {
+  it('sends the first write at once, and pending writes before an emit that follows them, the emit merged by name', () => {
     const shell = shellWindow();
     shell.connect({ reads: [] });
     shell.run("lumitra.setState('a', 1)");
     shell.advance(0);
     expect(shell.sent).toEqual([{ kind: 'setState', id: 'a', value: 1 }]);
-    shell.run("lumitra.setState('a', 2); lumitra.setState('__proto__', 3); lumitra.emit('done')");
+    shell.run("lumitra.setState('a', 2); lumitra.emit('done'); lumitra.setState('__proto__', 3); lumitra.emit('custom:done')");
+    expect(shell.sent).toHaveLength(1);
+    shell.advance(50);
     expect(shell.sent).toEqual([
       { kind: 'setState', id: 'a', value: 1 },
       { kind: 'setState', id: 'a', value: 2 },
@@ -425,6 +428,39 @@ describe('the shell', () => {
     ]);
     shell.advance(1000);
     expect(shell.sent).toHaveLength(4);
+  });
+
+  it('keeps an honest slider under 25 a second: a write and an emit on every input at 120 Hz, ending on the last value', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    for (let input = 1; input <= 240; input++) {
+      shell.run(`lumitra.setState('count', ${input}); lumitra.emit('done')`);
+      shell.advance(1000 / 120);
+    }
+    shell.advance(1000);
+    const sent = shell.sent as { kind: string; id?: string; value?: unknown; name?: string }[];
+    const most = Math.max(...shell.times.map((at) => shell.times.filter((t) => t >= at && t < at + 1000).length));
+    expect(most).toBeLessThanOrEqual(25);
+    expect(sent.filter((m) => m.kind === 'setState').at(-1)).toEqual({ kind: 'setState', id: 'count', value: 240 });
+    expect(sent.at(-1)).toEqual({ kind: 'emit', name: 'custom:done' });
+  });
+
+  it('never sends more than 25 in a second, however many states change at once, and every final value arrives', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    // Review 3 of pull request #452, L1: 10 states, then 21 more within the second, then all 31 again.
+    shell.run("for (var i = 0; i < 10; i++) lumitra.setState('s' + i, 1)");
+    shell.advance(500);
+    shell.run("for (var i = 10; i < 31; i++) lumitra.setState('s' + i, 1); lumitra.resize(50); lumitra.emit('done')");
+    shell.advance(100);
+    shell.run("for (var i = 0; i < 31; i++) lumitra.setState('s' + i, 2)");
+    shell.advance(5000);
+    const sent = shell.sent as { kind: string; id?: string; value?: unknown }[];
+    const most = Math.max(...shell.times.map((at) => shell.times.filter((t) => t >= at && t < at + 1000).length));
+    expect(most).toBeLessThanOrEqual(25);
+    for (let i = 0; i < 31; i++) expect(sent.filter((m) => m.id === `s${i}`).at(-1)).toEqual({ kind: 'setState', id: `s${i}`, value: 2 });
+    expect(sent.filter((m) => m.kind === 'resize')).toEqual([{ kind: 'resize', height: 50 }]);
+    expect(sent.filter((m) => m.kind === 'emit')).toEqual([{ kind: 'emit', name: 'custom:done' }]);
   });
 
   it('keeps only the latest values while it waits for the page, however long', () => {

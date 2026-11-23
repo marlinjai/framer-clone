@@ -20,7 +20,7 @@
 export const BOX_PROTOCOL_VERSION = 1;
 
 /** The version of the shell, sent in `hello`. The shell is in no hash, so it can change with a deploy. */
-export const BOX_SHELL_VERSION = 3;
+export const BOX_SHELL_VERSION = 4;
 
 /** Present in every served document: what the canary monitor looks for. */
 export const BOX_SHELL_MARKER = 'fc-box-shell';
@@ -275,24 +275,29 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
  *                               are coalesced (below), so the latest value of
  *                               each state always arrives
  *   lumitra.emit(name)          fires a declared `custom:<name>` event (`name` or
- *                               `custom:name`), at once, after any pending write
+ *                               `custom:name`); coalesced too: emits of one name
+ *                               within one flush (about 50 ms) arrive as one,
+ *                               after the writes pending with them
  *   lumitra.resize(height)      asks for a height in pixels (sizing `content`);
  *                               coalesced like writes
  *   lumitra.ready()             a promise, resolved once the page has connected
  *                               and sent every declared read its first value
  *
- * Writes and resizes are coalesced (shell version 3, decision D65): the client
- * keeps the latest value of each state and the latest height, and sends them on
- * a timer, on the trailing edge, at most one message per 50 milliseconds on
- * average (after a flush of `n` messages the next waits `n` times 50). An author
- * may call `setState` from every animation frame: the page gets about 20
- * messages a second, never past its limit of 30, and the last value always
- * arrives. An `emit` goes at once, after flushing what is pending, so the page
- * sees a write before an event that follows it. Errors are reported at most
- * once a second. Until the page connects, the latest values wait, and what must
- * keep its order (an emit and the writes before it, an error) waits in a short
- * queue (the first 20 messages, which with `hello` stay within the page's 30 a
- * second), so code that runs at once loses nothing. Nothing here is a
+ * Writes, resizes and emits are coalesced (shell version 4, decision D65): the
+ * client keeps the latest value of each state, the latest height and each
+ * emitted name once, and sends them on a timer, on the trailing edge, about one
+ * message per 50 milliseconds on average (after a flush of `n` messages the next
+ * waits `n` times 50): writes first, then the height, then the emits in the order
+ * of their first call, so the page sees a write before an event that followed
+ * it. An emit of a name already pending in the same flush is merged into it. No
+ * more than 25 messages leave in any one second, counted as they are sent, so
+ * the page's limit of 30 is never reached however many states change at once;
+ * what does not fit waits, latest only, for the next flush. An author may call
+ * `setState` and `emit` from every animation frame or every `input` of a slider:
+ * the page gets about 20 messages a second, and the last value of each always
+ * arrives. Errors are reported at most once a second. Until the page connects,
+ * all of it waits (errors in a short queue of 20), so code that runs at once
+ * loses nothing. Nothing here is a
  * boundary for the page: the author's code shares this realm and can post
  * anything on the port, and the broker in the page checks every message
  * (src/lib/customCode/broker.ts). An uncaught error or rejection in the frame is
@@ -320,15 +325,21 @@ export const BOX_SHELL_SCRIPT = [
   // The bridge client. Everything below is the author's convenience; the broker trusts none of it.
   'try{',
   'var port=null,queue=[],values={},subs={},wait=[],reads=null,done=false,own=Object.prototype.hasOwnProperty;',
-  'var send=function(m){if(port){try{port.postMessage(m);}catch(e){}}else if(queue.length<20){queue.push(m);}};',
-  // Coalescing: the latest write per state and the latest height, sent on the trailing edge of a timer.
-  // No prototype, so a state id such as `__proto__` is a key like any other.
-  'var pend=Object.create(null),grow=null,timer=null,last=0,gap=50,errAt=-1e9;',
-  // Before the page connects, pending values wait as they are (the latest only), unless an emit needs them sent first.
-  'var flush=function(f){if(timer!==null){clearTimeout(timer);timer=null;}if(!port&&!f)return;var c=0;',
-  'for(var k in pend){if(own.call(pend,k)){send({kind:"setState",id:k,value:pend[k]});c++;}}pend=Object.create(null);',
-  'if(grow!==null){send({kind:"resize",height:grow});grow=null;c++;}',
-  'if(c){last=Date.now();gap=50*c;}};',
+  // `sent`: when each of the last messages left, so no second holds more than 25.
+  'var sent=[],send=function(m){if(port){try{port.postMessage(m);}catch(e){}sent.push(Date.now());if(sent.length>25)sent.shift();}else if(queue.length<20){queue.push(m);}};',
+  'var room=function(){var t=Date.now()-1000,c=25;for(var i=0;i<sent.length;i++){if(sent[i]>t)c--;}return c;};',
+  // Coalescing: the latest write per state, the latest height and each emitted name, sent on the trailing edge of a
+  // timer. No prototype, so a state id such as `__proto__` is a key like any other.
+  'var pend=Object.create(null),grow=null,ems=[],timer=null,last=0,gap=50,errAt=-1e9;',
+  // Before the page connects, everything waits as it is. A flush sends what the second has room for, in order, and
+  // leaves the rest for the next.
+  'var flush=function(){if(timer!==null){clearTimeout(timer);timer=null;}if(!port)return;var r=room(),c=0,k;',
+  'for(k in pend){if(c>=r)break;send({kind:"setState",id:k,value:pend[k]});delete pend[k];c++;}',
+  'if(grow!==null&&c<r){send({kind:"resize",height:grow});grow=null;c++;}',
+  'while(ems.length&&c<r){send({kind:"emit",name:ems.shift()});c++;}',
+  'if(c){last=Date.now();gap=50*c;}',
+  'var left=grow!==null||ems.length>0;for(k in pend){left=true;break;}',
+  'if(left)timer=setTimeout(flush,Math.max(100,last+gap-Date.now()));};',
   'var later=function(){if(timer===null)timer=setTimeout(flush,Math.max(0,last+gap-Date.now()));};',
   'var settle=function(){if(done||!reads)return;for(var j=0;j<reads.length;j++){if(!own.call(values,reads[j]))return;}',
   'done=true;for(var k=0;k<wait.length;k++){try{wait[k]();}catch(e){}}wait=[];};',
@@ -352,7 +363,7 @@ export const BOX_SHELL_SCRIPT = [
   'if(own.call(values,id)){try{fn(values[id]);}catch(x){report(x);}}',
   'return function(){var l=own.call(subs,id)?subs[id]:[];var at=l.indexOf(fn);if(at>=0)l.splice(at,1);};},',
   'setState:function(id,value){pend[String(id)]=value;later();},',
-  'emit:function(name){name=String(name);flush(1);send({kind:"emit",name:name.indexOf("custom:")===0?name:"custom:"+name});},',
+  'emit:function(name){name=String(name);name=name.indexOf("custom:")===0?name:"custom:"+name;if(ems.indexOf(name)<0)ems.push(name);later();},',
   'resize:function(height){grow=Number(height);later();},',
   'ready:function(){return new Promise(function(resolve){if(done)resolve();else wait.push(resolve);});}',
   '};',
