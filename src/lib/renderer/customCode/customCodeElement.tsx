@@ -40,10 +40,30 @@ export type CustomCodeSurface = 'editor' | 'preview' | 'standalone' | 'published
 export const CUSTOM_CODE_TILE_TEXT = 'Custom code, not run here';
 export const CUSTOM_CODE_PREVIEW_LINK_TEXT = 'Open the preview to run it';
 
-const BADGE: Record<'block' | 'proposal' | 'invalid', string> = {
+const BADGE: Record<'block' | 'proposal' | 'draft' | 'invalid', string> = {
   block: 'Custom code',
   proposal: 'Proposed, not active',
+  // `customCode: null`: a block added in the editor whose code was never saved (decision D102).
+  draft: 'No code saved yet',
   invalid: 'Not a valid block, shows its fallback',
+};
+
+/** The label over a block's fallback while the editor shows it instead of the tile (decision D110). */
+export const CUSTOM_CODE_FALLBACK_LABEL = 'Fallback, shown while the code cannot run';
+
+const FALLBACK_LABEL_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  top: 4,
+  right: 4,
+  zIndex: 1,
+  padding: '2px 8px',
+  borderRadius: 999,
+  background: '#111827',
+  color: '#ffffff',
+  fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  fontSize: 11,
+  fontWeight: 600,
+  pointerEvents: 'none',
 };
 
 const TILE_STYLE: React.CSSProperties = {
@@ -110,10 +130,15 @@ export interface CustomCodeElementInput {
    * browser and assistive technology meets nested interactive content. The editor surfaces only.
    */
   insideControl?: boolean;
+  /**
+   * The canvas only: draw the box with its children, the fallback, instead of the tile, so
+   * the author can edit the fallback where it shows (decision D110). Editor state, never stored.
+   */
+  showFallback?: boolean;
 }
 
-function tileOf(parsed: CustomCodeParse, previewHref: string | null): React.ReactElement {
-  const kind = parsed.ok ? parsed.value.kind : 'invalid';
+function tileOf(parsed: CustomCodeParse, previewHref: string | null, config: unknown): React.ReactElement {
+  const kind = parsed.ok ? parsed.value.kind : config === null ? 'draft' : 'invalid';
   return (
     <div data-fc-custom-code-tile="" style={TILE_STYLE}>
       <span data-fc-custom-code-badge="" style={BADGE_STYLE}>{BADGE[kind]}</span>
@@ -185,7 +210,7 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
     if (input.foreign === 'svg') {
       // The tile's HTML lives in a foreignObject, whose content React draws as HTML
       // again; the block's own attributes stay on the group outside it.
-      const tile = React.createElement('div', { role: 'group', 'aria-label': label, style: { position: 'relative' } }, tileOf(parsed, input.insideControl ? null : input.previewHref ?? null));
+      const tile = React.createElement('div', { role: 'group', 'aria-label': label, style: { position: 'relative' } }, tileOf(parsed, input.insideControl ? null : input.previewHref ?? null, input.config));
       return React.createElement(
         'g',
         { ...domProps, key: input.key },
@@ -195,8 +220,17 @@ export function createCustomCodeElement(surface: CustomCodeSurface, input: Custo
     const host = TILE_HOST_TAGS.has(tag) ? tag : 'div';
     // A control's own attributes mean nothing on the div that replaces it.
     if (host !== tag) for (const name of ['href', 'target', 'rel', 'download', 'type', 'disabled', 'form', 'name', 'value']) delete domProps[name];
+    if (surface === 'editor' && input.showFallback) {
+      // The fallback in place of the tile, under a label that says so; still never a frame.
+      return React.createElement(
+        host,
+        { ...domProps, key: input.key, style, 'data-fc-custom-code-fallback': '' },
+        React.createElement('span', { key: 'fc-fallback-label', 'data-fc-custom-code-badge': '', style: FALLBACK_LABEL_STYLE }, CUSTOM_CODE_FALLBACK_LABEL),
+        input.children,
+      );
+    }
     // A group, so its label is allowed (ARIA 1.2 names no plain div).
-    return React.createElement(host, { ...domProps, key: input.key, style, role: 'group', 'aria-label': label }, tileOf(parsed, input.insideControl ? null : input.previewHref ?? null));
+    return React.createElement(host, { ...domProps, key: input.key, style, role: 'group', 'aria-label': label }, tileOf(parsed, input.insideControl ? null : input.previewHref ?? null, input.config));
   }
   // A void tag under a parent that holds only its own kinds of children: no box at all.
   if (boxTag === null) return null;

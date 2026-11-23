@@ -264,6 +264,7 @@ export function createComponentElement(
       return (
         <CustomCodeOnEditorSurface
           mode={options?.mode === 'editor' ? 'editor' : 'preview'}
+          nodeId={component.id}
           tag={String(component.type)}
           domProps={propsWithIdentity}
           config={(component.props as Record<string, unknown>).customCode}
