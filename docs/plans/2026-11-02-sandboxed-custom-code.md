@@ -1227,24 +1227,25 @@ the fallback switch, the reserved prop and the Layers badge; the section on the 
 paths, with the page saved before the code, a taken-down block, a branch and a reader, 25 cases (`CustomCodeSection.test.tsx`).
 Integration against Postgres: 20 cases (`authoring.itest.ts`). Browser, Chromium and WebKit: the CodeMirror field, 10 cases
 (`test/renderGate/customCodeEditor.gate.ts`), and the field component in React, its name following the title, 2 cases
-(`customCodeEditorField.gate.ts`). Full unit suite on hermes: 15,279 passed, the one failure `rawSqlCatalogQualified`, which
+(`customCodeEditorField.gate.ts`), and the whole flow in the real editor, 4 cases (`customCodeAuthoring.gate.ts`): insert the
+block from the Components panel, title it, type its code into CodeMirror, save; the page is saved before the code is posted, the
+block names exactly the hash the route answers, Layers marks it, and a refusal from the route reaches the person in an alert while
+the block stays as it was. Full unit suite on hermes: 15,279 passed, the one failure `rawSqlCatalogQualified`, which
 needs `.git` and passes locally (locally it had found two unqualified catalog functions in the budget query, fixed). Full
 `pnpm test:integration`: 1,302 of 1,304; the two failures are concurrency cases of `coordinationPostgres.itest.ts` and
-`prismaModels.itest.ts`, files this slice does not touch, which pass 41 of 41 run alone (the first case also failed in an
-earlier full run, the second not), so they are flaky under load, not caused here.
+`prismaModels.itest.ts`, files this slice does not touch. They are flaky under load, not caused here: with the machine at a load
+average of about 200, the same `coordinationPostgres` case fails run alone on this branch and on `origin/main` (`a51d1a65`) alike
+(40 of 41 each), and a full integration run on `origin/main` under that load fails both cases, among 23 failures there.
 
-**Weakening, 19 of 19 caught by a failed expectation** (record in the orchestration folder `c4-weakening/`): the availability
+**Weakening, 21 of 21 caught by a failed expectation** (record in the orchestration folder `c4-weakening/`): the availability
 gate on POST and on GET, the switch reading `true`, the insert item ignoring the switch, the permission check, the size limit,
 a text state in a declaration, the branch refusal, the site switch, the takedown check, the declaration against the stored page,
 the hourly limit, the site row lock, the idempotent answer, a hash ignoring the declaration, the panel applying an answer to a
-changed block, the panel posting while the page is unsaved, Tab bound in the editor, and the editor's name not following the
-title. Three survived a first run and each got the case that now catches it: the idempotent answer (the insert's `ON CONFLICT`
+changed block, the panel posting while the page is unsaved, Tab bound in the editor, the editor's name not following the
+title, and in the end-to-end flow a post that never reaches the route and a returned hash never written to the block. Three survived a first run and each got the case that now catches it: the idempotent answer (the insert's `ON CONFLICT`
 also answers `created: false`; held code now passes at the hourly limit), the insert item's switch check (the provider never
 reaches `ready` with the switch off; the rule is now tested directly), and the editor's name (the field was mounted once with
 its first name).
-
-**Open:** the section with the real CodeMirror was not driven end to end in a browser (insert, type, save, the hash on the node);
-the jsdom cases cover that flow with the plain field, and the gates cover the field itself.
 
 ## Decided in slice C4, say so if you disagree
 
