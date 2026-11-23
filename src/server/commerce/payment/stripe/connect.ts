@@ -12,28 +12,19 @@ import 'server-only';
 //   - Readiness: `pending` until Stripe reports the account can take charges, then `ready`; asked of Stripe
 //     on return from onboarding and whenever a payment starts on an account not ready yet.
 //   - The provider: a Checkout Session as a direct charge on the company's account with the 1% platform fee
-//     as `application_fee_amount`, expiring with the payment window; a full refund returns the fee too.
+//     as `application_fee_amount`, ending when its pin says (checkoutSession.ts); how a session stands, read back
+//     from Stripe; a full refund returns the fee too.
 //
-// UNPROVEN against Stripe itself (no Stripe account yet): every path is tested against a fake StripeApi.
+// The Checkout Session's idempotency, expiry floor, retrieve statuses and error replay were proven in Stripe's sandbox on
+// 2026-11-23 (docs/plans/2026-11-02-shop-backbone.md, section 2.5); every path here is tested against a fake StripeApi
+// that keeps those rules.
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Kysely } from 'kysely';
 
 import type { CommerceDB } from '../../db-types';
-import type { PaymentProvider } from '../provider';
-import type { StripeApi, StripeConfig } from './client';
-
-/** Stripe's shortest Checkout Session lifetime (30 minutes), plus a minute for the clocks. */
-const MIN_SESSION_MS = 31 * 60 * 1000;
-
-/**
- * When an order's Checkout Session ends: a fixed time after its payment window, so every start of one order sends the
- * same `expires_at` under the same idempotency key (Stripe refuses a key reused with other parameters). A start is
- * only made while the window is open, so the session always lives at least Stripe's minimum.
- */
-export function checkoutSessionEnd(paymentWindowEnd: Date): Date {
-  return new Date(paymentWindowEnd.getTime() + MIN_SESSION_MS);
-}
+import type { CheckoutSessionState, PaymentProvider } from '../provider';
+import type { StripeApi, StripeCheckoutSessionState, StripeConfig } from './client';
 
 export type AccountStatus = 'not_connected' | 'pending' | 'ready' | 'restricted';
 
@@ -59,10 +50,15 @@ function statusFrom(flags: { charges_enabled: boolean }, previous: AccountStatus
 }
 
 /** Ask Stripe how the company's account stands and store it. */
-export async function refreshAccount(db: Kysely<CommerceDB>, api: StripeApi, tenantId: string): Promise<CompanyPaymentAccount> {
+export async function refreshAccount(
+  db: Kysely<CommerceDB>,
+  api: StripeApi,
+  tenantId: string,
+  signal?: AbortSignal,
+): Promise<CompanyPaymentAccount> {
   const current = await readAccount(db, tenantId);
   if (!current.accountId) return current;
-  const account = await api.retrieveAccount(current.accountId);
+  const account = await api.retrieveAccount(current.accountId, signal);
   const status = statusFrom(account, current.status);
   await db
     .updateTable('payment_account')
@@ -155,13 +151,29 @@ export async function completeOauth(
 }
 
 /** The company's account id, refreshed from Stripe when it is not ready yet; null when it cannot take charges. */
-export async function chargeableAccount(db: Kysely<CommerceDB>, api: StripeApi, tenantId: string): Promise<string | null> {
+export async function chargeableAccount(
+  db: Kysely<CommerceDB>,
+  api: StripeApi,
+  tenantId: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
   let account = await readAccount(db, tenantId);
-  if (account.accountId && account.status !== 'ready') account = await refreshAccount(db, api, tenantId);
+  if (account.accountId && account.status !== 'ready') account = await refreshAccount(db, api, tenantId, signal);
   return account.status === 'ready' ? account.accountId : null;
 }
 
 // --- the provider -------------------------------------------------------------------------------------------
+
+function sessionState(session: StripeCheckoutSessionState): CheckoutSessionState {
+  return {
+    status: session.status,
+    paid: session.status === 'complete' && session.payment_status === 'paid',
+    url: session.url,
+    amount: session.amount_total,
+    currency: session.currency ? session.currency.toUpperCase() : null,
+    providerPaymentId: session.payment_intent,
+  };
+}
 
 /**
  * The Stripe payment provider for one company. `start` creates the hosted Checkout Session (the outcome
@@ -178,12 +190,7 @@ export function stripeProvider(
       const accountId = args.connectedAccountId ?? (await chargeableAccount(ctx.db, api, ctx.tenantId));
       if (!accountId) throw new Error(`company ${ctx.tenantId} has no Stripe account that can take payments`);
       if (!args.returnUrl) throw new Error('a hosted checkout needs a return address');
-      if (!args.expiresAt) throw new Error('a hosted checkout needs the end of its payment window');
-      const sessionEnd = checkoutSessionEnd(args.expiresAt);
-      // Past the window the pay route closes the order first; this only stops a request Stripe would refuse.
-      if (sessionEnd.getTime() - Date.now() < 30 * 60 * 1000) {
-        throw new Error(`the payment window of order ${args.orderId} is over: no hosted checkout opens for it`);
-      }
+      if (args.sessionExpiresAt === undefined) throw new Error('a hosted checkout needs its pinned end');
       const session = await api.createCheckoutSession({
         accountId,
         orderId: args.orderId,
@@ -196,14 +203,22 @@ export function stripeProvider(
         customerEmail: args.buyerEmail,
         successUrl: `${args.returnUrl}${args.returnUrl.includes('?') ? '&' : '?'}checkout=paid&order=${encodeURIComponent(args.orderNumber)}`,
         cancelUrl: `${args.returnUrl}${args.returnUrl.includes('?') ? '&' : '?'}checkout=cancelled&order=${encodeURIComponent(args.orderNumber)}`,
-        // Stripe keeps a session open at least 30 minutes; one that outlives the payment window and is paid
-        // late goes through the late-success path (the stock reserved again, or a full refund).
-        expiresAt: Math.floor(sessionEnd.getTime() / 1000),
-        // One session per order: a retried start sends the same request (the pay route keeps the first one's email
-        // and return address, 028), so Stripe answers the same session.
+        // Pinned before Stripe was first asked (checkoutSession.ts), so every start of one order sends the same value.
+        expiresAt: args.sessionExpiresAt,
+        // One session per order: every start sends the pinned request, so Stripe answers the same session or its stored
+        // refusal, never a second session (docs/plans/2026-11-02-shop-backbone.md, section 2.1).
         idempotencyKey: `checkout:${args.orderId}`,
+        signal: args.signal,
       });
       return { providerPaymentId: session.id, redirectUrl: session.url };
+    },
+    chargeableAccount: (signal) => chargeableAccount(ctx.db, api, ctx.tenantId, signal),
+    // The pinned account, whatever the company's account is now: a session is read and ended where it was made.
+    async retrieveSession({ sessionId, accountId, signal }) {
+      return sessionState(await api.retrieveCheckoutSession({ accountId, sessionId, signal }));
+    },
+    async expireSession({ sessionId, accountId, signal }) {
+      return sessionState(await api.expireCheckoutSession({ accountId, sessionId, signal }));
     },
     async refund({ providerPaymentId, connectedAccountId }) {
       const accountId = connectedAccountId ?? (await readAccount(ctx.db, ctx.tenantId)).accountId;

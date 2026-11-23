@@ -45,3 +45,12 @@ export function readBuyer(stored: Record<string, unknown>): Buyer | null {
   if (!parsed.success) throw new Error(`order_payment.buyer is malformed: ${parsed.error.message}`);
   return parsed.data;
 }
+
+/** Whether two buyers are the same for the invoice: compared after the schema's own normalisation. */
+export function sameBuyer(a: Buyer, b: Buyer): boolean {
+  const canonical = (buyer: Buyer) => {
+    const parsed = buyerSchema.parse(buyer) as Record<string, unknown>;
+    return JSON.stringify(Object.keys(parsed).sort().map((key) => [key, parsed[key] ?? null]));
+  };
+  return canonical(a) === canonical(b);
+}

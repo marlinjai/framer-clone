@@ -11,6 +11,7 @@ import type { Kysely } from 'kysely';
 import type { CommerceDB } from '../db-types';
 import { deliverShopMail, type OutboxDeps } from '../mail/outbox';
 import { outboxDeps } from '../mail/runtime';
+import { sessionAtExpiry } from '../payment/checkoutSession';
 import { paymentDeps } from '../payment/deps';
 import { handlePaymentEvent, issueReceipt, receiptFailure, type PaymentDeps } from '../payment/payments';
 import { claimJob, finishDead, finishDone, finishRerun, finishRetry, type ClaimOptions } from './claim';
@@ -82,6 +83,7 @@ function jobPayments(
   return {
     handleEvent: (event) => handlePaymentEvent(deps, { ...event, tenantId }),
     issueReceipt: (orderId) => issueReceipt(deps, tenantId, orderId),
+    sessionAtExpiry: (orderId, signal) => sessionAtExpiry(deps, tenantId, orderId, signal),
   };
 }
 

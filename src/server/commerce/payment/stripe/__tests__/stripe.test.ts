@@ -3,7 +3,8 @@
 // The Stripe pieces that need no database: the webhook signature (valid, wrong secret, stale, malformed,
 // a rotated second signature), what a delivery says, the form encoding, the configuration (placeholders read
 // as "not configured"), the OAuth state (bound to the company, signed, expiring) and the shape of the HTTPS
-// requests (direct charges on the connected account, the fee, idempotency keys). All data is synthetic;
+// requests (direct charges on the connected account, the fee, idempotency keys), reading a checkout session and
+// telling Stripe's answer from none (slice B7). All data is synthetic;
 // secrets are built at run time.
 
 import { randomBytes } from 'node:crypto';
@@ -158,6 +159,75 @@ describe('the Stripe client', () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StripeApiError);
     expect(err).toMatchObject({ status: 404, stripeCode: 'resource_missing' });
+  });
+});
+
+describe('reading a checkout session and telling an answer from none (slice B7)', () => {
+  it('retrieves the session on the connected account, with the caller\'s signal', async () => {
+    const answer = { id: 'cs_1', status: 'open', payment_status: 'unpaid', url: 'https://checkout.example/cs_1', amount_total: 999, currency: 'eur', payment_intent: null };
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(answer), { status: 200 }));
+    const signal = new AbortController().signal;
+    const session = await httpStripeApi(CONFIG, fetchImpl as unknown as typeof fetch).retrieveCheckoutSession({ accountId: 'acct_123', sessionId: 'cs_1', signal });
+    expect(session).toEqual(answer);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://api.stripe.com/v1/checkout/sessions/cs_1');
+    expect(init).toMatchObject({ method: 'GET', body: undefined, signal });
+    expect((init.headers as Record<string, string>)['stripe-account']).toBe('acct_123');
+    expect((init.headers as Record<string, string>)['idempotency-key']).toBeUndefined();
+  });
+
+  it('the same create twice sends the same bytes and headers, and passes its signal', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ id: 'cs_1', url: 'https://checkout.example/cs_1' }), { status: 200 }));
+    const api = httpStripeApi(CONFIG, fetchImpl as unknown as typeof fetch);
+    const args = {
+      accountId: 'acct_123',
+      orderId: 'order_1',
+      orderNumber: 'ORD-000001',
+      tenantGroupId: TG,
+      tenantId: TENANT,
+      amount: 999,
+      currency: 'EUR',
+      applicationFeeAmount: 10,
+      customerEmail: 'alex@example.com',
+      successUrl: 'https://shop.example/?checkout=paid',
+      cancelUrl: 'https://shop.example/?checkout=cancelled',
+      expiresAt: 1_800_000_000,
+      idempotencyKey: 'checkout:order_1',
+    };
+    const first = new AbortController().signal;
+    await api.createCheckoutSession({ ...args, signal: first });
+    await api.createCheckoutSession({ ...args, signal: new AbortController().signal });
+    const [[, a], [, b]] = fetchImpl.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(b.body).toBe(a.body);
+    expect(b.headers).toEqual(a.headers);
+    expect(a.signal).toBe(first);
+  });
+
+  it('Stripe\'s own error is an answer, with its type; a gateway page, no response or an unreadable success are not', async () => {
+    const call = (fetchImpl: () => Promise<Response>) =>
+      httpStripeApi(CONFIG, fetchImpl as unknown as typeof fetch)
+        .retrieveCheckoutSession({ accountId: 'acct_123', sessionId: 'cs_1' })
+        .catch((e: unknown) => e);
+
+    const refused = await call(async () =>
+      new Response(JSON.stringify({ error: { type: 'idempotency_error', message: 'Keys for idempotent requests can only be used with the same parameters' } }), { status: 400 }),
+    );
+    expect(refused).toBeInstanceOf(StripeApiError);
+    expect(refused).toMatchObject({ status: 400, stripeCode: 'idempotency_error', stripeType: 'idempotency_error', answered: true });
+
+    expect(await call(async () => new Response('<html>Bad gateway</html>', { status: 502 }))).toMatchObject({ status: 502, answered: false });
+    expect(await call(async () => Promise.reject(new TypeError('fetch failed')))).toMatchObject({ status: 0, answered: false });
+    const aborted = await call(async () => Promise.reject(new DOMException('The operation was aborted', 'TimeoutError')));
+    expect(aborted).toMatchObject({ status: 0, answered: false });
+    expect((aborted as Error).message).toContain('TimeoutError');
+    expect(await call(async () => new Response('{"id": "cs_1", "sta', { status: 200 }))).toMatchObject({ status: 0, answered: false });
+  });
+
+  it('a message of a request without an answer names the path, never an id or the request', async () => {
+    const err = (await httpStripeApi(CONFIG, (async () => Promise.reject(new TypeError('fetch failed to cs_secret'))) as unknown as typeof fetch)
+      .retrieveCheckoutSession({ accountId: 'acct_123', sessionId: 'cs_secret' })
+      .catch((e: unknown) => e)) as Error;
+    expect(err.message).toBe('Stripe gave no answer to GET /v1/checkout (TypeError)');
   });
 });
 

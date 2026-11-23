@@ -4,10 +4,10 @@
 // unproven until an account exists). Through the real webhook route with signed deliveries:
 //   - onboarding stores the company's account (pending), the return asks Stripe and marks it ready;
 //   - an order of a ready company is paid through a hosted checkout: a direct charge on the company's own
-//     account with the 1% fee, the session living at least Stripe's minimum;
+//     account with the 1% fee, the session ending when its pin says (checkoutSession.ts);
 //   - forward: payment_intent.succeeded pays, and the receipt's job (started by the route, not awaited) issues the
 //     receipt; delivered twice changes nothing;
-//   - a declined card closes the order and releases its stock;
+//   - a declined card closes the order and releases its stock; on a pinned session still open it keeps both (slice B7);
 //   - late with the stock gone: refunded on the company's account (the fee returned), the order closed;
 //   - refused: a bad signature (400), an event from another connected account (ignored), an amount that
 //     differs (ignored);
@@ -49,6 +49,7 @@ import { oauthState } from '@/server/commerce/payment/stripe/connect';
 import type { OwnerContext } from '@/server/commerce/payment/stripe/ownerRoute';
 import { booksScope } from '@/server/books/scope';
 import { runJobNow } from '@/server/commerce/jobs/run';
+import { pinCheckoutSession } from '@/server/commerce/payment/checkoutSession';
 import { FakeContactBook, FakeDirectory, initCompany, openBooksEnv, type BooksEnv } from '@/server/books/__tests__/booksFixtures';
 
 const fake = (prefix: string) => `${prefix}_${randomBytes(12).toString('hex')}`;
@@ -80,6 +81,22 @@ class FakeStripe implements StripeApi {
   async createCheckoutSession(args: Parameters<StripeApi['createCheckoutSession']>[0]) {
     this.calls.push({ op: 'createCheckoutSession', args });
     return { id: `cs_${randomBytes(6).toString('hex')}`, url: 'https://checkout.stripe.test/pay' };
+  }
+  async retrieveCheckoutSession(args: { accountId: string; sessionId: string }) {
+    this.calls.push({ op: 'retrieveCheckoutSession', args });
+    return {
+      id: args.sessionId,
+      status: 'open' as const,
+      payment_status: 'unpaid' as const,
+      url: 'https://checkout.stripe.test/pay',
+      amount_total: 999,
+      currency: 'eur',
+      payment_intent: null,
+    };
+  }
+  async expireCheckoutSession(args: { accountId: string; sessionId: string }) {
+    this.calls.push({ op: 'expireCheckoutSession', args });
+    return { ...(await this.retrieveCheckoutSession(args)), status: 'expired' as const, url: null };
   }
   async createRefund(args: { accountId: string; paymentIntentId: string; idempotencyKey: string }) {
     this.calls.push({ op: 'createRefund', args });
@@ -154,6 +171,8 @@ async function stockedRing(stock: number) {
   return { variantId: v.id, item, location };
 }
 
+const BUYER = { kind: 'person', name: 'Alex Example', email: 'alex@example.com', addressLine1: 'Beispielweg 2', postalCode: '20095', city: 'Hamburg', country: 'DE' } as const;
+
 async function stripeOrder(ring: Awaited<ReturnType<typeof stockedRing>>) {
   const result = await createOrder(env.appDb, env.tgId, {
     tenantId: company,
@@ -165,7 +184,7 @@ async function stripeOrder(ring: Awaited<ReturnType<typeof stockedRing>>) {
     lines: [{ inventoryItemId: ring.item, variantId: ring.variantId, quantity: 1, locationId: ring.location, variantRef: ring.variantId, variantRefSource: 'owned' }],
     payment: {
       provider: 'stripe',
-      buyer: { kind: 'person', name: 'Alex Example', email: 'alex@example.com', addressLine1: 'Beispielweg 2', postalCode: '20095', city: 'Hamburg', country: 'DE' },
+      buyer: BUYER,
     },
   });
   if (!result.ok) throw new Error('short');
@@ -216,7 +235,7 @@ describe('Stripe Connect through the webhook (fake Stripe)', () => {
         applicationFeeAmount: payment.application_fee_amount,
         buyerEmail: 'alex@example.com',
         returnUrl: 'https://shop.example/cart',
-        expiresAt: payment.expires_at,
+        sessionExpiresAt: 1_800_000_000,
       },
       async () => {},
     );
@@ -231,7 +250,8 @@ describe('Stripe Connect through the webhook (fake Stripe)', () => {
       idempotencyKey: `checkout:${orderId}`,
       successUrl: 'https://shop.example/cart?checkout=paid&order=ORD-1',
     });
-    expect(session.expiresAt as number).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) + 30 * 60);
+    // The pinned end, as given: never computed from the clock here (checkoutSession.ts pins it).
+    expect(session.expiresAt).toBe(1_800_000_000);
   });
 
   it('forward: payment_intent.succeeded pays and issues the receipt; the same event twice changes nothing', async () => {
@@ -262,6 +282,25 @@ describe('Stripe Connect through the webhook (fake Stripe)', () => {
     expect(await res.json()).toMatchObject({ status: 'failed' });
     expect(await paymentOf(orderId)).toMatchObject({ status: 'failed', failure_code: 'insufficient_funds' });
     expect(await reserved(ring.item)).toBe(0);
+  });
+
+  it('a declined attempt on a pinned session that is still open keeps the order and its stock; the retry pays it', async () => {
+    const ring = await stockedRing(1);
+    const orderId = await stripeOrder(ring);
+    const pinned = await pinCheckoutSession(env.appDb, company, orderId, BUYER, 'https://shop.example/cart', new Date(), async () => accountId);
+    expect(pinned.ok).toBe(true);
+    const declined = await deliver('payment_intent.payment_failed', {
+      id: `pi_${orderId}`,
+      currency: 'eur',
+      metadata: metadata(orderId),
+      last_payment_error: { code: 'card_declined', decline_code: 'insufficient_funds' },
+    });
+    expect(await declined.json()).toMatchObject({ status: 'pending', duplicate: false });
+    expect(await paymentOf(orderId)).toMatchObject({ status: 'pending', failure_code: 'insufficient_funds', closed_at: null });
+    expect(await reserved(ring.item)).toBe(1);
+    expect(await (await deliver('payment_intent.succeeded', succeeded(orderId))).json()).toMatchObject({ status: 'paid' });
+    expect(await paymentOf(orderId)).toMatchObject({ status: 'paid', failure_code: null, refund_id: null });
+    expect(stripe.calls.filter((c) => c.op === 'createRefund')).toEqual([]);
   });
 
   it('late with the stock gone: refunded on the company account with the fee, the order closed', async () => {

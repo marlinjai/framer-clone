@@ -106,6 +106,12 @@ export interface PaymentEvent {
    * provider's own `checkout_expired` never sets it.
    */
   requireDue?: true;
+  /**
+   * Close only a payment with no stored checkout session, decided under the row lock: a close decided here (the margin,
+   * a refused create, an outdated order) must not end a payment whose session another click stored meanwhile, which the
+   * buyer may still pay. With a session stored, nothing is written and the outcome names it (`sessionStored`).
+   */
+  requireNoSession?: true;
 }
 
 /** What starting a payment answers: the provider reference, and for a hosted page where to send the buyer. */
@@ -126,14 +132,37 @@ export interface StartPaymentArgs {
   /** Where a hosted checkout returns the buyer (success and cancel). */
   returnUrl?: string;
   /**
-   * When the payment window closes. A hosted checkout ends a fixed time after it, never computed from the clock, so
-   * a repeated start of one order sends the same request (stripe/connect.ts).
+   * When a hosted checkout ends, unix seconds: the pinned `session_expires_at` (checkoutSession.ts), never computed from
+   * the clock, so a repeated start of one order sends the same request.
    */
-  expiresAt?: Date;
+  sessionExpiresAt?: number;
+  /** Stops the provider's network call (a route's timeout, a job's deadline). */
+  signal?: AbortSignal;
   /** The company's connected account (Stripe Connect); absent for the demo provider. */
   connectedAccountId?: string;
   /** Demo only: the provider declines. A real provider ignores it. */
   simulateDecline?: boolean;
+}
+
+/** A hosted checkout session and the account it lives on, as pinned (checkoutSession.ts). */
+export interface SessionRef {
+  sessionId: string;
+  accountId: string;
+  signal?: AbortSignal;
+}
+
+/** How a hosted checkout session stands, as the provider reports it. */
+export interface CheckoutSessionState {
+  status: 'open' | 'complete' | 'expired';
+  /** The session completed with the money taken (a card); a complete session can still wait for a slower method. */
+  paid: boolean;
+  /** Where to send the buyer while it is open. */
+  url: string | null;
+  /** What it charged, minor units, and in which currency (upper case). */
+  amount: number | null;
+  currency: string | null;
+  /** The provider's payment reference (a Stripe PaymentIntent id); none before the buyer pays. */
+  providerPaymentId: string | null;
 }
 
 export interface PaymentProvider {
@@ -145,6 +174,15 @@ export interface PaymentProvider {
   start(args: StartPaymentArgs, emit: (event: PaymentEvent) => Promise<void>): Promise<StartedPayment>;
   /** Refund a payment in full (the platform fee returns with it). Answers the provider's refund id. */
   refund(args: { providerPaymentId: string; amount: number; connectedAccountId?: string }): Promise<{ refundId: string }>;
+  /**
+   * A hosted provider: the account a new session is made on (Stripe: the company's connected account, once it can take
+   * charges), or null when it cannot take payments. Pinned with the session (checkoutSession.ts).
+   */
+  chargeableAccount?(signal?: AbortSignal): Promise<string | null>;
+  /** A hosted provider: how a session it created on `accountId` stands. The demo provider has no session. */
+  retrieveSession?(args: SessionRef): Promise<CheckoutSessionState>;
+  /** A hosted provider: end an open session now, so it can no longer be paid. */
+  expireSession?(args: SessionRef): Promise<CheckoutSessionState>;
 }
 
 /** A short random reference for the demo provider (no network, no money). */
