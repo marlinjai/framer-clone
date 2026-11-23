@@ -1272,6 +1272,11 @@ once), so a hung request can never keep the fields locked; three jsdom cases, an
 refusal names the saved pages and components, and `replaces_mismatch` asks to copy the code before reloading. Info 8: the field
 leaves `aria-readonly` to CodeMirror, which sets it from its read-only state; the gates pin CodeMirror's own.
 
+**Review 3 of #459 (head `30160258`): mergeable, one Low fixed.** L1: a change to the block from elsewhere during a save closed the
+draft, and the answer then asked to "save it again" with nothing left to save; what was posted now comes back as a draft (D109).
+Also: a case pins that the same sentence said twice is two changes of the live region (the no-break space), and a misplaced
+comment moved. Two jsdom cases (42 in all); both weakenings caught by a failed expectation.
+
 ## Decided in slice C4, say so if you disagree
 
 Numbering continues after D98, the last number in this plan.
@@ -1352,7 +1357,8 @@ later shows the fallback there, and the panel names the problem as soon as it ap
 **D109. The panel's draft is keyed to the node and the value it was loaded from.** The draft (code, declaration, title) remembers the
 node's id and the `customCode` it started from (a hash, or null for a new block). An answer from the route is applied only while the
 node still exists and still names that value; otherwise the blob stays stored (unnamed, harmless, pruned by C5) and the panel says
-"The block changed while saving, so nothing was applied to it". An undo or a live change from another tab closes
+"The block changed while saving, so nothing was applied to it"; what was posted then comes back as a draft on the block's current
+value, so saving it again is one click and replaces what the block now names (review 3, L1). An undo or a live change from another tab closes
 the draft and says so. Selecting another element keeps the draft, per block, for this editor session, and it comes back with a
 notice when the block is selected again (review 1, L3: the fallback switch of D110 leads straight to another element). While a save
 runs, every field is frozen, read-only and still focusable (the Height dropdown and the pointer switch say `aria-disabled`), and
