@@ -276,8 +276,8 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
  *                               each state always arrives
  *   lumitra.emit(name)          fires a declared `custom:<name>` event (`name` or
  *                               `custom:name`); coalesced too: emits of one name
- *                               within one flush (about 50 ms) arrive as one,
- *                               after the writes pending with them, so a page
+ *                               made while one batch gathers (about 50 ms)
+ *                               arrive as one, after that batch's writes, so a page
  *                               handler that toggles or steps a state runs once
  *                               for them; to count, write the count as a number
  *                               state instead
@@ -292,10 +292,13 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
  * message per 50 milliseconds on average (after a flush of `n` messages the next
  * waits `n` times 50): writes first, then the height, then the emits in the order
  * of their first call, so the page sees a write before an event that followed
- * it. An emit of a name already pending in the same flush is merged into it. No
- * more than 25 messages leave in any one second, counted as they are sent, so
- * the page's limit of 30 is never reached however many states change at once;
- * what does not fit waits, latest only, for the next flush. An author may call
+ * it. A flush takes everything pending as one batch; an emit of a name already
+ * in the batch being gathered is merged into it, while one made after the batch
+ * was taken goes into the next batch, after that batch's writes. No more than
+ * 25 messages leave in any one second, counted as they are sent, so the page's
+ * limit of 30 is never reached however many states change at once; what does
+ * not fit stays in its batch for the next flush, and newer values wait for the
+ * batch after it, so a batch's older value is still sent before a newer one. An author may call
  * `setState` and `emit` from every animation frame or every `input` of a slider:
  * the page gets about 20 messages a second, and the last value of each always
  * arrives. Errors are reported at most once a second. Until the page connects,
@@ -345,8 +348,8 @@ export const BOX_SHELL_SCRIPT = [
   'var r=room(),c=0,k;',
   'for(k in bat.w){if(c>=r)break;send({kind:"setState",id:k,value:bat.w[k]});delete bat.w[k];c++;}',
   'var wl=false;for(k in bat.w){wl=true;break;}',
-  'if(!wl&&bat.g!==null&&c<r){send({kind:"resize",height:bat.g});bat.g=null;c++;}',
-  'if(!wl)while(bat.e.length&&c<r){send({kind:"emit",name:bat.e.shift()});c++;}',
+  'if(bat.g!==null&&c<r){send({kind:"resize",height:bat.g});bat.g=null;c++;}',
+  'while(bat.e.length&&c<r){send({kind:"emit",name:bat.e.shift()});c++;}',
   'if(c){last=now();gap=50*c;}',
   'var left=wl||bat.g!==null||bat.e.length>0;if(!left)bat=null;',
   'if(!left){left=grow!==null||ems.length>0;for(k in pend){left=true;break;}}',

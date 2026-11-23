@@ -992,15 +992,18 @@ after the first review of pull request #452 (C3), which proved in all three engi
   of each state and the latest height and send them on the trailing edge of a timer, about one message per 50 milliseconds
   (after a flush of `n` messages the next waits `n` times 50), so an honest author stays near 20 a second and the last value
   always arrives. Emits ride the same timer (review 3, M2: an `emit` sent at once made a slider that writes and emits on every
-  `input` send 120 to 240 messages a second while dragged, and it was removed in all three engines): an emit of a name already
-  pending is merged into it, and emits go after the pending writes and height, in the order of their first call, so the page
-  still sees a write before an event that followed it. A merged emit runs the page's handlers once where the author called it
+  `input` send 120 to 240 messages a second while dragged, and it was removed in all three engines): a flush takes everything
+  pending as one batch, and an emit of a name already in the batch being gathered is merged into it; emits go after the batch's
+  writes and height, in the order of their first call, so the page still sees a write before an event that followed it. An emit
+  made after its batch was taken is not merged into that batch: it goes into the next one, after that batch's writes (review 5
+  of pull request #452, I1). A merged emit runs the page's handlers once where the author called it
   several times within about 50 ms. For a handler that sets a state that is the same end state, but not for one that toggles or
   steps it: two emits merged leave a toggle flipped instead of back, and a step advanced by one instead of two (review 4, L4).
   At a person's pace the first emit leaves at once, so this needs a programmatic burst or a key repeating faster than about 20 a
   second; the shell's documentation tells authors to write a count as a number state when they need one. The shell also never sends more than 25
   messages in any second, counted as they leave (review 3, L1: a flush of 31 states at once passed 30 and lost the 31st); what
-  does not fit waits, latest only, for the next flush. Errors are reported at most once a second. The broker's ceiling is then
+  does not fit stays in its batch for the next flush, and newer values wait for the batch after it, so a batch's older value is
+  still sent before a newer one and the last value of each still arrives. Errors are reported at most once a second. The broker's ceiling is then
   left for code that bypasses the client on purpose. The gate proves it in three engines: two writes per animation frame and a
   4 ms timer keep the block and end on their last values, a block growing to 400 pixels ends at 400, a slider dragged with the
   mouse (a write and an emit on every input) is kept and ends on its last value, and 31 states written at once all arrive at
