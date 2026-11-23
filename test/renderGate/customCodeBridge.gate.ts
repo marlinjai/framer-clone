@@ -142,11 +142,25 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
       var t = setInterval(function () { if (Date.now() > stop) return clearInterval(t); port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(10000000) }); }, 40);
     `),
   },
+  // An engine may refuse to clone it in the frame already; either way the next write follows. The frame reports how long
+  // its own send took: WebKit's structured clone visits every index up to the length, so there the send is not free.
   sparseHuge: {
     shell: false,
     body: raw(`
-      // An engine may refuse to clone it in the frame already; either way the next write follows.
+      var at = Date.now();
       try { port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(4294967295) }); } catch (e) {}
+      probe({ sent: Date.now() - at });
+      setTimeout(function () { port.postMessage({ kind: 'setState', id: 'n', value: 2 }); }, 300);
+    `),
+  },
+  // The same for WebKit, at 2^28: its send takes about 1.8 seconds on a laptop (measured), so the row proves the same
+  // split of costs without holding every CI run for a minute (decided after CI run 45102875034).
+  sparseLarge: {
+    shell: false,
+    body: raw(`
+      var at = Date.now();
+      try { port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(268435456) }); } catch (e) {}
+      probe({ sent: Date.now() - at });
       setTimeout(function () { port.postMessage({ kind: 'setState', id: 'n', value: 2 }); }, 300);
     `),
   },
@@ -411,6 +425,21 @@ const frameOf = (page: Page, id: string) => page.evaluate((box) => {
   const frame = document.querySelector(`#${box} iframe`) as HTMLIFrameElement | null;
   return frame ? { attrs: Object.fromEntries([...frame.attributes].map((a) => [a.name, a.value])), height: frame.style.height, visible: frame.style.visibility !== 'hidden' } : null;
 }, id);
+/**
+ * Milliseconds from a click on the page's button to the state it sets, with any frame beside it. The click goes to the
+ * button's position, read before the clock starts: `page.click` first checks the target in several round trips to the
+ * page (visible, stable over animation frames, hit), and a slow test runner stretches each of them while the page itself
+ * answers at once (CI run 45102875034: 2172 ms in Firefox with the page's loop never held for a second). What is timed
+ * is the input's own trip and the page's answer to it.
+ */
+const clickToState = async (page: Page): Promise<number> => {
+  const box = await page.locator('#toB').boundingBox({ timeout: 30_000 });
+  if (!box) throw new Error('the button is not on the page');
+  const started = Date.now();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
+  return Date.now() - started;
+};
 const fallbackShown = (page: Page, id: string) => page.evaluate((box) => !(document.querySelector(`#${box} [data-fallback]`) as HTMLElement).hidden, id);
 /** Waits up to `ms` for a condition in the page, then lets the expectations below decide. */
 const until = (page: Page, condition: string, ms: number) => page.waitForFunction(condition, undefined, { timeout: ms }).catch(() => {});
@@ -564,10 +593,7 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
     try {
       // The flood starts at connect: the click goes in while it runs.
       await until(page, `${shownOnce('port')} && ${shownOnce('win')}`, 10_000);
-      const started = Date.now();
-      await page.click('#toB');
-      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 10_000);
-      const click = Date.now() - started;
+      const click = await clickToState(page);
       await until(page, `${removed('port')} && ${removed('win')}`, 5_000);
       // Whatever the click's timing against the removals: across the whole flood the page's loop was never held for long.
       const gap = await page.evaluate(() => (window as unknown as { __gap: number }).__gap);
@@ -604,14 +630,6 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
     }
   }, 60_000);
 
-  /** Milliseconds from a click on the page's button to the state it sets, with any frame beside it. */
-  const clickToState = async (page: Page): Promise<number> => {
-    const started = Date.now();
-    await page.click('#toB', { timeout: 30_000 });
-    await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
-    return Date.now() - started;
-  };
-
   it('removes a frame that sends sparse arrays of ten million slots, and the page answers a click meanwhile', async () => {
     const { page, context, console: lines } = await open(browser, [{ id: 'sp', doc: 'sparse' }]);
     try {
@@ -631,20 +649,48 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
     }
   }, 60_000);
 
-  it('drops one array of the greatest length there is at the cost of a small message, and takes the next write', async () => {
-    const { page, context } = await open(browser, [{ id: 'huge', doc: 'sparseHuge' }]);
+  // CI run 45102875034: WebKit's structured clone visits every index up to an array's length, in the sender, and WebKit
+  // runs the frame in the page's process, so the frame's send alone holds the page: 28 seconds on a laptop, 55 to 60 or
+  // more on a runner. That is the residual M7 (a frozen frame holds the page there), reached through the engine's own
+  // clone instead of a loop, and nothing in the page can refuse it before it is paid. What the broker owns is the page's
+  // cost once the message arrives, so that is what is bounded: the page's longest loop gap less the frame's own send.
+  // Playwright's timeouts do not fire while WebKit's page process is held (a 10 second wait here returned after 28), so
+  // every wait is raced against the test's own clock, in a browser of its own that is closed by force.
+  // WebKit gets an array of length 2^28 instead (`sparseLarge`): the greatest length would hold its page for a minute.
+  it('drops one array of the greatest length there is (2^28 in WebKit) at the cost of a small message, and takes the next write', async () => {
+    const own = await type.launch();
+    const bounded = <T,>(work: Promise<T>, ms: number): Promise<T | 'stuck'> =>
+      Promise.race([work, new Promise<'stuck'>((resolve) => setTimeout(() => resolve('stuck'), ms))]);
     try {
-      await until(page, shownOnce('huge'), 10_000);
-      const click = await clickToState(page);
-      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-n') === '2'", 10_000);
+      const opened = await bounded(open(own, [{ id: 'huge', doc: engine === 'webkit' ? 'sparseLarge' : 'sparseHuge' }]), 15_000);
+      if (opened === 'stuck') throw new Error('the page did not open');
+      const { page } = opened;
+      const done = "window.__probes.some(function (p) { return typeof p.sent === 'number'; }) && document.querySelector('[data-fc-scope]').getAttribute('data-fcs-n') === '2'";
+      await bounded(page.waitForFunction(done, undefined, { timeout: 0 }).catch(() => {}), engine === 'webkit' ? 30_000 : 10_000);
+      const seen = await bounded(page.evaluate(() => {
+        const w = window as unknown as { __gap: number; __probes: { sent?: number }[]; __settled: unknown[] };
+        return { gap: w.__gap, sent: w.__probes.find((p) => typeof p.sent === 'number')?.sent, settled: w.__settled, n: document.querySelector('[data-fc-scope]')?.getAttribute('data-fcs-n') };
+      }), 5_000);
+      if (seen === 'stuck') throw new Error('the page did not answer');
+      record(`one huge sparse array in ${engine}: the frame's send took ${seen.sent} ms, the page's longest loop gap ${Math.round(seen.gap)} ms`);
+      expect(seen.n).toBe('2');
+      expect(seen.settled).toEqual([{ id: 'huge', shown: true }]);
+      expect(typeof seen.sent).toBe('number');
+      const sent = seen.sent as number;
+      // The page's own share: in WebKit the gap holds the frame's send as well, elsewhere the send is free.
+      expect(seen.gap - (engine === 'webkit' ? sent : 0)).toBeLessThan(1_000);
+      // Asserted as the residual, both ways, so a change in any engine shows.
+      if (engine === 'webkit') expect(sent).toBeGreaterThan(1_000);
+      else expect(sent).toBeLessThan(1_000);
+      // And the page answers a click afterwards.
+      const click = await bounded(clickToState(page), 35_000);
       record(`one huge sparse array in ${engine}: click answered in ${click} ms`);
-      expect(click).toBeLessThan(2_000);
-      expect(await stateOf(page, 'n')).toBe('2');
-      expect(await settled(page)).toEqual([{ id: 'huge', shown: true }]);
+      expect(click).not.toBe('stuck');
+      expect(click as number).toBeLessThan(2_000);
     } finally {
-      await context.close();
+      await Promise.race([own.close(), new Promise((resolve) => setTimeout(resolve, 10_000))]);
     }
-  }, 60_000);
+  }, 90_000);
 
   it('removes a frame at its second message over 64 KB, as with data that is not plain', async () => {
     const { page, context, console: lines } = await open(browser, [{ id: 'bulk', doc: 'bulky' }]);
@@ -1121,11 +1167,7 @@ describe('the custom code bridge in chromium with site isolation', () => {
     try {
       await until(page, shownOnce('heavy'), 10_000);
       await page.waitForTimeout(500);
-      const started = Date.now();
-      // Caught: a page that cannot answer fails on the time below, not on the click's own timeout.
-      await page.click('#toB', { timeout: 30_000 }).catch(() => {});
-      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
-      const click = Date.now() - started;
+      const click = await clickToState(page);
       record(`costly window flood after hello, site isolation: click answered in ${click} ms; ${lines.filter((line) => line.startsWith('Custom code "Block heavy"')).join(' | ') || 'no line'}`);
       expect(await stateOf(page, 'tab')).toBe('b');
       expect(click).toBeLessThan(2_000);
@@ -1148,11 +1190,7 @@ describe('the custom code bridge in chromium with site isolation', () => {
       record(`costly first message without hello, site isolation: removed ${gone} ms after the frame was made`);
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
       expect(gone).toBeLessThan(3_000);
-      const started = Date.now();
-      // Caught: a page that cannot answer fails on the time below, not on the click's own timeout.
-      await page.click('#toB', { timeout: 30_000 }).catch(() => {});
-      await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
-      const click = Date.now() - started;
+      const click = await clickToState(page);
       record(`costly window flood without hello, site isolation: click answered in ${click} ms`);
       expect(click).toBeLessThan(2_000);
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
