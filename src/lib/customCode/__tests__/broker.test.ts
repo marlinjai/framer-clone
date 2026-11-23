@@ -65,13 +65,31 @@ describe('sizeOf: the UTF-8 length of a message as JSON, of plain data only, wit
     expect(sizeOf(cyclic)).toBe(-1);
   });
 
-  it('lets the size rule decide what the budget lets through: escaped characters count their escapes', () => {
-    // 65,536 quotes: within the walk's bounds, but twice that as JSON, so over 64 KB for the caller.
-    expect(sizeOf({ pad: '"'.repeat(65_536) })).toBe(bytes({ pad: '"'.repeat(65_536) }));
-    expect(sizeOf({ pad: '"'.repeat(65_536) })).toBeGreaterThan(65_536);
-    // A string of exactly 65,536 and an array of 65,000 are not refused by the walk.
-    expect(sizeOf({ pad: 'x'.repeat(65_536) })).toBeGreaterThan(65_536);
-    expect(sizeOf({ pad: new Array(65_000).fill(0) })).toBe(bytes({ pad: new Array(65_000).fill(0) }));
+  it('lets the size rule decide what the budget lets through: the walk refuses, or the caller sees more than 64 KB', () => {
+    // Either answer removes the frame: the walk refuses at its budget (-1), or the size is over 64 KB.
+    const refused = (value: unknown) => {
+      const size = sizeOf(value);
+      return size < 0 || size > 65_536;
+    };
+    expect(refused({ pad: '"'.repeat(65_536) })).toBe(true);
+    expect(refused({ pad: 'x'.repeat(65_536) })).toBe(true);
+    expect(refused({ pad: new Array(65_000).fill(0) })).toBe(true);
+  });
+
+  // Review of pull request #452, B1: the walk counted values, not the bytes of property names.
+  it('refuses a small shared graph whose JSON is gigabytes, without building it', () => {
+    const key = 'k'.repeat(65_536);
+    let node: unknown = 0;
+    for (let i = 0; i < 15; i++) node = { [key]: node, b: node };
+    const started = performance.now();
+    expect(sizeOf(node)).toBe(-1);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it('still measures ordinary messages below 64 KB: long arrays, long strings, many keys', () => {
+    for (const value of [new Array(30_000).fill(0), { pad: 'x'.repeat(60_000) }, Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`k${i}`, 1]))]) {
+      expect(sizeOf(value)).toBe(bytes(value));
+    }
   });
 
   it('starts every message with a fresh budget', () => {

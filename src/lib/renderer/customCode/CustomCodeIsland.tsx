@@ -62,6 +62,7 @@ export default function CustomCodeIsland({ tag, domProps, trace, block, children
   return React.createElement(
     tag,
     { ...domProps, ref: box, [CUSTOM_CODE_ATTR]: trace, 'data-fc-custom-code-state': phase },
-    phase === 'shown' ? null : children,
+    // A persistent Fragment: React then removes only the fallback's own nodes, never the broker's iframe in the box.
+    React.createElement(React.Fragment, null, phase === 'shown' ? null : children),
   );
 }

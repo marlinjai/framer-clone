@@ -70,4 +70,23 @@ describe('CustomCodeIsland', () => {
     stopServing = undefined;
     expect(container.textContent).toBe('Fallback');
   });
+
+  // Review of pull request #452, I1: a text-only fallback is cleared by React's content reset unless a Fragment holds it.
+  it('keeps the broker\'s iframe in the box when a direct-text fallback is removed', () => {
+    const handles: BlockHandle[] = [];
+    stopServing = serveBlocks((handle) => {
+      handles.push(handle);
+      return () => {};
+    });
+    const { container } = render(
+      <CustomCodeIsland tag="section" domProps={{ id: 'calc' }} trace="aaaaaaaaaaaa" block={block}>
+        {'Fallback'}
+      </CustomCodeIsland>,
+    );
+    const frame = document.createElement('iframe');
+    handles[0].el.appendChild(frame);
+    act(() => handles[0].settle(true));
+    expect(container.textContent).toBe('');
+    expect(container.querySelector('section > iframe')).toBe(frame);
+  });
 });

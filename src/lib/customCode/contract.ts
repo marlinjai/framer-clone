@@ -335,15 +335,21 @@ export const BOX_SHELL_SCRIPT = [
   'var room=function(){var t=now()-1000,c=25;for(var i=0;i<sent.length;i++){if(sent[i]>t)c--;}return c;};',
   // Coalescing: the latest write per state, the latest height and each emitted name, sent on the trailing edge of a
   // timer. No prototype, so a state id such as `__proto__` is a key like any other.
-  'var pend=Object.create(null),grow=null,ems=[],timer=null,last=-1e9,gap=50,errAt=-1e9;',
-  // Before the page connects, everything waits as it is. A flush sends what the second has room for, in order, and
-  // leaves the rest for the next.
-  'var flush=function(){if(timer!==null){clearTimeout(timer);timer=null;}if(!port)return;var r=room(),c=0,k;',
-  'for(k in pend){if(c>=r)break;send({kind:"setState",id:k,value:pend[k]});delete pend[k];c++;}',
-  'if(grow!==null&&c<r){send({kind:"resize",height:grow});grow=null;c++;}',
-  'while(ems.length&&c<r){send({kind:"emit",name:ems.shift()});c++;}',
+  'var pend=Object.create(null),grow=null,ems=[],bat=null,timer=null,last=-1e9,gap=50,errAt=-1e9;',
+  // Before the page connects, everything waits as it is. A flush works through one batch: what was pending when it
+  // began (writes, then the height, then the emits). What the second has no room for stays in the batch for the
+  // next flush, and newer writes wait in `pend` until the batch is empty, so continuous writes never starve the
+  // height or the emits.
+  'var flush=function(){if(timer!==null){clearTimeout(timer);timer=null;}if(!port)return;',
+  'if(bat===null){bat={w:pend,g:grow,e:ems};pend=Object.create(null);grow=null;ems=[];}',
+  'var r=room(),c=0,k;',
+  'for(k in bat.w){if(c>=r)break;send({kind:"setState",id:k,value:bat.w[k]});delete bat.w[k];c++;}',
+  'var wl=false;for(k in bat.w){wl=true;break;}',
+  'if(!wl&&bat.g!==null&&c<r){send({kind:"resize",height:bat.g});bat.g=null;c++;}',
+  'if(!wl)while(bat.e.length&&c<r){send({kind:"emit",name:bat.e.shift()});c++;}',
   'if(c){last=now();gap=50*c;}',
-  'var left=grow!==null||ems.length>0;for(k in pend){left=true;break;}',
+  'var left=wl||bat.g!==null||bat.e.length>0;if(!left)bat=null;',
+  'if(!left){left=grow!==null||ems.length>0;for(k in pend){left=true;break;}}',
   'if(left)timer=setTimeout(flush,Math.max(100,last+gap-now()));};',
   'var later=function(){if(timer===null)timer=setTimeout(flush,Math.max(0,last+gap-now()));};',
   'var settle=function(){if(done||!reads)return;for(var j=0;j<reads.length;j++){if(!own.call(values,reads[j]))return;}',

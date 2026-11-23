@@ -469,6 +469,25 @@ describe('the shell', () => {
     expect(sent.filter((m) => m.kind === 'emit')).toEqual([{ kind: 'emit', name: 'custom:done' }]);
   });
 
+  // Review of pull request #452, C3: more writes than one flush has room for must not starve the height and the emits.
+  it('delivers the height and an emit while 26 states change on every animation frame', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    shell.run("lumitra.resize(321); lumitra.emit('done')");
+    for (let frame = 1; frame <= 600; frame++) {
+      shell.run(`for (var i = 0; i < 26; i++) lumitra.setState('s' + i, ${frame})`);
+      shell.advance(1000 / 60);
+    }
+    const sent = shell.sent as { kind: string }[];
+    // Both arrived while the writes were still coming (600 frames last 10 seconds), not after they stopped.
+    const lastWrite = shell.times.length;
+    expect(sent.filter((m) => m.kind === 'resize')).toEqual([{ kind: 'resize', height: 321 }]);
+    expect(sent.filter((m) => m.kind === 'emit')).toEqual([{ kind: 'emit', name: 'custom:done' }]);
+    expect(lastWrite).toBeGreaterThan(0);
+    const most = Math.max(...shell.times.map((at) => shell.times.filter((t) => t >= at && t < at + 1000).length));
+    expect(most).toBeLessThanOrEqual(25);
+  });
+
   // Review 4 of pull request #452, L3: a wall clock stepped back an hour does not hold the sends.
   it('keeps sending on time when the wall clock steps back', () => {
     const shell = shellWindow();

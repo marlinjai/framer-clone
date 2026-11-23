@@ -74,14 +74,17 @@ let budget = 0;
  * every array slot included, and each writes at least one byte. So past 65,536 calls, or at a string or array
  * longer than 65,536, the message cannot be 64 KB of JSON, and it is refused at once instead of being built: a
  * sparse array of ten million slots costs its sender nothing and the page one call. (An object with its own
- * numeric `length` above that is refused with them.) `budget` is set to 0 before each message.
+ * numeric `length` above that is refused with them.) The budget is in characters, not calls: each call charges
+ * one, its property name's length (an array's slots have none in the JSON) and a string's length, and each of those is at most a byte of the JSON, so a
+ * small shared graph with long keys (whose JSON is gigabytes) is refused as it is walked, before any of it is
+ * built. `budget` is set to 0 before each message.
  */
-const plain = (_: string, value: unknown): unknown => {
+function plain(this: unknown, key: string, value: unknown): unknown {
   const kind = value && (value as object).constructor;
   // `kind` is null for null, and for a primitive its wrapper, which `typeof` leaves out.
-  if ((kind && kind != Object && kind != Array && typeof value == 'object') || ++budget > 65536 || ((value || 0) as string).length > 65536) throw 0;
+  if ((kind && kind != Object && kind != Array && typeof value == 'object') || (budget += 1 + (Array.isArray(this) ? 0 : key.length) + (typeof value == 'string' ? value.length : 0)) > 65536 || ((value || 0) as string).length > 65536) throw 0;
   return value;
-};
+}
 
 /**
  * A frame's message's size as the UTF-8 bytes of its JSON, or -1 when it is not plain data, is past the walk's
