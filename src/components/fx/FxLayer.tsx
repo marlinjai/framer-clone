@@ -450,8 +450,6 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
       settledPair.current = { key: settledWanted, stored: storedByWanted.current.get(settledWanted) ?? latestStored.current };
     }
     const requestStored = settledPair.current.stored;
-    const keyedWidth = size.width;
-    const keyedHeight = size.height;
     let retryTimer: number | undefined;
     // The old picture stays shown until the new one is there.
     setState((prev) => (prev === 'live' ? prev : 'loading'));
@@ -460,8 +458,7 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
       () => {
         const layer = layerRef.current;
         if (!layer || !layer.isConnected) return null;
-        // The picture must have the size its key names: a box resized while the job waited is asked again (no-host, retried).
-        if (layer.offsetWidth !== keyedWidth || layer.offsetHeight !== keyedHeight) return null;
+        // A box resized while the job waited has a new key (the size observer above), which asks again; this picture is replaced by it.
         return {
           host: layer,
           stored: requestStored,
