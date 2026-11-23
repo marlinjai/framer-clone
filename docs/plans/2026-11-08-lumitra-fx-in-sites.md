@@ -1140,6 +1140,14 @@ the effect to appear as quickly as possible, and for a tasteful loading indicati
 6. **Box holds nest.** `holdFxBox` is reference-counted, so the placeholder, a still and the live layer can overlap on
    one box and the box gets its own style back only when the last one goes.
 
+**Decided by Marlin (2026-11-23, relayed by the coordinator).** He accepts the measured cost of the still frames:
+after an edit settles, about 0.43 s of main-thread work on a laptop while the other breakpoints' stills are set up
+(one task per edit, through the shared still renderer). This holds on the condition measured in
+`test/behaviour/fxEditorTiming.spec.ts`: typing and dragging stay as responsive as on main (no long tasks during a
+burst of edits). If that ever stops holding, the cost is to be reduced again, not accepted. The look of the loading
+placeholder is still his to review (screenshots in the session's scratch folder); a roadmap line tracks it. This
+decision is not a deploy authorization.
+
 **Not changed.** The live scene's single-context rule, the reduced-motion behaviour on the published page, the
 held FX defect (screen and overlay ignoring source alpha on content layers, held until the lumitra.co comparison F8).
 No production deploy or site publish comes with this change; it waits for the existing release gate.
