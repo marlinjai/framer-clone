@@ -14,8 +14,9 @@ import { describe, expect, it } from 'vitest';
 const KILOBYTE = 1000;
 
 /** Splitting on, as Next does, so what a chunk imports dynamically is not counted in it. */
-async function gzippedSize(entry: string): Promise<{ raw: string; bytes: number }> {
+async function gzippedSize(entry: string, external: string[] = []): Promise<{ raw: string; bytes: number }> {
   const result = await build({
+    external,
     entryPoints: [path.resolve(__dirname, '..', entry)],
     bundle: true,
     minify: true,
@@ -26,7 +27,7 @@ async function gzippedSize(entry: string): Promise<{ raw: string; bytes: number 
     target: 'es2022',
     alias: { '@': path.resolve(__dirname, '../../..') },
   });
-  const file = result.outputFiles.find((output) => path.basename(output.path) === entry.replace('.ts', '.js'));
+  const file = result.outputFiles.find((output) => path.basename(output.path) === path.basename(entry).replace('.ts', '.js'));
   if (!file) throw new Error(`no output for ${entry}`);
   return { raw: file.text, bytes: gzipSync(file.text).length };
 }
@@ -48,7 +49,16 @@ describe('the behaviour chunks', () => {
     expect(bytes).toBeLessThanOrEqual(3 * KILOBYTE);
   });
 
-  it.each(['runtime.ts', 'rove.ts', 'verbs.ts'])('%s holds no part of the parser, and no code from a string', async (entry) => {
+  // The custom code broker, the third lazy chunk (slice C3 of the sandboxed custom code plan). Next
+  // keeps the registry (shared with the island) and the attribute names (shared with the core) in
+  // other chunks, so they are not counted here either. 2.2 kilobytes since the second review of pull
+  // request #452 (decision D73: the bounded plain-data walk and the nested-frame count).
+  it('the custom code broker stays within 2.2 kilobytes gzipped', async () => {
+    const { bytes } = await gzippedSize('../customCode/broker.ts', ['./registry', '@/lib/behaviour/names']);
+    expect(bytes).toBeLessThanOrEqual(2.2 * KILOBYTE);
+  });
+
+  it.each(['runtime.ts', 'rove.ts', 'verbs.ts', '../customCode/broker.ts'])('%s holds no part of the parser, and no code from a string', async (entry) => {
     const { raw } = await gzippedSize(entry);
     expect(raw).not.toContain('a trigger needs');
     expect(raw).not.toMatch(/\beval\(|new Function\(/);

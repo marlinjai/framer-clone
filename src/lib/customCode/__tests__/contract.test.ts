@@ -13,6 +13,7 @@ import {
   BOX_REFUSAL_POLICY,
   BOX_SHELL_MARKER,
   BOX_SHELL_SCRIPT,
+  BOX_SHELL_VERSION,
   boxDocumentHeaders,
   boxPath,
   boxRefusalHeaders,
@@ -267,7 +268,247 @@ describe('the shell', () => {
       expect(vm.runInContext(`typeof window.${name}`, context)).toBe('undefined');
       expect(() => vm.runInContext(`'use strict'; Object.defineProperty(window, '${name}', { value: 1 })`, context)).toThrow();
     }
-    expect(posted).toEqual([[{ fc: 1, kind: 'hello', shell: 1 }, '*']]);
+    expect(posted).toEqual([[{ fc: 1, kind: 'hello', shell: BOX_SHELL_VERSION }, '*']]);
+  });
+
+  /**
+   * A model window with listeners, a parent that records posts, a port pair to stand in for the broker, and a
+   * clock and timers the test moves by hand (`advance`).
+   */
+  function shellWindow() {
+    const listeners: Record<string, ((event: unknown) => void)[]> = {};
+    const parent = { postMessage: () => {} };
+    let time = 1_000_000;
+    let wallStep = 0;
+    let nextId = 1;
+    const timers = new Map<number, { at: number; fn: () => void }>();
+    const window: Record<string, unknown> = {
+      parent,
+      addEventListener: (type: string, fn: (event: unknown) => void) => (listeners[type] ??= []).push(fn),
+      // The shell times its sends with performance.now; the wall clock here may be stepped by a test.
+      performance: { now: () => time },
+      Date: { now: () => time + wallStep },
+      setTimeout: (fn: () => void, ms: number) => {
+        timers.set(nextId, { at: time + Math.max(0, ms || 0), fn });
+        return nextId++;
+      },
+      clearTimeout: (id: number) => timers.delete(id),
+    };
+    /** Moves the clock on, running each timer when its time comes, in order. */
+    const advance = (ms: number) => {
+      const end = time + ms;
+      for (;;) {
+        const due = [...timers.entries()].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        time = Math.max(time, due[1].at);
+        due[1].fn();
+      }
+      time = end;
+    };
+    window.window = window;
+    const context = vm.createContext(window);
+    vm.runInContext(BOX_SHELL_SCRIPT, context);
+    const sent: unknown[] = [];
+    /** When each message was sent, on the model clock. */
+    const times: number[] = [];
+    const port = {
+      onmessage: null as null | ((event: { data: unknown }) => void),
+      postMessage: (message: unknown) => {
+        times.push(time);
+        sent.push(JSON.parse(JSON.stringify(message)));
+      },
+    };
+    const dispatch = (type: string, event: unknown) => (listeners[type] ?? []).forEach((fn) => fn(event));
+    const connect = (declaration: unknown, from: unknown = parent, ports: unknown[] = [port]) =>
+      dispatch('message', { source: from, data: { fc: 1, kind: 'connect', declaration }, ports });
+    const toFrame = (data: unknown) => port.onmessage?.({ data });
+    const run = (code: string) => vm.runInContext(code, context);
+    const stepWallClock = (ms: number) => {
+      wallStep += ms;
+    };
+    return { context, sent, times, port, connect, toFrame, dispatch, run, advance, stepWallClock };
+  }
+
+  it('gives the author a frozen lumitra client that queues until the page connects', async () => {
+    const shell = shellWindow();
+    expect(shell.run('Object.isFrozen(window.lumitra) && Object.keys(window.lumitra).sort().join()')).toBe('emit,onState,read,ready,resize,setState');
+    shell.run('try { window.lumitra = null; } catch (e) {}');
+    expect(shell.run('typeof window.lumitra.read')).toBe('function');
+    shell.run("lumitra.setState('open', true); lumitra.emit('done'); lumitra.emit('custom:other'); lumitra.resize('320')");
+    expect(shell.sent).toEqual([]);
+    shell.connect({ reads: [], writes: ['open'], emits: ['custom:done'], sizing: 'content', interactive: true });
+    // Writes, then the height, then the emits in the order of their first call.
+    expect(shell.sent).toEqual([
+      { kind: 'setState', id: 'open', value: true },
+      { kind: 'resize', height: 320 },
+      { kind: 'emit', name: 'custom:done' },
+      { kind: 'emit', name: 'custom:other' },
+    ]);
+  });
+
+  it('takes the port only from its parent, once, and answers pings', () => {
+    const shell = shellWindow();
+    const other = { onmessage: null, postMessage: () => { throw new Error('the wrong port'); } };
+    shell.connect({ reads: [] }, { postMessage: () => {} }, [other]);
+    shell.connect({ reads: [] }, shell.context.parent, []);
+    shell.run("lumitra.setState('a', 1)");
+    expect(shell.sent).toEqual([]);
+    shell.connect({ reads: [] });
+    expect(shell.sent).toEqual([{ kind: 'setState', id: 'a', value: 1 }]);
+    shell.connect({ reads: [] }, shell.context.parent, [other]);
+    shell.toFrame({ kind: 'ping' });
+    expect(shell.sent.at(-1)).toEqual({ kind: 'pong' });
+  });
+
+  it('reads state, calls watchers with each value, and is ready once every read has one', async () => {
+    const shell = shellWindow();
+    shell.run("window.seen = []; window.isReady = false; lumitra.ready().then(function(){ window.isReady = true; }); window.stop = lumitra.onState('tab', function(v){ seen.push(v); })");
+    shell.connect({ reads: ['tab', 'open'] });
+    shell.toFrame({ kind: 'state', id: 'tab', value: 'b' });
+    await Promise.resolve();
+    expect(shell.run('isReady')).toBe(false);
+    shell.toFrame({ kind: 'state', id: 'open', value: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shell.run('isReady')).toBe(true);
+    expect(shell.run("lumitra.read('tab')")).toBe('b');
+    expect(shell.run("lumitra.read('missing')")).toBeUndefined();
+    shell.run('stop()');
+    shell.toFrame({ kind: 'state', id: 'tab', value: 'c' });
+    expect(shell.run('seen.join()')).toBe('b');
+    // A watcher added later hears the value it already has, at once.
+    shell.run("lumitra.onState('open', function(v){ seen.push(String(v)); })");
+    expect(shell.run('seen.join()')).toBe('b,true');
+  });
+
+  it('reports a thrown watcher and an uncaught error to the page, shortened', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: ['x'] });
+    shell.run("lumitra.onState('x', function(){ throw new Error('boom'); })");
+    shell.toFrame({ kind: 'state', id: 'x', value: 1 });
+    // A second error within the second is not reported: a frame that fails in a loop says so once a second.
+    shell.dispatch('error', { error: new Error('again') });
+    shell.advance(1000);
+    shell.dispatch('error', { error: new Error('y'.repeat(900)) });
+    expect(shell.sent).toEqual([
+      { kind: 'error', message: 'boom' },
+      { kind: 'error', message: 'y'.repeat(500) },
+    ]);
+  });
+
+  it('coalesces writes and resizes: the latest of each, on the trailing edge, about one message per 50 ms', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    // A write from every animation frame at 120 Hz for two seconds, two states, and a growing height.
+    for (let frame = 1; frame <= 240; frame++) {
+      shell.run(`lumitra.setState('count', ${frame}); lumitra.setState('n', ${frame % 9}); lumitra.resize(${100 + frame})`);
+      shell.advance(1000 / 120);
+    }
+    shell.run("lumitra.setState('count', 777)");
+    shell.advance(1000);
+    const sent = shell.sent as { kind: string; id?: string; value?: unknown; height?: number }[];
+    // Never more than 20 messages in any second, though 721 calls were made (the page drops past 30).
+    const most = Math.max(...shell.times.map((at) => shell.times.filter((t) => t >= at && t < at + 1000).length));
+    expect(most).toBeLessThanOrEqual(21);
+    expect(sent.length).toBeGreaterThan(30);
+    // The last value of each arrives.
+    expect(sent.filter((m) => m.id === 'count').at(-1)).toEqual({ kind: 'setState', id: 'count', value: 777 });
+    expect(sent.filter((m) => m.id === 'n').at(-1)).toEqual({ kind: 'setState', id: 'n', value: 240 % 9 });
+    expect(sent.filter((m) => m.kind === 'resize').at(-1)).toEqual({ kind: 'resize', height: 340 });
+  });
+
+  it('sends the first write at once, and pending writes before an emit that follows them, the emit merged by name', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    shell.run("lumitra.setState('a', 1)");
+    shell.advance(0);
+    expect(shell.sent).toEqual([{ kind: 'setState', id: 'a', value: 1 }]);
+    shell.run("lumitra.setState('a', 2); lumitra.emit('done'); lumitra.setState('__proto__', 3); lumitra.emit('custom:done')");
+    expect(shell.sent).toHaveLength(1);
+    shell.advance(50);
+    expect(shell.sent).toEqual([
+      { kind: 'setState', id: 'a', value: 1 },
+      { kind: 'setState', id: 'a', value: 2 },
+      { kind: 'setState', id: '__proto__', value: 3 },
+      { kind: 'emit', name: 'custom:done' },
+    ]);
+    shell.advance(1000);
+    expect(shell.sent).toHaveLength(4);
+  });
+
+  it('keeps an honest slider under 25 a second: a write and an emit on every input at 120 Hz, ending on the last value', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    for (let input = 1; input <= 240; input++) {
+      shell.run(`lumitra.setState('count', ${input}); lumitra.emit('done')`);
+      shell.advance(1000 / 120);
+    }
+    shell.advance(1000);
+    const sent = shell.sent as { kind: string; id?: string; value?: unknown; name?: string }[];
+    const most = Math.max(...shell.times.map((at) => shell.times.filter((t) => t >= at && t < at + 1000).length));
+    expect(most).toBeLessThanOrEqual(25);
+    expect(sent.filter((m) => m.kind === 'setState').at(-1)).toEqual({ kind: 'setState', id: 'count', value: 240 });
+    expect(sent.at(-1)).toEqual({ kind: 'emit', name: 'custom:done' });
+  });
+
+  it('never sends more than 25 in a second, however many states change at once, and every final value arrives', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    // Review 3 of pull request #452, L1: 10 states, then 21 more within the second, then all 31 again.
+    shell.run("for (var i = 0; i < 10; i++) lumitra.setState('s' + i, 1)");
+    shell.advance(500);
+    shell.run("for (var i = 10; i < 31; i++) lumitra.setState('s' + i, 1); lumitra.resize(50); lumitra.emit('done')");
+    shell.advance(100);
+    shell.run("for (var i = 0; i < 31; i++) lumitra.setState('s' + i, 2)");
+    shell.advance(5000);
+    const sent = shell.sent as { kind: string; id?: string; value?: unknown }[];
+    const most = Math.max(...shell.times.map((at) => shell.times.filter((t) => t >= at && t < at + 1000).length));
+    expect(most).toBeLessThanOrEqual(25);
+    for (let i = 0; i < 31; i++) expect(sent.filter((m) => m.id === `s${i}`).at(-1)).toEqual({ kind: 'setState', id: `s${i}`, value: 2 });
+    expect(sent.filter((m) => m.kind === 'resize')).toEqual([{ kind: 'resize', height: 50 }]);
+    expect(sent.filter((m) => m.kind === 'emit')).toEqual([{ kind: 'emit', name: 'custom:done' }]);
+  });
+
+  // Review of pull request #452, C3: more writes than one flush has room for must not starve the height and the emits.
+  it('delivers the height and an emit while 26 states change on every animation frame', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    shell.run("lumitra.resize(321); lumitra.emit('done')");
+    for (let frame = 1; frame <= 600; frame++) {
+      shell.run(`for (var i = 0; i < 26; i++) lumitra.setState('s' + i, ${frame})`);
+      shell.advance(1000 / 60);
+    }
+    const sent = shell.sent as { kind: string }[];
+    // Both arrived while the writes were still coming (600 frames last 10 seconds), not after they stopped.
+    const lastWrite = shell.times.length;
+    expect(sent.filter((m) => m.kind === 'resize')).toEqual([{ kind: 'resize', height: 321 }]);
+    expect(sent.filter((m) => m.kind === 'emit')).toEqual([{ kind: 'emit', name: 'custom:done' }]);
+    expect(lastWrite).toBeGreaterThan(0);
+    const most = Math.max(...shell.times.map((at) => shell.times.filter((t) => t >= at && t < at + 1000).length));
+    expect(most).toBeLessThanOrEqual(25);
+  });
+
+  // Review 4 of pull request #452, L3: a wall clock stepped back an hour does not hold the sends.
+  it('keeps sending on time when the wall clock steps back', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    shell.run("lumitra.setState('a', 1)");
+    shell.advance(100);
+    shell.stepWallClock(-3_600_000);
+    shell.run("lumitra.setState('a', 2)");
+    shell.advance(200);
+    expect(shell.sent).toEqual([{ kind: 'setState', id: 'a', value: 1 }, { kind: 'setState', id: 'a', value: 2 }]);
+  });
+
+  it('keeps only the latest values while it waits for the page, however long', () => {
+    const shell = shellWindow();
+    for (let i = 1; i <= 500; i++) {
+      shell.run(`lumitra.setState('count', ${i})`);
+      shell.advance(4);
+    }
+    expect(shell.sent).toEqual([]);
+    shell.connect({ reads: [] });
+    expect(shell.sent).toEqual([{ kind: 'setState', id: 'count', value: 500 }]);
   });
 
   it('survives a window without a parent', () => {
