@@ -365,9 +365,9 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
 
   // Where focus goes once a Retry it was on succeeds: the first field, or the section itself.
   const sectionRef = React.useRef<HTMLDivElement>(null);
+  const titleRef = React.useRef<HTMLInputElement>(null);
   const focusFirstField = React.useCallback(() => {
-    const root = sectionRef.current;
-    (root?.querySelector<HTMLElement>('[data-custom-code-first-field]') ?? root)?.focus();
+    (titleRef.current ?? sectionRef.current)?.focus();
   }, []);
   const codeRetry = useRetry(current.phase, () => setLoadGeneration((n) => n + 1), focusFirstField);
   const settingsRetry = useRetry(authoring.state.phase, authoring.reload, focusFirstField);
@@ -424,7 +424,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
                 value={fields.title}
                 maxLength={200}
                 readOnly={frozen}
-                data-custom-code-first-field=""
+                ref={titleRef}
                 aria-label="Title of the custom code block"
                 placeholder="Opening hours clock"
                 onChange={(event) => edit({ title: event.target.value })}
