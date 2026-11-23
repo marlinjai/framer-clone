@@ -175,17 +175,20 @@ describe('still queue', () => {
     expect(h.jobs).toHaveLength(4);
   });
 
-  it('dispose aborts what runs and forgets everything', async () => {
+  it('askers whose boxes are all out of the page when the job starts are told, and may ask again', async () => {
     const h = harness();
-    h.ask('x');
-    h.ask('y');
+    const into: StillOutcome[] = [];
+    const leave = h.queue.request('k', () => null, (o) => into.push(o));
     h.runIdle();
-    h.queue.dispose();
-    expect(h.jobs[0].signal.aborted).toBe(true);
-    expect(h.queue.stats()).toEqual({ running: 0, queued: 0, kept: 0, failed: 0 });
-    h.ask('z');
+    expect(h.jobs).toHaveLength(0);
+    expect(into).toEqual([{ ok: false, reason: 'no-host' }]);
+    leave();
+    const again = h.ask('k');
     h.runIdle();
     expect(h.jobs).toHaveLength(1);
+    h.jobs[0].resolve(h.picture());
+    await h.settle();
+    expect(again.into).toHaveLength(1);
   });
 });
 

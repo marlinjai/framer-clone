@@ -55,10 +55,8 @@ export interface StillQueue {
    * microtask, when it is known already). Returns the leave.
    */
   request: (key: string, target: () => StillTarget | null, listener: (outcome: StillOutcome) => void) => () => void;
-  /** What the queue holds now (tests and the panel). */
+  /** What the queue holds now (for tests). */
   stats: () => { running: number; queued: number; kept: number; failed: number };
-  /** Abort what runs, drop every request and every kept picture. */
-  dispose: () => void;
 }
 
 interface Asker {
@@ -104,7 +102,6 @@ export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQ
   let running: Entry | null = null;
   let cancelIdle: (() => void) | null = null;
   let tick = 0;
-  let disposed = false;
 
   const tell = (entry: Entry, outcome: StillOutcome) => {
     for (const asker of [...entry.askers]) asker.listener(outcome);
@@ -119,7 +116,7 @@ export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQ
   };
 
   const pump = () => {
-    if (disposed || running || cancelIdle || queue.length === 0) return;
+    if (running || cancelIdle || queue.length === 0) return;
     cancelIdle = whenIdle(() => {
       cancelIdle = null;
       start();
@@ -127,7 +124,7 @@ export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQ
   };
 
   const start = () => {
-    if (disposed || running) return;
+    if (running) return;
     let entry = queue.shift();
     // Entries nobody asks for any more were dropped from the map; skip what is left of them.
     while (entry && (entries.get(entry.key) !== entry || entry.askers.size === 0)) entry = queue.shift();
@@ -138,8 +135,10 @@ export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQ
       if (target) break;
     }
     if (!target) {
-      // No asker can place the scene now (its box is gone from the page): nothing to draw.
+      // No asker can place the scene now (their boxes are out of the page for the moment): nothing is drawn,
+      // and they are told, so none of them waits for a picture that is not coming (they may ask again).
       entries.delete(entry.key);
+      tell(entry, { ok: false, reason: 'no-host' });
       pump();
       return;
     }
@@ -156,7 +155,6 @@ export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQ
   const settle = (job: Entry, outcome: StillOutcome) => {
     if (running === job) running = null;
     job.abort = undefined;
-    if (disposed) return;
     if (!outcome.ok && outcome.reason === 'aborted') {
       // Aborted because its askers left: if some came back meanwhile, it is drawn again for them.
       if (job.askers.size > 0 && entries.get(job.key) === job) {
@@ -183,7 +181,6 @@ export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQ
   };
 
   const request: StillQueue['request'] = (key, target, listener) => {
-    if (disposed) return () => {};
     const asker: Asker = { target, listener };
     let entry = entries.get(key);
     if (!entry) {
@@ -225,15 +222,6 @@ export function createStillQueue({ render, whenIdle, keep = STILL_KEEP }: StillQ
         kept: all.filter((e) => e.state === 'done').length,
         failed: all.filter((e) => e.state === 'failed').length,
       };
-    },
-    dispose: () => {
-      disposed = true;
-      cancelIdle?.();
-      cancelIdle = null;
-      running?.abort?.abort();
-      running = null;
-      queue.length = 0;
-      entries.clear();
     },
   };
 }

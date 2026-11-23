@@ -44,7 +44,7 @@ import { FxClaim } from '@/lib/fxScene/claim';
 import { parseFxProp } from '@/lib/fxScene/fxScene';
 import { FX_LAYER_ATTR, FX_PLACEHOLDER_ATTR, FX_STATE_ATTR, FX_STILL_ATTR, type FxState } from '@/lib/fxScene/marker';
 import { breathe, FX_PLACEHOLDER_DELAY_MS, FX_PLACEHOLDER_STYLE } from '@/lib/fxScene/placeholder';
-import { createStillQueue, stillPixelRatio, whenBrowserIdle, type StillQueue } from '@/lib/fxScene/stillQueue';
+import { createStillQueue, LASTING_FAILURES, stillPixelRatio, whenBrowserIdle, type StillQueue } from '@/lib/fxScene/stillQueue';
 import { FX_REDUCED_MOTION_QUERY, FX_WARNING, fxStartDecision, whenStarted, type FxStartSettings } from '@/lib/fxScene/start';
 import { editorSiteImageUrl } from '@/lib/site/siteImages';
 import { FxPickOutline } from './FxPickOutline';
@@ -296,6 +296,9 @@ export const FxCanvasLayer = observer(function FxCanvasLayer({ stored, ownPositi
 
 /** How long a changed scene or size waits before its still frame is drawn again: edits come in bursts. */
 export const FX_STILL_DEBOUNCE_MS = 300;
+/** A still frame that failed for a reason that may pass is tried again this often, this long after. */
+const FX_STILL_RETRIES = 2;
+const FX_STILL_RETRY_MS = 1500;
 
 /** One queue of still frames per editor (its store): one still context at a time, shared by every frame. */
 const stillQueues = new WeakMap<object, StillQueue>();
@@ -367,8 +370,6 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
     return () => window.clearTimeout(timer);
   }, [covered]);
 
-  // The box holds the layer while it is there (the picture sits behind the content, as the live scene does).
-  useFxBoxHold(layerRef, true, ownPosition);
 
   // Only for a box on or near the screen (half a screen around it), and from then on while it is mounted.
   useEffect(() => {
@@ -403,7 +404,10 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
 
   const read = parseFxProp(stored);
   const scene = read.ok ? read.fx.scene : null;
-  const sceneJson = scene ? JSON.stringify(scene) : '';
+  // Once per change of the stored scene, not on every render of every frame.
+  const sceneJson = useMemo(() => (scene ? JSON.stringify(scene) : ''), [stored]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A failure that may pass (a lost context, a box out of the page for a moment) is tried again, twice, a moment later.
+  const [attempt, setAttempt] = useState(0);
   const wanted = !hiddenUnder && near && size && size.width > 0 && size.height > 0 && scene ? `${size.width}x${size.height}|${projectId ?? ''}|${sceneJson}` : '';
   // The first picture is asked for at once; a change waits until the edits settle.
   const settledWanted = useSettled(wanted, hasPicture ? FX_STILL_DEBOUNCE_MS : 0);
@@ -449,6 +453,7 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
           // The box's own background, as on the published page (warned once per picture, above).
           clearPicture();
           setState('off');
+          if (!LASTING_FAILURES.has(outcome.reason) && attempt < FX_STILL_RETRIES) window.setTimeout(() => setAttempt((n) => n + 1), FX_STILL_RETRY_MS);
           return;
         }
         picture.width = outcome.picture.width;
@@ -460,7 +465,14 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
     );
     return leave;
     // `read`, `scene` and `size` are captured through `settledWanted`, which is keyed on all of them.
-  }, [settledWanted, editorUI]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [settledWanted, editorUI, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A new scene or size starts the retries over.
+  useEffect(() => setAttempt(0), [settledWanted]);
+
+  // The box holds the layer only while it shows something here (a picture, or the placeholder on the way to
+  // one): a frame that is off screen, covered by the live scene or has nothing to show leaves the box as it is.
+  useFxBoxHold(layerRef, near && !hiddenUnder && state !== 'off', ownPosition);
 
   // A first picture that takes a noticeable moment shows the loading placeholder meanwhile (src/lib/fxScene/placeholder.ts).
   // Only for a box on or near the screen, which is the only one asking: an off-screen frame shows nothing at all.

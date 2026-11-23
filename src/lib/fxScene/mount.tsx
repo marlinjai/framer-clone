@@ -174,6 +174,8 @@ export function renderFxScene(layer: HTMLElement, stored: unknown, { onLive, onO
 export const FX_STILL_SETTLE_MS = 250;
 /** The longest a still frame is waited for, from the first frame: a scene that keeps drawing is taken as it is then. */
 export const FX_STILL_MAX_MS = 3000;
+/** The longest a still frame waits for its first frame: a scene that never draws one is given up as `empty`. */
+export const FX_STILL_FIRST_FRAME_MS = 15000;
 
 export interface RenderFxStillOptions {
   /** As for `renderFxScene`. */
@@ -228,6 +230,8 @@ export function renderFxStill(layer: HTMLElement, stored: unknown, { resolveImag
     };
     const onAbort = () => finish({ ok: false, reason: 'aborted' });
     signal.addEventListener('abort', onAbort);
+    // A scene that never draws (an engine change, a stalled driver) must not hold the queue: one still runs at a time.
+    settle = window.setTimeout(() => finish({ ok: false, reason: 'empty' }), FX_STILL_FIRST_FRAME_MS);
 
     const copy = () => {
       const source = host.querySelector('canvas');

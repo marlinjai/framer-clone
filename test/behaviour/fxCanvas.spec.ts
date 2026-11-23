@@ -226,6 +226,11 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     expect(all.filter((still) => still.state === 'live').map((still) => still.frame)).toEqual([0, 0]);
     expect(all.filter((still) => still.state === 'waiting')).toHaveLength((frames - 1) * 2);
     expect(await madeContexts()).toBe(1);
+    // Nor is the box changed there: no stacking context, no position given to it.
+    const offScreen = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-viewport-content-id]')].slice(1).map((frame) => (frame.querySelector('[data-inner-component-id="fxa"]') as HTMLElement).style.isolation),
+    );
+    expect(offScreen.every((isolation) => isolation === '')).toBe(true);
     expect(crashes).toEqual([]);
   });
 
