@@ -526,7 +526,7 @@ C1 to C6 can be built now: nothing is served on the real domain until O1, and no
 | O1 | `sandbox-domain-and-host` (operator, not a worker). **Repository half built 2026-11-17 on `feat/sandbox-box-deploy`,** see "Decided in step O1 (repository half)"; the operator half (infra repository, Coolify, Infisical, DNS, monitors) is open | Infra repo: Cloudflare zone and records in Terraform, Infisical project `framer-clone-box` and its machine identity, Coolify application, `box_reader` applied, five Kuma monitors. In this repository: the Infisical client and login entrypoint in `Dockerfile.box`, and the push, webhook and health poll steps in `box.yml` | C1a, C1b, **M2 bought** | Half a day | `curl` with and without fetch metadata headers gives 200 and 403 on `run.<domain>`; certificates valid; no `Set-Cookie`; all monitors green; abuse page answers |
 | C2 | `sandbox-element`. **Built 2026-11-16 on `feat/sandbox-element`,** see "Decided in slice C2" | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `blockedNodes.ts`, `renderVocabulary.ts`, `previewSafe.ts`, `src/components/CustomCodeSurface.tsx` with `EditorApp.tsx` and `PreviewMount.tsx` (the surface context), `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), `src/lib/consent/consent.ts` and `MapEmbedIsland.tsx` (D48), `PreviewShell.tsx` and `src/lib/site/sitePath.ts` (D49), `applyBindings.ts` (D98); no registry entry (D43), `HeadlessComponentRenderer.tsx` unchanged | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
 | C3 | `sandbox-bridge`. **Built 2026-11-17 on `feat/sandbox-bridge`,** see "Decided in slice C3" | `src/lib/customCode/broker.ts`, `CustomCodeIsland.tsx`, the shell client in `contract.ts`, `runtime.ts` (third lazy chunk), size test (broker at most 2 kilobytes gzipped, as the behaviour plan holds) | C2, B4 | 3 sessions | Bridge tests above in three engines; a page without blocks loads no broker byte; the focus watch proven or replaced with the proof attached |
-| C4 | `sandbox-authoring`. **Being built 2026-11-23 on `feat/sandbox-authoring`,** see "C4 implementation" and "Decided in slice C4" | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
+| C4 | `sandbox-authoring`. **Built 2026-11-23 on `feat/sandbox-authoring`, awaiting review and merge,** see "C4 implementation" and "Decided in slice C4" | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
 | C5 | `sandbox-lifecycle` | `src/server/sites/repository.ts` (blob pruning with revisions), `src/server/sites/erase.ts` (D9), publish dialog listing, `publishCheck.ts` warnings, proposals (D7): `propose_custom_code` in the site operations, the importer's "Propose as custom code", the panel's Accept, `POST /api/internal/custom-code/block`, frames in the standalone preview (D111), the site budget checked at save and publish (D107) | C4 | 2 sessions | Rollback to a revision whose blob was blocked shows the fallback; an erase inside code rewrites the hash in every kept revision in one transaction; a proposal never reaches the box; an agent key cannot write a hash |
 | C6 | `sandbox-escape-suite` | `test/sandbox/escape.spec.ts` and hostile fixtures, a path-filtered workflow on `src/lib/customCode/**`, `services/box/**` and the suite, `events.score.ts`, `report.ts`, `exclusions.json`, `samples.json` | C5 | 3 sessions | Every probe above, in Chromium, WebKit and Firefox, against the real box image; residuals asserted as residuals; the score rows the behaviour plan lists |
 | C7 | `sandbox-switch-on` | Enable dialog with the reviewed wording in `SiteSettingsDialog.tsx`, privacy page template line in `src/lib/legal/`, `CUSTOM_CODE_AVAILABLE` on, the abuse page text, the canary site | C6, O1, **M9, M10** | 1 session | Production browser proof: enable on a test site, add a block, publish, see it run on `*.sites.lumitra.co`, disable and see the fallback within six minutes, the kill switch, the canary monitor green |
@@ -1196,7 +1196,7 @@ migration: the tables of C1b are used as they are. Nothing here switches a site 
 
 What is built, grounded in the code as it stands:
 
-- **The switch for the slice,** `CUSTOM_CODE_AVAILABLE`, read on the server only (D99). The editor page (`loader.ts`, `page.tsx`,
+- **The switch for the slice,** `CUSTOM_CODE_AVAILABLE`, read on the server only (D99). The editor page (`page.tsx`, then
   `EditorMount.tsx`) hands the editor one boolean; the route answers 404 `custom_code_unavailable` while it is off.
 - **`manageCustomCode`** in `src/lib/permissions.ts`, mapped to `workspace.admin` (M8), and accepted by `authorizeDomainProject`.
 - **The pure rules,** `src/lib/customCode/authoring.ts`: the request's shape, the text checks, the size of code plus declaration,
@@ -1221,6 +1221,22 @@ What is built, grounded in the code as it stands:
   `RightSidebar` and store through the four stateful paths (jsdom); the code editor's keyboard and accessible name in Chromium
   and WebKit (browser).
 
+**Proof, 2026-11-23.** Unit: the pure rules (`src/lib/customCode/__tests__/authoring.test.ts`), the route
+(`src/app/api/projects/__tests__/custom-code-route.test.ts`), the model actions (`PageModel.customCode.test.ts`), the tile and
+the fallback switch, the reserved prop and the Layers badge; the section on the real `RightSidebar` through the four stateful
+paths, 19 cases (`CustomCodeSection.test.tsx`). Integration against Postgres: 20 cases (`authoring.itest.ts`). Browser: the
+code field in Chromium and WebKit, 8 cases (`test/renderGate/customCodeEditor.gate.ts`). Full unit suite on hermes: 15,273
+passed, the one failure `rawSqlCatalogQualified` (expected there, no `.git`; locally it found two unqualified catalog
+functions in the budget query, fixed). Full `pnpm test:integration`: 1,303 of 1,304, the one failure a concurrency mutation
+case of `coordinationPostgres.itest.ts`, outside this slice, which passed 19 of 19 run alone.
+
+**Weakening, 15 of 15 caught by a failed expectation** (record in the orchestration folder `c4-weakening/`): the availability
+gate, the switch reading `true`, the permission check, the size limit, a text state in a declaration, the branch refusal, the
+site switch, the takedown check, the declaration against the stored page, the hourly limit, the site row lock, the idempotent
+answer (it survived the first run, since the insert's `ON CONFLICT` also answers `created: false`; a case now proves that held
+code passes at the hourly limit), a hash ignoring the declaration, the panel applying an answer to a changed block, and Tab
+bound in the editor.
+
 ## Decided in slice C4, say so if you disagree
 
 Numbering continues after D98, the last number in this plan.
@@ -1231,7 +1247,7 @@ leaves it unset until C7. The editor page reads it and hands the editor a boolea
 404 `custom_code_unavailable`, with that reason, before it reads a session. The client bundle never reads `process.env` for it
 (D38). It gates authoring only: a page that already names a block renders as before (C2, C3), and the Layers badge marks a stored
 block whatever the switch says. The kill switch `CUSTOM_CODE_DISABLED` does not stop authoring: it stops serving, and the panel says
-so ("Custom code is switched off on this server: blocks show their fallback").
+so ("This server does not run custom code right now, so published blocks show their fallback").
 
 **D100. Custom code is written on the main site, never on a branch.** A blob is keyed by its site's id and a branch is its own
 `sites` row whose switch nothing turns on (D30), so a blob written on a branch would not exist for main after a merge. The route
@@ -1298,7 +1314,7 @@ later shows the fallback there, and the panel names the problem as soon as it ap
 **D109. The panel's draft is keyed to the node and the value it was loaded from.** The draft (code, declaration, title) remembers the
 node's id and the `customCode` it started from (a hash, or null for a new block). An answer from the route is applied only while the
 node still exists and still names that value; otherwise the blob stays stored (unnamed, harmless, pruned by C5) and the panel says
-"The block changed while saving; nothing was applied". An undo, a live change from another tab or a selection of another block closes
+"The block changed while saving, so nothing was applied to it". An undo, a live change from another tab or a selection of another block closes
 the draft. Saving again with nothing changed sends nothing.
 
 **D110. The fallback is edited on the canvas behind a switch.** D42 left this to C4. The section has a switch "Show the fallback on
