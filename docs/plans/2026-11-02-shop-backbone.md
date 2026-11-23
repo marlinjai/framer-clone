@@ -1317,6 +1317,16 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
     `dead` job (`session_amount_mismatch`): only a person can say what that order is. B8's findings will cover it.
   - The expiry job's retry while Stripe gives no answer is every 5 minutes, capped by the hour past the hold; any other failure to
     read the session (the account disconnected, a fault) is logged as an error and bounded by the same hour.
+  - The storefront gateway (`lib/commerce/payment/storefrontGateway.ts`) maps the new answers: 409 `payment_processing` and
+    `checkout_pending` keep the order with the shop's message (as `unavailable`, never `closed`), 503 `checkout_unavailable` is a
+    retryable error in the shop's words, and a later click that finds the session paid answers `{ status: 'paid', provider:
+    'stripe', receipt: null }`, shown as paid with the receipt to follow.
+  - Deploy overlap: while the build before B7 still serves, its click on a payment this build pinned sends its own request under
+    the key and answers 500 (Stripe refuses it; nothing is charged), and its worker and sweep close a stored session by the clock
+    without asking Stripe; a payment taken meanwhile with its webhook lost then takes the late path. Bounded by the overlap of the
+    two containers, as section 2.1 "Cutover" accepts.
   - Unproven: the hosted-page half of the declined attempt (whether the session stays `open` between attempts on Stripe's own page)
-    and the 24-hour key lifetime; both wait for the operator's sandbox purchase this slice names under "Needs Marlin". Nothing is
-    deployed.
+    and the 24-hour key lifetime; both wait for the operator's sandbox purchase this slice names under "Needs Marlin". Also not
+    measured: the fields of a `complete` session on retrieve (the proof read open and expired only; `amount_total`, `currency` and
+    `payment_intent` are Stripe's documented fields), that a 409 for a key in use is not stored, and the replay of a 500 (Stripe
+    documents it). Nothing is deployed.
