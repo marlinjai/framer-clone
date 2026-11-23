@@ -687,20 +687,31 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     expect(fxWarnings()).toEqual([]);
   });
 
-  it('start settled: waits for the page to load and 1.5 seconds more before it fetches the engine', async () => {
-    await page.goto(`${origin}/fx-settled`, { waitUntil: 'load' });
-    // The island writes its state when the page is hydrated, which can come after the
-    // `load` event (the island arms its timer then): wait for the state, never read it once.
-    await waitForState('waiting');
-    expect(await engineScripts()).toEqual([]);
+  it('start settled: fetches the engine while it waits, before the scene starts loading', async () => {
+    // When the box turns `loading` (the start has come), from navigation start.
+    await page.addInitScript(() => {
+      const marks: Record<string, number> = {};
+      (window as unknown as { __fxMarks: Record<string, number> }).__fxMarks = marks;
+      new MutationObserver(() => {
+        const state = document.querySelector('[data-t="hero"]')?.getAttribute('data-fc-fx-state');
+        if (state && !(state in marks)) marks[state] = performance.now();
+      }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-fc-fx-state'] });
+    });
+    await page.goto(`${origin}/fx-settled`);
     await waitForState('live');
-    const timing = await page.evaluate((mark) => {
-      const load = (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming).loadEventStart;
-      const chunks = (performance.getEntriesByType('resource') as PerformanceResourceTiming[]).filter((entry) => entry.name.includes('/_next/static/') && entry.startTime > load);
-      return { load, firstAfterLoad: Math.min(...chunks.map((entry) => entry.startTime)), mark };
-    }, ENGINE_MARK);
-    expect(timing.firstAfterLoad - timing.load).toBeGreaterThanOrEqual(1450);
-    expect(await engineScripts()).not.toEqual([]);
+    const engineUrls = new Set(await engineScripts());
+    expect(engineUrls.size).toBeGreaterThan(0);
+    const timing = await page.evaluate((urls) => {
+      const marks = (window as unknown as { __fxMarks: Record<string, number> }).__fxMarks;
+      const engine = (performance.getEntriesByType('resource') as PerformanceResourceTiming[]).filter((entry) => urls.includes(entry.name));
+      return { waiting: marks.waiting, loading: marks.loading, engineStart: Math.min(...engine.map((entry) => entry.startTime)) };
+    }, [...engineUrls]);
+    // The fetch began while the box was still waiting for its start: before, it began only once the start had come.
+    expect(timing.waiting).toBeDefined();
+    expect(timing.engineStart).toBeLessThan(timing.loading);
+    // And the start comes in the first idle moment, not after a fixed wait: under a second from waiting (it was
+    // the load event plus 1.5 seconds, so at least 1.5 seconds after the box began to wait).
+    expect(timing.loading - timing.waiting).toBeLessThan(1000);
   });
 
   it('start visible: fetches nothing while the box is far below, and draws once it comes near', async () => {
@@ -728,14 +739,37 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     expect(fxWarnings()).toEqual([]);
   });
 
-  it('leaves no canvas and no context behind when the scene is cancelled before it started', async () => {
-    await page.goto(`${origin}/fx-settled`, { waitUntil: 'load' });
+  it('leaves no canvas, no fetch and no context behind when a scene waiting to start is cancelled', async () => {
+    // A `visible` scene below the fold waits for as long as nobody scrolls: put away then, it fetched nothing.
+    await page.goto(`${origin}/fx-visible`, { waitUntil: 'load' });
     await waitForState('waiting');
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
-    await page.waitForTimeout(2200);
+    await box().scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1500);
     expect(await canvases()).toBe(0);
     expect(await engineScripts()).toEqual([]);
     expect(await state()).toBeNull();
+  });
+
+  it('leaves no canvas, no placeholder and no hold behind when a settled scene is cancelled while its engine arrives', async () => {
+    // The engine held back for three seconds, so the scene is put away while it is on its way.
+    await page.route('**/_next/static/chunks/**', async (route) => {
+      const response = await route.fetch();
+      const body = await response.body();
+      if (body.toString('utf8').includes(ENGINE_MARK)) await new Promise((resolve) => setTimeout(resolve, 3000));
+      await route.fulfill({ response, body }).catch(() => {});
+    });
+    await page.goto(`${origin}/fx-settled`, { waitUntil: 'load' });
+    await waitForState('loading');
+    // Past the placeholder's delay, so it is there to be taken away.
+    await page.waitForSelector('[data-fc-fx-placeholder]', { state: 'attached' });
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    expect(await page.locator('[data-fc-fx-placeholder]').count()).toBe(0);
+    expect(await box().evaluate((element) => (element as HTMLElement).style.isolation)).toBe('');
+    await page.waitForTimeout(4000);
+    expect(await canvases()).toBe(0);
+    expect(await state()).toBeNull();
+    expect(fxWarnings()).toEqual([]);
   });
 
   it('without JavaScript: the box, its background and its content, as the server sent them', async () => {
