@@ -38,7 +38,15 @@ export async function generateMetadata(): Promise<Metadata> {
     console.error("root layout: could not resolve the site for the icon links.", err);
     return {};
   }
-  return { icons: { icon: "/platform-favicon.ico" } };
+  return {
+    icons: {
+      icon: [
+        { url: "/platform-icon.svg", type: "image/svg+xml" },
+        { url: "/platform-favicon.ico", sizes: "any" },
+      ],
+      apple: "/platform-apple-touch-icon.png",
+    },
+  };
 }
 
 // `<html class>`: DEFAULT_HTML_CLASS, except on a published site whose theme forces

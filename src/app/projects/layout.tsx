@@ -6,8 +6,8 @@
 // published storefront under `(site)`. The root layout is now neutral; the grid
 // CSS lives only on the editor surfaces that actually render the grid (this
 // layout + `src/app/page.tsx` for `/`). Classes/vars are `dt-*`-namespaced; the
-// `cms-grid-theme.css` overrides pin the engine tokens to the light Studio-iris
-// theme. This segment layout adds NO `<html>`/`<body>` (only the root owns those).
+// `cms-grid-theme.css` overrides pin the engine tokens to the dark suite
+// palette. This segment layout adds NO `<html>`/`<body>` (only the root owns those).
 import React from 'react';
 // The editor's own sheet first, as when the root layout carried it: the grid
 // sheets below override some of its rules by order.

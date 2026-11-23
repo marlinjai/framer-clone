@@ -19,8 +19,8 @@ const ROOT = process.cwd();
 const SHEET = path.join(ROOT, 'src/app/globals.css');
 /** Read through the explicit @source in globals.css: the Books composer's inspector fields. */
 const BLOCK_EDITOR_DIST = fs.realpathSync(path.join(ROOT, 'node_modules/@marlinjai/block-editor-react/dist'));
-/** The sheets globals.css imports: they are CSS the build inlines, not scanned code. */
-const IMPORTED_SHEETS = ['tailwindcss', 'tw-animate-css'].map((name) => fs.realpathSync(path.join(ROOT, 'node_modules', name)));
+/** The sheets globals.css imports (the suite tokens among them): they are CSS the build inlines, not scanned code. */
+const IMPORTED_SHEETS = ['tailwindcss', 'tw-animate-css', '@marlinjai/suite-theme-core'].map((name) => fs.realpathSync(path.join(ROOT, 'node_modules', name)));
 
 const inside = (file: string, dir: string) => file === dir || file.startsWith(`${dir}${path.sep}`);
 

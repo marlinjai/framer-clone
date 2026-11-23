@@ -15,6 +15,8 @@ owner: Design Systems Engineer
 date: 2026-06-20
 ---
 
+> Palette update, 2026-11-22: the colours named below (iris, light surfaces) are the June 2026 design. The editor chrome now runs the Lumitra suite palette, dark only (primary, accent, depth; plan `docs/plans/2026-11-22-lumitra-rebrand-mint-light.md` in the knowledge base). The layout and structure here still stand; the token names (`--brand`, `--status-*`) are unchanged and now resolve in `src/app/globals.css`.
+
 # Editor chrome redesign: Layers tree + Properties panel ("Studio" language)
 
 > Restyle the left **Layers** tree and the right **Properties** panel to match the approved

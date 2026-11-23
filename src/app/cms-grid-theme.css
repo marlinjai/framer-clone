@@ -1,40 +1,27 @@
 /* src/app/cms-grid-theme.css
  *
  * Loaded AFTER the data-table-react stylesheets so these :root overrides win.
- * Two jobs:
- *   1. Keep the grid LIGHT regardless of the OS theme. The engine auto-darkens
- *      under `@media (prefers-color-scheme: dark) :root:not(.light)`; the
- *      `.light` class on <html> (see layout.tsx) opts out, and the media block
- *      below re-pins the light values as belt-and-suspenders.
- *   2. Align the engine accent + selection with the Studio iris brand.
+ * Pins the grid to Lumitra's dark suite palette (the editor is dark only) and
+ * aligns the engine accent + selection with the suite's primary. The pins are
+ * unconditional, so the engine's own OS-theme switch cannot change them. The
+ * suite variables come from the tokens file globals.css imports.
  */
 
 :root {
-  /* Studio iris accent (was the engine's #2563eb blue). */
-  --dt-accent-primary: #5b5bd6;
-  --dt-accent-primary-hover: #4f4fc7;
-  --dt-bg-selected: rgba(91, 91, 214, 0.08);
+  --dt-bg-primary: var(--suite-bg);
+  --dt-bg-secondary: var(--suite-surface);
+  --dt-bg-tertiary: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
+  --dt-bg-hover: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
+  --dt-bg-selected: var(--suite-primary-wash);
+  --dt-border-color: var(--suite-line);
+  --dt-border-color-strong: color-mix(in oklab, var(--suite-line), var(--suite-text) 15%);
+  --dt-text-primary: var(--suite-text);
+  --dt-text-secondary: var(--suite-text-muted);
+  --dt-text-muted: var(--suite-text-muted);
+  --dt-text-placeholder: var(--suite-text-muted);
+  --dt-accent-primary: var(--suite-primary);
+  --dt-accent-primary-hover: color-mix(in oklab, var(--suite-primary), white 15%);
+  --dt-glass-bg: color-mix(in oklab, var(--suite-surface) 80%, transparent);
+  --dt-glass-bg-subtle: color-mix(in oklab, var(--suite-surface) 60%, transparent);
   --dt-border-radius: 8px;
-}
-
-/* Belt-and-suspenders: if the OS is in dark mode, still render the grid light
- * and on-brand (overrides the engine's dark glass theme). */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --dt-bg-primary: #ffffff;
-    --dt-bg-secondary: #f9fafb;
-    --dt-bg-tertiary: #f3f4f6;
-    --dt-bg-hover: #f3f4f6;
-    --dt-bg-selected: rgba(91, 91, 214, 0.08);
-    --dt-border-color: #e5e7eb;
-    --dt-border-color-strong: #d1d5db;
-    --dt-text-primary: #111827;
-    --dt-text-secondary: #6b7280;
-    --dt-text-muted: #9ca3af;
-    --dt-text-placeholder: #9ca3af;
-    --dt-accent-primary: #5b5bd6;
-    --dt-accent-primary-hover: #4f4fc7;
-    --dt-glass-bg: rgba(255, 255, 255, 0.7);
-    --dt-glass-bg-subtle: rgba(255, 255, 255, 0.5);
-  }
 }
