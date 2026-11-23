@@ -955,7 +955,7 @@ after the first review of pull request #452 (C3), which proved in all three engi
   makes it throw itself. A message that is not an object (`null`, a number, a string) is refused the same way, without an error
   in the page (review 2, L2: `null` raised an uncaught error per message).
 - The walk is bounded before its cost (review 2 of pull request #452, M1). A sparse array is plain data that costs its sender
-  nothing, since structured clone carries only its length, while `JSON.stringify` in the page walks every slot: ten million
+  nothing in Chromium and Firefox, whose structured clone carries only its length (in WebKit see M7 under D74), while `JSON.stringify` in the page walks every slot: ten million
   slots 28 times a second kept a click from answering for 3.6 to 4.7 seconds, and with the frame in its own process (Chromium's
   site isolation) for more than a minute. The replacer counts its calls and throws past 65,536 of them, or at any string or array
   longer than 65,536, at once. Every call but one for `undefined` (which JSON leaves out, or writes as `null` in an array) writes
@@ -1148,7 +1148,13 @@ throughout. Every box frame is of one site, so they share that process, and a he
 removed with it; the page keeps every fallback. WebKit, and Firefox as Playwright runs it (Fission does not start there even when
 asked), run the frame in the page's own process: a frozen frame holds the page as well. That is the residual M7 the plan already
 names, asserted as such so a change shows; the plan's wish to prove the watchdog on a frozen frame in Firefox could not be met in
-this harness.
+this harness. WebKit reaches the same residual through its own structured clone: it visits every index up to an array's length in
+the sender, so one sparse array of length 2^32-1 takes about 28 s to send on a laptop and about a minute on a CI runner, and since
+the frame runs in the page's process the page is held as long (CI run 45102875034). Nothing in the page can refuse it before it is
+paid; the page's own cost once the message arrives stays under 25 ms. The gate asserts both in every engine: the page's longest
+loop gap less the frame's own send stays under a second, and the send itself is over a second in WebKit and under one elsewhere.
+WebKit's row uses length 2^28 (about 1.8 s to send on a laptop) so that every CI run is not held for a minute; Chromium and Firefox
+keep the greatest length.
 
 The gate starts the runtime and the broker by hand, so the chain as it ships has a test of its own in the behaviour suite
 (`test/behaviour/customCode.spec.ts`, Chromium and WebKit): a stored page with a block, published through the real repository,
