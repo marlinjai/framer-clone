@@ -13,7 +13,8 @@
 //     (D95), not inside a sticky bar, a map, a void or unnamed tag or a refused tag,
 //     which draw no children, and not on or inside `svg` or `math`, where an HTML
 //     frame is not drawn, nor on or inside a tag that draws no element child (a
-//     select, an option, a textarea, a canvas, a video, a template, FRAMELESS_TAGS)
+//     select, an option, a textarea, a canvas, a video, a template, a meter,
+//     FRAMELESS_TAGS, in any case)
 //     (D66);
 //   - fewer than BOX_LIMITS.blocksPerPage blocks were accepted before it;
 //   - every state its declaration reads or writes stands on the node's path as
@@ -133,6 +134,8 @@ function blockState(state: StateValue): BlockState | null {
  */
 export const FRAMELESS_TAGS: ReadonlySet<string> = new Set([
   'select', 'option', 'optgroup', 'datalist', 'textarea', 'canvas', 'video', 'audio', 'template', 'noscript', 'colgroup',
+  // Review 4: a progress bar and a meter draw a shadow root with no slot for children, and `rp` is never displayed.
+  'progress', 'meter', 'rp',
 ]);
 
 export function applyCustomCode(root: ComponentNode, live: LiveCustomCode | null): CustomCodeResult {
@@ -213,7 +216,8 @@ export function applyCustomCode(root: ComponentNode, live: LiveCustomCode | null
     // A box that is itself `svg` or `math` holds its frame in foreign content as much as one inside them.
     const ownContent = contentBelow(tag, false);
     // A box, or any element, of a tag that draws no element child: a frame in it is never seen (D66).
-    const frameless = boxTag !== null && FRAMELESS_TAGS.has(boxTag) ? `a ${boxTag}` : null;
+    const lower = boxTag === null ? null : boxTag.toLowerCase();
+    const frameless = lower !== null && FRAMELESS_TAGS.has(lower) ? `a ${lower}` : null;
     const where = self
       ? `${outside ? 'inside' : 'on'} ${self}`
       : foreign !== false ? `inside ${foreign}` : isBlock && ownContent !== false ? `on ${ownContent}`

@@ -187,6 +187,9 @@ describe('applyCustomCode', () => {
     ['media', ['canvas', 'video', 'audio']],
     ['inert content', ['template', 'noscript']],
     ['a table column group', ['colgroup']],
+    // Review 4, L1: shadow roots without a slot, a part never displayed, and the rule in any case.
+    ['progress, meter and rp', ['progress', 'meter', 'rp']],
+    ['a tag stored in upper or mixed case', ['SELECT', 'Video']],
   ])('refuses a block on or inside %s, where a frame is never seen, and gives it no slot (D66)', (_group, tags) => {
     const root = page([
       ...tags.flatMap((tag, i) => [
@@ -202,11 +205,11 @@ describe('applyCustomCode', () => {
     }
     expect(runOf(result.root, 'after')).toBeDefined();
     expect(result.blocks).toBe(1);
-    expect(FRAMELESS_TAGS.size).toBe(11);
+    expect(FRAMELESS_TAGS.size).toBe(14);
     const reasons = Object.fromEntries(result.problems.map((p) => [p.node, p.reason]));
     for (const tag of tags) {
-      expect(reasons[`on-${tag}`], tag).toMatch(new RegExp(`on a (${tag}|refused tag)`));
-      expect(reasons[`in-${tag}`], tag).toMatch(new RegExp(`inside a (${tag}|refused tag)`));
+      expect(reasons[`on-${tag}`], tag).toMatch(new RegExp(`on a (${tag.toLowerCase()}|refused tag)`));
+      expect(reasons[`in-${tag}`], tag).toMatch(new RegExp(`inside a (${tag.toLowerCase()}|refused tag)`));
     }
   });
 
