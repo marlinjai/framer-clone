@@ -18,6 +18,7 @@ import 'server-only';
 // Every successful write also deletes the retired `framer_ws` cookie, so the
 // per-workspace selector of PR #99 disappears with the first company choice.
 
+import { DEMO_PATH } from '@/lib/projects/demoAddress';
 import { cookies } from 'next/headers';
 import {
   AuthUnavailableError,
@@ -80,8 +81,11 @@ export function safeEditorReturnPath(raw: unknown): string {
   if (typeof raw !== 'string') return '/projects';
   // The one-time cookie migration handler is never a destination.
   if (raw.startsWith('/projects/migrate-company')) return '/projects';
-  // `/` is the browser-only demo editor: "Save as a new project" sends a
-  // person without a chosen company through the chooser and back to it.
+  // The browser-only demo editor (src/lib/projects/demoAddress.ts): "Keep as
+  // project" sends a person without a chosen company or session through the
+  // chooser or the login and back to it. Exact strings only. `/` itself is
+  // the home and stays a valid destination.
+  if (raw === DEMO_PATH) return DEMO_PATH;
   if (raw === '/') return '/';
   return /^\/projects(\/[A-Za-z0-9_-]+(\/preview)?)?$/.test(raw) ? raw : '/projects';
 }

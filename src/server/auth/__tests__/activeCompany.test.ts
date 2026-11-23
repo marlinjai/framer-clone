@@ -137,6 +137,11 @@ describe('safeEditorReturnPath', () => {
     ['/projects/migrate-company', '/projects'],
     // The demo editor, exactly (its "Save as a new project" goes through the chooser).
     ['/', '/'],
+    // The demo editor's address (src/lib/projects/demoAddress.ts), exactly: nothing else after `/?`.
+    ['/?demo=1', '/?demo=1'],
+    ['/?demo=1&next=https://evil.example', '/projects'],
+    ['/?demo=2', '/projects'],
+    ['/?DEMO=1', '/projects'],
     ['/?page=x', '/projects'],
     ['//', '/projects'],
     ['/preview', '/projects'],

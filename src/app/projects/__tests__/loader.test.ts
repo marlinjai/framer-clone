@@ -48,7 +48,7 @@ vi.mock('next/headers', () => ({
 }));
 
 import { AuthBrainError, AuthBrainNetworkError } from '@marlinjai/auth-brain-sdk';
-import { loadDashboard, type DashboardData } from '../loader';
+import { loadDashboard, loadHomeEntry, type DashboardData } from '../loader';
 
 const LOGIN_URL =
   'https://auth.lumitra.co/login?return_to=https%3A%2F%2Fapp.lumitra.co%2Fprojects';
@@ -480,5 +480,35 @@ describe('loadDashboard: deep link through the login', () => {
       status: 'unauthenticated',
       loginUrl: LOGIN_URL,
     });
+  });
+});
+
+describe('loadHomeEntry: what `/` needs (plan 2026-11-23-sites-home-and-light-mode)', () => {
+  it('no cookie: signed out, with a login that returns to the projects', async () => {
+    expect(await loadHomeEntry()).toEqual({ status: 'signed_out', loginUrl: LOGIN_URL });
+    expect(mockVerifySession).not.toHaveBeenCalled();
+  });
+
+  it('a stale cookie (the session does not verify) counts as signed out, never an error', async () => {
+    jar = { lumitra_session: 'old' };
+    mockVerifySession.mockResolvedValue(null);
+    expect(await loadHomeEntry()).toEqual({ status: 'signed_out', loginUrl: LOGIN_URL });
+  });
+
+  it('a valid session, with or without a usable company, is signed in (the dashboard decides the rest)', async () => {
+    signedIn(sessionA());
+    expect(await loadHomeEntry()).toEqual({ status: 'signed_in' });
+    signedIn(sessionNoCompany());
+    expect(await loadHomeEntry()).toEqual({ status: 'signed_in' });
+  });
+
+  it.each([
+    ['a network error', new AuthBrainNetworkError(new Error('ECONNREFUSED'))],
+    ['a 503', new AuthBrainError('verifySession failed: 503', 503)],
+  ])('auth-brain unavailable (%s): shown as signed out with the note, never thrown', async (_n, err) => {
+    jar = { lumitra_session: 'sess' };
+    mockVerifySession.mockRejectedValue(err);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await loadHomeEntry()).toEqual({ status: 'auth_unavailable', loginUrl: LOGIN_URL });
   });
 });

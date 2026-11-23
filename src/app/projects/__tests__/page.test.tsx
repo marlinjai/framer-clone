@@ -89,14 +89,34 @@ describe('ProjectsPage', () => {
     expect(html(result.element as React.ReactElement)).toContain('Choose a company');
   });
 
-  it('renders the header "Sites in <Company>", without a switch link for one company', async () => {
+  it('renders the home: the count in <Company>, no switch link for one company, the tools and the demo', async () => {
     mockLoadDashboard.mockResolvedValue(OK);
     const result = await run({});
     expect(result.redirect).toBeNull();
     const page = html(result.element as React.ReactElement);
-    expect(page).toMatch(/Sites in <span[^>]*>Acme<\/span>/);
+    expect(page).toContain('No projects yet');
+    expect(page).toMatch(/<h1[^>]*id="projects-heading"[^>]*>Projects<\/h1>/);
+    expect(page).toContain('href="/projects/catalog"');
+    expect(page).toContain('href="/projects/payments"');
+    expect(page).toContain('href="/?demo=1"');
+    expect(page).toContain('New project');
     expect(page).not.toContain('Switch company');
     expect(page).not.toMatch(/workspace/i);
+  });
+
+  it('shows each project as a card in its own colours, with the count in the company', async () => {
+    const site = {
+      siteId: 'site_1', name: 'Bakery', description: '', status: 'published', lumitraEnabled: false,
+      createdAt: new Date('2026-11-01'), updatedAt: new Date('2026-11-20'), subdomain: null, customDomains: [],
+      openBranches: 0, cardColors: { background: '#102030', text: '#ffffff', accent: '#ff8800' },
+    };
+    mockLoadDashboard.mockResolvedValue({ ...OK, sites: [site] });
+    const page = html((await run({})).element as React.ReactElement);
+    expect(page).toMatch(/1 project in <span[^>]*>Acme<\/span>/);
+    expect(page).toContain('href="/projects/site_1"');
+    expect(page).toContain('background:#102030');
+    expect(page).toContain('Published');
+    expect(page).not.toContain('No projects yet');
   });
 
   it('offers "Switch company" when the user has several companies with Sites', async () => {
