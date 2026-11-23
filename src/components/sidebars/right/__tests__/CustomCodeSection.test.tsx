@@ -315,6 +315,39 @@ describe('re-entry after a failure or a completion', () => {
     expect(codeOf(block)).toEqual({ sha256: 'cd'.repeat(32), title: 'Other tab' });
   });
 
+  it('R3-L1: gives back what was posted as a draft when the block changed while saving, and saves it on the next try', async () => {
+    mount();
+    const block = await insertBlock();
+    fill('Clock', '<p>two</p>');
+    fireEvent.change(section().getByLabelText('Events it can fire, separated by commas'), { target: { value: 'done' } });
+    server.hold = { release: () => {} };
+    act(() => {
+      fireEvent.click(section().getByRole('button', { name: 'Save code' }));
+    });
+    await waitFor(() => expect(server.posts).toHaveLength(1));
+    const held = server.hold!;
+    server.hold = null;
+    // Another tab's save lands meanwhile.
+    act(() => { block.setCustomCode({ sha256: 'cd'.repeat(32), title: 'Other tab' }); });
+    await act(async () => { held.release(); });
+    await waitFor(() => expect(document.querySelector('[data-custom-code-problem]')?.textContent).toBe('The block changed while saving, so nothing was applied to it. Your code is back in the panel; save it again to use it.'));
+    expect(codeOf(block)).toEqual({ sha256: 'cd'.repeat(32), title: 'Other tab' });
+    expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).value).toBe('<p>two</p>');
+    expect((section().getByLabelText('Title of the custom code block') as HTMLInputElement).value).toBe('Clock');
+    expect((section().getByLabelText('Events it can fire, separated by commas') as HTMLInputElement).value).toBe('done');
+    // Kept across another selection too.
+    act(() => store.editorUI.selectComponent(main));
+    act(() => store.editorUI.selectComponent(block));
+    expect((section().getByLabelText('Code of Clock') as HTMLTextAreaElement).value).toBe('<p>two</p>');
+    // "Save it again" is one click, and it replaces what the block now names.
+    // (This test site holds no code under the other tab's hash, so the read ends in "missing", where Save is offered.)
+    await waitFor(() => expect((section().getByRole('button', { name: 'Save code' }) as HTMLButtonElement).disabled).toBe(false));
+    await save();
+    expect(server.posts).toHaveLength(2);
+    expect(server.posts[1]).toMatchObject({ document: '<p>two</p>', title: 'Clock', replaces: 'cd'.repeat(32) });
+    expect((codeOf(block) as { title: string }).title).toBe('Clock');
+  });
+
   it('opens a second block after the first with its own empty draft', async () => {
     mount();
     await insertBlock();
@@ -676,6 +709,30 @@ describe('review 2 of #459', () => {
     expect(section().getByText('Unsaved edits from earlier')).toBeTruthy();
     fireEvent.click(section().getByRole('button', { name: 'Discard edits' }));
     expect(section().queryByText('Unsaved edits from earlier')).toBeNull();
+  });
+
+  it('says the same sentence twice as two changes of the live region (review 3 of #459)', async () => {
+    mount();
+    await insertBlock();
+    const region = document.querySelector('[data-custom-code-announcement]')!;
+    const changes: string[] = [];
+    const watcher = new MutationObserver(() => changes.push(region.textContent ?? ''));
+    watcher.observe(region, { childList: true, characterData: true, subtree: true });
+    const discard = async () => {
+      fill('Clock', '<p>draft</p>');
+      fireEvent.click(section().getByRole('button', { name: 'Discard edits' }));
+      await waitFor(() => expect(region.textContent?.trim()).toBe('Edits discarded.'));
+    };
+    await discard();
+    const first = region.textContent;
+    await discard();
+    // A region whose text does not change is not read again: the second time differs by a no-break space.
+    expect(region.textContent).not.toBe(first);
+    expect(region.textContent?.replace(/\u00a0/g, '')).toBe('Edits discarded.');
+    await discard();
+    expect(region.textContent).toBe(first);
+    watcher.disconnect();
+    expect(changes.filter((text) => text.trim() === 'Edits discarded.').length).toBeGreaterThanOrEqual(3);
   });
 
   it('L2: Retry stays focused while it retries and hands focus to the first field once the code loads', async () => {

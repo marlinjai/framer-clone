@@ -91,11 +91,6 @@ function readEmits(text: string): { emits: string[] } | { reason: string } {
   return { emits: [...new Set(names)].map((name) => `custom:${name}`) };
 }
 
-/**
- * A Retry that stays mounted while it retries, so keyboard focus is not dropped to the page
- * (review 2 of #459, L2). It settles once the read it started has run: on success, focus moves to
- * `focusAfter` if the button held it; on another failure the button, still focused, is offered again.
- */
 /** True when the promise settles within the time, false when the time runs out first. */
 async function withinTime(work: Promise<unknown>, ms: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -107,6 +102,11 @@ async function withinTime(work: Promise<unknown>, ms: number): Promise<boolean> 
   }
 }
 
+/**
+ * A Retry that stays mounted while it retries, so keyboard focus is not dropped to the page
+ * (review 2 of #459, L2). It settles once the read it started has run: on success, focus moves to
+ * `focusAfter` if the button held it; on another failure the button, still focused, is offered again.
+ */
 function useRetry(phase: string, retry: () => void, focusAfter: () => void) {
   const [stage, setStage] = React.useState<'idle' | 'asked' | 'reading'>('idle');
   const hadFocus = React.useRef(false);
@@ -309,6 +309,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
     }
     const keyAtStart = storedKey;
     const nodeId = component.id;
+    const posted: Fields = { title: checked.value.title, document: checked.value.document, declaration: checked.value.declaration, emitsText: fields.emitsText };
     updateSave(nodeId, { running: true, ownWrite: null, outcome: null });
     announce('Saving the code. The fields are locked until the server answers.');
     // Every end goes through the provider, so a section rebuilt meanwhile says it (review 2 of #459, M1).
@@ -353,7 +354,14 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
       if (!result.ok) return end('refused', result.message);
       // D109: applied only to the block as it was when Save was pressed.
       if (!isAlive(component) || keyOf(storedValueOf(component)) !== keyAtStart) {
-        return end('refused', 'The block changed while saving, so nothing was applied to it. The code is stored; save it again to use it.');
+        // What was posted comes back as a draft on the block's current value (review 3 of #459, L1),
+        // so "save it again" has something to save; a deleted block keeps its old draft for an undo.
+        if (isAlive(component)) {
+          const reopened = { key: keyOf(storedValueOf(component)), fields: { ...posted } };
+          setEdits(reopened);
+          keepDraft(nodeId, reopened);
+        }
+        return end('refused', 'The block changed while saving, so nothing was applied to it. Your code is back in the panel; save it again to use it.');
       }
       // Recorded before the write, so the section that sees the new value knows it as this save's own.
       const ownKey = keyOf({ sha256: result.value.sha256, title: checked.value.title });
