@@ -110,10 +110,18 @@ async function write(page: Page, title: string, code: string) {
   const field = section.locator('.cm-content');
   await expect.poll(() => field.getAttribute('aria-label')).toBe(`Code of ${title}`);
   // The editor can remount once more after the title settles (webkit), so retry until the click lands on a live, focused field.
-  await expect(async () => {
-    await field.click({ timeout: 3_000 });
-    expect(await field.evaluate((el) => el === document.activeElement || el.contains(document.activeElement))).toBe(true);
-  }).toPass({ timeout: 20_000 });
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    try {
+      await field.click({ timeout: 3_000 });
+      const focused = await field.evaluate((el) => el === document.activeElement || el.contains(document.activeElement));
+      if (focused) break;
+      throw new Error('the code field did not take focus');
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await page.waitForTimeout(200);
+    }
+  }
   await page.keyboard.type(code);
 }
 
