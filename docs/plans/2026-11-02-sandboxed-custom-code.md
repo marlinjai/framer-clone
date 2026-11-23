@@ -526,8 +526,8 @@ C1 to C6 can be built now: nothing is served on the real domain until O1, and no
 | O1 | `sandbox-domain-and-host` (operator, not a worker). **Repository half built 2026-11-17 on `feat/sandbox-box-deploy`,** see "Decided in step O1 (repository half)"; the operator half (infra repository, Coolify, Infisical, DNS, monitors) is open | Infra repo: Cloudflare zone and records in Terraform, Infisical project `framer-clone-box` and its machine identity, Coolify application, `box_reader` applied, five Kuma monitors. In this repository: the Infisical client and login entrypoint in `Dockerfile.box`, and the push, webhook and health poll steps in `box.yml` | C1a, C1b, **M2 bought** | Half a day | `curl` with and without fetch metadata headers gives 200 and 403 on `run.<domain>`; certificates valid; no `Set-Cookie`; all monitors green; abuse page answers |
 | C2 | `sandbox-element`. **Built 2026-11-16 on `feat/sandbox-element`,** see "Decided in slice C2" | `src/lib/customCode/customCode.ts` (pure parse), `src/lib/renderer/customCode/customCodeElement.tsx`, `renderComponentNode.tsx`, `createComponentElement.tsx`, `blockedNodes.ts`, `renderVocabulary.ts`, `previewSafe.ts`, `src/components/CustomCodeSurface.tsx` with `EditorApp.tsx` and `PreviewMount.tsx` (the surface context), `middleware.ts` and `src/lib/site/cspReportOnly.ts` (enforced `frame-src`, D6), `src/lib/consent/consent.ts` and `MapEmbedIsland.tsx` (D48), `PreviewShell.tsx` and `src/lib/site/sitePath.ts` (D49), `applyBindings.ts` (D98); no registry entry (D43), `HeadlessComponentRenderer.tsx` unchanged | C1a | 2 sessions | Renderer tests above; the map embed still loads after consent with the header enforced; the standalone preview route carries the enforced `frame-src` (a middleware route test); no `iframe` in the mounted editor; `renderer` collision tag |
 | C3 | `sandbox-bridge`. **Built 2026-11-17 on `feat/sandbox-bridge`,** see "Decided in slice C3" | `src/lib/customCode/broker.ts`, `CustomCodeIsland.tsx`, the shell client in `contract.ts`, `runtime.ts` (third lazy chunk), size test (broker at most 2 kilobytes gzipped, as the behaviour plan holds) | C2, B4 | 3 sessions | Bridge tests above in three engines; a page without blocks loads no broker byte; the focus watch proven or replaced with the proof attached |
-| C4 | `sandbox-authoring` | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
-| C5 | `sandbox-lifecycle` | `src/server/sites/repository.ts` (blob pruning with revisions), `src/server/sites/erase.ts` (D9), publish dialog listing, `publishCheck.ts` warnings, proposals (D7): `propose_custom_code` in the site operations, the importer's "Propose as custom code", the panel's Accept, `POST /api/internal/custom-code/block` | C4 | 2 sessions | Rollback to a revision whose blob was blocked shows the fallback; an erase inside code rewrites the hash in every kept revision in one transaction; a proposal never reaches the box; an agent key cannot write a hash |
+| C4 | `sandbox-authoring`. **Being built 2026-11-23 on `feat/sandbox-authoring`,** see "C4 implementation" and "Decided in slice C4" | `POST /api/projects/[projectId]/custom-code` and its read, `permissions.ts` (`manageCustomCode`), `CustomCodeSection.tsx` with CodeMirror, insert menu entry, Layers badge, model action, audit writes, the author API reference page in `docs/` | C3, B11 | 3 sessions | Hash covers the declaration (a changed declaration is a new hash); every refusal returns its reason; all four stateful paths; `pnpm test:integration`. The insert entry and the route are behind `CUSTOM_CODE_AVAILABLE`, off in production until C7 |
+| C5 | `sandbox-lifecycle` | `src/server/sites/repository.ts` (blob pruning with revisions), `src/server/sites/erase.ts` (D9), publish dialog listing, `publishCheck.ts` warnings, proposals (D7): `propose_custom_code` in the site operations, the importer's "Propose as custom code", the panel's Accept, `POST /api/internal/custom-code/block`, frames in the standalone preview (D111), the site budget checked at save and publish (D107) | C4 | 2 sessions | Rollback to a revision whose blob was blocked shows the fallback; an erase inside code rewrites the hash in every kept revision in one transaction; a proposal never reaches the box; an agent key cannot write a hash |
 | C6 | `sandbox-escape-suite` | `test/sandbox/escape.spec.ts` and hostile fixtures, a path-filtered workflow on `src/lib/customCode/**`, `services/box/**` and the suite, `events.score.ts`, `report.ts`, `exclusions.json`, `samples.json` | C5 | 3 sessions | Every probe above, in Chromium, WebKit and Firefox, against the real box image; residuals asserted as residuals; the score rows the behaviour plan lists |
 | C7 | `sandbox-switch-on` | Enable dialog with the reviewed wording in `SiteSettingsDialog.tsx`, privacy page template line in `src/lib/legal/`, `CUSTOM_CODE_AVAILABLE` on, the abuse page text, the canary site | C6, O1, **M9, M10** | 1 session | Production browser proof: enable on a test site, add a block, publish, see it run on `*.sites.lumitra.co`, disable and see the fallback within six minutes, the kill switch, the canary monitor green |
 | C8 | `sandbox-assets-and-shelf` (proposed) | Box routes `/asset/<siteId>/<sha256>` and `/lib/<name>@<version>/<file>`, the shelf build from pinned npm tarballs with recorded licences, `custom_code_assets` table, asset upload in the panel, the widened document policy, the `viewport` read, multi-file code, the escape suite extended | C7, **M11 to M15** | 3 sessions | Escape suite extended: a frame can reach only its own site's assets and the shelf, never another site's assets or another host; the forcing case fixture runs; erase lists assets |
@@ -1187,6 +1187,134 @@ of `main` before this slice the jobs took 12 minutes (verify), 14 (render gate) 
 the longest. Locally, under heavy load, the bridge and frame policy gates took about 6 minutes together; added to the render
 gate that stays well inside the behaviour job, so a pull request's wait does not change. What it costs is runner minutes, a few
 per pull request, which buys the bridge in three engines on every change to the runtime it rides on.
+
+## C4 implementation (sandbox-authoring)
+
+Started 2026-11-23 on `feat/sandbox-authoring`, from `main` at `caa7d88d` (C1a, C1b, C2, C3 and B11 merged). An author can add a
+block, write its code and its declaration in the panel, and save it through the guarded route; the node then names the hash. No
+migration: the tables of C1b are used as they are. Nothing here switches a site on (C7), prunes a blob or accepts a proposal (C5).
+
+What is built, grounded in the code as it stands:
+
+- **The switch for the slice,** `CUSTOM_CODE_AVAILABLE`, read on the server only (D99). The editor page (`loader.ts`, `page.tsx`,
+  `EditorMount.tsx`) hands the editor one boolean; the route answers 404 `custom_code_unavailable` while it is off.
+- **`manageCustomCode`** in `src/lib/permissions.ts`, mapped to `workspace.admin` (M8), and accepted by `authorizeDomainProject`.
+- **The pure rules,** `src/lib/customCode/authoring.ts`: the request's shape, the text checks, the size of code plus declaration,
+  the declaration against the states in reach of the node (the same rule `applyCustomCode` applies on the published page), and
+  the reasons, each a code and a sentence. Shared by the panel and the route, so both refuse the same things the same way.
+- **The write,** `src/server/customCode/authoring.ts`: one transaction that locks the site row, reads the site's switch, the
+  takedown list and an existing row of the same hash, counts the writes of the last hour and the live code of the site, checks
+  the declaration against the stored working copy, writes the blob with `ON CONFLICT DO NOTHING` and the `blob-write` audit line.
+- **The route,** `src/app/api/projects/[projectId]/custom-code/route.ts`: `GET` the site's custom code status, `GET ?sha256=` one
+  blob of this site (code, declaration, title), `POST` a write. `viewSite` to read, `manageCustomCode` to write.
+- **The editor:** a provider that reads the status once the switch is on (`CustomCodeAuthoring.tsx`), the "Custom code" item in
+  the Components panel, `PageModel.insertCustomCodeBlock` and `ComponentModel.setCustomCode` (one undo step each), the Layers
+  badge and icon, `CustomCodeSection.tsx` with a lazily loaded CodeMirror editor (D10), the pickers for reads, writes and
+  emits, sizing, the interactive switch, the sentence saying what the code may do, and a switch that shows the fallback on the
+  canvas instead of the tile (D42).
+- **`customCode` reserved** in the Custom section's attribute editor (`src/lib/styles/customEditor.ts`), which listed it as an
+  ordinary attribute.
+- **The author API reference,** `docs/custom-code-author-api.md`.
+- **Tests:** the pure rules (unit); the route with its guard (unit, every refusal and its reason); the write against a real
+  Postgres (integration: forward, idempotent re-write, a changed declaration is a new hash, blocked and listed hashes, a site
+  switched off, a branch, another workspace, the hourly limit, the site budget, and concurrent writes); the section on the real
+  `RightSidebar` and store through the four stateful paths (jsdom); the code editor's keyboard and accessible name in Chromium
+  and WebKit (browser).
+
+## Decided in slice C4, say so if you disagree
+
+Numbering continues after D98, the last number in this plan.
+
+**D99. `CUSTOM_CODE_AVAILABLE` turns authoring on only when it is exactly `1`, and only the server reads it.** Unset, empty, `0`,
+`true` or a typing mistake mean off, the way D16 reads the kill switch, so a server nobody configured offers nothing. Production
+leaves it unset until C7. The editor page reads it and hands the editor a boolean; the route reads it on every request and answers
+404 `custom_code_unavailable`, with that reason, before it reads a session. The client bundle never reads `process.env` for it
+(D38). It gates authoring only: a page that already names a block renders as before (C2, C3), and the Layers badge marks a stored
+block whatever the switch says. The kill switch `CUSTOM_CODE_DISABLED` does not stop authoring: it stops serving, and the panel says
+so ("Custom code is switched off on this server: blocks show their fallback").
+
+**D100. Custom code is written on the main site, never on a branch.** A blob is keyed by its site's id and a branch is its own
+`sites` row whose switch nothing turns on (D30), so a blob written on a branch would not exist for main after a merge. The route
+refuses a branch row with 409 `branch_site` and the reason, and the editor offers no insert item on a branch. A block that reaches a
+branch as a copy of main's page keeps main's hash and shows its tile there as anywhere in the editor.
+
+**D101. The insert item is not a `COMPONENT_REGISTRY` entry.** D43 gives the reasons: a registry entry is taught to the generator and
+is walked by the score, the serializer and the parity tests. The Components panel shows a "Custom code" item of its own, only when
+the switch is on, the site's custom code is enabled, the signed-in person holds `manageCustomCode` and the editor is not on a
+branch. It is a button: a click, a tap or Enter adds the block inside or after the selection (`tapInsertTarget`, as the phone sheet
+adds every component), as one undo step, and selects it. It cannot be dragged; one way in is enough for a block a person adds
+deliberately.
+
+**D102. A block before its first save stores `customCode: null`.** That is already a block with no value (D95): every renderer draws
+its box with the fallback, the published page carries no trace mark and no broker. On the editor's surfaces the tile now tells it
+apart from a broken value: "No code saved yet" instead of "Not a valid block, shows its fallback". The new block holds one paragraph
+of fallback text in the site's language (German or English, as the shop parts take theirs, `shopLocaleOf(siteLanguageOf(page))`),
+since an empty fallback leaves visitors nothing when the frame cannot run.
+
+**D103. What the write route checks, in order, and the reason each refusal gives.** The body (`pageId`, `nodeId`, `title`,
+`document`, `declaration`, optional `replaces`) is read with a cap of 1 megabyte, far above the largest acceptable block even with
+every character escaped, so an oversize block gets its own reason (413 `too_large`, with the size and the limit), not the
+transport's. Then: the title (the parser's rule, D36 and D97); the code is not empty, holds no U+0000 (Postgres `text` refuses it)
+and no lone surrogate half (`sha256Hex` would throw); the declaration parses (`parseDeclaration`); code plus canonical declaration
+is at most 262,144 bytes of UTF-8, which is stricter than the guard inside `box_document` (the code alone), so every accepted blob
+can be served. Then, inside the transaction: the site is not a branch (D100), its switch is on (409 `custom_code_off`), the hash is
+not taken down (410 `blocked`, from the takedown list or a row's `blocked_at`, D32), the node is stored on that page and is a block
+(409 `node_not_saved` or `not_a_block`), each read and write names a state in reach of the node that is not text (422
+`declaration_state`, naming the state), the hourly limit (429 `rate_limited` with the seconds to wait), and the site budget (413
+`site_budget`, with what is used). Every refusal is `{ error: { code, message } }`, the code fixed and the message a sentence a
+person can act on.
+
+**D104. A write is serialised per site by a lock on the site row.** `SELECT ... FROM public.sites WHERE id = $1 FOR NO KEY UPDATE`
+is the transaction's first statement, so two writes for one site (two tabs, a double click) run one after the other and each sees
+what the other committed: the hourly count, the budget and the existing row. A page save of the same site waits for the write's
+transaction, which holds no slow step (the stored working copy is read inside it, once). An advisory lock was the alternative; the
+row lock needs no key space of its own (D25 lists the fixed keys already taken) and also orders the write against a switch-off by
+C7's route, which will update that row.
+
+**D105. Writing the same code again is not a new write.** The hash covers code and declaration, not the title, and a trigger lets a
+blob row change only its `blocked_at` (D27). So a write whose hash the site already holds inserts nothing (`ON CONFLICT DO NOTHING`),
+writes no audit line, is not counted against the hourly limit, and answers 200 with `created: false`; the stored row keeps the title
+it was first written with, and the node carries its own title. A change of the title alone is not a write at all: the panel sets the
+node's title through the model action and posts nothing.
+
+**D106. Thirty writes an hour per site, counted from the audit table.** The `blob-write` lines of the site in the last hour are
+counted under the lock of D104. The audit table already holds the time and the site, and outlives every blob, so pruning cannot
+reset the count. The refusal says when the next write is allowed.
+
+**D107. The site budget counts the code named by the stored working copy or a kept revision, plus the new blob.** That is D4's
+"live" exactly. A blob the request says it `replaces` is left out when no kept revision names it, so replacing a block of a full
+site's code is not refused for the version it replaces. A blob written and not yet named by any save is not counted. **Residual,
+for C5:** several blobs written before a save names them can together take a site past 1 megabyte; the hourly limit bounds it (30
+writes of at most 256 kilobytes), and C5, which prunes blobs at every save and publish (D4), checks the budget there too.
+
+**D108. The declaration is checked against the stored working copy, which the panel saves first.** The route reads the page the
+request names from the stored working copy (a page or a component's definition), finds the node, and checks every read and write
+against the states in reach of it, the rule `applyCustomCode` applies when it draws the page. The panel asks the autosave to save
+first (`flush`) and posts only once the copy on the server is the one on screen; if the save failed or is held by a conflict, the
+panel says so and posts nothing. A node the stored copy does not hold yet is refused with `node_not_saved` ("Wait until the page is
+saved, then save the code again"), never guessed. The published page checks the same rule again at every render, so a state deleted
+later shows the fallback there, and the panel names the problem as soon as it appears (B11's rule of showing the parser's reason).
+
+**D109. The panel's draft is keyed to the node and the value it was loaded from.** The draft (code, declaration, title) remembers the
+node's id and the `customCode` it started from (a hash, or null for a new block). An answer from the route is applied only while the
+node still exists and still names that value; otherwise the blob stays stored (unnamed, harmless, pruned by C5) and the panel says
+"The block changed while saving; nothing was applied". An undo, a live change from another tab or a selection of another block closes
+the draft. Saving again with nothing changed sends nothing.
+
+**D110. The fallback is edited on the canvas behind a switch.** D42 left this to C4. The section has a switch "Show the fallback on
+the canvas": while it is on for a block, the canvas draws the block's box with its children instead of the tile, so the fallback is
+edited like any content, and a thin label says it is the fallback. It is editor state only, per block, never stored, and off again on
+reload.
+
+**D111. The standalone preview keeps the fallback in C4.** D68 named C4's read as what it would need. Running a frame there also
+needs the live-blob read for an editor session, the per-site `<meta>` and the island on a route that is not a published page, which
+is wider than this slice's row. It joins C5's row, beside the publish dialog that lists the blocks going out.
+
+**D112. The code editor never traps the keyboard.** CodeMirror is loaded as its own chunk when the section opens (D10), with HTML,
+JavaScript and CSS highlighting, line numbers and history. Tab is not bound, so Tab and Shift+Tab move the focus out as from any
+field; indenting is done with the editor's Mod-] and Mod-[. The content carries an accessible name ("Code of <title>") and a
+description saying how to leave and indent. Until the chunk loads, and if it fails to load, the same field is a plain labelled
+`textarea`, so the section always works.
 
 ## For Marlin
 
