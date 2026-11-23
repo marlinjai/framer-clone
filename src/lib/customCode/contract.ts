@@ -326,28 +326,30 @@ export const BOX_SHELL_SCRIPT = [
   'try{',
   'var port=null,queue=[],values={},subs={},wait=[],reads=null,done=false,own=Object.prototype.hasOwnProperty;',
   // `sent`: when each of the last messages left, so no second holds more than 25.
-  'var sent=[],send=function(m){if(port){try{port.postMessage(m);}catch(e){}sent.push(Date.now());if(sent.length>25)sent.shift();}else if(queue.length<20){queue.push(m);}};',
-  'var room=function(){var t=Date.now()-1000,c=25;for(var i=0;i<sent.length;i++){if(sent[i]>t)c--;}return c;};',
+  // A monotonic clock: a wall clock stepped back would hold every send until it caught up.
+  'var now=function(){return w.performance.now();};',
+  'var sent=[],send=function(m){if(port){try{port.postMessage(m);}catch(e){}sent.push(now());if(sent.length>25)sent.shift();}else if(queue.length<20){queue.push(m);}};',
+  'var room=function(){var t=now()-1000,c=25;for(var i=0;i<sent.length;i++){if(sent[i]>t)c--;}return c;};',
   // Coalescing: the latest write per state, the latest height and each emitted name, sent on the trailing edge of a
   // timer. No prototype, so a state id such as `__proto__` is a key like any other.
-  'var pend=Object.create(null),grow=null,ems=[],timer=null,last=0,gap=50,errAt=-1e9;',
+  'var pend=Object.create(null),grow=null,ems=[],timer=null,last=-1e9,gap=50,errAt=-1e9;',
   // Before the page connects, everything waits as it is. A flush sends what the second has room for, in order, and
   // leaves the rest for the next.
   'var flush=function(){if(timer!==null){clearTimeout(timer);timer=null;}if(!port)return;var r=room(),c=0,k;',
   'for(k in pend){if(c>=r)break;send({kind:"setState",id:k,value:pend[k]});delete pend[k];c++;}',
   'if(grow!==null&&c<r){send({kind:"resize",height:grow});grow=null;c++;}',
   'while(ems.length&&c<r){send({kind:"emit",name:ems.shift()});c++;}',
-  'if(c){last=Date.now();gap=50*c;}',
+  'if(c){last=now();gap=50*c;}',
   'var left=grow!==null||ems.length>0;for(k in pend){left=true;break;}',
-  'if(left)timer=setTimeout(flush,Math.max(100,last+gap-Date.now()));};',
-  'var later=function(){if(timer===null)timer=setTimeout(flush,Math.max(0,last+gap-Date.now()));};',
+  'if(left)timer=setTimeout(flush,Math.max(100,last+gap-now()));};',
+  'var later=function(){if(timer===null)timer=setTimeout(flush,Math.max(0,last+gap-now()));};',
   'var settle=function(){if(done||!reads)return;for(var j=0;j<reads.length;j++){if(!own.call(values,reads[j]))return;}',
   'done=true;for(var k=0;k<wait.length;k++){try{wait[k]();}catch(e){}}wait=[];};',
   'var onPort=function(e){var d=e.data;if(!d||typeof d!=="object")return;',
   'if(d.kind==="ping"){send({kind:"pong"});return;}',
   'if(d.kind==="state"&&typeof d.id==="string"){values[d.id]=d.value;var l=own.call(subs,d.id)?subs[d.id].slice():[];',
   'for(var j=0;j<l.length;j++){try{l[j](d.value);}catch(x){report(x);}}settle();}};',
-  'var report=function(x){var t=Date.now();if(t-errAt<1000)return;errAt=t;var m;try{m=x&&x.message!==undefined?String(x.message):String(x);}catch(e){m="error";}',
+  'var report=function(x){var t=now();if(t-errAt<1000)return;errAt=t;var m;try{m=x&&x.message!==undefined?String(x.message):String(x);}catch(e){m="error";}',
   'send({kind:"error",message:m.slice(0,500)});};',
   'w.addEventListener("message",function(e){var d=e.data;',
   'if(port||e.source!==w.parent||!d||d.fc!==1||d.kind!=="connect"||!e.ports||!e.ports[0])return;',

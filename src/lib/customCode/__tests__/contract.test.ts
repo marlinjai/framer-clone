@@ -279,12 +279,15 @@ describe('the shell', () => {
     const listeners: Record<string, ((event: unknown) => void)[]> = {};
     const parent = { postMessage: () => {} };
     let time = 1_000_000;
+    let wallStep = 0;
     let nextId = 1;
     const timers = new Map<number, { at: number; fn: () => void }>();
     const window: Record<string, unknown> = {
       parent,
       addEventListener: (type: string, fn: (event: unknown) => void) => (listeners[type] ??= []).push(fn),
-      Date: { now: () => time },
+      // The shell times its sends with performance.now; the wall clock here may be stepped by a test.
+      performance: { now: () => time },
+      Date: { now: () => time + wallStep },
       setTimeout: (fn: () => void, ms: number) => {
         timers.set(nextId, { at: time + Math.max(0, ms || 0), fn });
         return nextId++;
@@ -321,7 +324,10 @@ describe('the shell', () => {
       dispatch('message', { source: from, data: { fc: 1, kind: 'connect', declaration }, ports });
     const toFrame = (data: unknown) => port.onmessage?.({ data });
     const run = (code: string) => vm.runInContext(code, context);
-    return { context, sent, times, port, connect, toFrame, dispatch, run, advance };
+    const stepWallClock = (ms: number) => {
+      wallStep += ms;
+    };
+    return { context, sent, times, port, connect, toFrame, dispatch, run, advance, stepWallClock };
   }
 
   it('gives the author a frozen lumitra client that queues until the page connects', async () => {
@@ -461,6 +467,18 @@ describe('the shell', () => {
     for (let i = 0; i < 31; i++) expect(sent.filter((m) => m.id === `s${i}`).at(-1)).toEqual({ kind: 'setState', id: `s${i}`, value: 2 });
     expect(sent.filter((m) => m.kind === 'resize')).toEqual([{ kind: 'resize', height: 50 }]);
     expect(sent.filter((m) => m.kind === 'emit')).toEqual([{ kind: 'emit', name: 'custom:done' }]);
+  });
+
+  // Review 4 of pull request #452, L3: a wall clock stepped back an hour does not hold the sends.
+  it('keeps sending on time when the wall clock steps back', () => {
+    const shell = shellWindow();
+    shell.connect({ reads: [] });
+    shell.run("lumitra.setState('a', 1)");
+    shell.advance(100);
+    shell.stepWallClock(-3_600_000);
+    shell.run("lumitra.setState('a', 2)");
+    shell.advance(200);
+    expect(shell.sent).toEqual([{ kind: 'setState', id: 'a', value: 1 }, { kind: 'setState', id: 'a', value: 2 }]);
   });
 
   it('keeps only the latest values while it waits for the page, however long', () => {
