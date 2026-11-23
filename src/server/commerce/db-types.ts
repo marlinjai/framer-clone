@@ -898,7 +898,7 @@ export interface CommerceJobTable {
 }
 
 /**
- * 031_form_notification: the outbox of the email that tells the site owner about a submission, one row per submission (its primary key), deleted with it (ON DELETE CASCADE). `letter` is emptied once settled.
+ * 032_form_notification: the outbox of the email that tells the site owner about a submission, one row per submission (its primary key), deleted with it (ON DELETE CASCADE). `letter` is emptied once settled.
  */
 export interface FormNotificationTable {
   submission_id: string;

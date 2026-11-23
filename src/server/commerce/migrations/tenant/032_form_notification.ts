@@ -1,7 +1,7 @@
 import type { Migration } from '@marlinjai/tenant-db';
 
 /**
- * Form notification emails, `031_form_notification` (docs/plans/2026-10-23-published-site-essentials.md, "Form
+ * Form notification emails, `032_form_notification` (docs/plans/2026-10-23-published-site-essentials.md, "Form
  * notification emails"). Purely additive: one table, nothing existing changes.
  *
  * `form_notification` is the outbox of the email that tells a site owner about a new form submission: one row per
@@ -31,7 +31,7 @@ import type { Migration } from '@marlinjai/tenant-db';
  * House style as 017 and 023: BARE names, ids TEXT. Re-runnable.
  */
 export const formNotification: Migration = {
-  id: '031_form_notification',
+  id: '032_form_notification',
   up: async (tx) => {
     await tx`
       CREATE TABLE IF NOT EXISTS "form_notification" (

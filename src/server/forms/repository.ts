@@ -122,7 +122,7 @@ async function withNotifications(db: Kysely<CommerceDB>, tenantId: string, submi
   const byId = new Map(rows.map((r) => [r.submission_id, r]));
   return submissions.map((s) => {
     const n = byId.get(s.id);
-    return n ? { ...s, // The column is TEXT with a CHECK on exactly these values (031_form_notification), so the generated type is a plain string.
+    return n ? { ...s, // The column is TEXT with a CHECK on exactly these values (032_form_notification), so the generated type is a plain string.
       notification: { status: n.status as FormNotificationView['status'], reason: n.last_error, recipient: n.recipient } } : s;
   });
 }
@@ -169,7 +169,7 @@ export async function insertFormSubmission(
     // Only for a row this call wrote: the island's repeat of a lost answer must not write a second notice.
     if (inserted && row.notification) {
       // In a savepoint of its own: whatever goes wrong writing the notice (a schema that has not yet received
-      // migration 031, a rejected job row) costs the notice, never the submission this transaction stores.
+      // migration 032, a rejected job row) costs the notice, never the submission this transaction stores.
       await sql`SAVEPOINT notice_sp`.execute(tx);
       try {
         await writeFormNotification(tx, row.tenantId, row.id, row.notification);

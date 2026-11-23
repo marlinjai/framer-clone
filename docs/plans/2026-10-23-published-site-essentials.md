@@ -321,7 +321,7 @@ each reversible (say so if you disagree):
    business data), decided at submit time from the PUBLISHED form and site and frozen on the row; a posted value is never
    read. The form's address is a private prop: the server strips it from the node a client island receives, so visitors
    never get it (test `notifyEmailPrivate.test.tsx` fails without the strip). Neither set: the row says `no_recipient`.
-4. **Written in the submission's own transaction** (`031_form_notification`, primary key and foreign key = the submission
+4. **Written in the submission's own transaction** (`032_form_notification`, primary key and foreign key = the submission
    id, `ON DELETE CASCADE`), with a `form_mail` job (the shop job engine, retries 1, 5, 15, 60 minutes, then every 6 hours for
    three days). The job payload is the submission id only. A repeated post of the same submission id writes nothing more.
    A failed email never loses the submission: it is stored first, and the notice is a row of its own.

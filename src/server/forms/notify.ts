@@ -3,7 +3,7 @@ import 'server-only';
 // src/server/forms/notify.ts
 //
 // The email that tells a site owner about a new form submission (docs/plans/2026-10-23-published-site-essentials.md,
-// "Form notification emails"; migration 031_form_notification). It is the second letter of the shop's Lumitra Mail
+// "Form notification emails"; migration 032_form_notification). It is the second letter of the shop's Lumitra Mail
 // pipeline (docs/plans/2026-10-27-shop-receipt-email.md): the company's own connection, sealed send key and
 // templates, the same `form_mail` job engine, the same retry shape as the buyer's letters (mail/outbox.ts).
 //

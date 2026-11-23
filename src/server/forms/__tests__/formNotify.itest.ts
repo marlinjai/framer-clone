@@ -1,5 +1,5 @@
 // The owner's email about a form submission (docs/plans/2026-10-23-published-site-essentials.md, "Form notification
-// emails"; migration 031_form_notification), against real Postgres with a fake Lumitra Mail. The four paths of the
+// emails"; migration 032_form_notification), against real Postgres with a fake Lumitra Mail. The four paths of the
 // stateful-flow standard:
 //
 //   1. forward: a submission through POST /api/forms/submit writes its row and its job in one transaction, the job
@@ -215,7 +215,7 @@ beforeEach(async () => {
   company = newCompany();
 });
 
-describe('031_form_notification', () => {
+describe('032_form_notification', () => {
   it('lives in the tenant schema, the app role may use it, and its foreign key cascades', async () => {
     const privs = await fx.owner<{ p: string }[]>`
       SELECT privilege_type AS p FROM information_schema.role_table_grants

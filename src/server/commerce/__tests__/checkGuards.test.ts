@@ -40,7 +40,7 @@ describe('KNOWN_TENANT_TABLES (read from the per-tenant migration set)', () => {
         'sales_document_line',
         // Forms (017_form_submissions)
         'form_submission',
-        // Form notification emails (031_form_notification)
+        // Form notification emails (032_form_notification)
         'form_notification',
         // Commerce (001 to 006, 020_catalogue_company, 021_order_payment, 022_payment_account, 023_shop_mail, 025_commerce_job)
         'commerce_job',
