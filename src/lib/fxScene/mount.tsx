@@ -15,6 +15,10 @@
 //  - `renderFxScene` draws into a layer the caller already has, and hands back an
 //    `update` for a changed scene (the editor's canvas, where every change in the
 //    panel shows at once in the one context) and a `teardown`.
+//  - `renderFxStill` draws ONE still frame (the reduced-motion frame) into a layer the
+//    caller has placed, copies the picture into a plain 2D canvas, and releases the
+//    WebGL context before it resolves: the editor's still frames of a scene in the
+//    breakpoint frames it is not drawn live in (src/components/fx/FxLayer.tsx).
 //  - `mountFxScene` is the published page's: it makes the layer itself, as the
 //    box's first child (./box.ts says how it sits there), fades it in on the first
 //    frame, and takes it out again when the scene cannot draw (or stops), so the
@@ -164,6 +168,104 @@ export function renderFxScene(layer: HTMLElement, stored: unknown, { onLive, onO
       unmount();
     },
   };
+}
+
+/** How long a still frame waits for another frame (a late image or font) before its picture counts. */
+export const FX_STILL_SETTLE_MS = 250;
+/** The longest a still frame is waited for, from the first frame: a scene that keeps drawing is taken as it is then. */
+export const FX_STILL_MAX_MS = 3000;
+
+export interface RenderFxStillOptions {
+  /** As for `renderFxScene`. */
+  resolveImage?: (src: string) => string | null;
+  /** The pixel ratio to draw at (the caller bounds it); replaces the scene's own range. */
+  pixelRatio: number;
+  /** Aborted: the context is released at once and the promise rejects with `aborted`. */
+  signal: AbortSignal;
+}
+
+/** Why a still frame was not made: the live scene's reasons, and `aborted`. */
+export type FxStillFailure = FxOffReason | 'aborted' | 'empty';
+
+/**
+ * Draw `stored` as one still frame into `layer` (placed by the caller, sized as the box), copy it into a 2D
+ * canvas and release the WebGL context. Resolves with that canvas; rejects with an FxStillFailure. Nothing of
+ * the scene is left in `layer` either way.
+ */
+export function renderFxStill(layer: HTMLElement, stored: unknown, { resolveImage, pixelRatio, signal }: RenderFxStillOptions): Promise<HTMLCanvasElement> {
+  return new Promise((resolve, reject) => {
+    const parsed = parseFxProp(stored);
+    if (!parsed.ok) {
+      reject('refused' satisfies FxStillFailure);
+      return;
+    }
+    if (signal.aborted) {
+      reject('aborted' satisfies FxStillFailure);
+      return;
+    }
+    const host = document.createElement('div');
+    Object.assign(host.style, { position: 'absolute', inset: '0' });
+    layer.appendChild(host);
+    const root = createRoot(host);
+    let finished = false;
+    let firstAt = 0;
+    let settle: number | undefined;
+    let picture: HTMLCanvasElement | null = null;
+
+    const finish = (outcome: { ok: true; canvas: HTMLCanvasElement } | { ok: false; reason: FxStillFailure }) => {
+      if (finished) return;
+      finished = true;
+      if (settle !== undefined) window.clearTimeout(settle);
+      signal.removeEventListener('abort', onAbort);
+      // Not inside React's own commit: unmounting a root from its effect is refused.
+      queueMicrotask(() => {
+        loseContexts(host);
+        root.unmount();
+        host.remove();
+      });
+      if (outcome.ok) resolve(outcome.canvas);
+      else reject(outcome.reason);
+    };
+    const onAbort = () => finish({ ok: false, reason: 'aborted' });
+    signal.addEventListener('abort', onAbort);
+
+    const copy = () => {
+      const source = host.querySelector('canvas');
+      if (!source || source.width === 0 || source.height === 0) return false;
+      picture ??= document.createElement('canvas');
+      picture.width = source.width;
+      picture.height = source.height;
+      const context = picture.getContext('2d');
+      if (!context) return false;
+      context.clearRect(0, 0, picture.width, picture.height);
+      context.drawImage(source, 0, 0);
+      return true;
+    };
+    const done = () => {
+      if (picture) finish({ ok: true, canvas: picture });
+      else finish({ ok: false, reason: 'empty' });
+    };
+    const onFrame = () => {
+      if (finished) return;
+      copy();
+      const now = performance.now();
+      if (firstAt === 0) firstAt = now;
+      if (settle !== undefined) window.clearTimeout(settle);
+      // Taken as it is once nothing more is drawn, or after the longest wait for a scene that keeps drawing.
+      settle = window.setTimeout(done, now - firstAt >= FX_STILL_MAX_MS ? 0 : FX_STILL_SETTLE_MS);
+    };
+
+    const scene = withResolvedImages(parsed.fx.scene, resolveImage);
+    root.render(
+      createElement(LumitraScene, {
+        config: { ...scene, dpr: [pixelRatio, pixelRatio] },
+        layoutSize: true,
+        still: true,
+        onFrame,
+        onFail: (reason: SceneFailure) => finish({ ok: false, reason }),
+      }),
+    );
+  });
 }
 
 export interface MountFxOptions {

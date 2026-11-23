@@ -1092,7 +1092,7 @@ describe('Live: the scene on the canvas', () => {
     act(() => store.editorUI.selectComponent(box, frame.breakpointId!));
     render(<FxSceneSection component={box} />);
     expect(liveSwitch().getAttribute('aria-checked')).toBe('false');
-    expect(screen.getByText(/The canvas shows the box with its own background/)).toBeTruthy();
+    expect(screen.getByText(/Every breakpoint on the canvas shows one still frame of the scene/)).toBeTruthy();
 
     fireEvent.click(liveSwitch());
     expect(store.editorUI.fxLive).toEqual({ componentId: box.id, frameId: frame.breakpointId });
@@ -1100,7 +1100,7 @@ describe('Live: the scene on the canvas', () => {
     expect(screen.getByRole('status').textContent).toBe(`Starting the scene in ${frame.label}...`);
 
     act(() => store.editorUI.reportFxLive({ state: 'live' }));
-    expect(screen.getByRole('status').textContent).toMatch(new RegExp(`The scene is drawn in ${frame.label}, and every change here shows at once`));
+    expect(screen.getByRole('status').textContent).toMatch(new RegExp(`The scene moves in ${frame.label}, and every change here shows at once`));
 
     fireEvent.click(liveSwitch());
     expect(store.editorUI.fxLive).toBeUndefined();

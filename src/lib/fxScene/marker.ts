@@ -72,6 +72,10 @@ export function holdsFxScene(roots: Iterable<unknown>, exceptId?: string): boole
 export const FX_INDEX_ATTR = 'data-fc-fx';
 export const FX_STATE_ATTR = 'data-fc-fx-state';
 export const FX_LAYER_ATTR = 'data-fc-fx-layer';
+/** The editor's still frame of a scene (src/components/fx/FxLayer.tsx, FxStillLayer), with its state as the value. */
+export const FX_STILL_ATTR = 'data-fc-fx-still';
+/** The loading placeholder of a scene (./placeholder.ts). */
+export const FX_PLACEHOLDER_ATTR = 'data-fc-fx-placeholder';
 
 /** True for an attribute only the published page may write: `data-fc-fx` and every `data-fc-fx-*`. */
 export function isFxIssuedAttribute(name: string): boolean {
