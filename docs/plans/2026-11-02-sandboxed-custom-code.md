@@ -1165,12 +1165,13 @@ within 2 seconds; the send itself is asserted over a second in WebKit and under 
 engine shows.
 WebKit's row uses length 2^28 (about 1.8 s to send on a laptop) so that every CI run is not held for a minute; Chromium and Firefox
 keep the greatest length.
-The gate's reading of the page's longest hold also counts the hold still open since the ticker's last tick: a read queued behind
-a hold runs before the ticker's own task, so the recorded maximum alone missed a hold that had just ended. That is why a
-3 second hold the broker deferred past a frame's removal passed in WebKit at review 6, not, as first reported, because it never
-ran within the case (review 7 of pull request #452). The sparse flood case also waits 500 ms after the removal before reading,
-since in WebKit the frame loads later and its sends hold the shared thread, so the click lands before the broker sees any
-message; with both, that deferred hold fails the case in all three engines.
+A 3 second hold the broker deferred past a frame's removal (mutation C of reviews 6 to 8 of pull request #452) passed in
+WebKit for two reasons. First, the hold was read before it began: in WebKit the frame loads later and its sends hold the shared
+thread, so the frame is removed at its first message and the reading follows at once. Second, once the read was made to wait, it
+ran right behind the hold and before the ticker's own task, so the recorded maximum missed it. The sparse flood case now waits
+500 ms after the removal before reading, and the gate's reading of the page's longest hold also counts the hold still open since
+the ticker's last tick. Either alone still lets that deferred hold pass in WebKit; with both, it fails the case in all three
+engines.
 
 The gate starts the runtime and the broker by hand, so the chain as it ships has a test of its own in the behaviour suite
 (`test/behaviour/customCode.spec.ts`, Chromium and WebKit): a stored page with a block, published through the real repository,

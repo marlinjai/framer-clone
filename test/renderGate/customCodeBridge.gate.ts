@@ -462,7 +462,8 @@ const clickToState = async (page: Page): Promise<number> => {
 };
 /** The page's longest loop gap since its document began, in milliseconds. */
 // The gap still open since the last tick counts too: a read queued behind a freeze runs before the ticker's own task,
-// so the maximum alone would miss a freeze that has just ended (it did in WebKit, review 7).
+// so the maximum alone would miss a freeze that has just ended. Together with the sparse flood case's 500 ms wait after the
+// removal this catches a deferred freeze in WebKit; either alone does not (review 8).
 const longestGap = (page: Page) =>
   page
     .evaluate(() => {
