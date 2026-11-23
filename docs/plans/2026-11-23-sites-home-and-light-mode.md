@@ -1,9 +1,9 @@
 ---
 title: A real home at app.lumitra.co, a light mode, and a readable dark mode
 description: Plan for what app.lumitra.co shows first (signed in and signed out), where the demo editor moves, an interface theme preference (System, Light, Dark) across every editor surface, and a lifted dark palette whose panels and fields separate.
-summary: Marlin reported on 2026-11-23 that app.lumitra.co opens straight into "Framer Clone Demo" instead of his projects, that he wants a light mode throughout the product, and that the dark editor is too dark to read. Measured on production the same day, text contrast is fine (17 to 1) but panel surface on background is 1.02 to 1 and field borders 1.2 to 1, so every panel melts into one black. The plan makes `/` a home for a signed-in person while a signed-out visitor keeps the demo with no login (directly or behind a short welcome, his choice), keeps the demo at `/` by address so no tenant page is shadowed, fixes its return paths, adds a System, Light and Dark preference kept per browser with no flash, lifts the dark palette into a three-step ramp with field borders of at least 3 to 1, and proves both modes with a contrast check, a raw-colour check and browser runs. Five slices, each under about 1,500 changed lines; four choices wait on Marlin.
+summary: Marlin reported on 2026-11-23 that app.lumitra.co opens straight into "Framer Clone Demo" instead of his projects, that he wants a light mode throughout the product, and that the dark editor is too dark to read. Measured on production the same day, text contrast is fine (17 to 1) but panel surface on background is 1.02 to 1 and field borders 1.2 to 1, so every panel melts into one black. The plan makes `/` a home for a signed-in person (Direction A, a grid of site cards) and a welcome page for a signed-out visitor, with the demo one click away and no login, keeps the demo at `/` by address so no tenant page is shadowed, fixes its return paths, adds a System, Light and Dark preference kept per browser with no flash from a shared Lumitra-wide palette in suite-theme, lifts the dark palette into a three-step ramp with field borders of at least 3 to 1, and proves both modes with a contrast check, a raw-colour check and browser runs. Selection everywhere is a complete glowing ring, never a one-sided edge. Decided by Marlin on 2026-11-23; five slices, each under about 1,500 changed lines.
 type: plan
-status: draft
+status: decided
 date: 2026-11-23
 tags: [framer-clone, editor, dashboard, theme, light-mode, accessibility, plan]
 projects: [framer-clone, suite-theme]
@@ -49,7 +49,7 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 ### Taken here (decided, say so if you disagree)
 
 - **Nobody is sent to the login for opening app.lumitra.co.** A signed-out visitor keeps a way into the demo with no
-  account. Whether that is the demo itself (as today) or a welcome page in front of it is D4 below.
+  account: the welcome page (D4) opens the demo with one click.
 - **Signed-in `/` shows the home.** One server-side session read (the existing `loadDashboard`). A signed-in person
   with an active company gets the home; without a company, `/projects` with its chooser and "Sites not enabled" states
   exactly as today. If auth-brain does not answer, `/` behaves as for a signed-out visitor, with a retry note, never an
@@ -99,29 +99,31 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
   load a WebGL scene per card, against the one-WebGL-context rule of the FX work. Real thumbnails captured at publish
   are a separate idea, not part of this request.
 
-### Genuinely Marlin's (sent to the coordinator)
+### Marlin's decisions (2026-11-23, after reviewing the visual direction)
 
-- **D1. Does the light palette become part of the suite theme, or stay inside Sites?** Recommendation: add it to
-  `@marlinjai/suite-theme-core` as a second token set (and the lifted dark ramp as the "app" surfaces), amending rule 5
-  of the rebrand plan from "dark only, no toggle" to "dark first; apps offer Light, Dark and System; marketing stays
-  dark". Reason: one source for every app (Booking, Mail, Studio and Lumitra OS can follow when they want), and the
-  contrast floors are checked in one build. The alternative keeps light inside Sites only, faster by about a day, but
-  the next app would copy the values by hand.
-- **D2. Which home direction?** A, "Studio grid" (recommended): one top bar, sites as large cards with a theme
-  picture, a "New site" card, the tools (Catalog, Payments, Books, Demo) as a quiet row. B, "Workspace rail": a left
-  rail with Sites, Catalog, Payments, Books and the company, sites as a dense list, better past about twenty sites, and
-  it would restyle the Catalog, Payments and Books pages around the same rail. Both are in the visual direction file.
-- **D3. How much lighter the dark gets.** Proposed: background `#0c1316`, surface `#131e23`, raised `#1a272d`
-  (the visual direction's middle editor). Marketing keeps `#04090b`. If he wants it lighter still, the ramp moves up
-  as a whole; the checks below hold either way.
-- **D4. What a signed-out visitor sees at app.lumitra.co.** Default, if he does not answer: the demo editor directly,
-  as today (nothing changes for signed-out visitors). Alternative, recommended: a short welcome page ("Try the editor"
-  opens the demo with no sign-in, "Sign in" goes to the shared login and back to the home), drawn in the visual
-  direction file. Reason for recommending it: a first visitor learns what the product is and finds the sign-in, and
-  the demo is still one click away; the cost is one click for people who came for the demo, plus marketing copy he
-  should approve.
+| Date | Decision | By |
+| --- | --- | --- |
+| 2026-11-23 | D1: the light palette is shared Lumitra-wide, in `@marlinjai/suite-theme-core` (a `ui` token group, `ui.css`), not inside Sites only. Amends rule 5 of the rebrand plan of 2026-11-22 for app interfaces: apps offer Light, Dark and System; marketing stays dark | Marlin, relayed by the coordinator |
+| 2026-11-23 | D2: Direction A, "Studio grid" (top bar, sites as large cards, a New site card, the tools as a quiet row) | Marlin |
+| 2026-11-23 | D3: the dark interface is lifted. He first asked for "quite a bit lighter than current" and then approved the "proposed dark" of the visual direction (background `#0c1316`, surface `#131e23`, raised `#1a272d`); that is what is built. A lighter revision (background `#1e282b`, surface `#263236`, raised `#2f3c41`, about Figma's interface brightness, all floors still passing) is shown beside it in the visual direction; taking it is a change of values in `tokens.json` only | Marlin |
+| 2026-11-23 | D4: signed-out visitors get the welcome page ("Try the editor" opens the demo with no sign-in, "Sign in" goes to the shared login and back to the home) | Marlin |
+| 2026-11-23 | Approved as drawn: the editor chrome, the proposed dark and light, the phone layout | Marlin |
+| 2026-11-23 | Selection is a complete ring that blooms outward (`--ui-selection-ring`), never a one-sided edge such as the left bar on the selected Layers row or the selected page. Applied to every selection treatment in the editor and the home, consistently | Marlin |
 
-## 3. Tokens (proposed; numbers computed 2026-11-23)
+The welcome copy is the visual direction's ("Build and run your website in one place." and its two sentences), which he
+approved with the page.
+
+### Whether a public Sites landing page exists (checked 2026-11-23)
+
+No. lumitra.co (still served by lumitra-web) lists Lumitra QR, Ultra Power, email-mcp, Studio and Analytics, not Sites;
+`lumitra.co/sites`, `/en/sites`, `/de/sites` and `/products/sites` answer 404, and no page links to app.lumitra.co. The
+lumitra.co rebuild inside Sites (project "Lumitra (new landing page)", published at `6zp2te2a5btk.sites.lumitra.co`)
+carries the same product list without Sites; its open branch "Test new design" holds the hub sections and `/services`
+pages per the plans (the branch's page list was not read directly). `demo.sites.lumitra.co` is the seeded shop demo, not a
+product page. So the welcome page of D4 is, for now, the only public explanation of Sites; a Sites entry on lumitra.co is
+a separate item for the lumitra.co rebuild, recorded on the roadmap.
+
+## 3. Tokens (decided; numbers computed 2026-11-23, enforced by the suite-theme build)
 
 | Token | Dark (lifted) | Light |
 | --- | --- | --- |
@@ -158,20 +160,24 @@ sets `color-scheme: light` itself, which also turns native scrollbars and form c
 Each slice is one branch, about 1,500 changed lines at most, proven by `pnpm verify` before its one review and one
 push, landed through land-pr.
 
-1. **S1, tokens** (suite-theme repository, only if D1 is "suite"): `tokens.json` gains the light set and the app
-   ramp, the build emits `tokens.css` (dark, unchanged names) and `tokens-ui.css` (both modes under
-   `[data-ui-theme]` plus the `prefers-color-scheme` fallback), the build fails under the floors of section 3,
-   release 0.2.0. If D1 is "Sites only", the same file lives in `src/app/ui-theme.css` and this slice folds into S2.
-2. **S2, theme plumbing in Sites:** `editor-theme.css` maps the semantic tokens (`--background`, `--card`,
-   `--border`, `--input` to line-strong, `--ring`, `--sidebar*`, the glass ground of `globals.css`) per mode;
-   `cms-grid-theme.css` gets both modes; the cookie, the server read in the editor surfaces' layouts (never in the
-   published path), the "Interface theme" control (three toggle buttons with `aria-pressed`, keyboard reachable) in
-   the home's account menu and the editor's settings menu; `ColorModeSwitch`'s `tone` follows the interface.
-3. **S3, the raw-colour sweep:** 114 hard-coded palette classes in 24 files (most in `PreviewToolbar`,
-   `CanvasDebugPanel`, `ProductPreviewBar`, `ResponsivePageRenderer`, `PreviewFrame`, `SkeletonLayer`) and about 50
-   colour literals in editor components move to tokens; files that draw a site's own content (the canvas page, the
-   published renderer) are on an explicit allow-list. A check fails on any new raw palette class or colour literal in
-   editor chrome.
+1. **S1, tokens** (suite-theme repository): built 2026-11-23 as suite-theme #1. `tokens.json` gains a `ui` group
+   (dark and light under the same names), the build emits `dist/ui.css` (both modes under `[data-ui-theme]`, the
+   `prefers-color-scheme` fallback, `--ui-selection-ring` and `--ui-focus-ring`) and `dist/ui-tailwind.css`, and fails
+   when a mode drops under the floors of section 3 on any of its four grounds. `tokens.css` is byte-identical, so the
+   seven apps on this package change nothing until they import `ui.css`. Release 0.2.0 needs a tag push, which waits on
+   Marlin's yes; S2 merges only after it.
+2. **S2, theme plumbing in Sites:** take suite-theme 0.2.0; `editor-theme.css` maps the semantic tokens
+   (`--background`, `--card`, `--popover`, `--border`, `--input` to line-strong, `--ring`, `--sidebar*`, the glass ground
+   of `globals.css`) onto `--ui-*`, so both modes follow one attribute; `cms-grid-theme.css` follows too; the cookie and
+   the root layout's no-site branch (section 2); the "Appearance (this browser)" group in More actions (three toggle
+   buttons with `aria-pressed`, keyboard reachable); `ColorModeSwitch`'s `tone` follows the interface.
+3. **S3, the raw-colour sweep and the selection ring:** 114 hard-coded palette classes in 24 files (most in
+   `PreviewToolbar`, `CanvasDebugPanel`, `ProductPreviewBar`, `ResponsivePageRenderer`, `PreviewFrame`,
+   `SkeletonLayer`) and about 50 colour literals in editor components move to tokens; files that draw a site's own
+   content (the canvas page, the published renderer) are on an explicit allow-list. Every selection treatment (the
+   selected Layers row, the selected page, the selected tab, cards) becomes `--ui-selection-ring`; one-sided selection
+   edges are removed. Checks fail on any new raw palette class or colour literal in editor chrome, and on a one-sided
+   selection edge (`border-l-2`, an inset x-offset shadow) in a selected state.
 4. **S4, the home and the entry:** `/` as in section 2 (signed in to `/projects`, the demo by `?demo=1`, `?page=`
    or `?preview=1`, the signed-out case as D4 decides), the return paths and the allow-list, the home in the chosen
    direction (D2), company switcher, account menu with sign out and the theme, empty state ("No sites yet" with New
