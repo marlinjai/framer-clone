@@ -1025,6 +1025,9 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       if (!box) throw new Error('no frame to move onto');
       for (let n = 0; n < 6 && !(await settled(page)).some((s) => !s.shown); n++) {
         await page.click('#outside');
+        // The click lands mid-field once the field holds text, so the caret must go back to the end or the
+        // keys interleave and the final value is out of order (a WebKit flake on the CI run of this branch).
+        await page.keyboard.press('End');
         await page.keyboard.type('p');
         await page.mouse.move(box.x + 60 + n * 7, box.y + 40, { steps: 4 });
         await page.waitForTimeout(100);
