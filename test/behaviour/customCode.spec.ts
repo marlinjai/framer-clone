@@ -145,13 +145,24 @@ describe.each(ENGINES)('a custom code block on a published page in %s', (_name, 
     // after it, is: so the missing request is the policy, not a frame that had not loaded yet.
     const stranger = `${BOX_ORIGIN}/box/${randomUUID()}/${STRANGER}`;
     const control = `${BOX_ORIGIN}/box/${siteId}/${STRANGER}`;
-    await page.evaluate((sources) => {
-      for (const src of sources) {
-        const frame = document.createElement('iframe');
-        frame.src = src;
-        document.body.append(frame);
-      }
-    }, [stranger, control]);
+    // The stranger frame's refusal must be seen, not assumed: the browser reports an enforced frame-src violation
+    // for it (the control frame is admitted, so it can cause none), and only then is its missing request evidence.
+    await page.evaluate((src) => {
+      const w = window as unknown as { __violations: string[] };
+      w.__violations = [];
+      document.addEventListener('securitypolicyviolation', (event) => {
+        if (event.disposition === 'enforce' && event.effectiveDirective === 'frame-src') w.__violations.push(event.blockedURI);
+      });
+      const frame = document.createElement('iframe');
+      frame.src = src;
+      document.body.append(frame);
+    }, stranger);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __violations: string[] }).__violations.length), { timeout: 5_000 }).toBeGreaterThan(0);
+    await page.evaluate((src) => {
+      const frame = document.createElement('iframe');
+      frame.src = src;
+      document.body.append(frame);
+    }, control);
     await expect.poll(() => boxRequests.includes(control), { timeout: 5_000 }).toBe(true);
     expect(boxRequests).not.toContain(stranger);
   });

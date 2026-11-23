@@ -70,6 +70,8 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
     const name = event.data && event.data.frame;
     if (name in window.__outcomes) window.__outcomes[name] = 'loaded';
   });
+  // A frame the case expects loaded is done only on its own message; a violation naming only the shared origin may
+  // mark it refused meanwhile, and the message still overrides that.
   document.addEventListener('securitypolicyviolation', (event) => {
     if (event.disposition !== 'enforce') return;
     for (const [name, frame] of Object.entries(frames)) {
@@ -86,7 +88,10 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
   }
 </script></body></html>`;
 
-async function outcomes(page: Page, headers: Record<string, string>, documentUrl: string, body = PAGE): Promise<Record<string, Outcome>> {
+/** The frames a case expects loaded: each is final only on its own message, never on a violation. */
+const loadedIn = (expected: Record<string, Outcome>) => Object.keys(expected).filter((name) => expected[name] === 'loaded');
+
+async function outcomes(page: Page, headers: Record<string, string>, documentUrl: string, expectedLoaded: string[], body = PAGE): Promise<Record<string, Outcome>> {
   await page.route('**/*', (route) => {
     const url = route.request().url();
     if (url === documentUrl) return route.fulfill({ status: 200, contentType: 'text/html', headers, body });
@@ -101,7 +106,15 @@ async function outcomes(page: Page, headers: Record<string, string>, documentUrl
   await page.goto(documentUrl, { waitUntil: 'domcontentloaded' });
   // Every frame ends loaded or refused; give the browser up to ten seconds, then read what happened.
   await page
-    .waitForFunction(() => Object.values((window as unknown as { __outcomes: Record<string, string> }).__outcomes).every((o) => o !== 'pending'), undefined, { timeout: 10_000 })
+    .waitForFunction(
+      (expectedLoaded) => {
+        const found = (window as unknown as { __outcomes: Record<string, string> }).__outcomes;
+        // Final means: loaded for each frame expected to load (its own message), and not pending for the rest.
+        return Object.entries(found).every(([name, outcome]) => (expectedLoaded.includes(name) ? outcome === 'loaded' : outcome !== 'pending'));
+      },
+      expectedLoaded,
+      { timeout: 10_000 },
+    )
     .catch(() => {});
   return page.evaluate(() => (window as unknown as { __outcomes: Record<string, Outcome> }).__outcomes);
 }
@@ -141,7 +154,7 @@ describe('the enforced frame policy', () => {
       const browser = await type.launch();
       try {
         const page = await browser.newPage();
-        expect(await outcomes(page, headers, url)).toEqual(expected);
+        expect(await outcomes(page, headers, url, loadedIn(expected))).toEqual(expected);
       } finally {
         await browser.close();
       }
@@ -153,9 +166,9 @@ describe('the enforced frame policy', () => {
     try {
       const url = `https://${SITE}/contact`;
       const before = await browser.newPage();
-      const refused = await outcomes(before, await headersFor(url, ''), url);
+      const refused = await outcomes(before, await headersFor(url, ''), url, ['box']);
       const after = await browser.newPage();
-      const loaded = await outcomes(after, await headersFor(url, `${MAPS_CONSENT_COOKIE}=1`), url);
+      const loaded = await outcomes(after, await headersFor(url, `${MAPS_CONSENT_COOKIE}=1`), url, ['box', 'map']);
       expect([refused.map, loaded.map]).toEqual(['refused', 'loaded']);
       // What the browser holds is the header the middleware sent.
       const response = await after.goto(url);
@@ -212,9 +225,9 @@ describe("the per-site policy of a page with custom code", () => {
       const browser = await type.launch();
       try {
         const page = await browser.newPage();
-        const before = await outcomes(page, await headersFor(url, ''), url, pageWith(meta));
+        const before = await outcomes(page, await headersFor(url, ''), url, ['box'], pageWith(meta));
         const second = await browser.newPage();
-        const after = await outcomes(second, await headersFor(url, `${MAPS_CONSENT_COOKIE}=1`), url, pageWith(meta));
+        const after = await outcomes(second, await headersFor(url, `${MAPS_CONSENT_COOKIE}=1`), url, ['box', 'map'], pageWith(meta));
         expect(before).toEqual({ box: 'loaded', map: 'refused', other: 'refused', stranger: 'refused' });
         expect(after).toEqual({ box: 'loaded', map: 'loaded', other: 'refused', stranger: 'refused' });
       } finally {

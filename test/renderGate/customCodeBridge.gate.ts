@@ -101,7 +101,16 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
       setTimeout(function () { port.postMessage({ kind: 'resize', height: 50000 }); }, 2500);
     `),
   },
-  foreign: { shell: false, body: raw("probe({ connected: 'foreign' });") },
+  // Says hello, then proves its script ran (`ran`) at once; `connected` would only follow a connect the broker never sends it.
+  foreign: {
+    shell: false,
+    body: `<!doctype html><meta charset="utf-8"><script>
+      var probe = function (m) { parent.postMessage(Object.assign({ probe: true }, m), '*'); };
+      parent.postMessage({ fc: 1, kind: 'hello', shell: 2 }, '*');
+      probe({ ran: 'foreign' });
+      addEventListener('message', function (e) { if (e.data && e.data.kind === 'connect' && e.ports[0]) probe({ connected: 'foreign' }); });
+    </script>`,
+  },
   // Floods for 4 seconds in bursts that leave its own event loop free: on its port, or to the page's window.
   deluge: {
     shell: false,
@@ -337,6 +346,43 @@ async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?:
   const consoleLines: string[] = [];
   const requests: string[] = [];
   const errors: string[] = [];
+  // From document creation: every write to the page's `n` state, in order, even one made while the page still parses.
+  await context.addInitScript(() => {
+    const w = window as unknown as { __n: string[] };
+    w.__n = [];
+    new MutationObserver((records) => {
+      for (const record of records) w.__n.push((record.target as Element).getAttribute('data-fcs-n') as string);
+    }).observe(document, { subtree: true, attributeFilter: ['data-fcs-n'] });
+  });
+  // The page's own event loop, ticked every 20 ms from document creation: the longest gap between two ticks is how long
+  // the page was unresponsive, however the click that follows it happens to be timed.
+  await context.addInitScript(() => {
+    const w = window as unknown as { __gap: number };
+    let at = performance.now();
+    w.__gap = 0;
+    setInterval(() => {
+      const now = performance.now();
+      w.__gap = Math.max(w.__gap, now - at);
+      at = now;
+    }, 20);
+  });
+  // When each block's frame was inserted and when it left the page, by block id, on the page's own clock.
+  await context.addInitScript(() => {
+    const w = window as unknown as { __loadAt: Record<string, number>; __goneAt: Record<string, number> };
+    w.__loadAt = {};
+    w.__goneAt = {};
+    // A frame's load event never reaches the window, so its start is its insertion (the stand-in box answers at once).
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of Array.from(record.addedNodes)) {
+          if ((node as Element).tagName === 'IFRAME' && w.__loadAt[(record.target as Element).id] === undefined) w.__loadAt[(record.target as Element).id] = performance.now();
+        }
+        for (const node of Array.from(record.removedNodes)) {
+          if ((node as Element).tagName === 'IFRAME' && w.__goneAt[(record.target as Element).id] === undefined) w.__goneAt[(record.target as Element).id] = performance.now();
+        }
+      }
+    }).observe(document, { subtree: true, childList: true });
+  });
   page.on('console', (message) => consoleLines.push(message.text()));
   page.on('pageerror', (error) => errors.push(error.message));
   await context.route('**/*', (route) => {
@@ -432,6 +478,8 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
         document.getElementById('b1')?.appendChild(frame);
       }, `${BOX}/box/${SITE}/${hashOf('foreign')}`);
       await until(page, "window.__probes.some(function (p) { return Array.isArray(p.states); })", 3_000);
+      // Evidence that the foreign frame's script ran and said hello, so the missing `connected` means something.
+      await until(page, "window.__probes.some(function (p) { return p.ran === 'foreign'; })", 5_000);
       await page.waitForTimeout(1_000);
       expect(await probes(page)).not.toContainEqual({ probe: true, connected: 'foreign' });
       expect(await settled(page)).toEqual([{ id: 'b1', shown: true }]);
@@ -469,16 +517,12 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       block: { title: 'Hostile', reads: ['tab', 'name'], writes: ['n', 'name', 'tab'], emits: ['custom:go'], states: { ...STATES, ...textState } as Record<string, BlockState> },
     }]);
     try {
-      await page.evaluate(() => {
-        const w = window as unknown as { __n: string[] };
-        w.__n = [];
-        const scope = document.querySelector('[data-fc-scope]') as Element;
-        new MutationObserver(() => w.__n.push(scope.getAttribute('data-fcs-n') as string)).observe(scope, { attributeFilter: ['data-fcs-n'] });
-      });
       await until(page, "window.__probes.some(function (p) { return Array.isArray(p.states); })", 10_000);
       expect(await page.evaluate(() => (window as unknown as { __n: string[] }).__n)).toEqual(['3']);
       expect(await stateOf(page, 'tab')).toBe('a');
       expect(await stateOf(page, 'done')).toBe('false');
+      // The text state the frame tried to write ('leak') was never written to the page.
+      expect(await stateOf(page, 'name')).toBeNull();
       // The frame was sent its one allowed read, never the text state.
       expect((await probes(page)).find((p) => Array.isArray(p.states))?.states).toEqual(['tab']);
       expect((await frameOf(page, 'h'))?.height).toBe('100%');
@@ -525,6 +569,10 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 10_000);
       const click = Date.now() - started;
       await until(page, `${removed('port')} && ${removed('win')}`, 5_000);
+      // Whatever the click's timing against the removals: across the whole flood the page's loop was never held for long.
+      const gap = await page.evaluate(() => (window as unknown as { __gap: number }).__gap);
+      record(`flood in ${engine}: longest gap in the page's loop ${Math.round(gap)} ms`);
+      expect(gap).toBeLessThan(1_000);
       record(`flood in ${engine}: click answered in ${click} ms`);
       expect(await stateOf(page, 'tab')).toBe('b');
       expect(click).toBeLessThan(2_000);
@@ -742,6 +790,15 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
     const { page, context, console: lines } = await open(browser, blocks);
     try {
       await until(page, removed('quiet'), 9_000);
+      // Measured from the frame's own load, on the page's clock: the deadline is 5 seconds, so a 7 second one fails.
+      const { loaded, gone } = await page.evaluate(() => {
+        const w = window as unknown as { __loadAt: Record<string, number>; __goneAt: Record<string, number> };
+        return { loaded: w.__loadAt.quiet, gone: w.__goneAt.quiet };
+      });
+      expect(loaded).toBeDefined();
+      expect(gone).toBeDefined();
+      expect(gone - loaded).toBeGreaterThanOrEqual(4_500);
+      expect(gone - loaded).toBeLessThan(6_000);
       expect(await frameOf(page, 'quiet')).toBeNull();
       expect(await settled(page)).toContainEqual({ id: 'quiet', shown: false });
       expect(await settled(page)).not.toContainEqual({ id: 'quiet', shown: true });
@@ -905,6 +962,8 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
         await page.focus('#toB');
         await page.keyboard.press('Tab');
         await page.waitForTimeout(150);
+        // Tab went into the frame: the page's active element is then the frame itself. Where Shift+Tab lands differs by engine (Firefox keeps it in the frame's own document first), so only the frame's survival is held after it.
+        expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('IFRAME');
         await page.keyboard.press('Shift+Tab');
       }
       await page.waitForTimeout(300);
