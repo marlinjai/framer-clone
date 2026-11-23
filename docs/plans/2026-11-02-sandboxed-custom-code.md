@@ -975,8 +975,14 @@ after the first review of pull request #452 (C3), which proved in all three engi
   with the frame never removed, because each read took long enough that fewer than 90 were handled in any second. Now the frame's
   first window message must be its `hello`, read once (anything else removes the frame, `no hello`; the shell sends `hello` before
   any author code runs), and after `hello` its window messages and its nested frames' are counted from `source` alone and never
-  read. The gate proves both under Chromium's site isolation with a page that reads no message itself: a click answers within 2
-  seconds while the costly flood runs, and a frame whose first message is the costly one is removed at it. Past 30 in a second
+  read. The page therefore pays once to read a frame's first window message, whatever the frame makes it: a first message of
+  300,000 small objects is one task of a few hundred milliseconds on a laptop and about 1.5 seconds on a CI runner, and then the
+  frame is gone. The gate proves it under Chromium's site isolation with a page that reads no message itself: a click answers
+  within 2 seconds while the costly flood runs; a frame whose first message is the costly one is removed at it, within 3 seconds,
+  and the page answers a click; and a frame whose first message is small and is followed by a costlier flood (1,000,000 objects a
+  message) is removed at the small one, with the page's longest freeze under 500 ms (22 ms measured on a laptop, about 210 ms at
+  background priority, where macOS spaces the gate's 20 ms ticker about 200 ms apart), so a broker that read one more message
+  fails (1.2 seconds measured, 7 seconds at background priority; review 7 of pull request #452). Past 30 in a second
   a message is dropped; past 90 in a second the frame is removed (`flooded`), because each message costs the page's main thread a
   task whether it is used or not. The review measured a click beside a flooding frame at 8.9 seconds in Chromium, 584 ms in
   WebKit and 255 ms in Firefox, with the frame never removed. The bridge gate's new case floods the port and the window for 4
@@ -1159,6 +1165,12 @@ within 2 seconds; the send itself is asserted over a second in WebKit and under 
 engine shows.
 WebKit's row uses length 2^28 (about 1.8 s to send on a laptop) so that every CI run is not held for a minute; Chromium and Firefox
 keep the greatest length.
+The gate's reading of the page's longest hold also counts the hold still open since the ticker's last tick: a read queued behind
+a hold runs before the ticker's own task, so the recorded maximum alone missed a hold that had just ended. That is why a
+3 second hold the broker deferred past a frame's removal passed in WebKit at review 6, not, as first reported, because it never
+ran within the case (review 7 of pull request #452). The sparse flood case also waits 500 ms after the removal before reading,
+since in WebKit the frame loads later and its sends hold the shared thread, so the click lands before the broker sees any
+message; with both, that deferred hold fails the case in all three engines.
 
 The gate starts the runtime and the broker by hand, so the chain as it ships has a test of its own in the behaviour suite
 (`test/behaviour/customCode.spec.ts`, Chromium and WebKit): a stored page with a block, published through the real repository,

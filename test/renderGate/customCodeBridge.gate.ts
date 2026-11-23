@@ -187,6 +187,18 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
       (function send() { parent.postMessage({ kind: 'nothing', pad: pad }, '*'); if (Date.now() < stop) setTimeout(send, 0); })();
     </script>`,
   },
+  // Review 7: no hello, a small first window message, then a flood costlier than preHeavy's (1,000,000 objects a message,
+  // so a broker that read one more would hold the page far past the bound). The broker reads the first message once and
+  // removes the frame at it, so the page never pays for a costly one.
+  preSmall: {
+    shell: false,
+    body: `<!doctype html><meta charset="utf-8"><p>no hello</p><script>
+      parent.postMessage({ kind: 'small' }, '*');
+      var pad = []; for (var i = 0; i < 1000000; i++) pad.push({ a: i });
+      var stop = Date.now() + 6000;
+      (function send() { parent.postMessage({ kind: 'nothing', pad: pad }, '*'); if (Date.now() < stop) setTimeout(send, 0); })();
+    </script>`,
+  },
   // Review 3, M2: an honest slider, a write and an emit on every input.
   slider: {
     shell: true,
@@ -373,17 +385,17 @@ async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?:
   // Every gap over 100 ms is also kept with its start and end on the wall clock (`__gaps`), which the page and its frames
   // share, so a gap can be set against a frame's own send window (review 6 of pull request #452).
   await context.addInitScript(() => {
-    const w = window as unknown as { __gap: number; __gaps: [number, number][] };
-    let at = performance.now();
+    const w = window as unknown as { __gap: number; __gaps: [number, number][]; __at: number };
     let wall = Date.now();
+    w.__at = performance.now();
     w.__gap = 0;
     w.__gaps = [];
     setInterval(() => {
       const now = performance.now();
       const wallNow = Date.now();
-      w.__gap = Math.max(w.__gap, now - at);
-      if (now - at > 100 && w.__gaps.length < 200) w.__gaps.push([wall, wallNow]);
-      at = now;
+      w.__gap = Math.max(w.__gap, now - w.__at);
+      if (now - w.__at > 100 && w.__gaps.length < 200) w.__gaps.push([wall, wallNow]);
+      w.__at = now;
       wall = wallNow;
     }, 20);
   });
@@ -449,7 +461,15 @@ const clickToState = async (page: Page): Promise<number> => {
   return Date.now() - started;
 };
 /** The page's longest loop gap since its document began, in milliseconds. */
-const longestGap = (page: Page) => page.evaluate(() => (window as unknown as { __gap: number }).__gap).catch(() => Number.POSITIVE_INFINITY);
+// The gap still open since the last tick counts too: a read queued behind a freeze runs before the ticker's own task,
+// so the maximum alone would miss a freeze that has just ended (it did in WebKit, review 7).
+const longestGap = (page: Page) =>
+  page
+    .evaluate(() => {
+      const w = window as unknown as { __gap: number; __at: number };
+      return Math.max(w.__gap, performance.now() - w.__at);
+    })
+    .catch(() => Number.POSITIVE_INFINITY);
 /**
  * The page's longest hold outside a window of time: each recorded gap less its overlap with the window. A frame's send
  * holds the page only where the engine runs the frame in the page's thread, and then only during the send, so whatever
@@ -613,7 +633,7 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       const click = await clickToState(page);
       await until(page, `${removed('port')} && ${removed('win')}`, 5_000);
       // Whatever the click's timing against the removals: across the whole flood the page's loop was never held for long.
-      const gap = await page.evaluate(() => (window as unknown as { __gap: number }).__gap);
+      const gap = await longestGap(page);
       record(`flood in ${engine}: longest gap in the page's loop ${Math.round(gap)} ms`);
       expect(gap).toBeLessThan(1_000);
       record(`flood in ${engine}: click answered in ${click} ms`);
@@ -652,8 +672,11 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
     try {
       await until(page, shownOnce('sp'), 10_000);
       await page.waitForTimeout(150);
+      // In WebKit the frame loads later and its sends hold the shared thread, so the click may land before the broker sees
+      // any message; a short settle after the removal lets whatever the page deferred show in the gap too (review 7).
       const click = await clickToState(page);
       await until(page, removed('sp'), 5_000);
+      await page.waitForTimeout(500);
       const gap = await longestGap(page);
       record(`sparse flood in ${engine}: click answered in ${click} ms, longest gap in the page's loop ${Math.round(gap)} ms`);
       expect(click).toBeLessThan(2_000);
@@ -1199,16 +1222,19 @@ describe('the custom code bridge in chromium with site isolation', () => {
       await page.waitForTimeout(500);
       const click = await clickToState(page);
       record(`costly window flood after hello, site isolation: click answered in ${click} ms; ${lines.filter((line) => line.startsWith('Custom code "Block heavy"')).join(' | ') || 'no line'}`);
-      expect(await stateOf(page, 'tab')).toBe('b');
+      // The click's bound first: it is decided already, and a page held by reads would make the read of its state wait.
       expect(click).toBeLessThan(2_000);
+      expect(await stateOf(page, 'tab')).toBe('b');
       // Across the whole flood (6 seconds from connect), the page's loop was never held for a second.
       await page.waitForTimeout(6_000);
       const gap = await longestGap(page);
       record(`costly window flood after hello, site isolation: longest gap in the page's loop ${Math.round(gap)} ms; ${lines.filter((line) => line.startsWith('Custom code "Block heavy"')).join(' | ') || 'no line'}`);
       expect(gap).toBeLessThan(1_000);
-      // Never anything but a count's outcome: kept, a pong dropped past 30 in a second (its port shares the count with the
-      // flood, so the one warning may appear once the 6 seconds are over), or removed as a flood.
+      // Never anything but kept, at most the one warning, or removed as a flood. The warning is rate-dependent: a pong past
+      // 30 in a second is dropped (the port shares the count with the flood), but the same line also comes from a port
+      // message read and refused, so it does not tell "only counted" from "read"; the click and the gap carry that.
       const own = lines.filter((line) => line.startsWith('Custom code "Block heavy"'));
+      expect(own.filter((line) => line.endsWith('dropped a message or error, then silent')).length).toBeLessThanOrEqual(1);
       expect(own.every((line) => line.endsWith('flooded: removed') || line.endsWith('dropped a message or error, then silent'))).toBe(true);
     } finally {
       await context.close();
@@ -1228,14 +1254,31 @@ describe('the custom code bridge in chromium with site isolation', () => {
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
       expect(gone).toBeLessThan(3_000);
       const click = await clickToState(page);
-      const gap = await longestGap(page);
-      record(`costly window flood without hello, site isolation: click answered in ${click} ms, longest gap in the page's loop ${Math.round(gap)} ms`);
+      // No bound on the page's freeze here: the broker reads a frame's first window message once, by design, and this
+      // frame makes that message its costly one (1.5 s in CI run 45119357537). The variant below bounds the freeze.
+      record(`costly window flood without hello, site isolation: click answered in ${click} ms`);
       expect(click).toBeLessThan(2_000);
-      expect(gap).toBeLessThan(1_000);
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
       expect(lines.filter((line) => line.startsWith('Custom code "Block pre"'))).toEqual(['Custom code "Block pre": no hello: removed']);
     } finally {
       await context.close();
     }
   }, 90_000);
+
+  it('removes a frame whose small first window message is not a hello, and the page never pays for its costly flood', async () => {
+    const { page, context, console: lines } = await open(browser, [{ id: 'small', doc: 'preSmall' }], { quiet: true });
+    try {
+      await until(page, removed('small'), 3_000);
+      // A broker that read one more message would pay for a costly one before the removal; the settle catches any read
+      // deferred past it.
+      await page.waitForTimeout(500);
+      const gap = await longestGap(page);
+      record(`small first message without hello, site isolation: longest gap in the page's loop ${Math.round(gap)} ms`);
+      expect(await settled(page)).toEqual([{ id: 'small', shown: false }]);
+      expect(lines.filter((line) => line.startsWith('Custom code "Block small"'))).toEqual(['Custom code "Block small": no hello: removed']);
+      expect(gap).toBeLessThan(500);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
 });
