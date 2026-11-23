@@ -1,7 +1,7 @@
 ---
 title: A real home at app.lumitra.co, a light mode, and a readable dark mode
 description: Plan for what app.lumitra.co shows first (signed in and signed out), where the demo editor moves, an interface theme preference (System, Light, Dark) across every editor surface, and a lifted dark palette whose panels and fields separate.
-summary: Marlin reported on 2026-11-23 that app.lumitra.co opens straight into "Framer Clone Demo" instead of his projects, that he wants a light mode throughout the product, and that the dark editor is too dark to read. Measured on production the same day, text contrast is fine (17 to 1) but panel surface on background is 1.02 to 1 and field borders 1.2 to 1, so every panel melts into one black. The plan makes `/` a home (the projects for a signed-in person, a welcome with "Try the editor" for everyone else), moves the demo to `/demo` with every return path, adds a System, Light and Dark preference kept per browser with no flash, lifts the dark palette into a three-step ramp with field borders of at least 3 to 1, and proves both modes with a contrast check, a raw-colour check and browser runs. Five slices, each under about 1,500 changed lines.
+summary: Marlin reported on 2026-11-23 that app.lumitra.co opens straight into "Framer Clone Demo" instead of his projects, that he wants a light mode throughout the product, and that the dark editor is too dark to read. Measured on production the same day, text contrast is fine (17 to 1) but panel surface on background is 1.02 to 1 and field borders 1.2 to 1, so every panel melts into one black. The plan makes `/` a home for a signed-in person while a signed-out visitor keeps the demo with no login (directly or behind a short welcome, his choice), keeps the demo at `/` by address so no tenant page is shadowed, fixes its return paths, adds a System, Light and Dark preference kept per browser with no flash, lifts the dark palette into a three-step ramp with field borders of at least 3 to 1, and proves both modes with a contrast check, a raw-colour check and browser runs. Five slices, each under about 1,500 changed lines; four choices wait on Marlin.
 type: plan
 status: draft
 date: 2026-11-23
@@ -48,21 +48,23 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 
 ### Taken here (decided, say so if you disagree)
 
-- **Signed-out `/` is a welcome, not a login wall.** Not everyone who opens app.lumitra.co has an account, and the
-  demo is the way in without one. The welcome offers "Try the editor" (the demo, no sign-in) and "Sign in". Nobody
-  is sent to the login just for opening the address.
-- **Signed-in `/` shows the home.** One server-side session read (the existing `loadDashboard`). If auth-brain does
-  not answer, `/` shows the welcome with a retry note, never an error page and never a login loop.
-- **The demo moves to `/demo`, with every path that returns to it.** Today "Keep as project" sends a signed-out
-  person to `/projects?next=/` and `safeEditorReturnPath` lets `/` through, so the stashed demo is restored on the way
-  back. Once `/` is a home, that person would land on the home and their demo work would look lost. So in the same
-  slice: the return allow-list accepts `/demo` (and drops `/`), both hrefs in `saveDemoAsProject.ts` use `/demo`, the
-  "Back to the editor" link of `src/app/preview/page.tsx` points at `/demo`, and an old address `/?page=…` or
-  `/?preview=1` redirects to `/demo` with its query, so bookmarks and the address sync keep working.
+- **Nobody is sent to the login for opening app.lumitra.co.** A signed-out visitor keeps a way into the demo with no
+  account. Whether that is the demo itself (as today) or a welcome page in front of it is D4 below.
+- **Signed-in `/` shows the home.** One server-side session read (the existing `loadDashboard`). A signed-in person
+  with an active company gets the home; without a company, `/projects` with its chooser and "Sites not enabled" states
+  exactly as today. If auth-brain does not answer, `/` behaves as for a signed-out visitor, with a retry note, never an
+  error page and never a login loop.
+- **The demo stays at `/`, chosen by the address, not a new route.** A new `/demo` route would shadow any published
+  site's own page called "demo" (static app routes beat the site's catch-all, which is why `projects` and `preview`
+  are in `RESERVED_SLUG_SEGMENTS` of `src/lib/pages/slug.ts`), and adding `demo` to that list would break existing
+  pages. So `/` renders the demo editor when the query names it: `?demo=1`, or the demo's existing `?page=` and
+  `?preview=1` (old bookmarks and the address sync keep working). The address sync keeps `demo=1`. "Keep as project"
+  sends a signed-out person to `/projects?next=/?demo=1`; `safeEditorReturnPath` accepts exactly `/` and `/?demo=1`, a
+  fixed list, so the stashed demo is restored on the way back and no work looks lost. The "Back to the editor" link
+  of `src/app/preview/page.tsx` and every "Try the demo" link use `/?demo=1`.
 - **`/projects` stays the address of the signed-in home**, because the login's `return_to`, the company chooser,
-  `?switch=1`, `?next=` and every "Back to projects" link already use it. `/` for a signed-in person with an active
-  company renders the same home (one component, two routes); a person without a company goes to `/projects`, which
-  keeps the chooser and the "Sites not enabled" states exactly as they are.
+  `?switch=1`, `?next=` and every "Back to projects" link already use it. Signed-in `/` without a demo query redirects
+  there, so the home exists once.
 - **The list stays scoped to the active company.** "All projects" means all of this company's sites, with the company
   switcher on the home. Listing sites across companies on one page would mix tenants, which the multi-tenancy design
   forbids.
@@ -70,16 +72,25 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
   root layout sets them from a published site's theme, the data-table grid sheet relies on `.light`, the canvas
   frames get `.dark` from the site's own colour mode (`editorUI.frameDarkClass`), and Tailwind's `dark:` variant keys
   on `.dark` ancestors, so a dark editor marked with `.dark` would turn every site in the canvas dark. The interface
-  theme is `data-ui-theme="light|dark"` on `<html>` instead, set only on editor surfaces.
+  theme is `data-ui-theme="light|dark"` on `<html>` instead.
+- **The attribute is written by the root layout, in its no-site branch only.** Only the root layout renders `<html>`
+  and it serves published sites too; a wrapper element would not do, because menus and dialogs portal to `<body>`.
+  The layout already resolves the request's site (for the icon links and `htmlClass`); when no site resolves (the
+  editor host), it adds `data-ui-theme` from the cookie. A published host never reads the cookie and never gets the
+  attribute. S2 refreshes the published-base hash and extends `src/app/__tests__/publishedSheet.test.ts` to hold this.
 - **The preference is System (default), Light or Dark, kept per browser in a host-only cookie** (`lumitra_ui_theme`,
-  no `Domain` attribute, so it never reaches a published site on another subdomain). The server reads it and writes
-  `data-ui-theme` into the first HTML, so there is no flash; with no cookie the attribute is absent and CSS follows
+  no `Domain` attribute, so it never reaches a published site on another subdomain). The server writes the attribute
+  into the first HTML, so there is no flash; with no cookie the attribute is absent and CSS follows
   `prefers-color-scheme`, which also tracks a system switch live without script. Nothing goes into the account:
   a theme per device is the common expectation and needs no API.
-- **Where the switch lives:** in the account menu of the home, and in the editor's existing settings menu, named
-  "Interface theme" so it is not confused with the canvas's Light and Dark buttons, which show a site's own colour
-  mode to visitors. No new top-bar button, so the measured fold order of the top bar (plan 2026-11-12-top-bar-fold)
-  does not change.
+- **Where the switch lives:** the editor's "More actions" menu (`TopBar.tsx`) already holds "Theme", which is the
+  *site's* theme, so the interface switch goes into the same menu as its own group under a separator, named
+  "Appearance (this browser)" with System, Light and Dark. The demo uses the same top bar, so signed-out visitors have
+  it too. On the home it sits in the account menu, and on a signed-out welcome page (if D4 chooses one) in its top
+  bar. No new top-bar button, so the measured fold order of plan 2026-11-12-top-bar-fold does not change. It stays
+  apart from the canvas's Light and Dark buttons, which show a site's own colour mode to its visitors.
+- **Light mode keeps the mint legible:** mint (`#52ffa5`) on white is 1.3 : 1, so in light the star uses the suite's
+  light logo version (dark-green `#06764a`), and mint buttons keep their dark ink and get a `#06764a` edge.
 - **The canvas and published sites do not follow the interface theme.** A page on the canvas shows the site's own
   colours; only the ground around it (the dotted canvas) follows the interface. Published sites never load the editor
   sheet, and a test keeps it that way (see section 5).
@@ -103,6 +114,12 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 - **D3. How much lighter the dark gets.** Proposed: background `#0c1316`, surface `#131e23`, raised `#1a272d`
   (the visual direction's middle editor). Marketing keeps `#04090b`. If he wants it lighter still, the ramp moves up
   as a whole; the checks below hold either way.
+- **D4. What a signed-out visitor sees at app.lumitra.co.** Default, if he does not answer: the demo editor directly,
+  as today (nothing changes for signed-out visitors). Alternative, recommended: a short welcome page ("Try the editor"
+  opens the demo with no sign-in, "Sign in" goes to the shared login and back to the home), drawn in the visual
+  direction file. Reason for recommending it: a first visitor learns what the product is and finds the sign-in, and
+  the demo is still one click away; the cost is one click for people who came for the demo, plus marketing copy he
+  should approve.
 
 ## 3. Tokens (proposed; numbers computed 2026-11-23)
 
@@ -113,21 +130,24 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 | raised (menus, popovers) | `#1a272d` | `#ffffff` with shadow |
 | sunken (canvas ground, wells) | `#0a1012` | `#e9efec` |
 | line (dividers, decorative) | `#2a3b42` | `#d6e0dc` |
-| line-strong (field and control edges) | `#56707a` | `#7f948e` |
+| line-strong (field and control edges) | `#5c7780` | `#768b85` |
 | text | `#e8f2ef` | `#0a1714` |
 | muted text | `#9cb3ae` | `#4b5f5a` |
 | primary fill / ink | `#52ffa5` / `#03140c` | `#52ffa5` / `#03140c` |
-| primary as text, links, focus ring | `#52ffa5` | `#06764a` (mint fails as text on white) |
+| primary as text, links, focus ring, the star | `#52ffa5` | `#06764a` (mint is 1.3 : 1 on white) |
 | accent as text | `#6aa5ff` | `#1d5fd6` |
+
+Every figure is the lowest ratio of the pair against all four grounds (background, surface, raised, sunken),
+recomputed against the values of the table above:
 
 | Check | Dark | Light | Floor |
 | --- | --- | --- | --- |
-| Text on surface | 15.3 | 18.3 | 4.5 |
-| Muted on surface / on raised or sunken | 7.9 / 6.9 | 6.8 / 5.8 | 4.5 |
-| Field edge (line-strong) on surface | 3.2 | 3.2 | 3.0 |
-| Ink on primary | 14.6 | 14.6 | 4.5 |
-| Primary text or focus ring on surface | 13.5 | 5.7 | 4.5 text, 3.0 ring |
-| Accent text on surface | 7.0 | 5.7 | 4.5 |
+| Text | 13.4 | 15.7 | 4.5 |
+| Muted text | 6.9 | 5.8 | 4.5 |
+| Field edge (line-strong) | 3.2 | 3.1 | 3.0 |
+| Ink on primary fill | 14.6 | 14.6 | 4.5 |
+| Primary as text or focus ring | 11.8 | 4.9 | 4.5 text, 3.0 ring |
+| Accent as text | 6.2 | 4.9 | 4.5 |
 
 Surface steps stay small by design (1.1 : 1, like Linear or Figma); the separation comes from the step plus a
 visible line and, in light, a shadow. The suite's `tokens.css` sets `color-scheme: dark` on `:root`, so the light set
@@ -152,9 +172,10 @@ push, landed through land-pr.
    colour literals in editor components move to tokens; files that draw a site's own content (the canvas page, the
    published renderer) are on an explicit allow-list. A check fails on any new raw palette class or colour literal in
    editor chrome.
-4. **S4, the home and the demo move:** `/` as in section 2, `/demo` with the redirects and return paths, the home in
-   the chosen direction (D2), company switcher, account menu with sign out and the theme, empty state ("No sites
-   yet" with New site and Try the demo), the phone layout (fixes the overflow of section 1.4), titles per route.
+4. **S4, the home and the entry:** `/` as in section 2 (signed in to `/projects`, the demo by `?demo=1`, `?page=`
+   or `?preview=1`, the signed-out case as D4 decides), the return paths and the allow-list, the home in the chosen
+   direction (D2), company switcher, account menu with sign out and the theme, empty state ("No sites yet" with New
+   site and Try the demo), the phone layout (fixes the overflow of section 1.4), titles per route.
 5. **S5, proof:** the browser runs of section 5 on a local build, then on production after Marlin's deploy yes.
 
 S1 to S3 and S4 touch different files and can run in parallel after D1 and D2; S4 does not wait for the theme.
@@ -171,12 +192,13 @@ S1 to S3 and S4 touch different files and can run in parallel after D1 and D2; S
   changes while the page is open); resume (reload, a new tab, a deep link into `/projects/<id>`: the first paint is
   already in the chosen mode, measured by a screenshot taken before hydration); re-entry (sign out and in, the choice
   stays, because it belongs to the browser).
-- **The demo flow, the same four paths:** forward (`/demo`, edit, Keep as project, sign in, back at `/demo` with the
-  work, saved as a project); backtrack (cancel at the login or the chooser, return to `/demo` with the work intact);
-  resume (reload `/demo`, old `/?page=<id>` redirects with the page kept); re-entry (after saving, `/demo` starts a fresh
-  demo, as today).
-- **Entry paths:** signed out `/` shows the welcome with no login redirect; signed in `/` shows the home; signed in
-  without a company `/` leads to the chooser; auth-brain down shows the welcome with retry; `/projects` behaves as today.
+- **The demo flow, the same four paths:** forward (`/?demo=1`, edit, Keep as project, sign in, back at `/?demo=1`
+  with the work, saved as a project); backtrack (cancel at the login or the chooser, back at the demo with the work
+  intact); resume (reload, and an old `/?page=<id>` still opens the demo page, signed in or not); re-entry (after
+  saving, the demo starts fresh, as today).
+- **Entry paths:** signed out `/` gives the demo or the welcome (per D4) with no login redirect; signed in `/` goes to
+  the home; signed in without a company it leads to the chooser; auth-brain down behaves as signed out with a retry
+  note; `/projects` behaves as today; a published site's own page `/demo` is untouched (no new route).
 - **Accessibility:** axe on the home, the welcome and the editor in both modes; the theme control and the cards by
   keyboard alone; focus visible in both modes.
 - **Responsive:** home and welcome at 390, 768, 1280 and 1680 px with no horizontal scroll; the editor's phone layout
@@ -188,8 +210,8 @@ S1 to S3 and S4 touch different files and can run in parallel after D1 and D2; S
 
 - The host-only cookie protects visitors of published sites from the editor's preference changing their page. No
   attacker involved: a correctness boundary.
-- The return allow-list accepting `/demo` protects against an open redirect through `?next=` (a phishing link that
-  sends a signed-in person elsewhere after login). It stays a fixed list, extended by one path.
+- The return allow-list accepting `/?demo=1` protects against an open redirect through `?next=` (a phishing link that
+  sends a signed-in person elsewhere after login). It stays a fixed list of exact strings, extended by one.
 - Nothing else is added: the theme carries no data worth protecting.
 
 ## 7. Out of scope
