@@ -43,7 +43,7 @@ import { applyInventoryEffect, ReservationOverflowError, reserve, RESERVE_ISOLAT
 import { isLockTimeout } from '../provisioning/ownerSql';
 import type { PaymentEvent, PaymentProvider, ProviderId } from './provider';
 // A cycle (checkoutSession.ts imports this module): both only call each other's functions, never at load time.
-import { sessionAtExpiry, STRIPE_WAIT_PAST_HOLD_MS } from './checkoutSession';
+import { sessionAtExpiry, STRIPE_CALL_TIMEOUT_MS, STRIPE_WAIT_PAST_HOLD_MS } from './checkoutSession';
 import { demoCheckoutAllowed } from './demoCheckout';
 
 /** How long a pending payment holds its stock (the design: 30 minutes). */
@@ -541,7 +541,9 @@ export async function sweepExpiredPayments(
   for (const row of due) {
     try {
       if (row.provider_session_id !== null) {
-        const decision = await sessionAtExpiry(deps, tenantId, row.order_id, undefined);
+        // The sweep runs inside an order placement and a pay click, so a hanging Stripe must not hold them: an unanswered
+        // call ends at the same deadline as a click's, and past the wait the job's rule then closes the payment.
+        const decision = await sessionAtExpiry(deps, tenantId, row.order_id, AbortSignal.timeout(STRIPE_CALL_TIMEOUT_MS));
         // Paid after all (applied there), or not to be closed yet: nothing for the sweep to do.
         if (decision.kind !== 'close') continue;
       }

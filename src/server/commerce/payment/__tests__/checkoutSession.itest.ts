@@ -909,6 +909,10 @@ describe('review fixes: a close racing a create, closes under the lock, the pinn
     expect(await sweepExpiredPayments(shop.deps, shop.company)).toEqual([expiredOrder]);
     expect((await payment(expiredOrder)).status).toBe('expired');
     expect(await payment(paidOrder)).toMatchObject({ status: 'paid', provider_payment_id: paidSession.payment_intent });
+    // The sweep runs inside an order placement and a pay click: its Stripe reads carry a deadline of their own.
+    const reads = shop.sandbox.requests.filter((r) => r.method === 'GET' && r.path.startsWith('/v1/checkout/sessions/'));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const r of reads.slice(-2)) expect(r.signal).toBeInstanceOf(AbortSignal);
   });
 });
 
