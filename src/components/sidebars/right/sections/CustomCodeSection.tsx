@@ -63,7 +63,7 @@ interface Fields {
 type Loaded =
   | { phase: 'new' }
   | { phase: 'loading' }
-  | { phase: 'ready'; document: string; declaration: CustomCodeDeclaration }
+  | { phase: 'ready'; document: string; declaration: CustomCodeDeclaration; blocked?: boolean }
   | { phase: 'missing'; message: string }
   | { phase: 'failed'; message: string };
 
@@ -132,9 +132,9 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
       if (!live) return;
       if (result.ok) {
         const declaration = result.value.declaration ?? DEFAULT_DECLARATION;
-        setLoaded({ key: storedKey, value: { phase: 'ready', document: result.value.document, declaration } });
+        setLoaded({ key: storedKey, value: { phase: 'ready', document: result.value.document, declaration, blocked: result.value.blocked } });
       } else if (result.status === 404 && result.code === 'blob_not_found') {
-        setLoaded({ key: storedKey, value: { phase: 'missing', message: 'This site holds no code under this block\'s hash (it may have been copied from another site). Write the code and save it to store it here.' } });
+        setLoaded({ key: storedKey, value: { phase: 'missing', message: '' } });
       } else {
         setLoaded({ key: storedKey, value: { phase: 'failed', message: result.message } });
       }
@@ -292,7 +292,20 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
         {authoring.available && !proposal && (
           <>
             {current.phase === 'loading' && <p className={HINT} role="status">Loading the stored code…</p>}
-            {(current.phase === 'missing' || current.phase === 'failed') && <p className={REASON} role="alert">{current.message}</p>}
+            {current.phase === 'failed' && <p className={REASON} role="alert">{current.message}</p>}
+            {current.phase === 'missing' && (
+              <p className={REASON} role="alert">
+                {status?.branch
+                  ? 'A branch holds no code of its own: this block\'s code is stored with the main site. Open the main site to read or change it.'
+                  : 'This site holds no code under this block\'s hash (it may have been copied from another site). Write the code and save it to store it here.'}
+              </p>
+            )}
+            {current.phase === 'ready' && current.blocked && (
+              <p className={REASON} role="alert" data-custom-code-blocked="">
+                This code was taken down by Lumitra, so the published page shows the fallback. Write different code and save it, or
+                contact support if you think this is a mistake.
+              </p>
+            )}
             {storedProblem && (
               <p className={REASON} role="alert" data-custom-code-stored-problem="">
                 {storedProblem.message.replace('The block', 'The saved code')} Until then the published page shows the fallback.
@@ -362,12 +375,20 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
                 />
               )}
             </PropertyRow>
-            <SwitchRow
-              label="Visitors can click into it"
-              hint="Off: clicks, scrolling and the keyboard pass through it, for a scene behind the page's content."
-              checked={fields.declaration.interactive}
-              onCheckedChange={(interactive) => { if (!readOnly) editDeclaration({ interactive }); }}
-            />
+            {readOnly ? (
+              <PropertyRow label="Pointer">
+                <span className="text-[12px] text-foreground">
+                  {fields.declaration.interactive ? 'Visitors can click into it' : 'Clicks pass through it'}
+                </span>
+              </PropertyRow>
+            ) : (
+              <SwitchRow
+                label="Visitors can click into it"
+                hint="Off: clicks, scrolling and the keyboard pass through it, for a scene behind the page's content."
+                checked={fields.declaration.interactive}
+                onCheckedChange={(interactive) => editDeclaration({ interactive })}
+              />
+            )}
             <p className={HINT} data-custom-code-summary="">{describeDeclaration(declaration, nameOf)}</p>
             {draftProblem && dirty && <p className={REASON} role="alert">{draftProblem.message}</p>}
             {status && bytes !== null && (

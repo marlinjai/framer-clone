@@ -150,6 +150,12 @@ Every refusal says why, in the panel, and the route answers with a code and a se
 | `blocked` | 410 | This exact code was taken down. |
 | `declaration_state` | 422 | The declaration names a state that is not in reach of the block, or a text state. |
 | `rate_limited` | 429 | 30 saves in the last hour. The answer's `Retry-After` header and the sentence say when. |
+| `authz_unavailable` | 503 | The permission service did not answer. Nothing was saved; try again shortly. |
+| `custom_code_failed` | 500 | An unexpected failure. Nothing was saved. |
+
+A request without a session gets the sign-in answer every editor route gives (401). Reading one block
+(`GET ?sha256=`) answers `bad_hash` (400) for a malformed hash and `blob_not_found` (404) when this site
+holds no code under it, which is also what a branch answers for main's blocks.
 
 Saving the same code and declaration again stores nothing new and answers `200` (a new one is `201`).
 A change of the title alone is stored on the page, not as new code.

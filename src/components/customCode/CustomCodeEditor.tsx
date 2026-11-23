@@ -71,6 +71,11 @@ export function CustomCodeEditor({ id, value, onChange, label, readOnly = false,
     handle.current?.setReadOnly(readOnly);
   }, [readOnly, mode]);
 
+  // The name follows the block's title as it is typed.
+  React.useEffect(() => {
+    handle.current?.setLabel(label);
+  }, [label, mode]);
+
   return (
     <div className="flex flex-col gap-1" data-custom-code-editor={mode}>
       {mode !== 'rich' && (

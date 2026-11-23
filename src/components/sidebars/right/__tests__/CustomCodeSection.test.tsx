@@ -12,7 +12,7 @@ import type { PageModelType } from '@/models/PageModel';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import { customCodeHash, type CustomCodeDeclaration } from '@/lib/customCode/contract';
-import { CustomCodeAuthoringProvider } from '@/components/customCode/CustomCodeAuthoring';
+import { CustomCodeAuthoringProvider, canInsertCustomCode, type CustomCodeAuthoringValue } from '@/components/customCode/CustomCodeAuthoring';
 
 // A whole sidebar on a real store, hashing in the browser's crypto: slow when the suite runs in parallel.
 vi.setConfig({ testTimeout: 30_000 });
@@ -24,6 +24,13 @@ vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
 vi.mock('@/components/customCode/codeMirrorView', () => {
   throw new Error('not in jsdom');
 });
+
+// The autosave the panel asks to save the page first (D108): a fake controller per test, or none.
+let autosave: { flush: ReturnType<typeof vi.fn>; hasUnsavedWork: ReturnType<typeof vi.fn> } | undefined;
+vi.mock('@/lib/projects/autosave', async (original) => ({
+  ...(await original<typeof import('@/lib/projects/autosave')>()),
+  existingAutosave: () => autosave,
+}));
 
 import RightSidebar from '../../RightSidebar';
 import ComponentsPanel from '../../left/ComponentsPanel';
@@ -78,6 +85,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
 
 beforeEach(() => {
   server = { status: { ...STATUS }, blobs: new Map(), posts: [], refuse: null, network: false, hold: null };
+  autosave = undefined;
   vi.stubGlobal('fetch', vi.fn(fakeFetch));
   store = createRootStore();
   store.projectStore.createProject('Code');
@@ -355,5 +363,96 @@ describe('who may write, and where', () => {
     fireEvent.click(section().getByRole('switch', { name: 'Show the fallback on the canvas' }));
     expect((section().getByRole('switch', { name: 'Show the fallback on the canvas' }) as HTMLElement).getAttribute('aria-checked')).toBe('true');
     expect(JSON.stringify(block.props)).toBe(before);
+  });
+});
+
+describe('the page is saved before the code (D108)', () => {
+  it('asks the autosave to save the page, then posts', async () => {
+    const order: string[] = [];
+    autosave = { flush: vi.fn(async () => { order.push('flush'); }), hasUnsavedWork: vi.fn(() => false) };
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') order.push('post');
+      return fakeFetch(input, init);
+    });
+    mount();
+    const block = await insertBlock();
+    fill('Clock', '<p>x</p>');
+    await save();
+    expect(order).toEqual(['flush', 'post']);
+    expect((codeOf(block) as { title: string }).title).toBe('Clock');
+  });
+
+  it('posts nothing while the page is not saved, and says so', async () => {
+    autosave = { flush: vi.fn(async () => {}), hasUnsavedWork: vi.fn(() => true) };
+    mount();
+    const block = await insertBlock();
+    fill('Clock', '<p>x</p>');
+    await save();
+    expect(autosave.flush).toHaveBeenCalledTimes(1);
+    expect(server.posts).toEqual([]);
+    expect(section().getByRole('alert').textContent).toContain('The page is not saved yet');
+    expect(codeOf(block)).toBeNull();
+  });
+});
+
+describe('what the stored code says about itself', () => {
+  it('says when the code was taken down', async () => {
+    const declaration: CustomCodeDeclaration = { reads: [], writes: [], emits: [], sizing: 'fixed', interactive: true };
+    const sha256 = await customCodeHash('<p>bad</p>', declaration);
+    server.blobs.set(sha256, { title: 'Bad', document: '<p>bad</p>', declaration });
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await fakeFetch(input, init);
+      if (!String(input).includes('sha256=')) return res;
+      return json({ ...(await res.json()), blocked: true });
+    });
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    block.setCustomCode({ sha256, title: 'Bad' });
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(screen.getByText(/This code was taken down by Lumitra/)).toBeTruthy());
+  });
+
+  it('on a branch, sends to the main site for code it does not hold, instead of asking to save', async () => {
+    server.status = { ...STATUS, branch: true };
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    block.setCustomCode({ sha256: 'ef'.repeat(32), title: 'Main\'s' });
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(screen.getByText(/A branch holds no code of its own/)).toBeTruthy());
+    expect(screen.queryByText(/Write the code and save it/)).toBeNull();
+  });
+
+  it('shows the pointer as text, not a switch, to a person who cannot write', async () => {
+    server.status = { ...STATUS, canManage: false };
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(screen.getByText(/Only a workspace admin/)).toBeTruthy());
+    expect(section().queryByRole('switch', { name: 'Visitors can click into it' })).toBeNull();
+    expect(section().getByText('Visitors can click into it')).toBeTruthy();
+    expect((section().getByLabelText(/^Code of/) as HTMLTextAreaElement).readOnly).toBe(true);
+  });
+});
+
+describe('canInsertCustomCode (D101)', () => {
+  const value = (over: Partial<CustomCodeAuthoringValue>, status: Partial<typeof STATUS> = {}): CustomCodeAuthoringValue => ({
+    available: true,
+    projectId: 'p',
+    state: { phase: 'ready', status: { ...STATUS, ...status } },
+    reload: () => {},
+    fallbackShown: new Set(),
+    setFallbackShown: () => {},
+    ...over,
+  });
+
+  it('offers the block only with the server switch on, the site enabled, an admin, and not a branch', () => {
+    expect(canInsertCustomCode(value({}))).toBe(true);
+    // The server switch decides even over a status read some other way.
+    expect(canInsertCustomCode(value({ available: false }))).toBe(false);
+    expect(canInsertCustomCode(value({}, { enabled: false }))).toBe(false);
+    expect(canInsertCustomCode(value({}, { canManage: false }))).toBe(false);
+    expect(canInsertCustomCode(value({}, { branch: true }))).toBe(false);
+    expect(canInsertCustomCode(value({ state: { phase: 'loading' } }))).toBe(false);
+    expect(canInsertCustomCode(value({ state: { phase: 'failed', message: 'x' } }))).toBe(false);
   });
 });

@@ -74,6 +74,14 @@ describe.each([
     await page.close();
   });
 
+  it('follows a new name, as the block\'s title changes', async () => {
+    await open();
+    await page.evaluate(() => (window as unknown as { __handle: { setLabel(v: string): void } }).__handle.setLabel('Code of Big clock'));
+    expect(await page.locator('.cm-content').getAttribute('aria-label')).toBe('Code of Big clock');
+    expect(await page.locator('.cm-content').getAttribute('aria-describedby')).toBe('hint');
+    await page.close();
+  });
+
   it('is reached with Tab, takes typing, keeps a typed Tab out, and is left with Tab and Shift+Tab', async () => {
     await open();
     await page.focus('#before');

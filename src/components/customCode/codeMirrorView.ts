@@ -29,6 +29,8 @@ export interface CodeMirrorOptions {
 export interface CodeMirrorHandle {
   setValue(value: string): void;
   setReadOnly(readOnly: boolean): void;
+  /** Renames the editable content (the block's title changed). */
+  setLabel(label: string): void;
   focus(): void;
   destroy(): void;
 }
@@ -43,8 +45,12 @@ const theme = EditorView.theme({
 
 export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions): CodeMirrorHandle {
   const editable = new Compartment();
-  const attributes: Record<string, string> = { 'aria-label': options.label, 'aria-multiline': 'true' };
-  if (options.describedBy) attributes['aria-describedby'] = options.describedBy;
+  const named = new Compartment();
+  const attributesFor = (label: string) => {
+    const attributes: Record<string, string> = { 'aria-label': label, 'aria-multiline': 'true' };
+    if (options.describedBy) attributes['aria-describedby'] = options.describedBy;
+    return EditorView.contentAttributes.of(attributes);
+  };
   let applying = false;
   const view = new EditorView({
     parent,
@@ -63,7 +69,7 @@ export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions)
         // No indentWithTab: Tab moves the focus on (D112).
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping,
-        EditorView.contentAttributes.of(attributes),
+        named.of(attributesFor(options.label)),
         options.placeholder ? placeholder(options.placeholder) : [],
         editable.of([EditorState.readOnly.of(options.readOnly), EditorView.editable.of(!options.readOnly)]),
         theme,
@@ -86,6 +92,9 @@ export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions)
     },
     setReadOnly(readOnly: boolean) {
       view.dispatch({ effects: editable.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]) });
+    },
+    setLabel(label: string) {
+      view.dispatch({ effects: named.reconfigure(attributesFor(label)) });
     },
     focus() {
       view.focus();
