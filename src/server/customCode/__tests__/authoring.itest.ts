@@ -257,6 +257,15 @@ describe('the hourly limit', () => {
     expect(await writeCustomCodeBlob(input(), undefined, () => later)).toMatchObject({ ok: true, created: true });
   });
 
+  it('answers a write of code the site already holds even at the limit: it is not a new write (D105)', async () => {
+    const now = new Date('2026-11-23T12:00:00Z');
+    const first = await writeCustomCodeBlob(input(), undefined, () => new Date(now.getTime() - 20 * 60 * 1000));
+    expect(first).toMatchObject({ ok: true, created: true });
+    await seedWrites(CUSTOM_CODE_WRITES_PER_HOUR, new Date(now.getTime() - 10 * 60 * 1000));
+    const again = await writeCustomCodeBlob(input(), undefined, () => now);
+    expect(again).toMatchObject({ ok: true, created: false });
+  });
+
   it('serialises two writes at once: with room for one, exactly one is written', async () => {
     const now = new Date();
     await seedWrites(CUSTOM_CODE_WRITES_PER_HOUR - 1, new Date(now.getTime() - 60 * 1000));
