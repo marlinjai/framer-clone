@@ -73,7 +73,8 @@ let budget = 0;
  * The walk is bounded too, before its cost: JSON.stringify calls the replacer once for every value it writes,
  * every array slot included, and each writes at least one byte. So past 65,536 calls, or at a string or array
  * longer than 65,536, the message cannot be 64 KB of JSON, and it is refused at once instead of being built: a
- * sparse array of ten million slots costs its sender nothing and the page one call. (An object with its own
+ * sparse array of ten million slots is free to send in Chromium and Firefox (WebKit's clone visits every slot in the
+ * sender, residual M7 of the plan) and costs the page one call. (An object with its own
  * numeric `length` above that is refused with them.) The budget is in characters, not calls: each call charges
  * one, its property name's length (an array's slots have none in the JSON) and a string's length, and each of those is at most a byte of the JSON, so a
  * small shared graph with long keys (whose JSON is gigabytes) is refused as it is walked, before any of it is

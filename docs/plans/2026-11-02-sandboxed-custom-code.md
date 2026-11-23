@@ -1151,8 +1151,12 @@ names, asserted as such so a change shows; the plan's wish to prove the watchdog
 this harness. WebKit reaches the same residual through its own structured clone: it visits every index up to an array's length in
 the sender, so one sparse array of length 2^32-1 takes about 28 s to send on a laptop and about a minute on a CI runner, and since
 the frame runs in the page's process the page is held as long (CI run 45102875034). Nothing in the page can refuse it before it is
-paid; the page's own cost once the message arrives stays under 25 ms. The gate asserts both in every engine: the page's longest
-loop gap less the frame's own send stays under a second, and the send itself is over a second in WebKit and under one elsewhere.
+paid; the diagnosis measured the page's own cost once the message arrives at under 25 ms. What the gate asserts, per engine: in
+all three, the page's longest hold outside the frame's own send window stays under a second (every hold over 100 ms is recorded
+with its start and end on the wall clock the page and its frames share, and each is counted less only its overlap with the send,
+so page work in separate holds still shows; review 6 of pull request #452), the next write is taken and a click then answers
+within 2 seconds; the send itself is asserted over a second in WebKit and under one in Chromium and Firefox, so a change in any
+engine shows.
 WebKit's row uses length 2^28 (about 1.8 s to send on a laptop) so that every CI run is not held for a minute; Chromium and Firefox
 keep the greatest length.
 
