@@ -1256,6 +1256,17 @@ frozen while saving, read-only taking the field out of the tab order (when mount
 `replaces` taken on the request's word. The first M2 weakening survived, because the case only made the field read-only after
 mounting, a path the mutation did not touch; the case now covers both.
 
+**Review 2 of #459 (head `375bf48b`), all four findings fixed.** M1: a save still running when the person selected another element
+and came back left the reopened panel unlocked, so later typing was lost and the notice was false; the running save, its own write
+and its outcome now live per block in the authoring provider (D109). L1: the restored-draft notice was the initial text of a live
+region created with it, so likely never spoken; the region now lives in the provider, and a visible marker was added. L2: Retry
+dropped focus to the page and two buttons shared the name "Retry". L3: the Height dropdown and the pointer switch were not locked
+during a save. New proof: 7 jsdom cases on the real sidebar (37 in all): reopened mid-save then Code saved, no second Save, success
+and refusal while away, the live region, Retry focus, the two names; the M1 case now also checks Height and pointer. One browser
+case in Chromium and WebKit types into the real CodeMirror during a held save, before and after selecting away and back (6
+end-to-end cases in all), which also closes review 2's Info 3. Weakening: 8 of 9 caught by a failed expectation; the ninth (the
+save's own write not recognised) is equivalent, because the outcome is shown in the same commit and replaces the false sentence.
+
 ## Decided in slice C4, say so if you disagree
 
 Numbering continues after D98, the last number in this plan.
@@ -1339,10 +1350,17 @@ node still exists and still names that value; otherwise the blob stays stored (u
 "The block changed while saving, so nothing was applied to it". An undo or a live change from another tab closes
 the draft and says so. Selecting another element keeps the draft, per block, for this editor session, and it comes back with a
 notice when the block is selected again (review 1, L3: the fallback switch of D110 leads straight to another element). While a save
-runs, every field is frozen, read-only and still focusable, and the live region says so, so nothing typed meanwhile is lost; a
-failed save keeps the edits (M1). Saving again with nothing changed sends nothing; a change of the title alone is applied on the
+runs, every field is frozen, read-only and still focusable (the Height dropdown and the pointer switch say `aria-disabled`), and
+the live region says so, so nothing typed meanwhile is lost; a failed save keeps the edits (M1). The running save belongs to the
+block, not to the panel (review 2, M1): the editor's custom code provider keeps per block whether a save runs, the stored value it
+wrote, and how it ended. A panel opened on the block mid-save, after another element was selected, is frozen too and offers no
+second Save; the save's own write is not reported as a foreign change; and the outcome ("Code saved" or the refusal's sentence)
+is shown once by whichever panel is open when it ends, or on return. The live region lives in that provider, so a sentence set as
+the panel opens is announced, and a restored draft also shows "Unsaved edits from earlier" (review 2, L1). Saving again with nothing changed sends nothing; a change of the title alone is applied on the
 node only when this site holds the code, and a block whose hash this site does not hold posts its code. While the stored code
-failed to load, Save is off and a Retry loads it (L4).
+failed to load, Save is off and a Retry loads it (L4). A Retry stays in place, marked busy, while it reads again, and hands focus
+to the title field when the read succeeds; the two Retry buttons are named "Retry loading the stored code" and "Retry reading the
+custom code settings" (review 2, L2).
 
 **D110. The fallback is edited on the canvas behind a switch.** D42 left this to C4. The section has a switch "Show the fallback on
 the canvas": while it is on for a block, the canvas draws the block's box with its children instead of the tile, so the fallback is
