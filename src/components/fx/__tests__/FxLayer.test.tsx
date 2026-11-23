@@ -11,7 +11,6 @@ import type { ComponentInstance } from '@/models/ComponentModel';
 import { FxClaim } from '@/lib/fxScene/claim';
 import { fxFromPreset, setFxBackground, setFxCalm, setFxStart, type FxEdit } from '@/lib/fxScene/edit';
 import { FX_PROP } from '@/lib/fxScene/marker';
-import { FX_SETTLE_DELAY_MS } from '@/lib/fxScene/start';
 
 let store: RootStoreType;
 vi.mock('@/hooks/useStore', () => ({ useStore: () => store }));
@@ -123,7 +122,7 @@ describe('in the preview', () => {
     expect(active()[0].layer).toBe(document.querySelector('[data-fc-fx-layer]'));
   });
 
-  it('start settled: waits 1.5 seconds before the engine is fetched, and a frame that closes first fetches nothing', async () => {
+  it('start settled: waits for the first idle moment after load (a short breath where there are no idle callbacks), and a frame that closes first fetches nothing', async () => {
     vi.useFakeTimers();
     const view = render(
       <Frame claim={new FxClaim()}>
@@ -132,7 +131,7 @@ describe('in the preview', () => {
     );
     await flush();
     expect(states()).toEqual(['waiting']);
-    await act(async () => void vi.advanceTimersByTime(FX_SETTLE_DELAY_MS - 10));
+    await act(async () => void vi.advanceTimersByTime(40));
     expect(drawn).toHaveLength(0);
     await act(async () => void vi.advanceTimersByTime(20));
     await flush();
@@ -147,7 +146,7 @@ describe('in the preview', () => {
     );
     await flush();
     second.unmount();
-    await act(async () => void vi.advanceTimersByTime(FX_SETTLE_DELAY_MS * 2));
+    await act(async () => void vi.advanceTimersByTime(1000));
     expect(drawn).toHaveLength(0);
   });
 
