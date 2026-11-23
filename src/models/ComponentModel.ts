@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { replaceTokenReferences } from '@/lib/site/theme';
 import { isPlacementType } from '@/lib/components/placement';
-import { types, Instance, SnapshotIn, SnapshotOut, getParent, hasParent as hasMstParent } from 'mobx-state-tree';
+import { types, Instance, SnapshotIn, SnapshotOut, applySnapshot, getParent, getSnapshot, hasParent as hasMstParent } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { contentOf, tagRefusal } from '@/lib/styles/customEditor';
@@ -145,6 +145,32 @@ export interface PageBreakpoint {
   id: string;
   minWidth: number;
   label: string;
+}
+
+/**
+ * Every id on the page (or in the definition) holding `node`, outside `node` itself: the
+ * page's tree and every canvas node. Walks up to the page as findPageBreakpoints does.
+ */
+function idsOutside(node: unknown): Set<string> {
+  const out = new Set<string>();
+  const walk = (at: any) => {
+    if (!at || typeof at !== 'object' || at === node) return;
+    if (typeof at.id === 'string') out.add(at.id);
+    for (const child of at.children ?? []) walk(child);
+  };
+  let current: any = node;
+  let top: any = node;
+  while (current && hasMstParent(current)) {
+    current = getParent(current);
+    if (current && typeof current === 'object' && 'canvasNodes' in current && 'appComponentTree' in current) {
+      walk(current.appComponentTree);
+      for (const canvas of current.canvasNodes.values()) walk(canvas);
+      return out;
+    }
+    if (current && typeof current === 'object' && 'children' in current && 'type' in current) top = current;
+  }
+  walk(top);
+  return out;
 }
 
 /**
@@ -759,6 +785,29 @@ const ComponentModel: any = ComponentBase
       if (compact) next.behaviour = compact;
       else delete next.behaviour;
       self.props = next;
+      return { ok: true };
+    },
+
+    // A preset's items changed in the panel (src/lib/behaviour/presetItems.ts): its
+    // whole subtree is written as one action, so one undo step. The root keeps its id,
+    // so it stays where it stands; any other id is refused.
+    replaceSubtree(snapshot: Record<string, unknown>): RuleWrite {
+      if (snapshot.id !== self.id) return { ok: false, reason: 'A subtree keeps the id of the node it replaces.' };
+      // An id the new subtree brings may not be one a node outside it already holds: the
+      // tree would hold it twice, which MST does not refuse and every reference would misread.
+      const inside = new Set<string>();
+      const collect = (node: any, into: Set<string>) => {
+        if (!node || typeof node !== 'object') return;
+        if (typeof node.id === 'string') into.add(node.id);
+        if (Array.isArray(node.children)) node.children.forEach((child: unknown) => collect(child, into));
+      };
+      collect(getSnapshot(self), inside);
+      const incoming = new Set<string>();
+      collect(snapshot, incoming);
+      const outside = idsOutside(self);
+      const clash = [...incoming].find((id) => !inside.has(id) && outside.has(id));
+      if (clash) return { ok: false, reason: `${clash} is already an element elsewhere on the page.` };
+      applySnapshot(self, snapshot as never);
       return { ok: true };
     },
 

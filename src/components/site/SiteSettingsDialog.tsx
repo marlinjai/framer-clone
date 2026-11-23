@@ -64,6 +64,7 @@ import { literalPageTree } from '@/lib/renderer/server/snapshotToComponentNode';
 import { getSnapshot } from 'mobx-state-tree';
 import { GoogleMapsPrivacyHint } from './GoogleMapsPrivacyHint';
 import { SiteImageField } from './SiteImageField';
+import { HeadItemsSection } from './HeadItemsDialog';
 import { SiteImageLibrary } from './SiteImageLibrary';
 import { namedSiteImages } from '@/lib/site/siteImages';
 import { fxSiteImagePaths } from '@/lib/fxScene/fxScene';
@@ -413,6 +414,9 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
           </div>
         </section>
 
+        {/* Head items (src/lib/site/headItems.ts): written at once by their own action, not by Save. */}
+        <HeadItemsSection scope={{ kind: 'site', project }} />
+
         {/* The page base (src/lib/site/pageBase.ts): what elements look like before
             anyone styles them, on the published page, the preview and the canvas. */}
         <section className="flex flex-col gap-4" aria-labelledby="site-settings-appearance">
@@ -505,7 +509,7 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
                               updateRow(i, { days: on ? row.days.filter((d) => d !== day) : WEEKDAYS.filter((d) => d === day || row.days.includes(d)) });
                               touch(key)();
                             }}
-                            className={`h-7 rounded px-2 text-[11px] ${on ? 'bg-brand text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+                            className={`h-7 rounded px-2 text-[11px] ${on ? 'bg-brand text-brand-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
                           >
                             {DAY_SHORT[day]}
                           </button>

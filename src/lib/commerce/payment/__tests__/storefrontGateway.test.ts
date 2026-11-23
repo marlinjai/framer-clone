@@ -92,6 +92,34 @@ describe('StorefrontPaymentGateway', () => {
     expect(result).toMatchObject({ ok: false, code });
   });
 
+  it('a Stripe order found paid on a later click is paid, its receipt still to come', async () => {
+    const fetchImpl = answer(200, { status: 'paid', provider: 'stripe', receipt: null });
+    expect(await new StorefrontPaymentGateway(fetchImpl as unknown as typeof fetch).authorize(request)).toEqual({
+      ok: true,
+      provider: 'stripe',
+      transactionId: 'order 1',
+      receiptNumber: null,
+    });
+  });
+
+  it.each(['payment_processing', 'checkout_pending'])('a 409 %s keeps the order and passes the shop\'s message on, never "closed"', async (code) => {
+    const fetchImpl = answer(409, { error: { code, message: `the shop says ${code}` } });
+    expect(await new StorefrontPaymentGateway(fetchImpl as unknown as typeof fetch).authorize(request)).toEqual({
+      ok: false,
+      code: 'unavailable',
+      message: `the shop says ${code}`,
+    });
+  });
+
+  it('a 503 checkout_unavailable is retryable, in the shop\'s words', async () => {
+    const fetchImpl = answer(503, { error: { code: 'checkout_unavailable', message: 'The payment page could not be opened just now.' } });
+    expect(await new StorefrontPaymentGateway(fetchImpl as unknown as typeof fetch).authorize(request)).toEqual({
+      ok: false,
+      code: 'gateway_error',
+      message: 'The payment page could not be opened just now.',
+    });
+  });
+
   it('a network failure is a retryable gateway error', async () => {
     const failing = vi.fn(async () => {
       throw new Error('offline');

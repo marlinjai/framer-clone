@@ -6,7 +6,9 @@ import { HOME_REWRITE_SENTINEL } from '@/server/sites/homeSentinel';
 import { isEditorHost as isEditorHostname } from '@/lib/editorHost';
 import { previewHostAllows, publishedHostAllows, routeFor } from '@/lib/hostRoutes';
 import { isPreviewHost } from '@/lib/sites/previewHost';
-import { CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, reportOnlyPolicy } from '@/lib/site/cspReportOnly';
+import { CSP_ENFORCED_HEADER, CSP_REPORT_ONLY_HEADER, MAPS_CONSENT_COOKIE, MAPS_POLICY_TIMING, enforcedFramePolicy, reportOnlyPolicy } from '@/lib/site/cspReportOnly';
+// Dependency-free too: it imports only the import-free box contract.
+import { boxFrameSource } from '@/lib/customCode/customCode';
 // The dependency-free bearer test, NOT src/lib/auth-machine.ts: that pulls the
 // auth-brain SDK and `server-only`, which cannot run in the edge middleware.
 import { carriesBearer } from '@/lib/bearer';
@@ -164,15 +166,58 @@ function isCrossOriginWrite(request: NextRequest): boolean {
   }
 }
 
+/** Whether this request carries the visitor's maps consent (src/lib/site/cspReportOnly.ts). */
+function mapsConsented(request: NextRequest): boolean {
+  return request.cookies.get(MAPS_CONSENT_COOKIE)?.value === '1';
+}
+
+/**
+ * The enforced `frame-src` of a document that may hold a custom code frame
+ * (decision D6 of docs/plans/2026-11-02-sandboxed-custom-code.md): the box's
+ * path when this server is configured for it and its kill switch is off
+ * (src/lib/customCode/customCode.ts, read at run time like EDITOR_HOST), and
+ * Google after maps consent. Nothing else may be framed.
+ */
+function framePolicy(request: NextRequest): string {
+  return enforcedFramePolicy(
+    mapsConsented(request),
+    boxFrameSource({ CUSTOM_CODE_DISABLED: process.env.CUSTOM_CODE_DISABLED, SANDBOX_ORIGIN: process.env.SANDBOX_ORIGIN }),
+  );
+}
+
+/**
+ * Tells the page which maps policy its own response was served with, as a
+ * Server-Timing entry the consent runtime reads from the navigation timing: the
+ * cookie may change between the request and the script (another tab answers), the
+ * policy of this document cannot.
+ */
+function setMapsPolicyTiming(request: NextRequest, response: NextResponse): void {
+  response.headers.append('server-timing', `${MAPS_POLICY_TIMING};desc=${mapsConsented(request) ? '1' : '0'}`);
+}
+
 /**
  * A published page's response, carrying the report-only policy
- * (src/lib/site/cspReportOnly.ts). Only a document on a published host gets it:
- * the editor host never does, and it never blocks anything. Google Maps frames
- * are allowed only for a visitor whose maps consent the cookie records.
+ * (src/lib/site/cspReportOnly.ts), which never blocks anything, and the
+ * enforced frame policy (framePolicy). Only a document on a published host
+ * gets both: the editor host never does. Google Maps frames are allowed only
+ * for a visitor whose maps consent the cookie records.
  */
-function withReportOnlyPolicy(request: NextRequest, response: NextResponse): NextResponse {
-  response.headers.set(CSP_REPORT_ONLY_HEADER, reportOnlyPolicy(request.cookies.get(MAPS_CONSENT_COOKIE)?.value === '1'));
+function withPublishedPolicies(request: NextRequest, response: NextResponse): NextResponse {
+  response.headers.set(CSP_REPORT_ONLY_HEADER, reportOnlyPolicy(mapsConsented(request)));
+  response.headers.set(CSP_ENFORCED_HEADER, framePolicy(request));
+  setMapsPolicyTiming(request, response);
   return response;
+}
+
+/**
+ * True for the editor host's standalone preview of a project,
+ * `/projects/<id>/preview`, the one editor page that will run custom code
+ * frames (slice C3). Exactly that shape, on the normalized path: the editor,
+ * its other pages and the preview over the editor (`/projects/<id>?preview`)
+ * are not it.
+ */
+function isStandalonePreviewPath(pathname: string): boolean {
+  return /^\/projects\/[^/]+\/preview$/.test(normalizedPath(pathname));
 }
 
 /**
@@ -242,13 +287,20 @@ function refuseOnPublishedHost(request: NextRequest, routePath: string): NextRes
  *     working at once, also from a cache;
  *   - never sent on as a referrer: a link on the page, or a font or picture
  *     loaded from elsewhere, would hand the address to that site;
- *   - never framed: the page is the branch, shown to whoever holds the link.
+ *   - never framed: the page is the branch, shown to whoever holds the link;
+ *   - framing nothing (`frame-src 'none'; object-src 'none'`): a preview draws no frame (a map shows a
+ *     notice, a custom code block its fallback), so a frame a stored page could
+ *     sneak past the render gate is refused here too (decision D44 of
+ *     docs/plans/2026-11-02-sandboxed-custom-code.md).
  */
+/** The enforced policy of a preview host: never framed, and framing nothing. */
+const PREVIEW_HOST_POLICY = "frame-ancestors 'none'; frame-src 'none'; object-src 'none'";
+
 function withPreviewHeaders(response: NextResponse | Response): NextResponse | Response {
   response.headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
   response.headers.set('cache-control', 'private, no-store');
   response.headers.set('referrer-policy', 'no-referrer');
-  response.headers.set('content-security-policy', "frame-ancestors 'none'");
+  response.headers.set('content-security-policy', PREVIEW_HOST_POLICY);
   response.headers.set('x-frame-options', 'DENY');
   return response;
 }
@@ -338,7 +390,7 @@ async function route(request: NextRequest) {
       // home is rewritten with only the published cookies (publishedPassInit).
       const refused = refuseOnPublishedHost(request, `/${HOME_REWRITE_SENTINEL}`);
       if (refused) return refused;
-      return withReportOnlyPolicy(
+      return withPublishedPolicies(
         request,
         NextResponse.rewrite(new URL(`/${HOME_REWRITE_SENTINEL}`, request.url), publishedPassInit(request, bearer)),
       );
@@ -386,7 +438,7 @@ async function route(request: NextRequest) {
     // unmarked.
     const published = publishedPassInit(request, bearer);
     if (pathname === '/api' || pathname.startsWith('/api/')) return NextResponse.next(published);
-    return withReportOnlyPolicy(request, NextResponse.next(published));
+    return withPublishedPolicies(request, NextResponse.next(published));
   }
 
   // The matcher runs this for every API route so the cross-origin check above
@@ -441,6 +493,16 @@ async function route(request: NextRequest) {
     const loginUrl = new URL('/login', authBrainUrl);
     loginUrl.searchParams.set('return_to', returnTo);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // The standalone preview runs custom code frames as a published page does, so it
+  // gets the same enforced frame policy. Joined to `frame-ancestors 'none'` in one
+  // header: withFrameGuard adds that only where no policy is set yet.
+  if (isStandalonePreviewPath(request.nextUrl.pathname)) {
+    const response = NextResponse.next(pass);
+    response.headers.set(CSP_ENFORCED_HEADER, `frame-ancestors 'none'; ${framePolicy(request)}`);
+    setMapsPolicyTiming(request, response);
+    return response;
   }
 
   return NextResponse.next(pass);

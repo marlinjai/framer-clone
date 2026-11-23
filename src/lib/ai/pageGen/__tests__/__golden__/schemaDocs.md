@@ -148,6 +148,9 @@ props.fx:
 - A text layer draws its own words. Give it eyebrowText, headlineText, taglineText (leave one out to leave it empty), or set
   "visible": false; a text layer given no text is hidden. Text for people who cannot see the scene belongs in
   the children, not in the scene.
+- A "textBox" layer draws free-positioned words (its "text", where "position" puts its "anchor" point, "width" the
+  share of the scene it wraps in). It is decorative only: pixels no search engine or screen reader reads, never
+  the page's headline or any text a visitor needs. The page's real text goes in the children.
 
 Presets (each layer: id, kind, then its settings with the range and, in brackets, the preset's value):
 
@@ -182,6 +185,9 @@ Presets (each layer: id, kind, then its settings with the range and, in brackets
 - "bloom" (bloom): intensity 0 to 3 (0.55); threshold 0 to 1 (0.35); radius 0 to 1 (0.7)
 - "vignette" (vignette): offset 0 to 1 (0.4); darkness 0 to 1 (0.65)
 - "grain" (grain): opacity 0 to 1 (0.14); premultiply true or false (false)
+
+### FX preset "lumitra-light" (Lumitra Light): A ring of fine light particles in mint, light blue and indigo on near-black, leaning toward the pointer.
+- "ring" (particleRing): glow 0 to 2 (1); density 0.25 to 1 (1); seed 1 to 9999 (1); speed 0 to 2 (1)
 
 ## Fonts
 

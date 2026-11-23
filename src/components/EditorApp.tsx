@@ -31,7 +31,7 @@ import { resolveAction } from '@/lib/keyBindings';
 import { installSaveShortcut } from '@/lib/projects/saveShortcut';
 import { bindSpacePan, isActivatableControl } from '@/lib/canvas/spacePan';
 import { pageContentOf } from '@/lib/canvas/interactShim';
-import { deleteSelection } from '@/lib/canvas/deleteSelection';
+import { deleteSelection, routeFxLayerShortcut } from '@/lib/canvas/deleteSelection';
 import { duplicateLayer } from '@/lib/layers/layerActions';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { getSharedPrismaDataSourceProvider } from '@/lib/bindings/dataSource/prismaProvider';
@@ -39,6 +39,7 @@ import EditorCommerceProvider from '@/components/EditorCommerceProvider';
 import ProductPreviewBar from '@/components/ProductPreviewBar';
 import ShopPreviewBar from '@/components/ShopPreviewBar';
 import PreviewOverlay, { previewRequestedInLocation } from '@/components/preview/PreviewOverlay';
+import EditorCustomCodeSurface from './CustomCodeSurface';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 
 import { useStore } from "@/hooks/useStore";
@@ -205,6 +206,8 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         const page = rootStore.editorUI.currentPage;
         if (!page || rootStore.editorUI.selectedComponentList.length === 0) return;
         e.preventDefault();
+        // A picked layer of an FX scene is deleted instead of the box.
+        if (routeFxLayerShortcut('delete', rootStore.editorUI)) return;
         // Every selected node, as one undo step.
         deleteSelection(page, rootStore.editorUI, getHistoryStore());
         return;
@@ -216,6 +219,8 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         if (rootStore.editorUI.selectedTool === EditorTool.GRAB) return;
         const page = rootStore.editorUI.currentPage;
         if (!page || rootStore.editorUI.selectedComponentList.length === 0) return;
+        // A picked layer of an FX scene is copied instead of the box.
+        if (routeFxLayerShortcut('duplicate', rootStore.editorUI)) return;
         // Every selected node, as one undo step; the copies become the selection.
         duplicateLayer(page, rootStore.editorUI, getHistoryStore());
         return;
@@ -231,6 +236,8 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
           ui.setSelectedTool(EditorTool.SELECT);
           return;
         }
+        // A picked layer of an FX scene: Escape is back to the box.
+        if (routeFxLayerShortcut('clearSelection', ui)) return;
         // In a definition, Escape first lets go of what was picked, as everywhere,
         // and then leaves. Opening one selects its root, which counts as nothing
         // picked, so Escape straight after entering goes back out.
@@ -241,6 +248,13 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
         }
         if (!ui.selectedComponent && !ui.selectedViewportNode && ui.selectedComponentList.length === 0) return;
         ui.clearSelection();
+        return;
+      }
+
+      if (match.action === 'fxLayerForward' || match.action === 'fxLayerBackward' || match.action === 'renameLayer') {
+        // Only with a layer of an FX scene picked; otherwise the key is not ours.
+        if (rootStore.editorUI.selectedTool === EditorTool.GRAB || e.defaultPrevented) return;
+        if (routeFxLayerShortcut(match.action, rootStore.editorUI)) e.preventDefault();
         return;
       }
 
@@ -316,6 +330,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
       <DragManagerBinding />
       <ComponentDialogs />
 
+    <EditorCustomCodeSurface>
     <div className="relative w-screen h-screen">
       <Canvas />
 
@@ -367,6 +382,7 @@ export default function EditorApp({ projectSnapshot, projectVersion }: EditorApp
       {/* Preview over the editor, from this store (PreviewOverlay). */}
       <PreviewOverlay />
     </div>
+    </EditorCustomCodeSurface>
     </TransformProvider>
     </EditorCommerceProvider>
     </DataSourceProviderContext.Provider>

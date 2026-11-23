@@ -4,10 +4,15 @@
 // owner's Books. The browser never decides that an order is paid; it shows what the server answered.
 //
 // Answers, mapped to the PaymentResult the checkout renders:
-//   200 paid                    -> ok, with the receipt number when it is already issued
+//   200 paid                    -> ok, with the receipt number when it is already issued (a Stripe order found paid on a
+//                                  later click carries none yet: its receipt follows)
 //   200 redirect                -> ok with the hosted checkout page (Stripe) to send the buyer to
 //   402 payment_declined        -> declined (the order is closed: the checkout starts a new one)
 //   409 payment_closed          -> closed (paid or closed elsewhere, or expired: check out again)
+//   409 payment_processing      -> unavailable, with the shop's message: Stripe has the payment and its money is on the
+//                                  way, so the order is kept and nothing is to be done again
+//   409 checkout_pending        -> unavailable, with the shop's message: an earlier checkout page of the order may still
+//                                  be open, so the order is kept (pay there, or check out again once it has closed)
 //   409 buyer_fixed             -> refused, with the shop's message: a hosted checkout is made out to other details,
 //                                  the order keeps waiting (pay with those, or go back to the cart)
 //   422 buyer_not_invoiceable   -> refused, with the shop's own message (no money moved, the order keeps waiting)
@@ -15,6 +20,7 @@
 //   503 payments_unavailable    -> unavailable, with the shop's own message (the Books cannot issue the receipt yet:
 //                                  no money moved, and neither a correction nor a quick retry helps)
 //   422 buyer_required / 400    -> invalid (the buyer's details are missing or malformed)
+//   503 checkout_unavailable    -> gateway_error with the shop's message (Stripe did not answer: nothing charged, retry)
 //   anything else, or no answer -> gateway_error (retryable)
 
 import type { PaymentGateway, PaymentRequest, PaymentResult, RefusedBuyerField } from './types';
@@ -61,13 +67,19 @@ export class StorefrontPaymentGateway implements PaymentGateway {
     if (res.ok) {
       const body = (await res.json()) as {
         status: string;
+        provider?: string;
         receipt?: { number: string | null } | null;
         redirectUrl?: string;
       };
       if (body.status === 'redirect' && body.redirectUrl) {
         return { ok: true, provider: 'stripe', transactionId: request.orderId, redirectUrl: body.redirectUrl };
       }
-      return { ok: true, provider: this.id, transactionId: request.orderId, receiptNumber: body.receipt?.number ?? null };
+      return {
+        ok: true,
+        provider: body.provider === 'stripe' ? 'stripe' : this.id,
+        transactionId: request.orderId,
+        receiptNumber: body.receipt?.number ?? null,
+      };
     }
     const error = await errorOf(res);
     if (res.status === 402) {
@@ -76,6 +88,10 @@ export class StorefrontPaymentGateway implements PaymentGateway {
     if (res.status === 409 && error?.code === 'buyer_fixed') {
       // A hosted checkout is already made out to other details: the order keeps waiting, nothing to correct here.
       return { ok: false, code: 'refused', message: error.message ?? 'this order is already waiting for its payment with other details', fields: [] };
+    }
+    if (res.status === 409 && (error?.code === 'payment_processing' || error?.code === 'checkout_pending')) {
+      // Not closed: the money may be on its way, or an earlier page may still take it. The order is kept.
+      return { ok: false, code: 'unavailable', message: error.message ?? 'this order is still waiting for its payment. Nothing more is needed now.' };
     }
     if (res.status === 409) {
       return { ok: false, code: 'closed', message: error?.message ?? 'the order no longer takes a payment' };
@@ -94,6 +110,9 @@ export class StorefrontPaymentGateway implements PaymentGateway {
         code: 'unavailable',
         message: error.message ?? 'this shop cannot take payments yet. Nothing has been charged.',
       };
+    }
+    if (res.status === 503 && error?.code === 'checkout_unavailable') {
+      return { ok: false, code: 'gateway_error', message: error.message ?? 'the payment page could not be opened just now. Nothing has been charged; please try again.' };
     }
     const badFields = FIELD_HINTS.filter(([field]) => error?.issues?.some((issue) => issue.path?.at(-1) === field));
     if (res.status === 400 && badFields.length > 0) {

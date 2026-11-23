@@ -46,6 +46,40 @@ describe('applyBindings: an FX scene takes no binding', () => {
   });
 });
 
+describe('applyBindings: a custom code block takes no binding', () => {
+  it('never creates customCode where none is stored', () => {
+    const node: ComponentNode = {
+      type: 'div',
+      bindings: {
+        customCode: { mode: 'read', expression: '{{title}}' },
+        'customCode.sha256': { mode: 'read', expression: '{{title}}' },
+        'customCode.title': { mode: 'read', expression: '{{color}}' },
+        title: { mode: 'read', expression: '{{title}}' },
+      },
+    };
+    const { resolvedProps } = applyBindings(node, {}, rowScope());
+    expect(resolvedProps).not.toHaveProperty('customCode');
+    expect(resolvedProps).not.toHaveProperty(['customCode.sha256']);
+    // A neighbouring slot still binds.
+    expect(resolvedProps.title).toBe('Hello World');
+  });
+
+  it('leaves a stored customCode and every path under it as stored', () => {
+    const stored = { sha256: 'a'.repeat(64), title: 'Calculator' };
+    const node: ComponentNode = {
+      type: 'div',
+      bindings: {
+        customCode: { mode: 'read', expression: '{{title}}' },
+        'customCode.sha256': { mode: 'read', expression: '{{title}}' },
+        'customCode.title': { mode: 'read', expression: '{{color}}' },
+      },
+    };
+    const { resolvedProps } = applyBindings(node, { customCode: stored }, rowScope());
+    expect(resolvedProps.customCode).toBe(stored);
+    expect(resolvedProps.customCode).toEqual({ sha256: 'a'.repeat(64), title: 'Calculator' });
+  });
+});
+
 describe('applyBindings: the `fx` of an SVG radialGradient binds like any attribute', () => {
   it('resolves a binding into it', () => {
     const node: ComponentNode = { type: 'radialGradient', bindings: { fx: { mode: 'read', expression: '{{title}}' } } };

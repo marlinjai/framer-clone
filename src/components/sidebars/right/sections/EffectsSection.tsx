@@ -7,6 +7,7 @@
 // state, and the Play button previews the appear on the selected element.
 import React, { useEffect, useState } from 'react';
 import { observer } from 'mobx-react-lite';
+import { isAlive } from 'mobx-state-tree';
 import { Play, Sparkles } from 'lucide-react';
 import { ComponentInstance } from '@/models/ComponentModel';
 import {
@@ -80,10 +81,20 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
     return () => query.removeEventListener?.('change', onChange);
   }, []);
 
-  const setAppear = (patch: Partial<AppearEffect>) =>
+  // A number field keeps what is typed until Enter or blur. Keyed on the element
+  // and the frame it edits, a field whose selection or frame changes without a
+  // blur unmounts, and its open draft is committed to the element and breakpoint
+  // it was typed on (src/hooks/useOpenDraft.ts) instead of being overwritten by
+  // the next element's value. The write is skipped when that element is gone.
+  const fieldKey = `${component.id}:${breakpointId ?? ''}`;
+  const setAppear = (patch: Partial<AppearEffect>) => {
+    if (!isAlive(component)) return;
     component.setEffect('appear', normalizeAppear({ ...appear, ...patch }), breakpointId);
-  const setScroll = (patch: Partial<ScrollEffect>) =>
+  };
+  const setScroll = (patch: Partial<ScrollEffect>) => {
+    if (!isAlive(component)) return;
     component.setEffect('scroll', normalizeScroll({ ...scroll, ...patch }), breakpointId);
+  };
 
   const hoverOptions = hoverOptionsFor(component.type, scroll.kind === 'parallax');
   const { distance, duration, delay, stagger, parallax } = EFFECT_LIMITS;
@@ -116,6 +127,7 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
           {SLIDES.has(appear.kind) && (
             <PropertyRow label="Distance" hint={`How far it travels, ${distance.min} to ${distance.max}px`}>
               <DimensionInput
+                key={fieldKey}
                 label=""
                 value={appear.distance}
                 units={['px']}
@@ -128,6 +140,7 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
           )}
           <PropertyRow label="Duration" hint={`In milliseconds, ${duration.min} to ${duration.max}. Keep reveals short.`}>
             <DimensionInput
+                key={fieldKey}
               label=""
               value={`${appear.duration}ms`}
               units={['ms']}
@@ -140,6 +153,7 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
           </PropertyRow>
           <PropertyRow label="Delay" hint={`Wait after it comes into view, in milliseconds, up to ${delay.max}`}>
             <DimensionInput
+                key={fieldKey}
               label=""
               value={`${appear.delay}ms`}
               units={['ms']}
@@ -161,6 +175,7 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
           {hasChildren && appear.stagger > 0 && (
             <PropertyRow label="Step" hint={`Time between two children, ${stagger.min} to ${stagger.max}ms`}>
               <DimensionInput
+                key={fieldKey}
                 label=""
                 value={`${appear.stagger}ms`}
                 units={['ms']}
@@ -223,6 +238,7 @@ export const EffectsSection = observer(({ component, breakpointId }: EffectsSect
           {scroll.kind === 'parallax' && (
             <PropertyRow label="Strength" hint={`The largest shift, ${parallax.min} to ${parallax.max}px`}>
               <DimensionInput
+                key={fieldKey}
                 label=""
                 value={scroll.strength}
                 units={['px']}

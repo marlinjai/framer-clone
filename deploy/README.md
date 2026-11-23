@@ -81,7 +81,7 @@ How the release of 2026-11-12 was done, and how the next one should be (site bra
 
 1. **Pin the commit.** Tag the reviewed commit and dispatch the build from the tag (`gh workflow run deploy --ref <tag>`), never from a moving `main`. Check that the run's commit equals the pin.
 2. **The image.** The build job pushes it as `latest` and under the commit hash. Before deploying, check in the registry that `latest` and the pin's hash are one image and that no other deploy run is in flight: `latest` is what Coolify pulls, and it is mutable.
-3. **The deployment.** The workflow's own deploy step calls the shared Coolify webhook, which **answers HTTP 405 since 2026-11-12** (the shared `coolify-deploy-verify` workflow sends a GET), so that step fails before it starts anything. Until the shared workflow is fixed, start the deployment through the Coolify API for the application.
+3. **The deployment.** The workflow's own deploy step calls the shared Coolify webhook. It answered HTTP 405 from 2026-11-12 and works again since (on 2026-11-16 it started the production deployment by itself right after the build), so **dispatching the workflow deploys**: do every check that must precede the deployment (a rehearsal, a role change) before `gh workflow run`, not after the build. When the step does fail, start the deployment through the Coolify API for the application.
 4. **Proof that the new image serves.** A green deployment can still be the old container answering. The running container's `COMMIT_SHA` must equal the pin, its image digest the registry's, and `_prisma_migrations` must hold every migration of the pin with none failed.
 5. **A changed variable needs a redeploy**, not only a restart, and each redeploy pulls `latest` again: repeat check 2 before it.
 
@@ -173,10 +173,12 @@ not only of the start step. That is acceptable because the owner role is bounded
   server files, bypass row security, or act as a superuser. The start step refuses
   any owner URL that is not exactly this role (see the start sequence above).
 
-A leaked owner URL therefore exposes the shop data of every company and the shop
-schema, not the rest of the database or the server. Moving provisioning off the
-request path (a job seam) would let the owner URL leave the server process; that
-is the deferral noted in the route.
+A leaked owner URL exposes the shop data of every company and the shop schema.
+Until the database role hardening on `ROADMAP.md` is complete, it may also reach
+objects outside those schemas through the database's default search path, so do
+not treat the bounds above as a guarantee. Moving provisioning off the request
+path (a job seam) would let the owner URL leave the server process; that is the
+deferral noted in the route.
 
 **No superuser fallback.** The infra RUNBOOK allowed `COMMERCE_OWNER_DATABASE_URL`
 to fall back to the database's bootstrap user if the non-superuser owner did not
@@ -195,7 +197,8 @@ unknown startup parameters is not the failure mode.
 `prisma/sql/commerce-roles.sql` sets all of this up on Postgres 16 or later and is
 safe to run again. It also takes `CREATE` on `public` and `TEMPORARY` on the
 database away from every role (`PUBLIC`), which matters for databases restored from
-older dumps; nothing in the app needs either. It creates both roles without a login; the RUNBOOK's
+older dumps; nothing in the app needs either. `commerce_ddl` keeps `CREATE` on
+`public` only until the first start (see "Privileges on public" below). It creates both roles without a login; the RUNBOOK's
 `07-commerce-roles.sh` then gives each a login with a freshly generated password and
 writes both URLs into Infisical without printing them. The integration test
 `src/server/commerce/provisioning/__tests__/roles.itest.ts` proves the whole chain
@@ -228,6 +231,42 @@ It leaves both logins and passwords alone. Check the result with
 and `SELECT count(*) FROM pg_auth_members WHERE roleid = 'commerce_app'::regrole
 AND member = 'commerce_ddl'::regrole` (expect `0`). A deploy that runs first fails
 its start step with exactly that instruction.
+
+### Privileges on public
+
+`commerce_ddl` holds `USAGE` on `public` and, after the first start, no `CREATE`.
+Objects in `public` resolve through the search path of every role that keeps
+`public` on it, the database superuser included, so only the superuser adds
+objects there. The roles file grants `CREATE` on `public` only to a fresh database
+(no `public.__public_db_migrations` yet), whose first start creates the registry,
+and takes it away when it is re-applied after that start. `@marlinjai/tenant-db`
+0.3.1 or later is required: 0.3.0 and older recreate their tracking table with
+`CREATE TABLE IF NOT EXISTS` on every start, which needs `CREATE` even when the
+table exists, so the start fails with `permission denied for schema public`.
+
+**A new public migration** (a new entry in the tenant-db public set, or a
+commerce public migration that adds an object in `public`) needs the privilege for
+the one deploy that applies it. As the database superuser, right before that deploy:
+`GRANT CREATE ON SCHEMA public TO commerce_ddl;` and after the start has applied it,
+re-apply `prisma/sql/commerce-roles.sql` (or `REVOKE CREATE ON SCHEMA public FROM
+commerce_ddl;`). Without the grant that start fails with Postgres's permission error
+and records nothing.
+
+Check: `SELECT has_schema_privilege('commerce_ddl', 'public', 'CREATE')` (expect `f`).
+
+### The superuser's search path
+
+The database superuser (`framer_clone`, which `DATABASE_URL` logs in as) has
+`search_path = public` for this database, set once by
+`ALTER ROLE framer_clone IN DATABASE framer_clone SET search_path = public` (in
+place on production since 2026-11-16). Without it the default path starts with
+`"$user"`, a schema named after the role that any role with `CREATE` on the
+database could create. Do not pin it to `pg_catalog` alone: `prisma migrate deploy`
+then no longer finds `_prisma_migrations` and fails the start. Raw SQL calls
+built-in functions by their `pg_catalog.` name (`rawSqlCatalogQualified.test.ts`
+keeps it that way). Check:
+`SELECT setconfig FROM pg_db_role_setting WHERE setrole = 'framer_clone'::regrole`
+(expect `{search_path=public}`); a rebuilt database needs the `ALTER ROLE` again.
 
 ## Environment
 
@@ -269,6 +308,8 @@ says where each comes from.
 | `CUSTOM_DOMAIN_TARGET_IPV6` | no | Comma-separated IPv6 address(es) Traefik answers on. Unset means "no AAAA record allowed": a customer AAAA record pointing elsewhere is reported, because Let's Encrypt would try it first and fail |
 | `CUSTOM_DOMAIN_DNS_SERVERS` | no, recommended | Resolver IPs for the ownership check, e.g. `1.1.1.1,8.8.8.8`, so a TXT record a customer just added is not hidden by the container resolver's negative cache |
 | `CUSTOM_DOMAIN_TLS_PROBE` | no | `off` skips the certificate probe that moves a domain from verified to active (it then stays verified) |
+| `SANDBOX_ORIGIN` | no, for custom code | The origin of the custom code box, exactly `https://` and a host name, such as `https://run.<box domain>` (plan `docs/plans/2026-11-02-sandboxed-custom-code.md`, D37). Published pages and the standalone preview `/projects/<id>/preview` allow frames from its `/box/` path only while this is valid and `CUSTOM_CODE_DISABLED` is `0`. Unset (the default) means no page may frame the box, so every block shows its fallback; a set but malformed value is logged at start and treated as unset |
+| `CUSTOM_CODE_DISABLED` | no, for custom code | The kill switch, read exactly as the box reads it (D16): only `0` lets pages frame the box; unset or any other value keeps every block on its fallback. Read by the middleware at run time, so a change takes a restart |
 | `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timers present to `GET /api/internal/custom-domains/hostnames`, `POST /api/internal/custom-domains/recheck`, `POST /api/internal/commerce/expired-payments` and `POST /api/internal/commerce/jobs/run`. Unset means all four answer 503, the proxy keeps its last file, live domains are not re-checked, the expired payment sweep is off (each order's expiry job still closes it) and the job watchdog is off (the poller still runs) |
 
 A published site only injects analytics when its `lumitraEnabled` flag is set.
@@ -490,6 +531,75 @@ repeat the same search and erase on each affected site once the code is forward 
 A record whose branch older code deleted as a site is closed as discarded by the database (a trigger), so it keeps no
 copy and frees its name.
 
+## Sandboxed custom code: the schema and the box's role
+
+Plan `docs/plans/2026-11-02-sandboxed-custom-code.md`, slice C1b. The box (`services/box`) is the small service that will
+serve a site's own HTML and JavaScript into an isolated frame from its own domain. No deploy step of the
+application starts it (it gets its own host in operator step O1); this section is about what the application's database holds for it.
+
+**What migration `20261115000000_custom_code` adds.** Additive only; no existing row, column, constraint or privilege
+changes:
+
+- `sites.custom_code_enabled`, boolean, default false: every existing site stays off.
+- `custom_code_blobs`: one piece of code of one site, keyed by `(site_id, sha256)`, the hash of the code and its
+  declaration. Immutable (a trigger refuses any update but of `blocked_at`, the per-blob takedown); deleted with its site.
+- `custom_code_audit`: who did what to a site's code (enable, disable, blob-write, blob-erase, blob-block, blob-unblock,
+  proposal-accept), never the code. Append-only (a trigger refuses any update), and without a foreign key to the site,
+  so it outlives it.
+- `custom_code_proposals`: code an importer or an agent proposes; never served, never rendered; deleted with its site.
+- The function `box_document(site_id text, sha256 text)`, the only thing the box may call. `SECURITY DEFINER` with a
+  fixed `search_path`, it returns at most one row (`document`, `live`, `subdomain_labels`, `custom_hostnames`) for a
+  pair the caller already knows, and `document` is NULL unless the site has custom code on, the blob is not blocked and
+  its hash is not on the takedown list. EXECUTE is taken from PUBLIC, as on the migration's two trigger functions.
+- `custom_code_blocked_hashes`: the takedown list. A hash in it is served on no site, whatever happens to blob rows; no
+  foreign key to any site, so neither deleting a site nor erasing a company removes an entry. Because an erasure keeps
+  it, `blocked_by` holds an operator label only (`operator` or `operator:<channel>`, held by a `CHECK`), never a
+  person's id, and `reason` must name no person either.
+
+The triggers, the `CHECK` constraints and the function exist in the database only (Prisma's schema cannot name them),
+so `prisma migrate diff` does not list them. Run from the migrations to the schema on 2026-11-15, it showed only the two
+`site_branches` differences documented under "Site branches" and nothing for this migration. Nothing in the application reads
+or writes any of it until the guarded routes of later slices exist. Like every migration it is applied by the boot of
+the first deployment that contains it. Marlin approved this migration by name on 2026-11-15. Reversing it:
+`rollback.sql` beside the migration, **only after the application runs the previous image** (this image's Prisma client
+reads `sites.custom_code_enabled` on every site query); by hand, one transaction, safe to run twice, no `migrate
+resolve`; run it with `psql -X -v ON_ERROR_STOP=1 -1 -f`, as its header says (`-X` keeps a `~/.psqlrc` from turning the stop on error off); the rehearsal runs it twice and then lets `prisma migrate deploy` apply the migration again. It destroys every
+stored blob, proposal, audit row and takedown entry, so it needs its own explicit authorization; leaving the column, the tables and the
+function in place after a code rollback is the default.
+
+**The order rule between the migration and the box's role.** `prisma/sql/box-reader.sql` creates the role `box_reader`
+(and takes advisory locks, large objects, the write-ahead log and `CONNECT` from PUBLIC, decision D24 of the plan). It is
+applied separately, by the operator, once per database, after `commerce-roles.sql`, and **only with Marlin's yes by
+name**; the rollback is `prisma/sql/box-reader-rollback.sql`. `prisma migrate deploy`, by contrast, runs at every
+container start, and every fresh database (CI, local development, the integration tests) runs the migrations without
+the role file. So the EXECUTE grant on `box_document` is made from both sides, each only if the other side's
+object exists: the migration grants it to `box_reader` if the role exists, the role file grants it if the function
+exists. Whichever runs first, the end state is the same (EXECUTE for the function's owner and `box_reader`, nobody
+else), and a database without the role migrates as before. That holds also when the two run at the same time (the
+operator applies the role file while a container start is migrating): each side's check sees only what is committed,
+so both take the same transaction-level advisory lock (`pg_catalog.pg_advisory_xact_lock(7461001200)`, the
+migration's first statement, the role file's first in its transaction) and hold it until they commit; the later one
+waits, and its check then sees the other side's object. The rehearsal holds both orders of that race too.
+
+**Applying `box-reader.sql` (operator step O1).** Only with `psql -X -v ON_ERROR_STOP=1 -f prisma/sql/box-reader.sql`
+(and its rollback the same way), never with `\i` from an interactive session and never pasted. The file's first statement
+in its transaction takes the lock every container start's migration of slice C1b also takes, so a session left open on
+it (after an error under `\i`, or an interrupted paste) holds that lock and stops a container start that applies the
+migration `20261115000000_custom_code` (the first deploy with it, or one after its rollback) until it ends.
+If that happens, end the session at once: `ROLLBACK`, or quit psql.
+
+The rehearsal is
+`src/server/commerce/provisioning/__tests__/box-reader-roles.itest.ts`; the box's own integration
+suite builds its database from these files in production's order. Re-apply `box-reader.sql` after any restore, as
+`commerce-roles.sql` is: a plain dump does not carry the database's `CONNECT` rights. A dump restore runs no migration: it carries `_prisma_migrations` and every object as it was, and with them the grants, which name `commerce_app`, `commerce_ddl` and `box_reader`; restored into a fresh cluster, the restore stops at the first of them that does not exist (role does not exist). Before restoring into a fresh cluster, create the three roles bare, as superuser (`CREATE ROLE commerce_app NOLOGIN; CREATE ROLE commerce_ddl NOLOGIN; CREATE ROLE box_reader NOLOGIN`), restore, then apply `commerce-roles.sql` and `box-reader.sql`, which give them their shape. Do not apply `commerce-roles.sql` before the restore: its `CREATE SCHEMA IF NOT EXISTS ext` makes the dump's own `CREATE SCHEMA ext` fail, and a restore with `ON_ERROR_STOP` stops there. The role file's
+rollback leaves the grant on `box_document` in place: without a login the role cannot use it, and re-applying
+`box-reader.sql` restores it.
+
+**The app's own roles get nothing on these tables.** The application writes them as the Prisma role (the bootstrap
+superuser, `DATABASE_URL`), like every site table; `commerce_app` and `commerce_ddl` hold no right on the Prisma tables
+and are given none. Because no grant restrains a superuser, the immutability of a blob and the append-only audit are
+held by triggers, not by grants.
+
 ## Migration rollbacks
 
 `20261104000000_site_last_write_key` (the editor autosave's attempt keys, plan
@@ -500,16 +610,23 @@ redo. Do not drop anything to "tidy up" after a rollback.
 
 **Dropping the columns is destructive and needs its own explicit authorization** (the attempt keys of every site are lost,
 and the autosave of the previous image has no use for them either way). If it is authorized, do both steps in ONE
-transaction, after the application runs the previous image:
+transaction, after the application runs the previous image. Save the block below to a file and run it with
+`psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f <file>`, never pasted: with `-X` no `~/.psqlrc` can set
+`ON_ERROR_ROLLBACK`, which would undo only a failing `ALTER` and still commit the `DELETE`, and with `ON_ERROR_STOP` an
+error ends the run inside the transaction, so nothing commits:
 
 ```sql
 BEGIN;
-ALTER TABLE "sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
-DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261104000000_site_last_write_key';
+SET LOCAL search_path = pg_catalog, pg_temp;
+ALTER TABLE "public"."sites" DROP COLUMN "last_write_key", DROP COLUMN "last_write_version";
+DELETE FROM "public"."_prisma_migrations" WHERE "migration_name" = '20261104000000_site_last_write_key';
 COMMIT;
 ```
 
-The second statement is what makes the next deploy apply the migration again. **Do not use `prisma migrate resolve
+Like every file the operator applies as a superuser, it sets its own search path and names each object with its schema,
+so what it drops and deletes does not depend on the session's search path.
+
+The `DELETE` is what makes the next deploy apply the migration again. **Do not use `prisma migrate resolve
 --rolled-back` for this:** it works only on a migration Prisma recorded as FAILED, and for one that applied it stops with
 `P3012: cannot be rolled back because it is not in a failed state`. And do not drop the columns alone: Prisma still has
 the migration recorded as applied, answers "No pending migrations to apply", and the columns stay gone while newer code
@@ -547,6 +664,92 @@ replica keeps serving the erased company's cached pages until it restarts.
 
 Migration `20261102230000_site_erasures` is additive. Erase only once every container runs the new code: an older
 container neither refuses Save from editor tabs loaded before the erase nor knows the new cache key.
+
+## The box: the second application (sandboxed custom code)
+
+The box (`services/box`, plan `docs/plans/2026-11-02-sandboxed-custom-code.md`) is a separate small service that serves
+custom code blocks from their own domain. It is its own Coolify application with its own image, its own Infisical project
+and its own workflow (`.github/workflows/box.yml`); nothing in this application's image or start sequence changes for it.
+`services/box/README.md` ("How it starts", "Deploying") is the full reference. What the operator sets in step O1:
+
+| Where | What |
+|---|---|
+| Infisical | Project `framer-clone-box`, environment `prod`, path `/`, one secret: `BOX_DATABASE_URL` (the `box_reader` connection string on the private network the box shares with this Postgres; no encryption parameter, decision D23). Nothing else in that project: a value there overrides the container's environment. A machine identity with universal auth that can read this project only (decision D12) |
+| Coolify | Application `framer-clone-box`, from the image `ghcr.io/marlinjai/framer-clone-box` (the workflow points it at the digest of the image it deploys, in Coolify's `sha256-<hex>` tag form; there is no `latest`). Create it with the plain image name and a plain tag: an image given with a digest at creation through the API gets `@sha256` appended to its stored name, which the digest form would then break, on this Postgres's network, port 8080, **Coolify's own health check switched off** (it would replace the image's check with a shell command, and the image has no shell, `curl` or `wget`, so every deploy would fail; the image's own `HEALTHCHECK` applies, decision D55), read-only root file system, every capability dropped, no new privileges, 0.5 CPU, 256 megabytes, process limit 64 or more (decision D11), no volume. Environment: `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` (the box's identity, not this application's), `INFISICAL_PROJECT_ID`, `INFISICAL_ENVIRONMENT=prod`, and the box's settings (`BOX_EDITOR_HOST`, `BOX_SITES_BASE_HOST`, `BOX_TRUSTED_PROXIES`, the contacts, `CUSTOM_CODE_DISABLED`). Never `BOX_DATABASE_URL`: the box refuses to start with it |
+| GitHub | A GitHub environment `box-production`, deployment branches main only, holding the secrets `COOLIFY_BOX_WEBHOOK` (the box application's deploy webhook) and `COOLIFY_TOKEN` (a Coolify token with the read, write and deploy permissions, limited to the box application alone: the workflow reads and sets the application's image, starts the deploy and reads it). The limit narrows what a stolen token reaches, but it is not a server boundary: write on the box application can still set its run options (a privileged container, the Docker socket) and its pre- and post-deployment commands. What bounds the risk is that only the main-only `box-production` jobs can read the token. Coolify's allow-list of addresses for its API is a further option. Then the repository variable `BOX_DEPLOY_ENABLED=true`; `BOX_DEPLOY_PINNED` stays unset until a rollback. Until it is set the box workflow tests and pushes and deploys nothing (decision D57) |
+
+The order, in O1 and afterwards:
+
+1. **Deploy this application first,** so its migrations (slice C1b's `box_document`) are in the database. The box's
+   deploy waits for `/health/db`, which calls that function, so a box deployed before it fails its deploy. A later
+   migration the box reads goes the same way: this application's deploy, then the box's. The box workflow never
+   publishes while a change to `prisma/migrations` or `prisma/sql` lies between main and the commit running in
+   `box-production`; it says so in a notice, and the box is then deployed by a manual run (decision D56).
+2. Set up the box as in the table above, then run the `box` workflow on main by hand. It pushes the image the tests just
+   ran to `ghcr.io/marlinjai/framer-clone-box` under the commit's tag, points the Coolify application at the pushed
+   digest, calls the webhook, follows the deployment and waits until `https://run.lumitrausercontent.com/health/db`
+   answers.
+3. **Make the package readable by Coolify.** A new package on GitHub's container registry (GHCR) is private, and its
+   visibility can only be changed once it exists, so this first run pushes the image and then fails when Coolify cannot
+   pull it. In the package's settings on GitHub, make `framer-clone-box` public (the image holds no secret: the box's
+   one secret comes from Infisical at its start), or give Coolify a registry login for GHCR. Then run the workflow by
+   hand again.
+4. **Check what the first deploy proves,** in its log and in Coolify: the limited token read and set the image (a read
+   and a write), started the deploy (a deploy) and read the deployment until it finished (a read); Coolify took the `sha256-<hex>` tag and
+   runs `framer-clone-box@sha256:...` (its deployment log names the image); the image id held across `docker save` and
+   `docker load` on the runner. If Coolify refuses the digest form, see decision D53 of the plan.
+5. **Check the container reports healthy** in Coolify and in `docker inspect` (the image's own health check), and that
+   `/health/db` answers on the public host.
+6. **Check the box application's settings stay as documented,** after the first deploy and whenever the token may have
+   been exposed: no custom run options beyond the table above, no pre- or post-deployment command, the image name
+   `ghcr.io/marlinjai/framer-clone-box`.
+
+From then on a push to main publishes when the box's own files changed since the commit running in `box-production`
+(the last successful deployment there), so a run that was cancelled or failed is made good by the next one. Until one
+deployment has succeeded, every run counts as the first deploy, so a failed first deploy (step 3) is simply run again.
+Each deploy replaces the running container without waiting for the new one, since Coolify's health check is off:
+expect a few seconds of errors per deploy while the new box logs in and fetches its secret.
+
+When a run does not publish, it says why, and each case has a way out (decisions D56 and D59):
+
+| The run says | Way out |
+|---|---|
+| deploy the application first (the database changed) | Deploy the application, then run the workflow by hand on main |
+| too many changes to check the database (more than 300 files since the deployed commit) | Deploy the application if `prisma/migrations` or `prisma/sql` changed, then run the workflow by hand on main |
+| the commit running in `box-production` is not known, or is not an ancestor (the decision step fails) | Re-run it; or check in Coolify and GitHub what runs, then run the workflow by hand on main with `override_guard` (without it, the publish job's guard asks the same question and refuses again when the cause lasts) |
+| the guard refuses (in the publish job): not known, or an older run over a newer one | If meant after checking what runs, run the workflow by hand on main with `override_guard`; to go back on purpose, roll back instead |
+| pinned | Lift the pin (below), or run by hand with `publish_while_pinned` |
+| a deployment of the box is already queued or running in Coolify (nothing was changed) | Wait until it has ended in Coolify, or cancel it there if it is stuck, then re-run or run the workflow by hand on main |
+| the deploy started, then `/health/db` never answered (the error names the image Coolify now runs; the deploy line names the one it replaced) | Roll back to the replaced image (below), or fix main and publish again |
+
+A manual run waiting for a running one can be replaced by a later push run (GitHub keeps only the newest waiting run of
+a group), and that push may then hold the publish back for a database change: if a manual run shows as cancelled, look
+at the newer run's notice and run by hand again.
+
+**Rolling the box back** (decision D53):
+
+1. Set the repository variable `BOX_DEPLOY_PINNED=true`. While it is set nothing publishes, whatever a push changes, and
+   the rollback job refuses to run without it.
+2. Run the `box` workflow by hand on main with the input `rollback_digest` set to the digest of the image to go back to
+   (`sha256:...`). Take it from the "Pushed ... as ...@sha256:..." line of a publish run **on main**: any branch that can
+   write packages can add images to the same package, so a digest from elsewhere proves nothing. The rollback job
+   checks that the image is in the registry and deploys exactly it; nothing is rebuilt. After a failed `/health/db`, the image to go back to is the one the failed run's deploy line names as replaced ("it named ..."). It runs in a group of its own,
+   so a push cannot replace it while it waits.
+3. To lift the pin once main is fixed: if a migration landed since the rollback (a pinned run says so in its notice),
+   deploy the application first. Then set `BOX_DEPLOY_PINNED` to false and run the workflow by hand on main. Lifting
+   it without that run leaves the rolled-back image running, since the rollback is recorded in `box-production` as
+   main's commit and later pushes see no box change. A manual run with `publish_while_pinned` publishes main and leaves
+   the pin set: set `BOX_DEPLOY_PINNED` to false afterwards, and no further run is needed, since main is what was just
+   recorded.
+
+Re-running an older workflow run is not a rollback. A full re-run is refused once production has moved on (the
+deployed commit is then not an ancestor). "Re-run failed jobs" would keep the earlier decision and artifact, so the
+publish job asks again before pushing: it refuses while pinned and refuses unless the commit running in
+`box-production` is that run's commit or an ancestor of it. Re-running an old rollback run, by contrast, has no such
+check: while pinned it deploys that run's digest again, which is only right when that is the image meant.
+`override_guard` holds for the first attempt of a run only: a re-run of an override run (GitHub repeats its inputs) is
+refused by the guard, so an old override can never deploy its commit over a newer production. Start a new manual run
+instead, after checking again what runs.
 
 ## Operator commands (from a checkout, against a forwarded database)
 

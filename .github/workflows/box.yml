@@ -1,0 +1,410 @@
+name: box
+
+# The box: the small service that serves sandboxed custom code documents
+# (services/box, docs/plans/2026-11-02-sandboxed-custom-code.md).
+#
+# Every run, pull requests included: type check, lint, unit tests, the image
+# built and tested against a scratch Postgres and a stand-in for Infisical.
+#
+# Publishing and deploying (plan, decisions D53, D54, D56, D57 and D59) happen
+# only on main, only once the operator step O1 has set the repository variable
+# BOX_DEPLOY_ENABLED to true, never while the repository variable
+# BOX_DEPLOY_PINNED is true (a rollback holds), and only when the box's own
+# files changed since the commit running in box-production (the last
+# successful deployment there), or on a manual run on main.
+# services/box/ci/publishDecision.ts decides it. The image the tests just ran,
+# checked by its id, is pushed to ghcr.io/<owner>/framer-clone-box under the
+# commit's tag, and services/box/ci/deploy.ts points the box's Coolify
+# application at the pushed digest, starts and follows its deploy, and waits
+# until the box answers /health/db on its public host. A manual run with the
+# input rollback_digest redeploys an image already in the registry instead,
+# building nothing into production. The
+# webhook and the Coolify token are secrets of the GitHub environment
+# box-production, which only main may deploy to; nothing else in this workflow
+# can read them. A pull request never pushes and never deploys.
+#
+# Path-filtered: it runs when the box, the contract module it bundles, its
+# Dockerfile, this file, the Node version, or the database it reads changes
+# (the migrations and the role files, which its integration suite applies),
+# and never otherwise. A database change since the deployed commit is tested,
+# never published: migrations reach production with the application's deploy,
+# which is started by hand, so the run says to deploy the application and
+# then run this workflow by hand (decision D56).
+#
+# Every action is pinned by commit, with its version in a comment.
+
+on:
+  # A manual run on main publishes and deploys the current main (the first deploy after O1, after the
+  # application's deploy, or to lift a pin), or redeploys an image already pushed (a rollback).
+  workflow_dispatch:
+    inputs:
+      rollback_digest:
+        description: 'Roll back: the digest (sha256:...) of an image already in the registry to deploy again. Builds nothing into production. Set BOX_DEPLOY_PINNED first.'
+        type: string
+        default: ''
+      publish_while_pinned:
+        description: 'Publish main although BOX_DEPLOY_PINNED is true.'
+        type: boolean
+        default: false
+      override_guard:
+        description: 'Publish although the guard cannot confirm production runs this commit or an ancestor. Only after checking what runs.'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - services/box/**
+      - src/lib/customCode/contract.ts
+      - Dockerfile.box
+      - Dockerfile.box.dockerignore
+      - .github/workflows/box.yml
+      - .nvmrc
+      - prisma/migrations/**
+      - prisma/sql/**
+      # The three root files that leave services/ out of the application's checks: a change to
+      # them is checked here too, so the box cannot lose its checks unseen.
+      - tsconfig.json
+      - eslint.config.mjs
+      - .dockerignore
+  pull_request:
+    branches: [main]
+    paths:
+      - services/box/**
+      - src/lib/customCode/contract.ts
+      - Dockerfile.box
+      - Dockerfile.box.dockerignore
+      - .github/workflows/box.yml
+      - .nvmrc
+      - prisma/migrations/**
+      - prisma/sql/**
+      - tsconfig.json
+      - eslint.config.mjs
+      - .dockerignore
+
+permissions:
+  contents: read
+
+concurrency:
+  # Rollback runs have a group of their own, so a push can never replace a rollback that waits. A newer
+  # push cancels an older run of the same pull request. On main a running run is not cancelled, so a deploy
+  # that has started is finished and verified; a newer run waits, and of several waiting only the newest is
+  # kept (GitHub replaces a pending run with a newer one). A cancelled push run loses nothing: the newest
+  # run compares with the commit running in box-production, not with its own push. The two jobs that
+  # deploy (publish and roll back) also share one job-level group, so two deploys never overlap; a pinned
+  # push skips its publish job and never enters that group (decision D53).
+  group: box-${{ github.ref }}-${{ inputs.rollback_digest != '' && 'rollback' || 'build' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  box:
+    name: box
+    # The shared server is aarch64, so the image is built and tested on the same architecture.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Read only: which commit the last successful box-production deployment ran, and the run that made it.
+      deployments: read
+      actions: read
+    outputs:
+      publish: ${{ steps.publish.outputs.publish }}
+      image_id: ${{ steps.build.outputs.image_id }}
+    defaults:
+      run:
+        working-directory: services/box
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Reads the pnpm version from services/box/package.json "packageManager".
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: services/box/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: services/box/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
+
+      # The application's type check and lint leave services/ out (root tsconfig.json and
+      # eslint.config.mjs), so these two steps are the box's only ones and must stay.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      # The image's id is recorded here, and checked again before it is saved and after it is loaded for
+      # the push, so the image pushed is the one built here, whatever ran in between (decision D57).
+      - name: Build the image
+        id: build
+        working-directory: .
+        run: |
+          docker build -f Dockerfile.box -t framer-clone-box:ci .
+          echo "image_id=$(docker image inspect --format '{{.Id}}' framer-clone-box:ci)" >> "$GITHUB_OUTPUT"
+
+      # The built image and the store against a scratch Postgres, on a private
+      # docker network, published on 127.0.0.1 only.
+      - name: Image and database tests
+        env:
+          BOX_IMAGE: framer-clone-box:ci
+        run: pnpm test:integration
+
+      # Whether this run publishes: main, not a pull request, O1 done (the variable), not pinned, and either
+      # a manual run or a change to the box's own files since the commit running in box-production. A
+      # database change since then holds publishing back until the application is deployed, and not
+      # knowing what runs fails this step (decisions D56, D59). After the tests, so they report first.
+      - name: Does this run publish
+        id: publish
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          ENABLED: ${{ vars.BOX_DEPLOY_ENABLED }}
+          PINNED: ${{ vars.BOX_DEPLOY_PINNED }}
+          ROLLBACK_DIGEST: ${{ inputs.rollback_digest }}
+          PUBLISH_WHILE_PINNED: ${{ inputs.publish_while_pinned }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node services/box/ci/publishDecision.ts
+
+      # The image the suite just tested is the one that is pushed, byte for byte, never a rebuild. It goes to
+      # the publish job as an artifact because only that job asks to write packages and can read the deploy
+      # secrets.
+      - name: Keep the tested image
+        if: steps.publish.outputs.publish == 'true'
+        working-directory: .
+        env:
+          IMAGE_ID: ${{ steps.build.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          if [ "$(docker image inspect --format '{{.Id}}' framer-clone-box:ci)" != "$IMAGE_ID" ]; then
+            echo "::error::framer-clone-box:ci is no longer the image this job built; nothing is kept or pushed."
+            exit 1
+          fi
+          docker save framer-clone-box:ci | gzip -1 > "$RUNNER_TEMP/box-image.tar.gz"
+
+      - name: Upload the tested image
+        if: steps.publish.outputs.publish == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: box-image
+          path: ${{ runner.temp }}/box-image.tar.gz
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  # Push and deploy in one job, the only one in the environment box-production: its secrets (the box's
+  # deploy webhook and the Coolify token) reach no other job, and the environment admits main only. The
+  # stack's shared deploy workflow cannot be used here, because a called workflow cannot read the secrets
+  # of an environment it does not name itself (decision D57).
+  publish:
+    name: publish and deploy
+    needs: box
+    # The pin is read here too: a job that is skipped never joins the deploy group, so a push decided before
+    # the pin was set cannot replace a rollback waiting there.
+    if: needs.box.outputs.publish == 'true' && (vars.BOX_DEPLOY_PINNED != 'true' || inputs.publish_while_pinned)
+    runs-on: ubuntu-24.04-arm
+    # The push, then at most 15 minutes following Coolify and about 4 minutes of health tries.
+    timeout-minutes: 30
+    concurrency:
+      group: box-production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      # The guard asks again which commit runs in production.
+      deployments: read
+      actions: read
+    environment:
+      name: box-production
+      url: https://run.lumitrausercontent.com/health/db
+    env:
+      HEALTH_URL: https://run.lumitrausercontent.com/health/db
+    steps:
+      - name: Are the deploy secrets set
+        env:
+          HAS_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK != '' }}
+          HAS_TOKEN: ${{ secrets.COOLIFY_TOKEN != '' }}
+        run: |
+          if [ "$HAS_WEBHOOK" != "true" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::BOX_DEPLOY_ENABLED is true, but the environment box-production lacks COOLIFY_BOX_WEBHOOK or COOLIFY_TOKEN (deploy/README.md, the box)."
+            exit 1
+          fi
+
+      - name: Checkout the deploy scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .nvmrc
+            services/box/ci
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      # "Re-run failed jobs" keeps the box job's decision and artifact from an earlier attempt, so this job
+      # asks again, with its own token: the pin now, and whether the commit running in box-production is
+      # this one or an ancestor of it. An older run never deploys over a newer one.
+      - name: May this run still publish
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          PINNED: ${{ vars.BOX_DEPLOY_PINNED }}
+          PUBLISH_WHILE_PINNED: ${{ inputs.publish_while_pinned }}
+          OVERRIDE_GUARD: ${{ inputs.override_guard }}
+          GITHUB_TOKEN: ${{ github.token }}
+        # Passes only on the script's verdict line: a script that ran but checked nothing fails the step.
+        run: |
+          status=0
+          answer="$(node services/box/ci/publishDecision.ts guard)" || status=$?
+          printf '%s\n' "$answer"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          case "$answer" in
+            'May publish: '*) ;;
+            *) echo '::error::The guard printed no verdict, so nothing was checked; the box is not published.'; exit 1 ;;
+          esac
+
+      - name: Download the tested image
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: box-image
+          path: ${{ runner.temp }}
+
+      - name: Load the tested image and check it is the one built
+        env:
+          IMAGE_ID: ${{ needs.box.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          gunzip -c "$RUNNER_TEMP/box-image.tar.gz" | docker load
+          if [ -z "$IMAGE_ID" ] || [ "$(docker image inspect --format '{{.Id}}' framer-clone-box:ci)" != "$IMAGE_ID" ]; then
+            echo "::error::The loaded image is not the one the box job built and tested; nothing is pushed."
+            exit 1
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The commit's tag names the image for people; production is pointed at the digest the push reports,
+      # so what runs is this image whatever the tag holds later (decision D53).
+      - name: Push the tested image
+        id: push
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/framer-clone-box"
+          docker tag framer-clone-box:ci "$image:$SHA"
+          docker push "$image:$SHA"
+          digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' framer-clone-box:ci | sed -n "s#^$image@##p" | head -n 1)
+          if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::The push reported no digest for $image; nothing is deployed."
+            exit 1
+          fi
+          echo "Pushed $image:$SHA as $image@$digest (the digest to give rollback_digest to deploy this image again)."
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # Points the Coolify application at the digest, calls the deploy webhook, follows the deployment until
+      # it finishes and waits for /health/db. Every way it can go wrong fails the run; nothing Coolify answers
+      # is printed beyond the status names it knows, and the Coolify address and application id are masked.
+      - name: Deploy through Coolify
+        env:
+          COOLIFY_BOX_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        run: node services/box/ci/deploy.ts
+
+  # A rollback: deploys an image already in the registry, named by its digest, and builds nothing. Main only,
+  # O1 done, and in the same environment as the publish job, so it reads the same secrets and no other job
+  # does. It refuses unless BOX_DEPLOY_PINNED is true: without the pin the next push could publish main over
+  # it, and its publish job could replace this one while it waits in the deploy group (decision D53).
+  rollback:
+    name: roll back
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.rollback_digest != '' && vars.BOX_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    concurrency:
+      group: box-production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    environment:
+      name: box-production
+      url: https://run.lumitrausercontent.com/health/db
+    env:
+      HEALTH_URL: https://run.lumitrausercontent.com/health/db
+    steps:
+      - name: Is the image in the registry
+        env:
+          DIGEST: ${{ inputs.rollback_digest }}
+          OWNER: ${{ github.repository_owner }}
+          PINNED: ${{ vars.BOX_DEPLOY_PINNED }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::rollback_digest is not an image digest (sha256: and 64 hex digits)."
+            exit 1
+          fi
+          if [ "$PINNED" != "true" ]; then
+            echo "::error::Set the repository variable BOX_DEPLOY_PINNED to true first: without it the next push that changes the box publishes main over this rollback."
+            exit 1
+          fi
+          image="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/framer-clone-box"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          if ! docker buildx imagetools inspect "$image@$DIGEST" >/dev/null; then
+            echo "::error::$image@$DIGEST is not in the registry; nothing is deployed."
+            exit 1
+          fi
+          docker logout ghcr.io >/dev/null
+
+      - name: Are the deploy secrets set
+        env:
+          HAS_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK != '' }}
+          HAS_TOKEN: ${{ secrets.COOLIFY_TOKEN != '' }}
+        run: |
+          if [ "$HAS_WEBHOOK" != "true" ] || [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::The environment box-production lacks COOLIFY_BOX_WEBHOOK or COOLIFY_TOKEN (deploy/README.md, the box)."
+            exit 1
+          fi
+
+      - name: Checkout the deploy script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .nvmrc
+            services/box/ci
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Deploy through Coolify
+        env:
+          COOLIFY_BOX_WEBHOOK: ${{ secrets.COOLIFY_BOX_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          IMAGE_DIGEST: ${{ inputs.rollback_digest }}
+        run: node services/box/ci/deploy.ts

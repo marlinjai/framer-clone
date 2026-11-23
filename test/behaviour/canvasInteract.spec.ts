@@ -168,7 +168,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     expect(await editor(page, (api) => api.tool())).toBe('interact');
     // The HUD lets go of the selection while the page runs, and the toolbar says which tool.
     await expect.poll(() => overlay.isVisible()).toBe(false);
-    expect(await page.getByRole('button', { name: 'Interact' }).getAttribute('aria-pressed')).toBe('true');
+    expect(await page.getByRole('button', { name: 'Interact', exact: true }).getAttribute('aria-pressed')).toBe('true');
     await inFrames(page, 'btn').first().click();
     expect(await displays(inFrames(page, 'panel'))).toEqual(['block', ...Array(count - 1).fill('none')]);
     expect(await inFrames(page, 'btn').first().getAttribute('aria-expanded')).toBe('true');

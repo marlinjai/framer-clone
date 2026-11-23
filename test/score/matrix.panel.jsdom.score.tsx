@@ -22,6 +22,16 @@
 // The Custom section's add fields take a name, then a value, so typing the same few
 // probes into every field cannot reach them. For those the driver types each name of
 // the universe, as a person would, and only a real write counts.
+//
+// An event row asks whether a person can write, through the Interactions section, the
+// stored page of that event's proof in events.score.ts: the proof's tree is on the page
+// without its trigger, its host is selected, and the driver adds the interaction as a
+// person would (the event, then "Set a value", the value, true). The cell passes when the
+// node then holds exactly the trigger the proof stores and the parser refuses nothing on
+// it. An event picked from "All events" rather than the first list carries `raw field`.
+// report.ts lowers a cell whose proof does not run on the published page. The two
+// behaviour sections stay out of the sweep: a click there writes `behaviour`, which
+// counts for a pattern only when the palette places its preset.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,7 +40,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { applySnapshot, getSnapshot, isAlive } from 'mobx-state-tree';
 import { createRootStore, type RootStoreType } from '@/stores/RootStore';
-import { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
+import ComponentModel, { createIntrinsicComponent, type ComponentInstance } from '@/models/ComponentModel';
+import { readBehaviourTree, type BehaviourNode } from '@/lib/behaviour/format';
+import { isQuickEvent } from '@/lib/behaviour/authoring';
 import { COMPONENT_REGISTRY } from '@/lib/componentRegistry';
 import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
@@ -44,7 +56,8 @@ import { PATTERNS, treeVocabulary } from './patterns';
 import { allEntries, atRuleSample, attributeSample, cssValueSample, markupAttributeSample, mediaFeatureSample, namespaceOf, selectorSample, styleKeyOf } from './lib/universe';
 import { atRuleProbe, isPageLevelRow, isTopLayerRow, selectorProbe, wrapperProbe, type RuleProbe } from './lib/encodings';
 import { writeOut } from './lib/io';
-import { rowKey, type Cell, type GapId, type SurfaceResults } from './lib/types';
+import { RAW_FIELD, rowKey, type Cell, type GapId, type SurfaceResults } from './lib/types';
+import { EVENT_PROOFS, NOT_PROVEN, n as proofNode, type EventProof, type StoredProofNode } from './lib/eventProofs';
 
 let store: RootStoreType;
 
@@ -119,7 +132,8 @@ function record(before: Record<string, unknown>, after: Record<string, unknown>,
   const beforeProps = (before.props ?? {}) as Record<string, unknown>;
   const afterProps = (after.props ?? {}) as Record<string, unknown>;
   for (const key of new Set([...Object.keys(beforeProps), ...Object.keys(afterProps)])) {
-    if (key === 'style' || key === 'rules') continue;
+    // `behaviour` counts through the event rows and the palette's presets, never through the sweep.
+    if (key === 'style' || key === 'rules' || key === 'behaviour') continue;
     if (JSON.stringify(beforeProps[key]) !== JSON.stringify(afterProps[key])) {
       written.propKeys.add(key);
       written.propsOnTag.add(`${String(after.type)}.${key}`);
@@ -315,7 +329,7 @@ async function drive(scenario: Scenario, breakpointId?: string, customNames = fa
   for (let pass = 0; pass < 8; pass++) {
     const controls = Array.from(
       document.body.querySelectorAll('input,textarea,select,button,[role="switch"],[role="slider"],[role="combobox"]'),
-    ).filter((el) => !el.closest('[data-testid="state-switch"]'));
+    ).filter((el) => !el.closest('[data-testid="state-switch"],[data-testid="interactions-section"],[data-testid="page-state-panel"]'));
     let acted = false;
     for (const el of controls) {
       if (!el.isConnected || !isAlive(node)) continue;
@@ -418,6 +432,119 @@ async function driveRawField(scenario: Scenario): Promise<void> {
   cleanup();
 }
 
+/** The trigger every proof stores: set `hit` to true. */
+const proofTrigger = (event: string) => ({ id: 'proof', on: event, do: [{ set: 'hit', value: true }] });
+
+/** The stored page of a proof under its root, holding `on` wherever the event fires. */
+function proofPage(proof: EventProof, on: Record<string, unknown>): StoredProofNode {
+  const state = [{ id: 'hit', name: 'hit', type: 'boolean', initial: false }, ...(proof.state ?? [])];
+  return proofNode('proof-root', 'div', { behaviour: { state } }, ...proof.tree(on));
+}
+
+/** Every node of a stored tree, depth first. */
+const nodesOf = (node: StoredProofNode): StoredProofNode[] => [node, ...node.children.flatMap(nodesOf)];
+const triggersOf = (node: { props?: unknown }): Record<string, unknown>[] => {
+  const behaviour = (node.props as { behaviour?: { on?: unknown } } | undefined)?.behaviour;
+  return Array.isArray(behaviour?.on) ? (behaviour.on as Record<string, unknown>[]) : [];
+};
+const withoutId = (trigger: Record<string, unknown>): Record<string, unknown> => {
+  const rest = { ...trigger };
+  delete rest.id;
+  return rest;
+};
+
+/** What a person does in the Interactions section to write a proof's trigger; `verb` swaps the action for the negative control. */
+async function addThroughPanel(event: string, prevent: boolean, verb = 'set'): Promise<void> {
+  const button = Array.from(document.body.querySelectorAll('button')).find((el) => el.textContent?.trim() === 'Add interaction');
+  if (!button) throw new Error('the Interactions section has no Add interaction');
+  await act(async () => fireEvent.click(button));
+  const field = (label: string) => document.body.querySelector(`[data-testid="interactions-section"] [aria-label="${label}"]`);
+  const eventField = field('Event') as HTMLSelectElement | null;
+  if (!eventField || !Array.from(eventField.options).some((option) => option.value === event)) throw new Error(`the event list has no ${event}`);
+  await act(async () => fireEvent.change(eventField, { target: { value: event } }));
+  await act(async () => fireEvent.change(field('Action 1') as Element, { target: { value: verb } }));
+  if (verb === 'set') {
+    await act(async () => fireEvent.change(field('Value to change in action 1') as Element, { target: { value: 'hit' } }));
+    await act(async () => fireEvent.change(field('New value in action 1') as Element, { target: { value: 'true' } }));
+  }
+  if (prevent) {
+    const editor = document.body.querySelector('[data-testid="interactions-section"] [role="group"][aria-label="Interaction"]');
+    const toggle = editor?.querySelector('[role="switch"]');
+    if (!toggle) throw new Error(`${event} offers no way to stop the browser's own response`);
+    await act(async () => fireEvent.click(toggle));
+  }
+  const save = field('Add this interaction');
+  if (!save) throw new Error('the interaction has no Add button');
+  await act(async () => fireEvent.click(save));
+}
+
+/**
+ * The panel cell of one event row: the proof's page without its trigger, its host picked,
+ * the trigger added through the real panel. Passes when the host holds exactly the proof's
+ * triggers and nothing on it is refused.
+ */
+async function driveEvent(event: string, proof: EventProof, verb = 'set'): Promise<Cell> {
+  const wanted = proofPage(proof, { on: [proofTrigger(event)] });
+  const host = nodesOf(wanted).find((node) => triggersOf(node).some((trigger) => trigger.id === 'proof'));
+  if (!host) return fail('blocked-event-handlers', 'the proof stores no trigger');
+  const start = proofPage(proof, { on: [] });
+
+  store = createRootStore();
+  const { projectStore, editorUI } = store;
+  projectStore.createProject('Event probe');
+  const project = projectStore.findProjectByTitle('Event probe')!;
+  const page = project.findPageBySlug('')!;
+  editorUI.setCurrentProject(project);
+  editorUI.setCurrentPage(page);
+  const main = (page.appComponentTree as ComponentInstance).children[0] as ComponentInstance;
+  main.addChildren([ComponentModel.create(start as never)]);
+  const node = page.findComponent(host.id);
+  if (!node) return fail('blocked-event-handlers', `${host.id} did not land on the page`);
+  editorUI.selectComponent(node);
+
+  const view = render(
+    <DataSourceProviderContext.Provider value={new InMemoryDataSourceProvider()}>
+      <RightSidebar />
+    </DataSourceProviderContext.Provider>,
+  );
+  try {
+    const prevent = triggersOf(host).some((trigger) => trigger.id === 'proof' && trigger.prevent === true);
+    await addThroughPanel(event, prevent, verb);
+    const stored = triggersOf(node);
+    const expected = triggersOf(host);
+    // Triggers on one event run in order, so that order must match; across events order means nothing.
+    const byEvent = (list: Record<string, unknown>[]) => {
+      const out = new Map<string, string[]>();
+      for (const trigger of list) out.set(String(trigger.on), [...(out.get(String(trigger.on)) ?? []), JSON.stringify(withoutId(trigger))]);
+      return JSON.stringify([...out.entries()].sort(([a], [b]) => a.localeCompare(b)));
+    };
+    const same = stored.length === expected.length && byEvent(stored) === byEvent(expected);
+    if (!same) {
+      const alert = document.body.querySelector('[data-testid="interactions-section"] [role="alert"]')?.textContent;
+      return fail('blocked-event-handlers', alert ? `the panel refused it: ${alert}` : 'the panel did not write the trigger the proof stores');
+    }
+    const refused = readBehaviourTree(getSnapshot(page.appComponentTree) as unknown as BehaviourNode).refused.filter((entry) => entry.nodeId === host.id);
+    if (refused.length > 0) return fail('blocked-event-handlers', `written and refused: ${refused[0].reason}`);
+    return pass(isQuickEvent(event) ? undefined : RAW_FIELD);
+  } catch (error) {
+    return fail('blocked-event-handlers', String((error as Error).message).slice(0, 120));
+  } finally {
+    view.unmount();
+    cleanup();
+  }
+}
+
+/** Every event row through the Interactions section. A row with no proof stays red for the reason the other columns give. */
+async function driveEvents(): Promise<SurfaceResults> {
+  const cells: SurfaceResults = {};
+  for (const entry of allEntries().filter((e) => e.kind === 'html-event-handler' && !e.excluded)) {
+    const event = entry.id.slice(2);
+    const proof = EVENT_PROOFS[event];
+    cells[rowKey(entry.kind, entry.id)] = proof ? await driveEvent(event, proof) : fail('blocked-event-handlers', NOT_PROVEN[event] ?? 'no proof yet');
+  }
+  return cells;
+}
+
 /** Every style key the section sources name, whether or not a control for it was reached. */
 function referencedStyleKeys(): Set<string> {
   const dir = path.resolve(process.cwd(), 'src/components/sidebars/right/sections');
@@ -442,6 +569,10 @@ describe('coverage matrix: properties panel', () => {
     await drive(SCENARIOS[0], 'tablet-probe');
     await driveStates(SCENARIOS[0]);
     await driveRawField(SCENARIOS[0]);
+    // A write the parser refuses earns nothing: focus on a hover is refused, so this cell must fail.
+    const refusedWrite = await driveEvent('mouseenter', EVENT_PROOFS.mouseenter, 'focus');
+    expect(refusedWrite.status).toBe('fail');
+    const events = await driveEvents();
 
     const referenced = referencedStyleKeys();
     const paletteTags = new Set(Object.values(COMPONENT_REGISTRY).map((entry) => entry.htmlType as string));
@@ -482,7 +613,7 @@ describe('coverage matrix: properties panel', () => {
           break;
         }
         case 'html-event-handler':
-          results[key] = fail('blocked-event-handlers');
+          results[key] = events[key];
           break;
         case 'svg-element':
         case 'mathml-element':
@@ -495,16 +626,16 @@ describe('coverage matrix: properties panel', () => {
         }
         case 'css-selector':
           if (written.states.has(entry.id)) results[key] = pass('through the state switch');
-          else if (written.rawField.has(key)) results[key] = pass('raw field');
+          else if (written.rawField.has(key)) results[key] = pass(RAW_FIELD);
           else results[key] = fail(isPageLevelRow(entry.id) ? 'page-level-css' : isTopLayerRow(entry.id) ? 'top-layer-refused' : 'selector-styles');
           break;
         case 'css-at-rule':
-          if (written.rawField.has(key)) results[key] = pass('raw field');
+          if (written.rawField.has(key)) results[key] = pass(RAW_FIELD);
           else results[key] = fail(isPageLevelRow(entry.id) ? 'page-level-css' : entry.id === '@media' ? 'media-queries' : 'at-rules');
           break;
         case 'css-media-feature':
           if (entry.id === 'width' && written.breakpointOverride) results[key] = pass('as breakpoints');
-          else results[key] = written.rawField.has(key) ? pass('raw field') : fail('media-queries');
+          else results[key] = written.rawField.has(key) ? pass(RAW_FIELD) : fail('media-queries');
           break;
       }
     }
@@ -521,6 +652,7 @@ describe('coverage matrix: properties panel', () => {
       paletteTags: [...paletteTags].sort(),
       presetsPlaced,
       rawFieldRows: [...written.rawField].sort(),
+      rawFieldEvents: Object.entries(events).filter(([, cell]) => cell.note === RAW_FIELD).map(([key]) => key).sort(),
     });
-  }, 400_000);
+  }, 900_000);
 });

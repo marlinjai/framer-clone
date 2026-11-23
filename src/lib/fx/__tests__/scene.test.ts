@@ -27,22 +27,24 @@ const BUILT_IN_TYPES = [
   'halftone',
   'image',
   'noiseFill',
+  'particleRing',
   'pixelate',
   'rgbShift',
   'shape',
   'text',
+  'textBox',
   'vignette',
 ];
 
 describe('the built-in registry', () => {
-  it('registers exactly the 15 layer types of the plan', () => {
+  it('registers exactly the 17 layer types (the plan\'s 16 and the particle ring)', () => {
     expect(listLayerDefinitions().map((d) => d.type).sort()).toEqual(BUILT_IN_TYPES);
   });
 
   it('lists content types before post passes in the add picker', () => {
     const kinds = listAddableTypes().map((t) => t.kind);
-    expect(kinds.slice(0, 5)).toEqual(Array(5).fill('content'));
-    expect(kinds.slice(5)).toEqual(Array(10).fill('post'));
+    expect(kinds.slice(0, 7)).toEqual(Array(7).fill('content'));
+    expect(kinds.slice(7)).toEqual(Array(10).fill('post'));
   });
 });
 
@@ -66,7 +68,7 @@ describe('the lumitra.co hub hero scene (lumitra-web src/scenes/hub-hero.json at
 
 describe('the presets', () => {
   it('each load through the scene loader with known layer types only', () => {
-    expect(PRESETS.map((p) => p.id).sort()).toEqual(['bokeh-focuspull', 'godrays-hero', 'gold-noise-gradient', 'noise-gradient']);
+    expect(PRESETS.map((p) => p.id).sort()).toEqual(['bokeh-focuspull', 'godrays-hero', 'gold-noise-gradient', 'lumitra-light', 'noise-gradient']);
     for (const meta of PRESETS) {
       expect(findPreset(meta.id)).toBe(meta);
       const scene = meta.load();

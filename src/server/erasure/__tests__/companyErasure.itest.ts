@@ -116,9 +116,11 @@ async function countsOf(company: string, workspaces: string[]): Promise<Record<s
   await one('inventory_level', o`SELECT count(*) AS n FROM ${o(s)}."inventory_level" WHERE "inventory_item_id" IN (${items()})`);
   await one('stock_movement', o`SELECT count(*) AS n FROM ${o(s)}."stock_movement" WHERE "inventory_item_id" IN (${items()})`);
   await one('sites', o`SELECT count(*) AS n FROM public.sites WHERE "company_id" = ${company} OR "workspace_id" = ANY(${ws}::text[])`);
-  for (const table of ['site_domains', 'site_pages', 'site_revisions', 'site_images', 'site_erasures', 'site_operation_audits', 'agent_runs', 'dt_tables']) {
+  for (const table of ['site_domains', 'site_pages', 'site_revisions', 'site_images', 'site_erasures', 'site_operation_audits', 'custom_code_audit', 'custom_code_proposals', 'agent_runs', 'dt_tables']) {
     await one(table, o`SELECT count(*) AS n FROM public.${o(table)} WHERE "workspace_id" = ANY(${ws}::text[])`);
   }
+  // Blobs carry no workspace column: they are the company's through its site (and go with it by cascade).
+  await one('custom_code_blobs', o`SELECT count(*) AS n FROM public.custom_code_blobs WHERE "site_id" = ${fixture?.siteId ?? ''}`);
   await one(
     'dt_rows',
     o`SELECT count(*) AS n FROM public.dt_rows WHERE "table_id" IN (SELECT id FROM public.dt_tables WHERE "workspace_id" = ANY(${ws}::text[]))`,
@@ -175,6 +177,17 @@ async function seedCompany(label: string): Promise<Company> {
   });
   await prisma.siteOperationAudit.create({
     data: { siteId, workspaceId, tenantGroupId: env.tgId, actorKind: 'user', actorId: ACTOR, operation: 'publish' },
+  });
+  // Sandboxed custom code: a blob, a proposal and an audit row naming the actor.
+  const codeHash = createHash('sha256').update(`code-${company}`).digest('hex');
+  await prisma.customCodeBlob.create({
+    data: { siteId, sha256: codeHash, document: '<p>block</p>', declaration: {}, title: 'Block', createdBy: ACTOR },
+  });
+  await prisma.customCodeProposal.create({
+    data: { siteId, workspaceId, tenantGroupId: env.tgId, source: 'agent', document: '<p>proposed</p>', declaration: {}, title: 'Proposed', createdBy: ACTOR },
+  });
+  await prisma.customCodeAudit.create({
+    data: { siteId, workspaceId, tenantGroupId: env.tgId, actor: ACTOR, action: 'blob-write', sha256: codeHash },
   });
   await prisma.agentRun.create({
     data: {
@@ -436,6 +449,10 @@ describe('erasing one company of a shared tenant group', () => {
     openLiveGeneration(a.siteId, scopeA, 'run-a', { kind: 'newPage' });
     openLiveGeneration(b.siteId, scopeB, 'run-b', { kind: 'newPage' });
 
+    // A takedown of a hash company A served: the list names no company and must outlive the erasure (plan D32).
+    const takenDown = createHash('sha256').update(`takedown-${a.id}`).digest('hex');
+    await env.fx.prisma.customCodeBlockedHash.create({ data: { sha256: takenDown, blockedBy: 'operator', reason: 'phishing' } });
+
     const outcome = await eraseCompany({ eventId: randomUUID(), companyId: a.id, workspaceIds: [a.legacyWorkspaceId] }, prodLikeDeps());
     // Only the group's schema held anything of the company: the other suites' schemas were read, never locked.
     expect(outcome).toMatchObject({ status: 'erased', servedHere: true, commerce: { erasedIn: 1 } });
@@ -443,6 +460,9 @@ describe('erasing one company of a shared tenant group', () => {
     const after = await countsOf(a.id, workspacesA);
     expect(Object.entries(after).filter(([, n]) => n !== 0)).toEqual([]);
     expect(await countsOf(b.id, [b.workspaceId, b.legacyWorkspaceId])).toEqual(beforeB);
+    expect(outcome).toMatchObject({ publicRows: { customCodeAudits: 1 } });
+    // The takedown list is not erased.
+    expect(await env.fx.prisma.customCodeBlockedHash.count({ where: { sha256: takenDown } })).toBe(1);
     // The erased company's kept copy is gone from memory too; the other company's stays.
     expect(cachedDocument(scopeA, a.siteId, 1)).toBeUndefined();
     expect(cachedDocument(scopeB, b.siteId, 1)).toBe('{"of":"b"}');

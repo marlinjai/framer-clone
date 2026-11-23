@@ -1,6 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import { shareUnchanged } from '../structuralSharing';
 
+describe('shareUnchanged and an effect settings change', () => {
+  const node = (appear: Record<string, unknown>, text = 'A') => ({
+    id: 'n',
+    props: { effects: { appear }, text },
+  });
+
+  it('adopts a changed direction and duration, and keeps the objects around them', () => {
+    const slideUp = { kind: 'slide-up', distance: 16, duration: 280, delay: 0, stagger: 0 };
+    const old = { children: [node(slideUp), { id: 'm', props: { text: 'B' } }] };
+    const next = JSON.parse(JSON.stringify(old));
+    next.children[0].props.effects.appear = { ...slideUp, kind: 'slide-left', duration: 400 };
+    const out = shareUnchanged(old, next);
+    expect(out.children[0].props.effects.appear).toEqual({ ...slideUp, kind: 'slide-left', duration: 400 });
+    expect(out.children[1]).toBe(old.children[1]);
+  });
+
+  it('keeps the open copy when the server copy has the same settings', () => {
+    const appear = { kind: 'fade', distance: 16, duration: 350, delay: 0, stagger: 0 };
+    const old = { children: [node(appear)] };
+    expect(shareUnchanged(old, JSON.parse(JSON.stringify(old)))).toBe(old);
+  });
+});
+
 describe('shareUnchanged', () => {
   it('answers the old value itself when the content is equal', () => {
     const old = { a: 1, b: { c: [1, 2, { d: 'x' }] } };

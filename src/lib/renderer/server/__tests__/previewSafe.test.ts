@@ -5,6 +5,15 @@ import { MAP_EMBED_ATTR, MAP_EMBED_MARKER } from '@/lib/mapEmbed/mapEmbed';
 import { PREVIEW_MAP_NOTICE, previewSafeTree } from '../previewSafe';
 
 describe('previewSafeTree', () => {
+  it('draws a custom code block stored on a void tag as a span, so its fallback children stay visible', () => {
+    const tree = { type: 'img', props: { customCode: { any: 'thing' }, alt: 'x' }, children: [{ type: 'p', props: { children: 'fallback' } }] };
+    const safe = previewSafeTree(tree);
+    expect(safe.type).toBe('span');
+    expect(safe.props).toEqual({ alt: 'x' });
+    expect(safe.children).toEqual(tree.children);
+    expect(tree.type).toBe('img');
+  });
+
   it('drops what would hand the address to another site or send something there, in any letter case, at any depth', () => {
     const tree = {
       type: 'div',

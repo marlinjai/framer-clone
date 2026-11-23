@@ -1,0 +1,189 @@
+-- prisma/sql/box-reader-preflight.sql
+--
+-- READ ONLY. It changes nothing. Run it on the real database, as a superuser,
+-- BEFORE prisma/sql/box-reader.sql, and read what it prints. The rehearsal ran
+-- against a database built from this repository's migrations, so it cannot
+-- know the roles and functions that exist only in the real one. This file
+-- shows them.
+--
+--   psql -v ON_ERROR_STOP=1 -U <bootstrap superuser> -d <database> -f prisma/sql/box-reader-preflight.sql
+--
+-- It sets ON_ERROR_STOP itself too, so a query that fails is never mistaken
+-- for a section that printed nothing.
+
+\set ON_ERROR_STOP on
+
+-- Every name below resolves in pg_catalog and nowhere else: under the default
+-- path ("$user", public) a function someone created in public with a closer
+-- argument type (has_schema_privilege(text, oid, text), acldefault(text, oid))
+-- would win over the built-in and run with the superuser's rights.
+SET search_path = pg_catalog, pg_temp;
+
+\echo '== 1. Login roles that would LOSE CONNECT on this database (no grant of it by their own name; a role'
+\echo '==    that has it through a role it is a member of is listed too and keeps it).'
+\echo '==    Expected: none. For each role listed that should keep it: GRANT CONNECT ON DATABASE <db> TO <role>;'
+SELECT r.rolname AS role
+  FROM pg_roles r
+  CROSS JOIN pg_database d
+ WHERE d.datname = current_database()
+   AND r.rolcanlogin
+   AND NOT r.rolsuper
+   AND r.rolname NOT IN ('commerce_app', 'commerce_ddl', 'box_reader')
+   AND has_database_privilege(r.oid, d.oid, 'CONNECT')
+   AND NOT EXISTS (
+         SELECT 1 FROM aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) a
+          WHERE a.grantee = r.oid AND a.privilege_type = 'CONNECT')
+ ORDER BY 1;
+
+\echo '== 2. Non-superuser roles besides commerce_app and commerce_ddl (roles that cannot log in are listed too:'
+\echo '==    another role may act through them). Any of them that takes advisory locks needs:'
+\echo '==    a line for it in box-reader.sql. One that calls pg_logical_emit_message (replication or change'
+\echo '==    capture) would lose that too. Expected: only box_reader, or none.'
+SELECT rolname AS role, rolcanlogin AS can_log_in
+  FROM pg_roles
+ WHERE NOT rolsuper
+   AND rolname NOT LIKE 'pg!_%' ESCAPE '!'
+   AND rolname NOT IN ('commerce_app', 'commerce_ddl')
+ ORDER BY 1;
+
+\echo '== 3. Is the role the application uses for Prisma (DATABASE_URL) a superuser? It must be, or it needs'
+\echo '==    EXECUTE on the advisory lock functions by name (prisma migrate deploy takes one). All superusers:'
+SELECT rolname AS superuser FROM pg_roles WHERE rolsuper ORDER BY 1;
+
+\echo '== 4. Large objects in this database. Expected: 0. If not, something stores them and box-reader.sql would'
+\echo '==    take its right to; find out what before applying.'
+SELECT count(*) AS large_objects FROM pg_largeobject_metadata;
+
+\echo '== 5. Functions outside the system schemas that PUBLIC may execute (box_reader could call them).'
+\echo '==    Expected: only functions that return "trigger" (they cannot be called directly); today the four'
+\echo '==    of the site branches migrations. Anything else here is callable by box_reader: look at it first.'
+\echo '==    Names print with their schema (public.<name>), since the file sets its own search path; runs from'
+\echo '==    before that change printed them without it.'
+SELECT p.oid::regprocedure AS function, p.prorettype::regtype AS returns
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
+   AND has_schema_privilege('public', n.oid, 'USAGE')
+   AND EXISTS (
+         SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+          WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE')
+ ORDER BY 1;
+
+\echo '== 6. What PUBLIC holds on this database now (TEMPORARY should already be gone, by commerce-roles.sql).'
+SELECT a.privilege_type
+  FROM pg_database d, aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) a
+ WHERE d.datname = current_database() AND a.grantee = 0
+ ORDER BY 1;
+
+\echo '== 7. Other databases of this cluster that PUBLIC may connect to (box_reader could too; box-reader.sql does'
+\echo '==    not change that, see its header).'
+SELECT d.datname AS database
+  FROM pg_database d
+ WHERE d.datname <> current_database()
+   AND d.datallowconn
+   AND EXISTS (
+         SELECT 1 FROM aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) a
+          WHERE a.grantee = 0 AND a.privilege_type = 'CONNECT')
+ ORDER BY 1;
+
+\echo '== 8. Is box-reader.sql already applied? (advisory lock functions PUBLIC may still execute; 0 after it)'
+SELECT count(*) AS advisory_lock_functions_open_to_public
+  FROM pg_proc p
+ WHERE p.pronamespace = 'pg_catalog'::regnamespace
+   AND (p.proname LIKE 'pg!_advisory!_%' ESCAPE '!' OR p.proname LIKE 'pg!_try!_advisory!_%' ESCAPE '!')
+   AND EXISTS (
+         SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+          WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE');
+
+\echo '== 9. Tables, views and sequences outside the system schemas on which PUBLIC holds any right. box_reader'
+\echo '==    would hold it too, and "never a row of the application" would be false. Expected: none.'
+SELECT n.nspname || '.' || c.relname AS relation, c.relkind AS kind, a.privilege_type
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault((CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END)::"char", c.relowner))) a
+ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+   AND a.grantee = 0
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
+ ORDER BY 1, 3;
+
+\echo '== 10. Schemas outside the system schemas where PUBLIC holds a right.'
+\echo '==     Expected: public, USAGE only (it lets a role see names there, not read rows). Anything else, above'
+\echo '==     all CREATE: look at it first.'
+SELECT n.nspname AS schema, a.privilege_type
+  FROM pg_namespace n
+  CROSS JOIN LATERAL aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a
+ WHERE a.grantee = 0
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
+ ORDER BY 1, 2;
+
+\echo '== 11. Columns outside the system schemas on which PUBLIC holds a right (a grant on single columns,'
+\echo '==     which section 9 does not see). Expected: none.'
+SELECT n.nspname || '.' || c.relname || '.' || a.attname AS column_name, x.privilege_type
+  FROM pg_attribute a
+  JOIN pg_class c ON c.oid = a.attrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(a.attacl) x
+ WHERE a.attacl IS NOT NULL
+   AND NOT a.attisdropped
+   AND x.grantee = 0
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'
+ ORDER BY 1, 2;
+
+\echo '== 12a. Default privileges, as stored, that list PUBLIC: rights on objects created LATER. An entry for one'
+\echo '==      schema lists only what was added there. An entry for every schema stores the whole list for its'
+\echo '==      object type, Postgres'' built-in default included, so for functions (f) and types (T) it lists PUBLIC'
+\echo '==      even when nobody named PUBLIC. This listing does not show the built-in defaults where no entry'
+\echo '==      exists (12b does, for functions in every schema). Expected: none. A row for one schema, or for'
+\echo '==      tables (r), sequences (S) or schemas (n), gives PUBLIC, and so box_reader, a right on objects made'
+\echo '==      later.'
+SELECT pg_get_userbyid(d.defaclrole) AS for_objects_created_by, COALESCE(n.nspname, 'every schema') AS schema,
+       d.defaclobjtype AS object_type, x.privilege_type
+  FROM pg_default_acl d
+  LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+  CROSS JOIN LATERAL aclexplode(d.defaclacl) x
+ WHERE x.grantee = 0
+ ORDER BY 1, 2, 3, 4;
+
+\echo '== 12b. Per role that owns a table, view, sequence, function, type or schema outside the system schemas:'
+\echo '==      may PUBLIC, and so box_reader, execute a function that role creates LATER, IN EVERY SCHEMA? Postgres'
+\echo '==      says yes by default; only an entry for every schema that leaves PUBLIC out says no. A 12a row for one'
+\echo '==      schema overrides an f here for that schema: functions the role creates there are open to PUBLIC.'
+\echo '==      A role that may create functions but owns nothing yet is not listed; for it the answer is the'
+\echo '==      built-in default (yes) unless an entry for every schema leaves PUBLIC out (such an entry is not'
+\echo '==      in 12a, which lists only entries that name PUBLIC; it is in pg_default_acl).'
+\echo '==      Expected on production: t for every owner. Then every function a migration creates is open to'
+\echo '==      box_reader until the migration takes EXECUTE from PUBLIC; the rehearsal pins the functions of this'
+\echo '==      repository''s migrations. box-reader.sql does not depend on it: it grants by name.'
+SELECT r.rolname AS owner,
+       CASE WHEN EXISTS (
+              SELECT 1 FROM pg_default_acl d
+               WHERE d.defaclrole = r.oid AND d.defaclnamespace = 0 AND d.defaclobjtype = 'f')
+            THEN EXISTS (
+              SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) x
+               WHERE d.defaclrole = r.oid AND d.defaclnamespace = 0 AND d.defaclobjtype = 'f'
+                 AND x.grantee = 0 AND x.privilege_type = 'EXECUTE')
+            ELSE true
+       END AS public_may_execute_its_new_functions_in_every_schema
+  FROM pg_roles r
+ WHERE r.rolname NOT LIKE 'pg!_%' ESCAPE '!'
+   AND (EXISTS (
+         SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relowner = r.oid
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!')
+    OR EXISTS (
+         SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE p.proowner = r.oid
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!')
+    OR EXISTS (
+         SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE t.typowner = r.oid
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!')
+    OR EXISTS (
+         SELECT 1 FROM pg_namespace n
+          WHERE n.nspowner = r.oid
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg!_%' ESCAPE '!'))
+ ORDER BY 1;

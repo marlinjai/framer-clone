@@ -61,8 +61,8 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   },
   'src/server/domains/service.ts': { uses: 16, kind: 'mains-only', why: 'addDomain refuses a branch (409) before the trigger would' },
   'src/server/erasure/public.ts': {
-    uses: 12, kind: 'sees-branches',
-    why: 'deletes every site of the company, branches included (same company and workspace); names the branches that cascade with a main of the batch, so each one is forgotten in memory too',
+    uses: 14, kind: 'sees-branches',
+    why: 'deletes every site of the company, branches included (same company and workspace); names the branches that cascade with a main of the batch, so each one is forgotten in memory too; deletes the custom code audit rows by site or workspace, a branch\'s included (its blobs and proposals go with the site by cascade, the takedown list is kept)',
   },
   'src/server/commerce/editorTenant.ts': {
     uses: 1, kind: 'sees-branches',
@@ -99,8 +99,8 @@ const SRC = path.join(ROOT, 'src');
 
 const TOUCHES = new RegExp(
   [
-    String.raw`\.(?:site|sitePage|siteDomain|siteRevision|siteImage|siteExperiment|siteBranch|siteBranchPreview|siteErasure|siteOperationAudit|cspReportCount)\.(?:findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|count|updateMany|update|deleteMany|delete|create|createMany|upsert|groupBy|aggregate)\(`,
-    String.raw`\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:public\.)?"?(?:sites|site_pages|site_domains|site_revisions|site_images|site_branches|site_branch_previews|site_experiments|site_erasures|site_operation_audits|csp_report_counts)"?\b`,
+    String.raw`\.(?:site|sitePage|siteDomain|siteRevision|siteImage|siteExperiment|siteBranch|siteBranchPreview|siteErasure|siteOperationAudit|cspReportCount|customCodeBlob|customCodeAudit|customCodeProposal|customCodeBlockedHash)\.(?:findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|count|updateMany|update|deleteMany|delete|create|createMany|upsert|groupBy|aggregate)\(`,
+    String.raw`\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:public\.)?"?(?:sites|site_pages|site_domains|site_revisions|site_images|site_branches|site_branch_previews|site_experiments|site_erasures|site_operation_audits|csp_report_counts|custom_code_blobs|custom_code_audit|custom_code_proposals|custom_code_blocked_hashes)"?\b`,
   ].join('|'),
 );
 
@@ -130,6 +130,19 @@ describe('every use of the site tables is classified for site branches', () => {
   it('finds the uses at all (the detector works)', () => {
     expect(touching).toContain('src/server/sites/repository.ts');
     expect(touching).toContain('src/server/sites/siteImages.ts');
+  });
+
+  // The custom code tables are keyed by a site (the takedown list by a hash any site may carry); nothing in src reads
+  // most of them yet, so the detector itself is held to know each one, as a Prisma delegate and as raw SQL.
+  it.each([
+    ['customCodeBlob', 'custom_code_blobs'],
+    ['customCodeAudit', 'custom_code_audit'],
+    ['customCodeProposal', 'custom_code_proposals'],
+    ['customCodeBlockedHash', 'custom_code_blocked_hashes'],
+  ])('the detector knows %s and %s', (model, table) => {
+    expect(`await tx.${model}.findMany({})`).toMatch(TOUCHES);
+    expect(`SELECT 1 FROM public.${table} b`).toMatch(TOUCHES);
+    expect(`DELETE FROM "${table}" WHERE x`).toMatch(TOUCHES);
   });
 
   it.each(touching)('%s is classified', (file) => {

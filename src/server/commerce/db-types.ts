@@ -812,7 +812,16 @@ export interface OrderPaymentTable {
   version: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  // 028_checkout_request: unwritten since 031; read only to tell a payment whose session the build before confirmed (checkoutSession.ts), dropped in slice B9.
   checkout_request: JsonColumn<Record<string, unknown>> | null;
+  // 031_checkout_session: the Checkout Session id, set once after Stripe answered the create (BK018).
+  provider_session_id: string | null;
+  // 031_checkout_session: when Stripe ends the session, pinned once before Stripe is asked (BK018).
+  session_expires_at: Timestamp | null;
+  // 031_checkout_session: where the hosted page returns the buyer, pinned with the end (BK018).
+  session_return_url: string | null;
+  // 031_checkout_session: the connected account the session is made on, pinned with the end (BK018).
+  session_account_id: string | null;
 }
 
 /** 021_order_payment: a provider event, recorded once (append-only, BK019). */

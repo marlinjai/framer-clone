@@ -7,10 +7,14 @@
  * Vignette, Grain, RGB Shift, and Distortion; Phase 2 added the Image,
  * Shape (SDF), and Gradient content layers; Phase 3 adds depth / finishing
  * effects: Bokeh / DoF (mix-radius mask), Pixelate, and Halftone / DotScreen.
+ * The Text Box content layer (free-positioned text, the 16th kind) came with the
+ * layers panel work (docs/plans/2026-11-13-fx-layers-in-layers-panel.md, slice L3).
  */
 
 import { TextLayer } from "./layers/text";
+import { TextBoxLayer } from "./layers/textBox";
 import { NoiseFillLayer } from "./layers/noiseFill";
+import { ParticleRingLayer } from "./layers/particleRing";
 import { ImageLayer } from "./layers/image";
 import { ShapeLayer } from "./layers/shape";
 import { GradientLayer } from "./layers/gradient";
@@ -32,9 +36,11 @@ import { registerNode } from "./registry";
 // better there.
 registerNode(TextLayer);
 registerNode(NoiseFillLayer);
+registerNode(ParticleRingLayer);
 registerNode(ImageLayer);
 registerNode(ShapeLayer);
 registerNode(GradientLayer);
+registerNode(TextBoxLayer);
 registerNode(GodRaysLayer);
 registerNode(BloomLayer);
 registerNode(BokehLayer);

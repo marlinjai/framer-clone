@@ -468,19 +468,28 @@ export type ContextMenuItem =
   | 'pasteStyle'
   | 'delete';
 
-/** The long-press menu's items for an element, in order. */
+/**
+ * The long-press menu's items for an element, in order.
+ *
+ * With a layer of an FX scene picked (`fxPick`: 'layer') the menu is about that layer and offers only what
+ * works on a layer, Duplicate and Delete (the menu says "layer"), never box items beside them: one menu
+ * must not mix two targets. With the scene's Background picked, Duplicate and Delete are left out (the
+ * background cannot be copied or removed) and the rest is the box's.
+ */
 export function contextMenuItemsFor(
   component: ComponentInstance,
   page: PageModelType,
   hasCopiedStyle: boolean,
+  fxPick?: 'layer' | 'background',
 ): ContextMenuItem[] {
+  if (fxPick === 'layer') return ['duplicate', 'delete'];
   const items: ContextMenuItem[] = [];
   if (parentOf(component, page)) items.push('selectParent');
   if (quickKindOf(component) === 'container' && firstChildOf(component)) items.push('selectChild');
   if (isTextEditable(component)) items.push('editText');
-  if (canDeleteLayer(component)) items.push('duplicate');
+  if (canDeleteLayer(component) && fxPick !== 'background') items.push('duplicate');
   items.push('copyStyle');
   if (hasCopiedStyle) items.push('pasteStyle');
-  if (canDeleteLayer(component)) items.push('delete');
+  if (canDeleteLayer(component) && fxPick !== 'background') items.push('delete');
   return items;
 }

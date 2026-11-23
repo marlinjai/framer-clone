@@ -23,6 +23,7 @@ import type {
   LayerDefinition,
 } from "../types";
 import { useWindowPointer } from "../interactivity";
+import { applyContentBlend, withPremultiplyUniform } from "./contentBlend";
 import { textSchema } from "../schemas";
 
 interface TextValues {
@@ -53,7 +54,8 @@ const FONT_STACKS: Record<string, string> = {
   "Courier New": '"Courier New", monospace',
 };
 
-function fontStack(name: string): string {
+/** The CSS stack of a font name; the text box layer draws with the same fixed stacks. */
+export function fontStack(name: string): string {
   return FONT_STACKS[name] ?? `"${name}", sans-serif`;
 }
 
@@ -161,7 +163,15 @@ function TextLayerComponent({ layer, values, ctx }: LayerComponentProps) {
     >
       <planeGeometry args={[v.width, v.height]} />
       <meshBasicMaterial
-        ref={matRef}
+        // The blend is applied here, from the ref callback: React calls it again on every render, so a later
+        // change of `blend` is applied too, and the first frame already has it.
+        ref={(m) => {
+          matRef.current = m;
+          if (m) {
+            withPremultiplyUniform(m);
+            applyContentBlend(m, layer.blend);
+          }
+        }}
         map={tex}
         transparent
         opacity={0}

@@ -12,6 +12,9 @@ import { ComponentInstance } from '@/models/ComponentModel';
 import { InputsSection } from './right/sections/InputsSection';
 import { RepeatSection } from './right/sections/RepeatSection';
 import { ShopPartNote, ShopStyleNote, isLockedShopText } from './right/sections/ShopPartNote';
+import { InteractionsSection } from './right/sections/InteractionsSection';
+import { PageStatePanel } from './right/sections/PageStatePanel';
+import { holdsBehaviour } from './right/sections/behaviourShared';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -75,6 +78,11 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
     ? definitionOnCanvas
     : undefined;
 
+  // A layer (or the Background row) of an FX scene is picked in the Layers panel: the panel shows that
+  // layer alone. The box's own sections (Size, Styles, ...) come back when the pick is cleared.
+  const fxPick = editorUI.fxLayerPick;
+  const fxLayerOnly = !!fxPick && !!target && fxPick.componentId === target.id;
+
   return (
     <div className={isSheet ? 'bg-background flex flex-col h-full w-full' : `
       bg-background border-l border-border flex flex-col transition-all duration-300 ease-in-out h-[calc(100vh-4rem)]
@@ -84,7 +92,7 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
       <RightSidebarHeader variant={variant} />
 
       {/* Under the name and outside the scroll: it says what every row below edits. */}
-      {!isCollapsed && <StateSwitch variant={variant} />}
+      {!isCollapsed && !fxLayerOnly && <StateSwitch variant={variant} />}
 
       {/* Content - only show when not collapsed */}
       {!isCollapsed && (
@@ -92,7 +100,9 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
         // (PropertyRow's minmax(0,1fr) track), sections own their 12px inset.
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="min-w-0">
-            {editsDefinition ? null : target ? (
+            {fxLayerOnly && target ? (
+              <FxSceneSection component={target} breakpointId={breakpointId} />
+            ) : editsDefinition ? null : target ? (
               <>
                 {openDefinition && <InputsSection definition={openDefinition} />}
                 {repeatable && target && <RepeatSection definition={repeatable} node={target} />}
@@ -118,9 +128,17 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
                 {/* Data section: renders only when the node has bindable slots
                     (text / button / image / data components); null otherwise. */}
                 {category !== 'placement' && <DataSourceSection component={target} breakpointId={breakpointId} />}
+                {/* What the element does, then the values it reads (docs/plans/2026-11-02-behaviour-model.md,
+                    "The panel"). A frame, a text run and a placement hold no behaviour of their own: a
+                    placement's is its definition's. Keyed by node, so a draft never moves to another. */}
+                {holdsBehaviour(target) && <InteractionsSection key={target.id} component={target} />}
+                <PageStatePanel component={target} />
               </>
             ) : (
-              <p className="p-3 text-[12px] text-muted-foreground">Select an element to edit its properties.</p>
+              <>
+                <p className="p-3 text-[12px] text-muted-foreground">Select an element to edit its properties.</p>
+                <PageStatePanel />
+              </>
             )}
           </div>
         </div>

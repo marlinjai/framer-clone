@@ -345,8 +345,23 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
       await app.end();
     }
   });
-  it('re-applying the file on a migrated, provisioned database changes nothing', async () => {
+  it('re-applying the file on a migrated, provisioned database takes CREATE on public away and changes nothing else', async () => {
+    expect((await su!`SELECT has_schema_privilege('commerce_ddl', 'public', 'CREATE') AS c`)[0].c).toBe(true);
     await applyRolesFile();
+    expect((await su!`SELECT has_schema_privilege('commerce_ddl', 'public', 'CREATE') AS c`)[0].c).toBe(false);
+    expect((await su!`SELECT has_schema_privilege('commerce_ddl', 'public', 'USAGE') AS c`)[0].c).toBe(true);
+
+    // commerce_ddl can no longer add an object to `public`, where every role that keeps `public` on its search
+    // path (the database superuser included) would resolve it.
+    const ddl = postgres(ownerUrl, { max: 1, prepare: false });
+    try {
+      await expect(ddl`CREATE TABLE public.decoy (id int)`).rejects.toThrow(/permission denied for schema public/);
+      await expect(ddl`CREATE FUNCTION public.decoy() RETURNS int LANGUAGE sql AS 'SELECT 1'`).rejects.toThrow(
+        /permission denied for schema public/,
+      );
+    } finally {
+      await ddl.end();
+    }
 
     const [p] = await su!`
       SELECT
@@ -366,9 +381,11 @@ describe('commerce-roles.sql on a fresh Postgres 16, owner as a non-superuser', 
       app_order_insert: true,
     });
 
-    // The start step still runs cleanly afterwards.
+    // The start step still runs cleanly afterwards, and applying the file once more keeps CREATE on public away.
     const result = await runCommerceDeployMigrations({ ownerUrl, appUrl, log: () => {} });
     expect(result.tenantApplied).toEqual([{ schema, applied: [] }]);
+    await applyRolesFile();
+    expect((await su!`SELECT has_schema_privilege('commerce_ddl', 'public', 'CREATE') AS c`)[0].c).toBe(false);
   });
 
   it('a database shaped by the earlier roles file: the start step refuses it, re-applying the file takes both powers away', async () => {

@@ -29,6 +29,7 @@
 
 import { getLayerSchema } from "./registry";
 import { serializeScene, type SerializedScene } from "./serialize";
+import { MAX_TARGETED_LAYERS, settleTargets } from "./targets";
 import {
   SCENE_SCHEMA_VERSION,
   type BlendMode,
@@ -43,15 +44,21 @@ export { getLayerSchema, listLayerSchemas } from "./registry";
 export { deserializeScene, sceneToJSON, serializeScene, type SerializedScene } from "./serialize";
 export {
   appendLayer,
+  duplicateLayer,
   instantiateLayer,
   listAddableTypes,
   moveLayer,
+  moveLayerTo,
+  placeInGroup,
   removeLayer,
   toggleLayer,
   withLayers,
 } from "./layerOps";
+export { layerReadsPointer, pointerBaseOf, settingGroupOf } from "./layerOps";
 export { PRESETS, findPreset, type PresetMeta } from "./presets";
 export { SCENE_SCHEMA_VERSION } from "./types";
+/** The particle ring's seeded generator: the ring's pixel oracle seeds the brand component with this same function. */
+export { mulberry32 } from "./particleRingCore";
 export type {
   BlendMode,
   InteractivitySpec,
@@ -92,6 +99,8 @@ export const FX_LIMITS = {
   name: 80,
   /** Characters of a scene or layer id. */
   id: 64,
+  /** Content layers that may have effects of their own (each costs render targets). */
+  targetedLayers: MAX_TARGETED_LAYERS,
 } as const;
 
 /** The pixel ratio range a scene may ask for (the engine's own invariant). */
@@ -303,15 +312,19 @@ function parseLayer(raw: unknown, index: number, usedIds: Set<string>, notes: st
     type: def.type,
     name,
     visible: typeof raw.visible === "boolean" ? raw.visible : true,
-    blend: isBlend(raw.blend) ? raw.blend : "normal",
+    blend: def.fixedBlend ?? (isBlend(raw.blend) ? raw.blend : "normal"),
     params,
   };
-  if (raw.blend !== undefined && !isBlend(raw.blend)) notes.push(`${layerLabel}: the blend mode ${quote(raw.blend)} is unknown, so "normal" is used.`);
+  if (def.fixedBlend) {
+    if (raw.blend !== undefined && raw.blend !== def.fixedBlend) notes.push(`${layerLabel}: this layer always blends as ${quote(def.fixedBlend)}, so ${quote(raw.blend)} was not used.`);
+  } else if (raw.blend !== undefined && !isBlend(raw.blend)) notes.push(`${layerLabel}: the blend mode ${quote(raw.blend)} is unknown, so "normal" is used.`);
   if (isRecord(raw.animate) && Object.keys(raw.animate).length > 0) {
     // The engine has the hook (resolveAnimatedNumber) but no layer calls it, so a
     // stored `animate` would do nothing. Left out, and said so, until it does.
     notes.push(`${layerLabel}: per-parameter animation is not supported and was left out.`);
   }
+  if (typeof raw.target === "string") layer.target = raw.target;
+  else if (raw.target !== undefined) notes.push(`${layerLabel}: the layer it applies to (${quote(raw.target)}) is not valid, so it applies to the whole scene.`);
   const interactivity = parseInteractivity(raw.interactivity);
   if (interactivity) layer.interactivity = interactivity;
   else if (raw.interactivity !== undefined) notes.push(`${layerLabel}: the pointer settings were not valid and were left out.`);
@@ -403,6 +416,7 @@ export function parseFxScene(raw: unknown, options: FxParseOptions = {}): FxScen
     if (outcome.layer) layers.push(outcome.layer);
   }
   settleSources(layers, notes);
+  notes.push(...settleTargets(layers));
 
   return {
     ok: true,

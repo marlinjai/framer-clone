@@ -80,6 +80,8 @@ export interface PublicErasureResult {
   sites: number;
   siteErasures: number;
   siteOperationAudits: number;
+  /** Sandboxed custom code's audit (no foreign key to the site, so the site delete does not reach it). */
+  customCodeAudits: number;
   agentRuns: number;
   cmsTables: number;
   cmsRows: number;
@@ -94,7 +96,7 @@ export async function eraseCompanyPublic(
   prisma: PrismaClient, initialScope: ErasureScope, eventId: string,
 ): Promise<{ scope: ErasureScope; rows: PublicErasureResult } | null> {
   let scope = initialScope;
-  const rows: PublicErasureResult = { sites: 0, siteErasures: 0, siteOperationAudits: 0, agentRuns: 0, cmsTables: 0, cmsRows: 0 };
+  const rows: PublicErasureResult = { sites: 0, siteErasures: 0, siteOperationAudits: 0, customCodeAudits: 0, agentRuns: 0, cmsTables: 0, cmsRows: 0 };
   for (;;) {
     const batch = await prisma.$transaction(async (tx) => {
       // Serialize scope changes with other deliveries and the final completion write. Re-read after
@@ -134,6 +136,11 @@ export async function eraseCompanyPublic(
       const siteErasures = await tx.siteErasure.deleteMany({ where: { id: { in: eraseIds } } });
       const auditIds = (await tx.siteOperationAudit.findMany({ where: auditWhere, select: { id: true }, take: PUBLIC_BATCH_SIZE })).map((r) => r.id);
       const siteOperationAudits = await tx.siteOperationAudit.deleteMany({ where: { id: { in: auditIds } } });
+      // The custom code audit records who did what to a site's code (actor ids, never code). Its blobs and proposals
+      // go with the site by cascade; its takedown list (custom_code_blocked_hashes) is deliberately NOT erased: it
+      // names hashes, no person, and a takedown must outlive the company that served the code (plan D32).
+      const codeAuditIds = (await tx.customCodeAudit.findMany({ where: auditWhere, select: { id: true }, take: PUBLIC_BATCH_SIZE })).map((r) => r.id);
+      const customCodeAudits = await tx.customCodeAudit.deleteMany({ where: { id: { in: codeAuditIds } } });
       const runIds = (await tx.agentRun.findMany({ where: { workspaceId: { in: workspaceIds } }, select: { id: true }, take: PUBLIC_BATCH_SIZE })).map((r) => r.id);
       const agentRuns = await tx.agentRun.deleteMany({ where: { id: { in: runIds } } });
 
@@ -165,7 +172,7 @@ export async function eraseCompanyPublic(
         scope: current,
         deletedSiteIds: [...new Set([...ids, ...cascadedBranches.map((b) => b.id)])],
         rows: { sites: sites.count, siteErasures: siteErasures.count, siteOperationAudits: siteOperationAudits.count,
-          agentRuns: agentRuns.count, cmsTables, cmsRows: cmsRows.count },
+          customCodeAudits: customCodeAudits.count, agentRuns: agentRuns.count, cmsTables, cmsRows: cmsRows.count },
       };
     }, PUBLIC_ERASURE_TRANSACTION);
     if (!batch) return null;

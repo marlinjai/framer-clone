@@ -28,6 +28,8 @@ import {
   type ResolvedAnalytics,
 } from '@/lib/renderer/server/renderPublishedPage';
 import { jsonLdScriptText } from '@/lib/site/publishedHead';
+import { resolveHead, type HeadProblem, type HeadResolution } from '@/lib/site/headItems';
+import { HeadItemTags } from '@/components/site/HeadItemTags';
 import { siteLookFromPages } from '@/lib/site/notFoundDefault';
 import { findLegalPage, legalLanguage } from '@/lib/legal/legalPages';
 import { productPagePath } from '@/lib/pages/slug';
@@ -134,6 +136,39 @@ export function PreviewBand({ preview, language = 'en' }: { preview: PreviewOf; 
   );
 }
 
+/**
+ * The head items a published page carries: the site's and the page's own, merged (resolveHead),
+ * each one checked again here because a page is opaque JSON to the save route. A refused or
+ * over-cap item renders nothing and is logged, so the owner's check before publishing (slice H3)
+ * and the server log agree. A preview carries none: its address is a secret that expires, and an
+ * alternate or identity link would point a crawler from it to the live site as if it were this.
+ */
+export function publishedHead(site: PublishedSite, pageHead: unknown): HeadResolution {
+  if (site.preview) return { items: [], problems: [] };
+  const resolution = resolveHead(site.siteSettings.head, pageHead);
+  for (const problem of resolution.problems) logHeadProblem(site.siteId, problem);
+  return resolution;
+}
+
+/** Problems already logged, by site: a bad item is told once per process, not once per visit or per bot. */
+const loggedHeadProblems = new Set<string>();
+const LOGGED_HEAD_PROBLEMS_MAX = 2000;
+
+/**
+ * One line per distinct problem. A message can hold stored text (a name, a key), so it goes out
+ * as an escaped, shortened JSON string: no line break or control character of an owner's text
+ * can forge a log line, and a 10 kilobyte name stays a short one.
+ */
+function logHeadProblem(siteId: string, problem: HeadProblem): void {
+  // JSON.stringify leaves U+2028 and U+2029 literal, and some log viewers break a line on them.
+  const text = JSON.stringify(problem.message.slice(0, 160)).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  const key = `${siteId}|${problem.home}|${problem.index}|${problem.reason}|${text}`;
+  if (loggedHeadProblems.has(key)) return;
+  if (loggedHeadProblems.size >= LOGGED_HEAD_PROBLEMS_MAX) loggedHeadProblems.clear();
+  loggedHeadProblems.add(key);
+  console.warn(`[site head] site ${siteId} ${problem.home} item ${problem.index} left out (${problem.reason}): ${text}`);
+}
+
 export interface RenderSitePageInput {
   site: PublishedSite;
   matched: MatchedPage;
@@ -211,6 +246,7 @@ export async function renderSitePage({ site, matched, adapted, jsonLd }: RenderS
 
   return (
     <>
+      <HeadItemTags items={publishedHead(site, adapted.metadata.head).items} />
       {jsonLd && !site.preview ? (
         // schema.org data for search engines; `<` is escaped (jsonLdScriptText).
         <script

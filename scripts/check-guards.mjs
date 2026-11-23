@@ -147,8 +147,11 @@ export const FX_DIR = 'src/lib/fx';
  *  - `@/lib/fx/unified`: the Studio bridge, which reads a scene in Lumitra Studio's
  *    format. Render-free too, but it brings the scene-core package, so it is its
  *    own entry, loaded only where such a scene is imported.
+ *  - `@/lib/fx/pick`: picking a layer on the editor's live canvas. EDITOR ONLY: its one importer
+ *    is src/components/fx/FxLayer.tsx, by a dynamic import of its own, so a published page's
+ *    island never carries it (src/lib/fx/__tests__/importGraph.test.ts pins both).
  */
-export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`, `${FX_DIR}/unified`];
+export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`, `${FX_DIR}/unified`, `${FX_DIR}/pick`];
 
 /**
  * Roots scanned for the FX rules ONLY, beside DEFAULT_ROOTS: the browser suites and

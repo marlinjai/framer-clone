@@ -1,0 +1,21 @@
+{
+    "data": {
+        "repository": {
+            "deployments": {
+                "pageInfo": {
+                    "hasNextPage": true,
+                    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMS0xNlQxNzoxNToxNVrPAAAAAdLEKEU="
+                },
+                "nodes": [
+                    {
+                        "commitOid": "4327362f6d6d49e77a22e362a22fffe1a2b4662f",
+                        "latestStatus": {
+                            "state": "SUCCESS",
+                            "logUrl": "https://github.com/marlinjai/framer-clone/commit/4327362f6d6d49e77a22e362a22fffe1a2b4662f/checks"
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}

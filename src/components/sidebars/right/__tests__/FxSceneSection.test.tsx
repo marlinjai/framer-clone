@@ -14,10 +14,11 @@ import { useStore } from '@/hooks/useStore';
 import { getHistoryStore } from '@/stores/RootStore';
 import ProjectModel from '@/models/ProjectModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
-import { FX_LIMITS, type Layer, type ParsedFx } from '@/lib/fx/format';
+import { FX_LIMITS, listAddableTypes, type Layer, type ParsedFx } from '@/lib/fx/format';
 import { FX_PROP, isFxScene, parseFxProp } from '@/lib/fxScene/fxScene';
+import { runFxLayerAction } from '@/lib/layers/fxRows';
 import { SECTION_MAP, getComponentCategory } from '../sectionConfig';
-import { FxSceneSection } from '../sections/FxSceneSection';
+import { FxSceneSection, MultilineTextSetting, settingLabel } from '../sections/FxSceneSection';
 
 const SITE_IMAGE = `/site-images/${'a'.repeat(64)}.png`;
 let projects = 0;
@@ -61,14 +62,30 @@ const layerOf = (box: ComponentInstance, id: string): Layer => {
 const valueOf = (box: ComponentInstance, id: string, key: string) => layerOf(box, id).params[key]?.value;
 
 const choose = (label: string | RegExp, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
-const pick = (name: string) => fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}`) }));
-const listed = () => within(screen.getByRole('list', { name: 'Layers, back to front' })).queryAllByRole('listitem');
-const listedNames = () => listed().map((item) => within(item).getAllByRole('button')[0].querySelector('span')!.textContent);
+/** Back to the box: the crumb above a picked layer (a no-op when nothing is picked). */
+const back = () => {
+  const crumb = screen.queryByRole('button', { name: 'FX scene' });
+  if (crumb) fireEvent.click(crumb);
+};
+/** Pick a layer from the summary, as a person does (from the box view). */
+const pick = (name: string) => {
+  back();
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`) }));
+};
+const listed = () => within(screen.getByRole('list', { name: 'Layers in this scene' })).queryAllByRole('listitem');
+/** The summary lists the front first; these are in stored order, back to front. */
+const listedNames = () => listed().map((item) => within(item).getAllByRole('button')[0].querySelector('span')!.textContent).reverse();
 const settings = (name: string) => screen.getByRole('group', { name: `Settings of ${name}` });
+/** Choose another kind for the picked layer and confirm that its settings are replaced. */
+const changeKind = (type: string) => {
+  choose('Kind', type);
+  fireEvent.click(screen.getByRole('button', { name: /^Change to / }));
+};
 const undo = () => act(() => getHistoryStore()!.undo());
 
 /** Add a layer of `type` and return it: the panel selects what it adds. */
 function add(box: ComponentInstance, type: string): Layer {
+  back();
   const before = new Set(layersOf(box).map((l) => l.id));
   choose('Add a layer', type);
   const added = layersOf(box).find((l) => !before.has(l.id));
@@ -86,8 +103,9 @@ describe('the FX scene box in the editor', () => {
     expect(listedNames()).toEqual(['Gradient', 'Noise Field', 'Bloom', 'Vignette', 'Grain']);
     expect((screen.getByLabelText('Starts') as HTMLSelectElement).value).toBe('settled');
     expect((screen.getByLabelText('With reduced motion') as HTMLSelectElement).value).toBe('background');
-    // Nothing is picked yet, and the panel says what to do.
-    expect(screen.getByText('Pick a layer in the list to change its settings.')).toBeTruthy();
+    // Nothing is picked yet: the box's own view, which points at the Layers panel for the rows.
+    expect(screen.getByText(/Each layer is a row under this box in the Layers panel/)).toBeTruthy();
+    expect(screen.queryByRole('group', { name: /^Settings of/ })).toBeNull();
   });
 });
 
@@ -218,7 +236,7 @@ describe('one control per kind of setting', () => {
   });
 
   it('what god rays read from is offered by layer name, and follows a removal with a note', () => {
-    const { box } = setup();
+    const { box, store } = setup();
     render(<FxSceneSection component={box} />);
     const rays = add(box, 'godRays');
     const field = within(settings(rays.name)).getByLabelText('Reads from') as HTMLSelectElement;
@@ -226,14 +244,76 @@ describe('one control per kind of setting', () => {
     fireEvent.change(field, { target: { value: 'noise' } });
     expect(valueOf(box, rays.id, 'sourceLayerId')).toBe('noise');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Noise Field' }));
+    // The layer it reads is removed from its row: the reader moves the rays to another layer and says so.
+    act(() => {
+      runFxLayerAction(box, store.editorUI, 'noise', { type: 'delete' });
+    });
     expect(valueOf(box, rays.id, 'sourceLayerId')).toBe('gradient-bg');
-    expect(screen.getByRole('status').textContent).toMatch(/Adjusted while saving/);
+    expect(store.editorUI.fxLayerNotice?.text).toMatch(/removed/);
+    expect(store.editorUI.fxLayerNotice?.problem).toBe(false);
 
-    // The note belongs to that change: after an undo it is gone, not left behind.
+    // The panel does not carry the message: the Layers panel says it. And after an undo the notice no longer matches the scene.
     undo();
     expect(valueOf(box, rays.id, 'sourceLayerId')).toBe('noise');
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(store.editorUI.fxLayerNotice?.about).not.toBe(JSON.stringify((box.props as Record<string, unknown>)[FX_PROP]));
+  });
+});
+
+describe('a text box layer\'s text keeps its line breaks', () => {
+  it('the field keeps line breaks: nothing is stored while typing, Enter is a line break, Cmd+Enter and leaving the field store', () => {
+    const onChange = vi.fn();
+    const view = render(<MultilineTextSetting label="Text" value={'First\nSecond'} onChange={onChange} />);
+    const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
+    expect(field.tagName).toBe('TEXTAREA');
+    expect(field.value).toBe('First\nSecond');
+    fireEvent.change(field, { target: { value: 'One\nTwo\nThree' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    expect(onChange).toHaveBeenLastCalledWith('One\nTwo\nThree');
+    fireEvent.change(field, { target: { value: 'Back\nlater' } });
+    fireEvent.blur(field);
+    expect(onChange).toHaveBeenLastCalledWith('Back\nlater');
+    // Untouched: once the stored value is the draft, leaving the field stores nothing.
+    view.rerender(<MultilineTextSetting label="Text" value={'Back\nlater'} onChange={onChange} />);
+    onChange.mockClear();
+    fireEvent.blur(field);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // Needs the text box kind (slice L3, a separate pull request): it runs as soon as that kind is in the engine.
+  it.runIf(listAddableTypes().some((t) => t.type === 'textBox'))('in a scene: another setting\'s edit and an edit of the text itself both keep the line breaks, each one undo step', () => {
+    const { box, history } = setup();
+    render(<FxSceneSection component={box} />);
+    const layer = add(box, 'textBox');
+    const first = String(valueOf(box, layer.id, 'text'));
+    const keyed = 'One\nTwo';
+    const field = screen.getByLabelText('Text') as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: keyed } });
+    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
+    expect(valueOf(box, layer.id, 'text')).toBe(keyed);
+    // Another setting: the text is untouched, line break included.
+    const number = Object.entries(layerOf(box, layer.id).params).find(([, schema]) => schema.type === 'number')!;
+    const input = screen.getByLabelText(`${settingLabel(number[0], number[1])}, as a number`) as HTMLInputElement;
+    const schema = number[1];
+    if (schema.type !== 'number') throw new Error('a number');
+    fireEvent.change(input, { target: { value: String(schema.max) } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(valueOf(box, layer.id, 'text')).toBe(keyed);
+    history.clear();
+    fireEvent.change(field, { target: { value: 'Three\nFour' } });
+    fireEvent.blur(field);
+    expect(valueOf(box, layer.id, 'text')).toBe('Three\nFour');
+    undo();
+    expect(valueOf(box, layer.id, 'text')).toBe(keyed);
+    expect(first).toBeTruthy();
+  });
+
+  it('every other text setting stays a single line', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    expect(document.querySelector('textarea')).toBeNull();
   });
 });
 
@@ -269,11 +349,11 @@ describe('a picture for an image layer', () => {
     const image = add(box, 'image');
     upload(file());
     // Changed while the picture is on its way.
-    choose('Starts', 'visible');
-    expect(fxOf(box).start).toBe('visible');
+    choose('Blend', 'screen');
+    expect(layerOf(box, image.id).blend).toBe('screen');
     await act(async () => finish(new Response(JSON.stringify({ path: SITE_IMAGE }), { status: 200 })));
     await waitFor(() => expect(valueOf(box, image.id, 'src')).toBe(SITE_IMAGE));
-    expect(fxOf(box).start).toBe('visible');
+    expect(layerOf(box, image.id).blend).toBe('screen');
     expect(screen.getByText('Picture uploaded.').getAttribute('aria-live')).toBe('polite');
   });
 
@@ -322,32 +402,36 @@ describe('a picture for an image layer', () => {
   });
 });
 
-describe('the layer list', () => {
-  it('adds at the front and selects what it added, hides, moves and removes', () => {
-    const { box } = setup();
+describe('the layer view and the summary', () => {
+  it('adds at the front and picks what it added; the panel shows that layer alone, behind a way back', () => {
+    const { box, store } = setup();
     render(<FxSceneSection component={box} />);
     const shape = add(box, 'shape');
-    expect(listedNames().at(-1)).toBe(shape.name);
+    expect(store.editorUI.fxLayerPick).toMatchObject({ kind: 'layer', layerId: shape.id });
     expect(settings(shape.name)).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: `Hide ${shape.name}` }));
-    expect(layerOf(box, shape.id).visible).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: `Show ${shape.name}` }));
-    expect(layerOf(box, shape.id).visible).toBe(true);
-
-    // The ends cannot move further.
-    expect((screen.getByRole('button', { name: 'Move Gradient toward the back' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: `Move ${shape.name} toward the front` }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Move Noise Field toward the back' }));
-    expect(listedNames().slice(0, 2)).toEqual(['Noise Field', 'Gradient']);
-
-    // Removing the picked layer closes its settings.
-    fireEvent.click(screen.getByRole('button', { name: `Remove ${shape.name}` }));
-    expect(layersOf(box).some((l) => l.id === shape.id)).toBe(false);
-    expect(screen.queryByRole('group', { name: `Settings of ${shape.name}` })).toBeNull();
+    // Only that layer: no preset, no start, no other layer's settings.
+    expect(screen.queryByLabelText('Starts')).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Layers in this scene' })).toBeNull();
+    expect(screen.getByRole('navigation', { name: 'Scene path' }).textContent).toContain(shape.name);
+    back();
+    expect(store.editorUI.fxLayerPick).toBeUndefined();
+    expect(listedNames().at(-1)).toBe(shape.name);
+    expect(screen.getByLabelText('Starts')).toBeTruthy();
   });
 
-  it('renames a layer, and the list and the settings follow', () => {
+  it('the visible switch hides and shows the layer as one undo step each', () => {
+    const { box, history } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Bloom');
+    history.clear();
+    fireEvent.click(within(settings('Bloom')).getByRole('switch', { name: 'Visible' }));
+    expect(layerOf(box, 'bloom').visible).toBe(false);
+    undo();
+    expect(layerOf(box, 'bloom').visible).toBe(true);
+    expect(history.canUndo).toBe(false);
+  });
+
+  it('renames a layer, and the crumb and the settings follow', () => {
     const { box } = setup();
     render(<FxSceneSection component={box} />);
     pick('Bloom');
@@ -355,47 +439,66 @@ describe('the layer list', () => {
     fireEvent.change(name, { target: { value: 'Glow' } });
     fireEvent.keyDown(name, { key: 'Enter' });
     expect(layerOf(box, 'bloom').name).toBe('Glow');
-    expect(listedNames()).toContain('Glow');
     expect(settings('Glow')).toBeTruthy();
+    back();
+    expect(listedNames()).toContain('Glow');
+  });
+
+  it('a layer picked in the summary of an unrelated box is not this box\'s pick', () => {
+    const { box, page, store } = setup();
+    const other = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
+    render(<FxSceneSection component={other} />);
+    store.editorUI.pickFxLayer(box, { kind: 'layer', layerId: 'bloom' });
+    expect(screen.queryByRole('group', { name: /^Settings of/ })).toBeNull();
   });
 
   it('refuses one layer too many with the way on, and keeps the scene', () => {
     const { box } = setup();
     render(<FxSceneSection component={box} />);
     while (layersOf(box).length < FX_LIMITS.layers) add(box, 'vignette');
+    back();
     choose('Add a layer', 'vignette');
     expect(layersOf(box)).toHaveLength(FX_LIMITS.layers);
     expect(screen.getByRole('alert').textContent).toMatch(new RegExp(`at most ${FX_LIMITS.layers} layers. Remove one first`));
-    // The refusal goes away with the next change that is stored.
-    fireEvent.click(screen.getAllByRole('button', { name: /^Remove / }).at(-1)!);
-    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('an empty scene says so and offers the way on', () => {
     const { box } = setup();
+    act(() => box.setProps({ [FX_PROP]: { ...(box.props as Record<string, unknown>)[FX_PROP] as object, scene: { ...fxOf(box).scene, layers: [] } } }));
     render(<FxSceneSection component={box} />);
-    for (const name of ['Gradient', 'Noise Field', 'Bloom', 'Vignette', 'Grain']) fireEvent.click(screen.getByRole('button', { name: `Remove ${name}` }));
     expect(layersOf(box)).toEqual([]);
     expect(screen.getByText(/This scene has no layers/)).toBeTruthy();
     add(box, 'gradient');
+    back();
     expect(listed()).toHaveLength(1);
   });
-});
 
-describe('the scene\'s own settings', () => {
-  it('stores when it starts, what reduced motion shows and the scene background', () => {
-    const { box } = setup();
+  it('the Background pick shows the scene background colour and the reduced motion choice, and nothing else', () => {
+    const { box, store } = setup();
     render(<FxSceneSection component={box} />);
-    choose('Starts', 'visible');
-    choose('With reduced motion', 'frame');
+    fireEvent.click(screen.getByRole('button', { name: 'Background colour' }));
+    expect(store.editorUI.fxLayerPick).toMatchObject({ kind: 'background' });
+    expect(screen.getByRole('navigation', { name: 'Scene path' }).textContent).toContain('Background');
+    expect(screen.queryByLabelText('Starts')).toBeNull();
     const background = screen.getByLabelText('Scene background') as HTMLInputElement;
     fireEvent.change(background, { target: { value: '#010203' } });
     fireEvent.keyDown(background, { key: 'Enter' });
     fireEvent.blur(background);
+    expect(fxOf(box).scene.background).toBe('#010203');
+    choose('With reduced motion', 'frame');
+    expect(fxOf(box).calm).toBe('frame');
+  });
+});
+
+describe('the scene\'s own settings', () => {
+  it('stores when it starts and what reduced motion shows', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    choose('Starts', 'visible');
+    choose('With reduced motion', 'frame');
     const fx = fxOf(box);
     expect(fx.start).toBe('visible');
     expect(fx.calm).toBe('frame');
-    expect(fx.scene.background).toBe('#010203');
   });
 
   it('a preset replaces the layers and keeps the start and reduced motion settings', () => {
@@ -403,6 +506,7 @@ describe('the scene\'s own settings', () => {
     render(<FxSceneSection component={box} />);
     choose('Starts', 'immediate');
     pick('Bloom');
+    back();
     choose('Replace with a preset', 'bokeh-focuspull');
     expect(listedNames()).toEqual(['Backdrop', 'Orb A', 'Orb B', 'Lockup', 'Bokeh Focus-Pull', 'Bloom', 'Vignette', 'Grain']);
     expect(fxOf(box).start).toBe('immediate');
@@ -540,10 +644,11 @@ describe('the four paths of editing a scene', () => {
 
     // The same kind again: nothing derived is thrown away.
     choose('Kind', 'noiseFill');
+    expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
     expect(JSON.stringify(layersOf(box)[1])).toBe(noiseBefore);
 
     // Another kind: its own defaults, in the same place, shown and blended as before.
-    choose('Kind', 'shape');
+    changeKind('shape');
     const replaced = layersOf(box)[1];
     expect(replaced.type).toBe('shape');
     expect(Object.keys(replaced.params)).not.toContain('intensity');
@@ -555,15 +660,16 @@ describe('the four paths of editing a scene', () => {
     expect(within(shown).queryByLabelText('Intensity')).toBeNull();
 
     // And back again: the first kind starts from its defaults, not from what was typed before.
-    choose('Kind', 'noiseFill');
+    changeKind('noiseFill');
     expect(layersOf(box)[1].type).toBe('noiseFill');
     expect(layersOf(box)[1].params.color.value).not.toBe('#445566');
     expect(others()).toBe(othersBefore);
   });
 
   it('a reload: the saved project restores the scene exactly, and the panel edits it on', () => {
-    const { box, project } = setup();
+    const { box, project, store } = setup();
     const view = render(<FxSceneSection component={box} />);
+    back();
     choose('Starts', 'visible');
     const shape = add(box, 'shape');
     const stored = JSON.stringify(fxOf(box));
@@ -575,17 +681,19 @@ describe('the four paths of editing a scene', () => {
     const again = find(reloaded.findPageBySlug('')!.appComponentTree as ComponentInstance)!;
     expect(JSON.stringify(fxOf(again))).toBe(stored);
 
+    // A reload is a new session: what was picked before it is not (the pick is session state, never stored).
+    store.editorUI.clearFxLayerPick();
     render(<FxSceneSection component={again} />);
     expect(listedNames().at(-1)).toBe(shape.name);
     expect((screen.getByLabelText('Starts') as HTMLSelectElement).value).toBe('visible');
-    // What was picked before the reload is not: the panel starts clean.
     expect(screen.queryByRole('group', { name: /^Settings of/ })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: `Hide ${shape.name}` }));
+    pick(shape.name);
+    fireEvent.click(within(settings(shape.name)).getByRole('switch', { name: 'Visible' }));
     expect(layerOf(again, shape.id).visible).toBe(false);
   });
 
   it('coming back: undo after a removal restores the layer with its settings, and it can be picked again', () => {
-    const { box } = setup();
+    const { box, store } = setup();
     render(<FxSceneSection component={box} />);
     pick('Bloom');
     const text = screen.getByLabelText('Intensity, as a number') as HTMLInputElement;
@@ -593,9 +701,16 @@ describe('the four paths of editing a scene', () => {
     fireEvent.keyDown(text, { key: 'Enter' });
     const before = JSON.stringify(layersOf(box));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Bloom' }));
-    expect(listedNames()).not.toContain('Bloom');
+    // The layer is removed from its row (the key and the buttons run this one action).
+    act(() => {
+      runFxLayerAction(box, store.editorUI, 'bloom', { type: 'delete' });
+    });
+    // The pick moved to the next layer of its group: the panel shows that one, not the removed layer.
+    expect(store.editorUI.fxLayerPick).toMatchObject({ kind: 'layer', layerId: 'vignette' });
     expect(screen.queryByRole('group', { name: 'Settings of Bloom' })).toBeNull();
+    expect(settings('Vignette')).toBeTruthy();
+    back();
+    expect(listedNames()).not.toContain('Bloom');
 
     undo();
     expect(JSON.stringify(layersOf(box))).toBe(before);
@@ -605,16 +720,20 @@ describe('the four paths of editing a scene', () => {
   });
 
   it('coming back: another box starts clean, with nothing of the last one\'s selection or messages', () => {
-    const { box, page } = setup();
+    const { box, page, store } = setup();
     const other = page.insertRegistryComponent('fxScene', { kind: 'appTree' })!;
     const view = render(<FxSceneSection component={box} />);
     pick('Bloom');
     while (layersOf(box).length < FX_LIMITS.layers) add(box, 'vignette');
+    back();
     choose('Add a layer', 'vignette');
     expect(screen.getByRole('alert')).toBeTruthy();
 
+    // Another box is picked: its panel starts clean, and the old pick is gone from the store.
+    act(() => store.editorUI.selectComponent(other));
     view.rerender(<FxSceneSection component={other} />);
     expect(screen.queryByRole('alert')).toBeNull();
+    expect(store.editorUI.fxLayerPick).toBeUndefined();
     expect(screen.queryByRole('group', { name: /^Settings of/ })).toBeNull();
     expect(listed()).toHaveLength(5);
   });
@@ -628,6 +747,339 @@ describe('the four paths of editing a scene', () => {
     choose('Start from a preset', 'gold-noise-gradient');
     expect(listedNames()).toEqual(['Gradient', 'Noise Field', 'Bloom', 'Vignette', 'Grain']);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+
+describe('setting groups, the text lines and the pointer', () => {
+  it('shows the lockup\'s Text group first with the three lines, then Type, Layout and Motion, and says the text is pixels', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const lockup = add(box, 'text');
+    const panel = settings(lockup.name);
+    const groups = within(panel).getAllByRole('group').map((g) => g.getAttribute('aria-label'));
+    expect(groups.slice(0, 4)).toEqual(['Text group', 'Type group', 'Layout group', 'Motion group']);
+    const text = within(panel).getByRole('group', { name: 'Text group' });
+    expect(within(text).getAllByRole('textbox').map((el) => (el as HTMLInputElement).value)).toEqual(['Introducing', 'Lumitra', 'we bring your project to life']);
+    expect(within(text).getByText(/drawn as pixels/)).toBeTruthy();
+    expect(within(text).getByText(/With this layer picked, Enter jumps to its text field\./)).toBeTruthy();
+    expect(within(within(panel).getByRole('group', { name: 'Layout group' })).getByLabelText('Width')).toBeTruthy();
+  });
+
+  it('a kind without groups shows its settings as before, with no group headings, and grouping stores nothing', () => {
+    const { box, history } = setup();
+    render(<FxSceneSection component={box} />);
+    const before = JSON.stringify(box.props);
+    pick('Noise Field');
+    const panel = settings('Noise Field');
+    expect(within(panel).queryByRole('group', { name: /^(Text|Type|Layout|Motion|Form|Look) group$/ })).toBeNull();
+    expect(within(panel).getByLabelText('Scale')).toBeTruthy();
+    expect(JSON.stringify(box.props)).toBe(before);
+    expect(history.canUndo).toBe(false);
+  });
+
+  it('a shape layer groups its settings as Form, Layout, Look and Motion', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const shape = add(box, 'shape');
+    const groups = within(settings(shape.name)).getAllByRole('group').map((g) => g.getAttribute('aria-label'));
+    expect(groups).toEqual(expect.arrayContaining(['Form group', 'Layout group', 'Look group', 'Motion group', 'Pointer group']));
+    expect(within(within(settings(shape.name)).getByRole('group', { name: 'Form group' })).getByLabelText('Shape')).toBeTruthy();
+  });
+
+  it('Enter with a text layer picked focuses its headline, not while typing; it does nothing for other kinds', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const lockup = add(box, 'text');
+    const headline = within(settings(lockup.name)).getByLabelText('Headline') as HTMLInputElement;
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    expect(document.activeElement).toBe(headline);
+    // typing: Enter inside a field is the field's own
+    const eyebrow = within(settings(lockup.name)).getByLabelText('Eyebrow') as HTMLInputElement;
+    eyebrow.focus();
+    fireEvent.keyDown(eyebrow, { key: 'Enter' });
+    expect(document.activeElement).toBe(eyebrow);
+    pick('Noise Field');
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('Enter focuses the headline only from nowhere or from the picked layer\'s own name button, never from another control', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const lockup = add(box, 'text');
+    const headline = within(settings(lockup.name)).getByLabelText('Headline') as HTMLInputElement;
+    const attached: HTMLElement[] = [];
+    const press = (el: HTMLElement) => {
+      el.focus();
+      const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    const rowOf = (layerId: string) => {
+      const row = document.createElement('div');
+      row.setAttribute('data-fx-layer-row', layerId);
+      row.setAttribute('data-fx-layer-box', box.id);
+      const name = document.createElement('button');
+      name.setAttribute('data-fx-row-name', '');
+      const del = document.createElement('button');
+      const rename = document.createElement('input');
+      row.append(name, del, rename);
+      document.body.appendChild(row);
+      attached.push(row);
+      return { name, del, rename };
+    };
+    // a resize handle keeps its Enter
+    const handle = document.createElement('div');
+    handle.setAttribute('role', 'separator');
+    handle.tabIndex = 0;
+    document.body.appendChild(handle);
+    attached.push(handle);
+    expect(press(handle)).toBe(false);
+    expect(document.activeElement).toBe(handle);
+    // another row (Enter there picks that row), the picked row's action button and its rename field keep theirs
+    const other = rowOf('some-other-layer');
+    expect(press(other.name)).toBe(false);
+    expect(document.activeElement).toBe(other.name);
+    const picked = rowOf(lockup.id);
+    expect(press(picked.del)).toBe(false);
+    expect(document.activeElement).toBe(picked.del);
+    expect(press(picked.rename)).toBe(false);
+    expect(document.activeElement).toBe(picked.rename);
+    // the picked layer's own name button, and the page body, go to the headline
+    expect(press(picked.name)).toBe(true);
+    expect(document.activeElement).toBe(headline);
+    (document.activeElement as HTMLElement).blur();
+    expect(press(document.body)).toBe(true);
+    expect(document.activeElement).toBe(headline);
+    for (const el of attached) el.remove();
+  });
+
+  it('a text box has its text first, as a multi-line field', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const textBox = add(box, 'textBox');
+    const text = within(settings(textBox.name)).getByRole('group', { name: 'Text group' });
+    expect(within(text).getByLabelText('Text').tagName).toBe('TEXTAREA');
+  });
+
+  it('the Pointer group stores through the reader, clamps, undoes in one step, resets, and is absent for kinds that ignore it', () => {
+    const { box, history } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    const group = within(settings('Noise Field')).getByRole('group', { name: 'Pointer group' });
+    expect(within(group).getByLabelText('Track mouse')).toBeTruthy();
+    const noise = layersOf(box)[1];
+    const typed = within(group).getByLabelText('Spring, as a number');
+    fireEvent.change(typed, { target: { value: '9' } });
+    fireEvent.blur(typed);
+    expect(layerOf(box, noise.id).interactivity).toMatchObject({ spring: 1, trackMouse: 0.5, axes: 'both' });
+    expect(history.canUndo).toBe(true);
+    undo();
+    expect(layerOf(box, noise.id).interactivity).toMatchObject({ spring: 0.05 });
+    choose('Axes', 'x');
+    expect(layerOf(box, noise.id).interactivity?.axes).toBe('x');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset pointer settings' }));
+    expect(layerOf(box, noise.id).interactivity).toBeUndefined();
+    pick('Bloom');
+    expect(within(settings('Bloom')).queryByRole('group', { name: 'Pointer group' })).toBeNull();
+  });
+});
+
+describe('the Pointer group tells the truth about a layer without pointer settings', () => {
+  it('shows the noise field of the god rays preset as following the pointer, and changing the axes alone keeps that follow', async () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    back();
+    choose('Replace with a preset', 'godrays-hero');
+    pick('Noise Field');
+    const group = within(settings('Noise Field')).getByRole('group', { name: 'Pointer group' });
+    expect((within(group).getByLabelText('Track mouse, as a number') as HTMLInputElement).value).toBe('1');
+    expect((within(group).getByLabelText('Spring, as a number') as HTMLInputElement).value).toBe('0.225');
+    expect(within(group).getByText(/follows the pointer in its own plain way/)).toBeTruthy();
+    const noise = layersOf(box).find((l) => l.name === 'Noise Field')!;
+    expect(noise.interactivity).toBeUndefined();
+    choose('Axes', 'x');
+    expect(layerOf(box, noise.id).interactivity).toEqual({ trackMouse: 1, momentum: 1, spring: 0.225, axes: 'x' });
+    fireEvent.click(screen.getByRole('button', { name: 'Reset pointer settings' }));
+    expect(layerOf(box, noise.id).interactivity).toBeUndefined();
+    // the button went away with the settings: focus stays inside the Pointer group, not on the page
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Pointer group' }).contains(document.activeElement)).toBe(true));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('a shape stands still, says so, and raising Track mouse alone makes it move (it has a spring)', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const shape = add(box, 'shape');
+    const group = within(settings(shape.name)).getByRole('group', { name: 'Pointer group' });
+    expect((within(group).getByLabelText('Track mouse, as a number') as HTMLInputElement).value).toBe('0');
+    expect(within(group).getByText(/stands still until you raise Track mouse/)).toBeTruthy();
+    const typed = within(group).getByLabelText('Track mouse, as a number');
+    fireEvent.change(typed, { target: { value: '1' } });
+    fireEvent.blur(typed);
+    expect(layerOf(box, shape.id).interactivity).toEqual({ trackMouse: 1, momentum: 0.85, spring: 0.05, axes: 'both' });
+  });
+});
+
+describe('changing a layer\'s kind asks first', () => {
+  it('a kind chosen is not stored until it is confirmed; keeping the kind drops it; one undo brings the old settings back', () => {
+    const { box, history } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    const before = JSON.stringify(layersOf(box));
+    choose('Kind', 'shape');
+    expect(screen.getByRole('group', { name: 'Confirm the change of kind' }).textContent).toMatch(/settings below are replaced/);
+    expect(JSON.stringify(layersOf(box))).toBe(before);
+    fireEvent.click(screen.getByRole('button', { name: /^Keep / }));
+    expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
+    expect((screen.getByLabelText('Kind') as HTMLSelectElement).value).toBe('noiseFill');
+    expect(history.canUndo).toBe(false);
+    changeKind('shape');
+    expect(layersOf(box)[1].type).toBe('shape');
+    undo();
+    expect(JSON.stringify(layersOf(box))).toBe(before);
+  });
+
+  it('the Kind field gets the focus back after the confirmation is answered', async () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    choose('Kind', 'shape');
+    fireEvent.click(screen.getByRole('button', { name: /^Keep / }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Kind')));
+  });
+
+  it('the confirmation is announced, and Escape keeps the current kind', () => {
+    const { box, history } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    const liveBefore = within(settings('Noise Field')).getAllByRole('status').find((el) => el.className.includes('sr-only'))!;
+    expect(liveBefore.textContent).toBe('');
+    choose('Kind', 'shape');
+    const group = screen.getByRole('group', { name: 'Confirm the change of kind' });
+    // the live region is the same element before and after the confirmation shows, so a screen reader announces its change
+    expect(liveBefore.isConnected).toBe(true);
+    expect(liveBefore.textContent).toMatch(/Change Noise Field to .*Its settings will be replaced.*Escape/);
+    fireEvent.keyDown(group, { key: 'Escape' });
+    expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
+    expect(liveBefore.isConnected).toBe(true);
+    expect(liveBefore.textContent).toBe('');
+    expect(layersOf(box)[1].type).toBe('noiseFill');
+    expect(history.canUndo).toBe(false);
+    // Escape from the Kind field itself, too
+    choose('Kind', 'shape');
+    fireEvent.keyDown(screen.getByLabelText('Kind'), { key: 'Escape' });
+    expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
+  });
+
+  it('picking another layer drops a kind that was waiting', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    choose('Kind', 'shape');
+    pick('Gradient');
+    expect(screen.queryByRole('group', { name: 'Confirm the change of kind' })).toBeNull();
+    expect(layersOf(box)[1].type).toBe('noiseFill');
+  });
+});
+
+describe('Applies to: effects that change one layer only', () => {
+  const targetOf = (box: ComponentInstance, name: string) => layersOf(box).find((l) => l.name === name)!.target;
+  const appliesTo = () => screen.getByLabelText('Applies to') as HTMLSelectElement;
+
+  it('is offered for an effect, not for a layer that draws or for god rays', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Noise Field');
+    expect(screen.queryByLabelText('Applies to')).toBeNull();
+    pick('Bloom');
+    expect(appliesTo().value).toBe('__scene');
+    // and what god rays read excludes a layer that has effects of its own
+    const gradient = layersOf(box)[0];
+    choose('Applies to', gradient.id);
+    add(box, 'godRays');
+    expect(screen.queryByLabelText('Applies to')).toBeNull();
+    const options = Array.from((screen.getByLabelText('Reads from') as HTMLSelectElement).options).map((o) => o.textContent);
+    expect(options).not.toContain('Gradient');
+    expect(options).toContain('Noise Field');
+  });
+
+  it('forward: set, shown in the hint; change to another layer; back to the whole scene', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Bloom');
+    const [gradient, noise] = layersOf(box);
+    choose('Applies to', gradient.id);
+    expect(targetOf(box, 'Bloom')).toBe(gradient.id);
+    expect(screen.getByText(/Only Gradient is changed by this effect/)).toBeTruthy();
+    choose('Applies to', noise.id);
+    expect(targetOf(box, 'Bloom')).toBe(noise.id);
+    choose('Applies to', '__scene');
+    expect(targetOf(box, 'Bloom')).toBeUndefined();
+  });
+
+  it('backtrack: undo takes each change back one step at a time', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Bloom');
+    const [gradient, noise] = layersOf(box);
+    choose('Applies to', gradient.id);
+    choose('Applies to', noise.id);
+    undo();
+    expect(targetOf(box, 'Bloom')).toBe(gradient.id);
+    undo();
+    expect(targetOf(box, 'Bloom')).toBeUndefined();
+  });
+
+  it('resume: a reload keeps the target', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Bloom');
+    const gradient = layersOf(box)[0];
+    choose('Applies to', gradient.id);
+    const reloaded = parseFxProp(JSON.parse(JSON.stringify((box.props as Record<string, unknown>)[FX_PROP])));
+    expect(reloaded.ok && reloaded.notes).toEqual([]);
+    expect(reloaded.ok && reloaded.fx.scene.layers.find((l) => l.name === 'Bloom')!.target).toBe(gradient.id);
+  });
+
+  it('re-entry: deleting the target layer removes the effects with a note; adding a layer again does not bring them back', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    pick('Bloom');
+    const gradient = layersOf(box)[0];
+    choose('Applies to', gradient.id);
+    act(() => {
+      runFxLayerAction(box, useStore().editorUI, gradient.id, { type: 'delete' });
+    });
+    expect(layersOf(box).some((l) => l.name === 'Bloom')).toBe(false);
+    add(box, 'gradient');
+    expect(layersOf(box).some((l) => l.name === 'Bloom')).toBe(false);
+    // undo of the add, then of the delete: the effect is back and still scoped
+    undo();
+    undo();
+    expect(targetOf(box, 'Bloom')).toBe(gradient.id);
+  });
+
+  it('shows a refusal (a fifth scoped layer) and stores nothing', () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    for (let i = 0; i < 3; i += 1) add(box, 'shape');
+    const content = layersOf(box).filter((l) => ['gradient', 'noiseFill', 'shape'].includes(l.type));
+    const effects = ['Bloom', 'Vignette', 'Grain'];
+    // four effects, four distinct targets
+    add(box, 'pixelate');
+    const four = [...effects, 'pixelate'];
+    four.forEach((name, i) => {
+      pick(name);
+      choose('Applies to', content[i].id);
+    });
+    add(box, 'halftone');
+    const before = JSON.stringify(layersOf(box));
+    choose('Applies to', content[4].id);
+    expect(screen.getByRole('alert').textContent).toMatch(/At most 4 layers/);
+    expect(JSON.stringify(layersOf(box))).toBe(before);
   });
 });
 

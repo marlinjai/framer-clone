@@ -18,6 +18,8 @@ import React from 'react';
 import { useStore } from '@/hooks/useStore';
 import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import { openProject } from '@/stores/openProject';
+import { CustomCodeSurfaceContext } from '@/lib/renderer/customCode/customCodeSurfaceContext';
+import { STANDALONE_CUSTOM_CODE_SURFACE } from '@/components/CustomCodeSurface';
 
 const PreviewShell = dynamic(
   () => import('@/components/preview/PreviewShell'),
@@ -46,5 +48,11 @@ export default function PreviewMount({
     opened.current = { missingPageId };
   }
 
-  return <PreviewShell missingPageId={opened.current.missingPageId} />;
+  // The standalone preview: a custom code block shows its box and fallback here (and,
+  // from slice C3, its frame), never the editor's tile (src/lib/renderer/customCode).
+  return (
+    <CustomCodeSurfaceContext.Provider value={STANDALONE_CUSTOM_CODE_SURFACE}>
+      <PreviewShell missingPageId={opened.current.missingPageId} />
+    </CustomCodeSurfaceContext.Provider>
+  );
 }

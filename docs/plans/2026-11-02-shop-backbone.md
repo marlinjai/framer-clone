@@ -543,6 +543,46 @@ each result under the table row above; a result that differs changes section 2.1
 
 Sandbox objects made here use the prefix `b7-proof-` in their metadata, so they can be told apart from shop orders.
 
+**B7 proof as run (2026-11-23, run `b7-proof-20261122T231152-340145`).** Run through the secrets proxy with the framer-clone
+`prod` key, checked to be a test key (`sk_test_`) before the first call, against the test shop's connected sandbox account
+(`acct_1UUqY4ALvFySTV7v`, the one with charges enabled) with `Stripe-Account`. The proof objects carry only
+`metadata.b7proof`, no platform metadata, so the webhook ignores their events. No real money moved. The script and its JSON
+result stay in the proxy's scratch directory (`b7proof/`).
+
+1. **Key reuse: as assumed.** The same key with `expires_at` one minute later answers 400 `idempotency_error`. The same key
+   with a different `customer_email` answers the same, so a buyer change after pinning would also break the key (the
+   guard's refusal is needed). The original parameters again return the same session id with `Idempotent-Replayed: true`.
+2. **Expiry floor: as assumed.** 29 minutes is refused (`invalid_request_error`, "must be at least 30 minutes from
+   Checkout Session creation"); 30 and 31 minutes are accepted. The floor is measured from Stripe's own creation time: 29
+   minutes 55 seconds by our clock was accepted too, so 45 minutes leaves a wide margin.
+3. **A declined attempt: as assumed, proven on the PaymentIntent.** On one PaymentIntent of the connected account, two
+   declined confirmations (`card_declined`: `generic_decline`, then `insufficient_funds`) each emitted
+   `charge.failed` plus `payment_intent.payment_failed` and left it `requires_payment_method`; a third confirmation with a
+   good card succeeded (`charge.succeeded`, `payment_intent.succeeded`). Not run: the same on the hosted Checkout page
+   (whether the session stays `open` between attempts), because the proxy has no browser and the session address is
+   redacted from its output. That half is the operator's sandbox purchase this slice already requires (B7 "Needs Marlin").
+   Side result for B8: events listed with `Stripe-Account` carry the `account` field.
+4. **Retrieve statuses.** Open: `status: open`, `payment_status: unpaid`, `payment_intent: null` (the intent is created
+   only at payment, so the expiry job cannot read it from an open session), `url` present. After
+   `POST .../expire`: `status: expired`, `payment_status: unpaid`, `url: null`. **New:** the create call repeated with the
+   same key and parameters after the expiry still answers the cached first response (`status: open`, the old id): a
+   replayed create says nothing about the session's state, so a later pay must retrieve it (section 2.1 step 4 already
+   does) and a create replay must never be read as "open".
+5. **Second refund.** 400 `invalid_request_error`, code `charge_already_refunded`. The first refund's key replayed answers
+   the first refund again (`Idempotent-Replayed: true`).
+6. **Error replay and key lifetime.** A first call refused with 400 (an `expires_at` under 30 minutes) is stored under its
+   key: the same request again replays that error (`Idempotent-Replayed: true`), and a valid request under that key is
+   refused with `idempotency_error`. So a create that Stripe refused with a 4xx can never succeed under the same key.
+   Stripe documents that keys are kept at least 24 hours; not measured here.
+
+**What changes in section 2.1 (decided by the proof run, say so if you disagree).** Nothing in the contract is contradicted.
+Two additions: (a) a create answered with an error under the pinned key closes the payment, since every retry would replay the
+refusal and only a new key could pass, which section 2.1 rules out. Measured for a 400; Stripe documents the same for a 500
+(the stored result includes 500 errors) and that a 429 rate limit is not stored, so a 429 and a request with no answer at all
+(timeout, connection failure) keep the retry of step 3.
+(b) A create that returns a session is stored by id and the payment's state is read only by retrieve, never from a create
+replay.
+
 ### B5 deploy assessment (read from main `380da6c1` on 2026-11-12; nothing deployed, nothing run)
 
 Production still runs `7b32ea16` (last deploy 2026-11-09). B5 (#364) is in main and is not deployed. The image is one build of
@@ -1028,9 +1068,12 @@ Runs before B6: B6 needs its sandbox proof.
 
 ### B9: drop mail's old columns and the backfills
 
-- **Files:** a migration, `db-types.ts`, `mail/outbox.ts`, `mail/connection.ts`, `jobs/backfills.ts`.
+- **Files:** a migration, `db-types.ts`, `mail/outbox.ts`, `mail/connection.ts`, `jobs/backfills.ts`, `payment/checkoutSession.ts`,
+  `scripts/commerce-codegen.ts`.
 - **Does:** removes `attempts`, `next_attempt_at`, `last_error` and their index after B5 has been deployed. The owner surface
-  reads the job's reason instead. Removes the receipt, mail and reconcile backfills.
+  reads the job's reason instead. Removes the receipt, mail and reconcile backfills. Once no payment pending at B7's deploy
+  is left, also drops `order_payment.checkout_request` (028) with its trigger `order_payment_checkout_guard` and its CHECK,
+  the `earlierSession` read in `payment/checkoutSession.ts` and both codegen entries (B7 kept the column for its cutover).
 - **F:** letters flow after the drop.
 - **B:** n/a, a schema change only.
 - **R:** the migration is re-runnable.
@@ -1242,3 +1285,66 @@ checked against the code and hold. Findings about Stripe behaviour are adopted a
   attempt is the poller's (within its 30 seconds), no longer started inline. The mail backfill gives a job to every `pending` row without one, due at the old
   `next_attempt_at`. `attempts` and `next_attempt_at` stay on the table, unwritten, until B9. The late-refund notice is still written before the refund moves money
   and now by emitting `payment.refunded` there; B6 moves that emission to the refund job's own commit. B0 to B5 are shipped, so the plan is `in-progress`.
+- 2026-11-23: B7 built: the Stripe session is pinned (migration `031_checkout_session`, `payment/checkoutSession.ts`), replacing
+  `payment/checkoutRequest.ts`. Three set-once columns on `order_payment` (`provider_session_id`, `session_expires_at`,
+  `session_return_url`), four CHECKs (pinned together, the hold after the session's end, Stripe only, one payment per session)
+  and `order_payment_session_guard` (BK018: a payment starts unpinned, is pinned only while pending, then the end, the return
+  address, the hold and the buyer are fixed and the session id is set once). The pay route pins, then opens: a stored session is
+  retrieved (open redirects, complete and paid applies the success under `session:<id>`, expired closes); without one, Stripe is
+  asked with the pinned values while the end is more than 31 minutes away, else the payment closes (`session_unconfirmed`). The
+  expiry job asks Stripe before closing a stored session (complete applies, expired closes, open reruns in 5 minutes,
+  no answer retries and closes an hour past the hold); `sweepExpiredPayments` skips a stored session. `payment_failed` keeps a
+  payment `pending` while its session is open. `StripeApi` gains `retrieveCheckoutSession` and an abort signal (a click waits
+  20 seconds); `StripeApiError` gains `answered` and `stripeType`, and a request with no readable answer (no response, a timeout,
+  a body cut off, a gateway page without Stripe's error object) is `answered: false` with status 0 or the gateway's. The four
+  paths are proven in `payment/__tests__/checkoutSession.itest.ts` through the real `httpStripeApi` against a fetch-level fake that
+  keeps the proof run's rules, at the route in `pay/__tests__/secondPay.itest.ts`, and at the webhook in `stripe-flow.itest.ts`.
+  Corrections and decisions beyond the text, say so if you disagree:
+  - `checkout_request` (028) **stays** until B9 (now in B9's text). The build before B7 still writes it while both containers
+    run, and this build reads its `confirmed` to recognise a payment whose session that build made under the same key: such a
+    payment keeps its buyer (another one gets 409 `buyer_fixed`, where 028's trigger would otherwise answer a raw BK018 as a 500),
+    is pinned without asking Stripe, answers 409 `checkout_pending` on every click, and is closed by its hold, never at the
+    31-minute margin, since closing there would release the stock behind a session the buyer can still pay.
+  - Stripe answering `idempotency_error` (a key held for another request) answers 409 `checkout_pending` and leaves the payment
+    to its hold, instead of closing it as addition (a) of the proof would: a session made by the build before may still be paid.
+    A 409 (key in use by a concurrent request) is retried like a 429, since Stripe does not store it.
+  - A session `complete` but not yet paid (a slower method) answers 409 `payment_processing` on a click, and the expiry job closes
+    it as without a session; its later success takes the late path, as section 2.4 leaves `processing` to rank 8.
+  - R2-3 ("a first click that failed at Stripe locks no typo in") no longer holds: the pin fixes the buyer before Stripe is
+    asked, because a create whose answer was lost may have made a session under that email. A buyer who spots a typo after a
+    503 checks out again; the old order's hold ends by itself. The route's 503 `checkout_unavailable` replaces the 500 of that case.
+  - A Stripe amount that differs on a later click is a 500 (the route logs `PaymentMismatchError`), and in the expiry job a
+    `dead` job (`session_amount_mismatch`): only a person can say what that order is. B8's findings will cover it.
+  - The expiry job's retry while Stripe gives no answer is every 5 minutes, capped by the hour past the hold; any other failure to
+    read the session (the account disconnected, a fault) is logged as an error and bounded by the same hour.
+  - The storefront gateway (`lib/commerce/payment/storefrontGateway.ts`) maps the new answers: 409 `payment_processing` and
+    `checkout_pending` keep the order with the shop's message (as `unavailable`, never `closed`), 503 `checkout_unavailable` is a
+    retryable error in the shop's words, and a later click that finds the session paid answers `{ status: 'paid', provider:
+    'stripe', receipt: null }`, shown as paid with the receipt to follow.
+  - Deploy overlap: while the build before B7 still serves, its click on a payment this build pinned sends its own request under
+    the key and answers 500 (Stripe refuses it; nothing is charged), and its worker and sweep close a stored session by the clock
+    without asking Stripe; a payment taken meanwhile with its webhook lost then takes the late path. Bounded by the overlap of the
+    two containers, as section 2.1 "Cutover" accepts.
+  - Unproven: the hosted-page half of the declined attempt (whether the session stays `open` between attempts on Stripe's own page)
+    and the 24-hour key lifetime; both wait for the operator's sandbox purchase this slice names under "Needs Marlin". Also not
+    measured: the fields of a `complete` session on retrieve (the proof read open and expired only; `amount_total`, `currency` and
+    `payment_intent` are Stripe's documented fields), that a 409 for a key in use is not stored, and the replay of a 500 (Stripe
+    documents it). Nothing is deployed.
+- 2026-11-23: B7 after its independent review (2 blocking, 7 minor, all fixed; each fix proven by a test that fails with the fix
+  reverted). Blocking: (1) a close landing while a create is in flight (another click at the margin, a refused create, an
+  outdated order) no longer leaves a payable session behind a closed payment: the session id is stored only on a payment still
+  pending (the store's condition and the 031 guard, BK018), a session Stripe answers after the close is expired at Stripe
+  (`expireCheckoutSession`, loudly logged when that fails), every close decided by the click re-reads the stored session under
+  the row lock (`PaymentEvent.requireNoSession`) and reads that session instead, and a create is sent only while the margin
+  plus the click's 20-second wait remains. (2) A declined attempt never closes a payment with a pinned session, also when its
+  delivery arrives after the session ended: a later attempt in that session may have succeeded, and the session's own end
+  (its webhook or the expiry job's retrieve) closes it; this replaces the "while the session is open" rule above. Minor: a
+  closed answer carries the payment's real status, so a paid order answers paid and a refunded one says so; the account is
+  resolved before the click's catch, with its signal, so only the create is classified as Stripe's answer; the account is
+  pinned with the session (`session_account_id`, added to 031 in place since it is not deployed), so a session is read and
+  expired where it was made after a reconnect, and an answered 404 there closes the payment; the sweep takes a stored session
+  an hour past its hold by the expiry job's rule (never closing one Stripe reports paid); a cutover pin holds until the later
+  of the pin plus 50 minutes and the earlier build's session end plus the grace; a kept decline bumps `version` like every
+  other write of `payments.ts` (the pin and the store now bump it too). New answers of the pay route: 503
+  `payments_unavailable` for a company with no chargeable account at the pin, 503 `checkout_unavailable` when Stripe gave no
+  answer about the account.

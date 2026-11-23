@@ -162,8 +162,9 @@ Following the map embed and the 3D primitive: an ordinary `div` with a marker at
 
 - **Insert palette:** an "FX scene" entry with the engine's presets as starting points, plus "Gold noise gradient" taken
   from `lumitra-web/src/scenes/hub-hero.json`.
-- **Properties panel, FX section:** a layer list (add, remove, reorder, show or hide; reusing the engine's `layerOps.ts`)
-  and, for the selected layer, controls generated from its `ParamSchema` (number with min, max and step; colour; select;
+- **Properties panel, FX section:** the scene's layers are rows under the box in the Layers panel (remove, duplicate, reorder, show or hide, rename; adding a layer stays in this section;
+  reusing the engine's `layerOps.ts`), planned in [FX scene layers in the Layers panel](2026-11-13-fx-layers-in-layers-panel.md),
+  which replaces the layer list that was first planned inside this section. The section shows, for the layer picked there, controls generated from its `ParamSchema` (number with min, max and step; colour; select;
   boolean; two-number vector). These map onto the panel's existing control kinds. The section also holds `start`, `calm`,
   and "Import scene JSON" / "Copy scene JSON", the same blob the leva Export writes, so a scene tuned on lumitra.co with
   `?tune=1` can be pasted in during the transition.
@@ -176,11 +177,12 @@ Following the map embed and the 3D primitive: an ordinary `div` with a marker at
 
 ### Safety
 
-- The registry is not reachable from stored data. A stored scene can only name the 15 built-in layer types; unknown types
+- The registry is not reachable from stored data. A stored scene can only name the 16 built-in layer types (15 until the `textBox`
+  kind of the [FX layer plan](2026-11-13-fx-layers-in-layers-panel.md) landed on 2026-11-13); unknown types
   are dropped by the engine's loader. No author-supplied shader code exists, so the render gate stays intact.
 - `image` layers load only from the site image route (`/site-images/...`, the site's own uploads). Any other address is
   refused at parse time with a message, and again at render time.
-- `text` layers draw into a `CanvasTexture`; their string is length-clamped and is not HTML.
+- `text` and `textBox` layers draw into a `CanvasTexture`; their strings are length-clamped and are not HTML.
 - Flash safety: clamps on animated luminance parameters so no full-screen luminance change exceeds three per second, as
   the 3D plan requires for its light presets.
 
@@ -954,3 +956,144 @@ match: one site to rebuild instead of two, `/angebot/arbosano` dropped (an expir
 indexed), and R4 is a redirect from services.lumitra.co to `/services`, which stays Marlin's yes like every domain
 step. Nothing of R1 to R6 is started by this plan's worker.
 
+
+### R2 `services-in-sites`: the booking button and the cutover inventory (2026-11-18)
+
+Asked by Marlin through the coordinator on 2026-11-18: move services.lumitra.co into Lumitra Sites, and let the audit
+button book his free discovery call (Lumitra Booking, `https://booking.lumitra.co/marlinjai/marlinjai/discovery-call`,
+15 minutes, active, no price) while the audit itself stays a paid 2.500 EUR offer. Nothing was published, deployed or
+moved; main of the site and every domain are as they were.
+
+**State found.** The site "Lumitra (new landing page)" (`cde77561`) is published at `6zp2te2a5btk.sites.lumitra.co`;
+its main is at version 14 (it was 9 on 2026-11-12) and gained an unpublished page `/tarife-und-preise-lumitra`
+("Tarife und Preise | Lumitra") and one changed node on the home page, author not visible from the review. The branch
+"Test new design" (`62653f35`) was at version 58 (31 on 2026-11-12), no conflicts with main, no problems, not ready,
+not approved. Its `/services` and `/services/angebot` match the live pages line by line (visible text, title,
+description, indexing) except one tag (below). The live pages have no Impressum or privacy link; the branch footers link
+to `lumitra.co/impressum`, `/datenschutz` and `/terms`, which answer 200 today from lumitra-web.
+
+**Written to the branch (versions 59 to 61), through the editor's save route under Marlin's session**, because the agent
+endpoint refuses the company key (blocker 1). Each write was version-locked, and the stored document was read back and
+compared with the one before: only the intended fields changed, and main stayed at version 14.
+
+- The seven "Audit buchen" and "KI-Potenzial-Audit buchen" links (four on `/services`, three on `/services/angebot`)
+  pointed at a `mailto:` to a private Gmail address; all seven now open the discovery-call booking page. Labels: the two
+  navigation buttons "Erstgespräch" (as wide as the old label, so the tablet navigation does not crowd the logo), the hero
+  and closing buttons "Kostenloses Erstgespräch buchen", the offer ladder's button "Kostenloses Erstgespräch zum Audit".
+- The note under the hero button on `/services` read "2.500 EUR, voll auf den Sprint anrechenbar", which made the free
+  call look like it cost 2.500 EUR. It now reads "Erstgespräch: 15 Minuten, kostenlos. KI-Potenzial-Audit: 2.500 EUR
+  Festpreis, voll auf den Sprint anrechenbar". The price lines of the audit card are unchanged.
+- The third offer card on both pages had lost its tag "Plattform-Build" (the live pages have it); it is back, styled as
+  its neighbours.
+- Proof (headless browser on the editor's preview of the branch): 1440, 800 and 390 px on both pages, no horizontal
+  overflow, no `mailto:` left on either page, 4 and 3 links to the booking address, and a click on the ladder button lands
+  on the booking page "Discovery call, 15 minutes".
+
+**Decided here, say so if you disagree:** the wording above departs from R2's "word for word" acceptance on purpose
+(Marlin asked for the change); the R2 check is now "live copy, plus the booking change". The visible private Gmail line in
+the closing section of `/services/angebot` is left as it is for Marlin (see below).
+
+**Cutover inventory (R3 and R4), nothing of it done:**
+
+| Item | Today | After the move | Gate |
+|---|---|---|---|
+| DNS | `services.lumitra.co`, `lumitra.co` and `domains.lumitra.co` all resolve to 157.90.119.98, the Coolify server that runs both lumitra-web and framer-clone | No DNS change: the move is a domain change between two Coolify apps on the same server | none |
+| Order | R4 needs R3 (apex on Sites), R3 needs R1 (every hub page in Sites), R1 needs F8 (the FX hero), F8 needs F7 (a deploy, waiting for Marlin's yes) | services cannot move on its own; the redirect points into the apex site | Marlin's yes per step |
+| R3 prerequisite: how the apex is served on Sites | `src/server/domains/hostname.ts` names `lumitra.co` the platform zone (`PLATFORM_ROOT_ZONE`), and `isUnderZone` rejects a custom domain that equals it, while the resolver serves only verified or active claims | a mechanism for a live Sites claim on `lumitra.co` and `www.lumitra.co` is decided and live before the Coolify domain move, because otherwise the apex answers 404 until the claim path is fixed. The mechanism is not chosen here: it must get past the platform-zone rule (an explicit, audited exception for the apex, or another path), and it is a named step of R3 | decided and proven live (a request with the apex Host header returns the Sites page) before any Coolify domain change; the rollback of the Coolify domain list stays as written |
+| Redirects on services.lumitra.co (R4) | lumitra-web serves `/` and `/angebot`, and answers 308 from `/services` and `/services/angebot` back to them | `/` to `lumitra.co/services`, `/angebot` and `/services/angebot` (the legacy offer URL, which lumitra-web redirects to `/angebot` today) each to `lumitra.co/services/angebot`, both explicit and ahead of the catch-all, `/angebot/arbosano` (not carried over) to `lumitra.co/services/angebot`, any other path to `lumitra.co/services`, all 301 | Marlin's yes, one line with rollback (table above) |
+| Branch merge and publish | branch at version 61, main at 14 | merge the branch, then publish the site; main's unpublished pricing page would go live with that publish unless its owner says otherwise | Marlin (merge needs his approval in the editor) |
+| Legal pages | footers link to lumitra-web's Impressum, privacy and terms | those pages exist in Sites before R3 (R1), or the apex move breaks every footer | R1 |
+| Privacy text | lumitra.co/datenschutz does not mention the booking service; the booking page links its own `/privacy` | a sentence on Lumitra Booking (who processes the booking data) in the rebuilt privacy page | the privacy page's owner, with R1 |
+| Site settings | `language` de for the whole site (the hub is English), empty site name, title template and 404 page | per-page language (agent plugin plan, friction 2) before the apex moves | R1 |
+| Company key | the Sites endpoint refuses `LUMITRA_SITES_API_KEY_LUMITRA` with `ambiguous_workspace` (the company now has more than one workspace; it worked on 2026-11-12) | fixed before any agent works on this site again, including a publish through the endpoint | see blocker 1 |
+
+**Blockers and open points, for Marlin through the coordinator:**
+
+1. *The agent key is locked out* (`ambiguous_workspace`, `src/server/sites/scope.ts`, which refuses a key whose company
+   has several workspaces instead of guessing). Production, needs the owner of the company structure to find where the
+   second workspace came from; not changed here.
+2. *The booking page is English only.* The discovery call has no German title or description (`translations` empty,
+   default locale English), so a German visitor clicking "Kostenloses Erstgespräch buchen" reads "Discovery call ... A
+   short first call". Adding a German translation is a live Booking change and waits for his yes.
+3. *The private Gmail address* is shown as text on `/services/angebot` (and is the live `mailto:` today). Recommended:
+   replace it with `hello@lumitra.co`, which the hub already uses (lumitra.co receives mail through Cloudflare's mail routing; whether that address is forwarded was not checked). His call, since it changes
+   where client mail goes.
+4. *"Tripwire (bezahlte Analyse)"* is the audit card's visible tag on both pages (live too): sales jargon in front of a
+   buyer. Belongs to the copy pass carried over above.
+
+### Addendum: the particle ring as a built-in FX layer, and mint light on `/services` (2026-11-22)
+
+Asked by Marlin on 2026-11-22 (through the motion-design session): the `/services` pages of the new lumitra.co site carry
+the mint light brand (knowledge-base `docs/plans/2026-11-22-lumitra-rebrand-mint-light.md`: mint `#52FFA5` leads, light
+blue `#3B84FF` accents, indigo `#582EFF` only as depth, on `#04090B`, dark only), built fully in Sites, with the brand's
+particle ring as the hero.
+
+**Decided by the motion-design session, kept here (say so if you disagree):** the ring enters Sites as a built-in FX
+layer type `particleRing` inside `src/lib/fx`, with the brand ring as a preset, not as a custom code block. FX already
+has the scene node, the panel, the fallbacks and the one-context rule; no author shader code means the render gate stays
+as it is; and customers get the layer too. The stellated dodecahedron intro and the star loop (cards E and D of
+`decision-pages/2026-11-22-lumitra-logo-particles.html`) are later presets of the same layer, not this step.
+
+**Source of truth.** `@marlinjai/suite-theme-core` (repository `marlinjai/suite-theme`, owned by the rebrand session) at
+commit `2105604`: `tokens.json` for the colours and `light/lumitra-light.js` for the ring (includes the `highp` fix
+`83b41a1`). The package is not on npm yet, so Sites takes no dependency on it: the colours are read from `tokens.json`
+at that commit when the pages are written, and the component file is vendored for the proof with its checksum, as F4
+vendored lumitra-web's engine.
+
+**The layer** (`src/lib/fx/layers/particleRing.tsx`, schema in `schemas.ts`):
+
+- The component's two shaders, unchanged in what they compute, as a three.js `RawShaderMaterial` on `THREE.Points`:
+  120 strands of up to 760 points, a glow pass (large faint points, indigo mixed in) drawn `glow` times, then the core
+  pass, additive (`ONE, ONE`), no depth, positions written straight in clip space from the box size, so the ring sits
+  centred with radius `min(0.37 W, 0.47 H)` as in the component.
+- Parameters: `glow` (0 to 2; passes counted as the component's loop counts them, one per started whole number, so 0.4 draws one and 1.2 two), `density` (0.25
+  to 1), `seed` (which particles), `speed` (0 to 2, 1 is the component's pace). The lean toward the pointer goes through
+  the engine's shared pointer settings (track mouse, momentum, spring, axes), starting from the noise field's values, so
+  it is set like every other layer's and needs no parameter of its own. The palette is the component's decided 60/30/10
+  mix; colour parameters are a later preset concern, not this step.
+- **One blend:** the ring is light and always adds. Its schema fixes the blend to `add` (`fixedBlend`); the reader
+  stores `add` whatever a scene says (with a note), the editor refuses another blend and shows a hint instead of the
+  menu, and a layer changed to or from the ring takes or gives back the blend.
+- **Repeatable:** the particles come from a seeded generator (mulberry32) in the component's order (per strand one phase,
+  per point one random), so the same seed is the same ring on every load. The component itself uses `Math.random`; the
+  proof seeds it with the same generator from outside.
+- **Colour space:** the component adds its colours in display space on an 8-bit canvas. The layer does the same in a
+  render target of its own (8 bits, no colour conversion, 4 samples, like the canvas's antialiasing), then a full-box
+  quad decodes the sum and writes it through three.js's normal output conversion. Where the scene has no post pass the
+  result is the component's byte for byte; where it has one, the composer's linear buffer receives the same picture
+  and encodes it back unchanged. As the only content layer the target is cleared with the scene's background and
+  replaces what is under it, so the clamp at 255 happens after the background, as on the component's canvas; with
+  other content layers it is cleared to black and added. three.js orders content layers by depth, so the ring's quad
+  sits at a depth of its own: over every fill (gradient, noise field, image, shape), under text, whatever the stored
+  order. It is not marked heavy: the step down for slow devices drops heavy layers whole, and the ring is the hero
+  itself, not an effect on it.
+- Reduced motion: one still frame at the component's starting time (its clock begins at 7 seconds), no pointer lean.
+- Pixel ratio: the format keeps a scene at 1.75 at most (the component draws at up to 2); the preset stores `[1, 1.75]`.
+
+**The preset** `lumitra-light`: one `particleRing` layer at the component's defaults (glow 1, density 1), background
+`#04090B`, pixel ratio `[1, 1.75]`; the box that holds it uses `calm: "frame"`, so a visitor who asks for reduced motion sees the still ring, not an empty box.
+
+**Proof (pixel for pixel):** `test/behaviour/fxRingOracle.spec.ts`, beside `fxOracle.spec.ts`. The reference page loads
+the vendored, unchanged `lumitra-light.js` (`test/fx-oracle/suite-theme-lumitra-light-2105604.js.gz`, both checksums
+checked) with `Math.random` replaced by the seeded generator and the clock stopped (`performance.now` and the time
+every animation frame is given are both 0), under reduced motion, in a box of the same size; the candidate is the
+`lumitra-light` preset drawn by the published page's island. In Chromium and WebKit, for a wide box (960 by 540) and a
+tall phone box (390 by 700), each at pixel ratio 1 and 1.75 (the second gives a fractional size, 682.5 pixels), each
+also with a post pass after the ring: no pixel may differ by more than 2 in a channel (stricter than F4's 0.5 percent
+share, because the measured count is 0). It must be able to fail: each side reproduces itself from a fresh page, a
+different seed and one changed palette stop are both far over F4's tolerance. Behaviour tests in `fxScoped.spec.ts`
+hold the ring among other layers: under text whatever the stored order and after hide and show, adding over a fill, and
+inside a group.
+
+**Result (2026-11-22):** all cases pass, 0 pixels over the tolerance in every size and both browsers.
+
+**Slices:**
+
+| # | Slice | What | Gate |
+|---|---|---|---|
+| P1 | `fx-particle-ring` | The layer, the preset, the schema and format rows, the panel controls (generated from the schema), the agent vocabulary, tests and the pixel proof | none (one pull request, land-pr) |
+| P2 | deploy | The layer reaches app.lumitra.co, so the editor and published pages know the new type | Marlin's yes to a production deploy |
+| P3 | `services-mint` | On the branch "Test new design": `/services` and `/services/angebot` restyled to the tokens (backgrounds, text, lines, buttons as primary with primary ink, accents for links), the hero box becomes an FX scene with the `lumitra-light` preset behind the headline, contrast checked against the plan's floors, screenshots at three widths | the branch only; publishing stays Marlin's |
+
+P3's colour restyle does not need P2 and can go first; only the hero scene waits for the deploy. The rest of the new
+site (the hub page) is still black and gold; it belongs to R1 and is not part of this request.

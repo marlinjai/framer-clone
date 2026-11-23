@@ -15,7 +15,7 @@
 // PURE: no React, no MST.
 
 import type { Binding, Expression, RowIndex, Trigger } from '../format';
-import { assertSeed, copyItem, derived, el, initialOf, onKeys, propsOf, stateIdOn, withProps, type PresetNode } from './nodes';
+import { assertSeed, copyItem, derived, el, initialOf, nameOf, onKeys, propsOf, stateIdOn, withProps, type PresetNode } from './nodes';
 
 export const TABS_VERSION = 1;
 
@@ -112,7 +112,7 @@ export function deriveTabs(root: PresetNode): PresetNode {
       return isPanel(child) ? panel(child) : child;
     }),
   }, {
-    state: [{ id: state, name: 'Active tab', type: 'number', initial: Math.min(initialOf(root, state), last), min: 0, max: last }],
+    state: [{ id: state, name: nameOf(root, state, 'Active tab'), type: 'number', initial: Math.min(initialOf(root, state), last), min: 0, max: last }],
     preset: { kind: 'tabs', version: TABS_VERSION },
   });
 }
@@ -177,14 +177,14 @@ export function collectionTabs({ seed, label = 'Sections', collection, titleFiel
 }
 
 /** One more tab and panel, cloned from the last, with every generated entry derived again. */
-export function addTab(root: PresetNode, item: TabItem): PresetNode {
+export function addTab(root: PresetNode, item: TabItem, taken?: ReadonlySet<string>): PresetNode {
   const children = root.children ?? [];
   const list = children.find(isList);
   const lastTab = list?.children?.filter(isTab).at(-1);
   const lastPanel = children.filter(isPanel).at(-1);
   if (!list || !lastTab || !lastPanel) return root;
-  const tab = withProps(copyItem(root, lastTab), { children: item.title });
-  const panel = withProps(copyItem(root, lastPanel), { children: item.body });
+  const tab = withProps(copyItem(root, lastTab, taken), { children: item.title });
+  const panel = withProps(copyItem(root, lastPanel, taken), { children: item.body });
   const at = children.lastIndexOf(lastPanel) + 1;
   return deriveTabs({
     ...root,

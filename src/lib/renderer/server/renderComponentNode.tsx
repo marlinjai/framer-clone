@@ -39,6 +39,8 @@ import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
 import { isFxSceneProp } from '@/lib/fxScene/marker';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
+import { hasCustomCode, withoutCustomCodeTree } from '@/lib/customCode/customCode';
+import { createCustomCodeElement, customCodeBoxTag } from '../customCode/customCodeElement';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { ShopPartElement } from '@/lib/commerce/shopRuntime';
@@ -62,10 +64,11 @@ const INTERACTIVE_COMMERCE_KINDS: ReadonlySet<string> = new Set([
 // for its island, never an attribute. It is denied per node (isFxSceneProp), because
 // on an SVG `radialGradient` the same name is the gradient's focal point.
 // `scene` is the stored 3D scene of a 3D scene box (src/lib/scene, not an FX scene): data for
-// its island under any value, never an attribute.
+// its island under any value, never an attribute. `customCode` names a sandboxed custom code
+// block (src/lib/customCode): drawn from its parsed value, never an attribute.
 // `rules` is the same unless it is a string, which stays the legacy `<table>`
 // attribute it has always been: anything else would render as `[object Object]`.
-const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour', 'scene']);
+const NON_DOM_PROPS: ReadonlySet<string> = new Set(['children', 'query', 'bindings', 'effects', 'behaviour', 'scene', 'customCode']);
 
 /**
  * Resolve a node's HTML tag. A stored `type` IS the tag: every write path stores
@@ -153,25 +156,37 @@ function rawTextChild(node: ComponentNode, inLink: boolean): React.ReactNode {
 /**
  * What goes inside a node's element: its own text, then its child nodes in
  * order. Exported for the form island, which renders its own wrapper. `inLink`
- * says the node sits inside a link or a button, its own tag included.
+ * says the node sits inside a link or a button, its own tag included; `parentTag`
+ * is the element the children stand in (the node's own tag unless drawn as another).
  */
 export function renderNodeChildren(
   node: ComponentNode,
   scope: BindingScope,
   foreign: ForeignContent = false,
   inLink = !runLinksAllowedIn(node.type),
+  parentTag: string | null = resolveHtmlTag(node.type),
 ): React.ReactNode {
   const rendered = (node.children ?? []).map((child, index) =>
-    renderComponentNode(child, scope, child.id ?? index, foreign, inLink),
+    renderComponentNode(child, scope, child.id ?? index, foreign, inLink, parentTag),
   );
   return ownTextThenChildren((node.props as any)?.children, rendered, createRunElement, !inLink) as React.ReactNode;
 }
 
 /** A node's child nodes without its own text (a shop part draws its text itself). */
-function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreign: ForeignContent, inLink: boolean): React.ReactNode {
+function renderNodeChildrenOnly(node: ComponentNode, scope: BindingScope, foreign: ForeignContent, inLink: boolean, parentTag: string | null): React.ReactNode {
   const children = node.children ?? [];
   if (children.length === 0) return undefined;
-  return children.map((child, index) => renderComponentNode(child, scope, child.id ?? index, foreign, inLink));
+  return children.map((child, index) => renderComponentNode(child, scope, child.id ?? index, foreign, inLink, parentTag));
+}
+
+/**
+ * Inside an island, the nodes a custom code block must not replace: a shop part and a
+ * nested shop control, which the block check below would otherwise draw as a box, so
+ * a control would lose its button (D95). They lose the prop instead.
+ */
+function drawnAsItselfInIsland(props: Record<string, unknown>): boolean {
+  const kind = props['data-component-kind'];
+  return shopPartRoleOf(props) !== undefined || (typeof kind === 'string' && INTERACTIVE_COMMERCE_KINDS.has(kind));
 }
 
 /**
@@ -185,6 +200,8 @@ export function renderComponentNode(
   key: React.Key = node.id ?? 0,
   foreign: ForeignContent = false,
   inLink = false,
+  /** The tag of the element this node stands in, when known (a void-tag custom code block's box needs it). */
+  parentTag: string | null = null,
 ): React.ReactNode {
   // No element at all, so nothing below (a tag, an island, a marker) applies.
   if (isTextNodeType(node.type)) return rawTextChild(node, inLink);
@@ -201,10 +218,12 @@ export function renderComponentNode(
   // time feeds the no-JavaScript fill-time check of the submit endpoint.
   const formKind = formKindOf(node.props as Record<string, unknown> | undefined);
   if (formKind === 'form') {
-    return <FormIsland key={key} node={withoutPrivateFormProps(node)} scope={scope} renderedAt={Date.now()} />;
+    // A client island's props are serialized into the page: neither the owner's private form settings nor any stored
+    // custom code value goes with them (D95).
+    return <FormIsland key={key} node={withoutCustomCodeTree(withoutPrivateFormProps(node), drawnAsItselfInIsland)} scope={scope} renderedAt={Date.now()} />;
   }
-  if (formKind === 'form-field') return <FormFieldIsland key={key} node={node} />;
-  if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={node} />;
+  if (formKind === 'form-field') return <FormFieldIsland key={key} node={withoutCustomCodeTree(node, drawnAsItselfInIsland)} />;
+  if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={withoutCustomCodeTree(node, drawnAsItselfInIsland)} />;
 
   // The sticky call to action bar draws its own link; renderPublishedPage
   // moved it to the end of the page and its stylesheet pins it on phones.
@@ -218,6 +237,26 @@ export function renderComponentNode(
     const source = (node.props ?? {}) as Record<string, unknown>;
     const config = Object.fromEntries(MAP_EMBED_PROP_KEYS.filter((name) => name in source).map((name) => [name, source[name]]));
     return <MapEmbedIsland key={key} domProps={stripMapEmbedProps(nodeDomProps(node))} config={config} />;
+  }
+
+  // A sandboxed custom code block (src/lib/customCode): the box and its children, which
+  // are the fallback, with the hash's first characters when it names a block. The frame
+  // is the island's (slice C3); a proposal or an invalid value is the fallback for good.
+  if (hasCustomCode(node.props)) {
+    const tag = resolveHtmlTag(node.type) ?? 'div';
+    // Null under a parent that holds only its own kinds of children: no box (D96).
+    const boxTag = customCodeBoxTag(tag, foreign, parentTag);
+    if (boxTag === null) return null;
+    return createCustomCodeElement('published', {
+      // The stored tag: the element swaps a void one for boxTag and keeps only global attributes.
+      tag,
+      foreign,
+      parentTag,
+      domProps: nodeDomProps(node),
+      config: (node.props as Record<string, unknown>).customCode,
+      children: renderNodeChildren(node, scope, contentBelow(boxTag, foreign), inLink || !runLinksAllowedIn(boxTag), boxTag),
+      key,
+    });
   }
 
   // A shop part (src/lib/commerce/parts.ts): drawn as its control's island says
@@ -235,7 +274,7 @@ export function renderComponentNode(
         tag={partTag}
         domProps={nodeDomProps(node)}
         storedText={partText}
-        content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign), inLink || !runLinksAllowedIn(partTag))}
+        content={isVoidTag(partTag) ? undefined : renderNodeChildrenOnly(node, scope, contentBelow(partTag, foreign), inLink || !runLinksAllowedIn(partTag), partTag)}
         surface="preview"
         linksAllowed={!inLink}
       />
@@ -251,7 +290,8 @@ export function renderComponentNode(
       <CommerceIsland
         key={key}
         kind={dataKind as CommerceIslandProps['kind']}
-        node={node}
+        // Serialized into the page with the island: no stored custom code value goes with it (D95).
+        node={withoutCustomCodeTree(node, drawnAsItselfInIsland)}
         // The product, variant and availability of the source the island sits in (hydrateBindings
         // records them on the node): a variant selector inside a product detail reads its product here.
         scope={node.islandFrames ? createScope([...scope.frames, ...node.islandFrames]) : scope}

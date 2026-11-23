@@ -11,6 +11,7 @@ import { UNCAPTURED_PAGES, type UncapturedPage } from './busbasis/pages';
 import type { ImportRun, ImportScoreOut } from './import/types';
 import {
   ACCEPTED_NOT_TAUGHT,
+  RAW_FIELD,
   GAPS,
   KIND_LABEL,
   ROW_KINDS,
@@ -43,6 +44,8 @@ interface PanelDetail {
   presetsPlaced: string[];
   /** The rows whose panel cell passes only through the text field for rules. */
   rawFieldRows: string[];
+  /** The event rows whose interaction was picked from "All events" rather than the first list. */
+  rawFieldEvents?: string[];
 }
 
 type Counts = { pass: number; fail: number; notTested: number; total: number };
@@ -67,8 +70,6 @@ function tally(counts: Counts, cell: Cell | undefined): void {
 const percent = (part: number, whole: number) => (whole === 0 ? 'none' : `${((part / whole) * 100).toFixed(1)} percent`);
 const ratio = (c: { pass: number; total: number }) => `${c.pass} of ${c.total} (${percent(c.pass, c.total)})`;
 
-/** The panel cells that pass only through the text field for rules. */
-const rawFieldCells = (score: Score): number => score.panel.rawFieldRows.length;
 
 /** A pattern is editable only when every tag and prop it uses is. */
 function patternPanelCells(patterns: PatternsOut, panel: SurfaceResults, detail: PanelDetail): SurfaceResults {
@@ -129,6 +130,8 @@ export interface Score {
     surfaces: Record<Surface, Counts>;
     /** AI passes the prompt does not teach: earned, but weaker than the column reads. */
     acceptedNotTaught: number;
+    /** Panel passes no designed control earned: CSS typed into the rule field, an event picked from "All events". */
+    rawField: { css: number; events: number };
     byKind: Record<RowKind, Record<Surface, Counts>>;
     included: number;
     excluded: Array<{ kind: RowKind; id: string; reason: string }>;
@@ -229,6 +232,14 @@ export function buildScore(durationSeconds?: number): Score {
   // An event row asks whether a stored action runs from a real cause, on both.
   Object.assign(results.format, events);
   Object.assign(results.renderer, events);
+  // The panel writes the proof's page; that counts only where the proof runs on the published page.
+  for (const [key, cell] of Object.entries(results.panel)) {
+    if (!key.startsWith('html-event-handler:') || cell.status !== 'pass') continue;
+    const published = events[key];
+    if (published?.status !== 'pass') {
+      results.panel[key] = { status: 'fail', gap: published?.gap ?? 'blocked-event-handlers', note: `the panel writes it, and it does not run on the published page: ${published?.note ?? 'no proof ran'}` };
+    }
+  }
   // And on the mounted editor, in the Interact tool.
   Object.assign(results.canvas, canvasEvents);
 
@@ -253,15 +264,22 @@ export function buildScore(durationSeconds?: number): Score {
 
   // A page-level item nothing has measured fails, under the theme contract's gap.
   // The panel column is measured in jsdom (pageItems.panel.jsdom.score.tsx), the AI column on the validator (pageItems.ai.score.ts), the rest in Chromium.
-  const pageItemResults = {
-    ...readOut<Partial<Record<Surface, SurfaceResults>>>('page-items'),
-    ...readOut<Partial<Record<Surface, SurfaceResults>>>('page-items-panel'),
-    ...readOut<Partial<Record<Surface, SurfaceResults>>>('page-items-ai'),
-  };
+  // The head rows measure the format, the published page and the generator (head.score.ts) and the panel
+  // (head.panel.jsdom.score.tsx); the canvas has no counterpart, so that cell fails under the head gap.
+  // Merged surface by surface: the files share surfaces (format, renderer), and a plain spread would let one replace the other's rows.
+  const pageItemResults: Partial<Record<Surface, SurfaceResults>> = {};
+  for (const file of ['page-items', 'page-items-panel', 'page-items-ai', 'page-items-head', 'page-items-head-panel']) {
+    for (const [surface, cells] of Object.entries(readOut<Partial<Record<Surface, SurfaceResults>>>(file))) {
+      pageItemResults[surface as Surface] = { ...pageItemResults[surface as Surface], ...cells };
+    }
+  }
+  const headUnmeasured: Partial<Record<Surface, string>> = { canvas: 'no counterpart on the canvas: a head tag has nothing to draw' };
   for (const entry of pageItemEntries()) {
     const key = rowKey(entry.kind, entry.id);
     for (const surface of SURFACES) {
-      results[surface][key] = pageItemResults[surface]?.[key] ?? { status: 'fail', gap: 'theme', note: 'not built yet' };
+      results[surface][key] =
+        pageItemResults[surface]?.[key] ??
+        (entry.id.startsWith('head:') ? { status: 'fail', gap: 'head-items', note: headUnmeasured[surface] ?? 'not measured' } : { status: 'fail', gap: 'theme', note: 'not built yet' });
     }
   }
 
@@ -288,6 +306,7 @@ export function buildScore(durationSeconds?: number): Score {
   const gapCells = new Map<GapId, number>();
   const rows: Score['matrix']['rows'] = {};
   let acceptedNotTaught = 0;
+  const rawField = { css: 0, events: 0 };
 
   for (const entry of included) {
     const key = rowKey(entry.kind, entry.id);
@@ -300,6 +319,7 @@ export function buildScore(durationSeconds?: number): Score {
       tally(byKind[entry.kind][surface], cell);
       if (cell.status === 'fail' && cell.gap) gapCells.set(cell.gap, (gapCells.get(cell.gap) ?? 0) + 1);
       if (cell.status === 'pass' && cell.note === ACCEPTED_NOT_TAUGHT) acceptedNotTaught += 1;
+      if (surface === 'panel' && cell.status === 'pass' && cell.note === RAW_FIELD) rawField[entry.kind === 'html-event-handler' ? 'events' : 'css'] += 1;
     }
     rows[key] = cells.join(' ');
   }
@@ -353,6 +373,7 @@ export function buildScore(durationSeconds?: number): Score {
     matrix: {
       surfaces,
       acceptedNotTaught,
+      rawField,
       byKind,
       included: included.length,
       excluded: entries.filter((e) => e.excluded).map((e) => ({ kind: e.kind, id: e.id, reason: e.excluded as string })),
@@ -431,14 +452,14 @@ export function renderReport(score: Score): string {
     '- **Format stores it:** the entry is written into a node, survives `ComponentModel.create`, a snapshot, JSON and a second create, and is read back unchanged through `getResolvedProps`. For a selector, at-rule, media feature or event handler the bytes alone prove nothing (props are opaque JSON and hold anything), so it also needs a reader that gives it a meaning: it has to reach the page. An attribute named like a CSS property comes back as a style, which counts as stored.',
     '- **Published renderer emits it:** the node goes through `applyResponsiveStyles` and `renderComponentNode`. An element or attribute must be in the markup, an attribute on the opening tag of its own element, and when that element is missing the attribute takes the element\'s gap. An SVG or MathML entry sits inside its root element and Chromium must parse the tag into that namespace. A CSS property must be there both ways a declaration reaches a page: inline, and in the page stylesheet as a responsive value, with `initial` as the value. A value row does the same with its sample on a host property. A WAI-ARIA pattern must pass its keyboard contract in real Chromium.',
     '- **Editor canvas shows it:** the same entry through the real `ComponentRenderer` with a real store, rendered to markup. An SVG attribute that arrives as a style declaration passes, because SVG maps those to the same property; an HTML one is `attribute-read-as-style`. A WAI-ARIA pattern runs its contract on the mounted editor instead: the real `EditorApp` in Chromium with the tree on a page, its server edge stubbed, in the Interact tool, where the page runs. So does the proof of an event row. A contract that passes when published and fails there is `canvas-editor-context`. A rule row renders the canvas sheet beside it and reads the text that sheet holds: pointer states and conditions on the editor must be dead until previewed, and the frame must answer a width.',
-    '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does: its stored behaviour, with the rules on a state or the gate, when the palette places that preset, and a plain rule through the raw field. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed.',
+    '- **Panel can edit it:** the real `RightSidebar` is mounted for a node of each component category and every control is operated. A key counts only if an action changed it in the node, and an attribute only on the tag the action changed it on. An element counts when a palette entry produces it or a panel action sets it. A pattern counts when every tag and prop it uses does: its stored behaviour, with the rules on a state or the gate, when the palette places that preset, and a plain rule through the raw field. A value row counts only for the kinds the driver types (a length, a color, a number) and when a control kept what was typed. An event row puts the stored page of its proof on the page without its trigger, picks the proof\'s host, and adds the interaction through the Interactions section as a person would; it counts when the node then holds exactly the proof\'s triggers, the parser refuses nothing on it, and the proof runs on the published page. An event picked from "All events" rather than the first list carries `raw field`.',
     '- **AI generator can produce it:** `validateGeneration` is given a node with the entry, and the entry must still be there afterwards. A tag rewritten to `div` is a fail. A value row needs the exact value back. A sample on a host property outside the allowlist fails as `ai-style-allowlist`, so it says nothing about the value. A rule row needs its stored rule back unchanged, and carries the note `accepted, not taught` unless the prompt teaches that form. A rule that reads a visitor or looks past its node is `ai-rule-refused`: that is a safety decision, not a missing feature. An event row gives the generator the stored page of its proof and needs every stored trigger back unchanged, references following the fresh ids; only a press is taught, so every other row is `accepted, not taught`, a proof whose host is a raw form control fails as `ai-tag-allowlist`, and a proof that stores a trigger on anything but a click, a key, an input or a change, or one holding a `delay` or an `emit`, fails as `ai-trigger-refused`, since a trigger the model writes itself must not run without a person. A pattern built from a preset is asked for the way the prompt teaches it, a preset request, and what the validator builds must pass the pattern\'s whole contract on the published page in Chromium. A generated carousel never rotates, so its cell is `ai-motion-refused`.',
     '- **A reusable component row** is a promise of the format, not a web standard entry. Format: it survives the snapshot round trip with a reader. Published: it is emitted through `renderPublishedPage`. Canvas: it renders through the real `ComponentRenderer`. Panel: it changes through the real section. AI: it survives `validateGeneration`. A pass here proves less than it reads: the corpus is the test.',
   );
   push(
     `The panel writes ${score.panel.styleKeysWritten.length} style keys and ${score.panel.propKeysWritten.length} other props across every category. Palette tags: ${score.panel.paletteTags.map((t) => `\`${t}\``).join(', ')}.`,
     '',
-    `Of the panel's passing cells, ${rawFieldCells(score)} are the \`raw field\`: a person typed the CSS, and no control exists for it. They pass, and they say less than a control would.`,
+    `Of the panel's passing cells, ${matrix.rawField.css + matrix.rawField.events} are the \`raw field\`: ${matrix.rawField.css} where a person typed the CSS, and no control exists for it, and ${matrix.rawField.events} event rows whose interaction was picked by name from "All events" rather than from the first list. They pass, and they say less than a control would.`,
     `Of the AI generator's passing cells, ${matrix.acceptedNotTaught} are \`accepted, not taught\`: the validator keeps the rule or the trigger, and the prompt never asks for it. They pass, and they say the generator can write the form, not that it will.`,
   );
 
@@ -589,7 +610,7 @@ export function renderReport(score: Score): string {
     '- **Whether a panel control is any good.** A key counts as editable when a control changed it, whatever range or units that control offers. Only the properties panel and the palette are covered: the quick toolbar, context menus and the Layers panel were searched for tag changes and none found, not driven.',
     '- **The whole published page.** The corpus uses `applyResponsiveStyles` and `renderComponentNode`, without `hydrateBindings`, effects, the sticky bar, or the consent and font wrappers, and only in Chromium. The page around it is real: the sheet of a production build (`test/score/data/published-base.css`, refreshed by `pnpm score:refresh-base`), and the mounted editor sits on the same sheet. Its utilities also follow classes in `test` and `docs`, which the deployed image does not scan, so it can hold a few the live sheet lacks.',
     '- **WAI-ARIA conformance.** A contract is the primary keyboard path of a pattern, not its whole page in the Guide.',
-    '- **Page-level items:** a site theme has rows (`test/score/pageItems.score.ts`): format, published in Chromium, and the canvas on the mounted editor, its theme set through the project and measured on the frame, with what lies outside the frames checked unchanged. The panel column is the real Theme panel and the node sections in jsdom (`pageItems.panel.jsdom.score.tsx`). The AI column (`pageItems.ai.score.ts`) asks whether a generation may use a token by reference and add one with its dark value, and proves that it cannot set the mode or a document default, which are refused on purpose. The preview is not measured, and neither is WebKit on the canvas. Head tags and page-wide scripts have no rows yet, and script and style elements are excluded with a reason.',
+    '- **Page-level items:** a site theme has rows (`test/score/pageItems.score.ts`): format, published in Chromium, and the canvas on the mounted editor, its theme set through the project and measured on the frame, with what lies outside the frames checked unchanged. The panel column is the real Theme panel and the node sections in jsdom (`pageItems.panel.jsdom.score.tsx`). The AI column (`pageItems.ai.score.ts`) asks whether a generation may use a token by reference and add one with its dark value, and proves that it cannot set the mode or a document default, which are refused on purpose. The preview is not measured, and neither is WebKit on the canvas. The head items have 33 rows (`test/score/head.score.ts`): the format (a site list and a page, through JSON and the reader again), the published page (the tag in the raw HTML of the real emission, in `<head>`, JSON-LD in the body and parsing back) and the generator, which refuses them on purpose. The raw head from a real build, the eight user agents and the three browsers are `test/behaviour/headItems.spec.ts` and `test/renderGate/headItems.gate.tsx`. The panel is the real Head panel in jsdom (`head.panel.jsdom.score.tsx`) and the canvas has no counterpart. Page-wide scripts have no rows yet, and script and style elements are excluded with a reason.',
     '- **FX scenes:** three reference scenes have rows (`test/score/fx.score.ts`). The renderer column compares pixels with Lumitra FX as lumitra-web runs it, at the reduced motion frame with the clock stopped, in Chromium, with the engine mounted as the published island mounts it but bundled by esbuild; the island itself, a real build and WebKit are in `test/behaviour/fx.spec.ts` and `fxOracle.spec.ts`. Animated frames are not compared. The canvas column (`test/score/fx.canvas.score.ts`) runs the real EditorApp in Chromium: nothing drawn by default, with Live the scene in exactly one WebGL context, filling the box behind its content, and released again; its pixels are the renderer column\'s, drawn by the same engine. The panel column (`test/score/fx.panel.jsdom.score.tsx`) pastes the scene into the real FX section and asks that it is stored unchanged and that every setting of every layer has a control. The generator column (in `fx.score.ts`) sends a box in the taught preset form through the real `validateGeneration`: it stores exactly the reference scene, one retuned setting changes only that setting, and an invented layer is left out with a note.',
     '- **Script on the BusBasis pages.** A frozen page holds no script, so menus, modals, filters and the gallery cannot run on the original. They stand under "needs" as failures rather than as compared states. A page is frozen in one state: logged out, no cart, the first visit.',
     '- **React import beyond static JSX and Tailwind.** Props as inputs, `cva` tables, entries, hooks, Radix and the AI rebuild step of the plan are not built, so the real components read "not imported", honestly. The import score runs in Chromium only, on the default frames, and with no dark mode state.',

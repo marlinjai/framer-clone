@@ -16,8 +16,10 @@ import {
   useInteractivity,
   useInteractivitySpec,
   useWindowPointer,
+  type InteractivityTarget,
 } from "../interactivity";
 import type {
+  InteractivitySpec,
   LayerComponentProps,
   LayerDefinition,
 } from "../types";
@@ -33,6 +35,7 @@ interface NoiseValues {
 
 interface NoiseUniforms {
   [key: string]: THREE.IUniform<unknown>;
+  uPremultiply: THREE.IUniform<number>;
   uTime: THREE.IUniform<number>;
   uMouse: THREE.IUniform<THREE.Vector2>;
   uScale: THREE.IUniform<number>;
@@ -49,6 +52,7 @@ const NOISE_VERT = /* glsl */ `
 `;
 
 const NOISE_FRAG = /* glsl */ `
+  uniform float uPremultiply;
   uniform float uTime;
   uniform vec2 uMouse;
   uniform float uScale;
@@ -101,8 +105,42 @@ const NOISE_FRAG = /* glsl */ `
     // to the screen converted nothing. Into the composer's buffer this is the
     // identity, so a scene with a post pass is drawn exactly as before.
     #include <colorspace_fragment>
+    // Multiply blends premultiplied colour (see contentBlend): uPremultiply is 1 for it, 0 otherwise.
+    gl_FragColor.rgb *= mix(1.0, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
+    // Only multiply reads the alpha as a factor (one minus it); a value above 1 (the noise reaches 1.1) must not go negative there.
+    gl_FragColor.a = mix(gl_FragColor.a, clamp(gl_FragColor.a, 0.0, 1.0), uPremultiply);
   }
 `;
+
+/**
+ * One frame of a noise field's pointer, in the order the component runs it (the component and its test both
+ * call this, so the order cannot drift apart from what is tested):
+ *  1. the engine's smoothing steps (`interactivity.step`);
+ *  2. with pointer settings, the engine's position is the field's (`uMouse`);
+ *  3. without them, the field follows the pointer plainly, `mouse += (pointer - mouse) * 0.04` (the first
+ *     version's feel, kept exactly), and the engine's target is kept at the same position with no velocity, so
+ *     that the moment the layer gets pointer settings (a first edit in the editor) the engine carries on from
+ *     where the field already is instead of from the rest position, which would be a visible jump. Under
+ *     reduced motion this branch does not run and the still frame is untouched.
+ */
+export function stepNoisePointer(
+  uMouse: THREE.Vector2,
+  hasSettings: boolean,
+  spec: InteractivitySpec,
+  reduce: boolean,
+  pointer: Readonly<{ x: number; y: number }>,
+  engine: InteractivityTarget,
+): void {
+  engine.step(spec, reduce);
+  if (hasSettings) {
+    uMouse.copy(engine.mouse);
+  } else if (!reduce) {
+    uMouse.x += (pointer.x - uMouse.x) * 0.04;
+    uMouse.y += (pointer.y - uMouse.y) * 0.04;
+    engine.mouse.copy(uMouse);
+    engine.velocity.set(0, 0);
+  }
+}
 
 function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
   const v = values as unknown as NoiseValues;
@@ -115,6 +153,7 @@ function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
   // strict react-hooks/immutability rule happy.
   const initialUniforms = useMemo<NoiseUniforms>(
     () => ({
+      uPremultiply: { value: 0 },
       uTime: { value: 0 },
       uMouse: { value: new THREE.Vector2(0, 0) },
       uScale: { value: v.scale },
@@ -157,16 +196,7 @@ function NoiseFieldComponent({ layer, values, ctx }: LayerComponentProps) {
     if (!m) return;
     const u = m.uniforms;
     u.uTime.value = ctx.reduce ? 2.0 : state.clock.elapsedTime * v.speed;
-    interactivity.step(spec, ctx.reduce);
-    // If the layer declares interactivity, the bus drives mouse; otherwise
-    // keep the legacy v7 lerp so the hero feels exactly the same.
-    if (layer.interactivity) {
-      (u.uMouse.value as THREE.Vector2).copy(interactivity.mouse);
-    } else if (!ctx.reduce) {
-      const mouse = u.uMouse.value as THREE.Vector2;
-      mouse.x += (pointer.x - mouse.x) * 0.04;
-      mouse.y += (pointer.y - mouse.y) * 0.04;
-    }
+    stepNoisePointer(u.uMouse.value as THREE.Vector2, !!layer.interactivity, spec, ctx.reduce, pointer, interactivity);
   });
 
   return (

@@ -8,6 +8,7 @@
 // the static-publish path.
 
 import type { BindingsRecord, ReadBinding } from '@/lib/bindings/types';
+import { CUSTOM_CODE_PROP } from '@/lib/customCode/customCode';
 import type { BindingScope } from './scope';
 import { evaluateExpression, parseExpression } from './expression';
 import { isSafeSrc, safeHrefFromData } from '@/lib/links/safeHref';
@@ -139,6 +140,9 @@ export function applyBindings(
     if (!entry || entry.mode !== 'read' || slot === 'visible') continue;
     // Nothing is bound into a behaviour: the one way in is a component's `state`.
     if (slot === 'behaviour' || slot.startsWith('behaviour.')) continue;
+    // Nor into a custom code block's value (src/lib/customCode): which approved code runs
+    // where is the stored revision's choice (decision D4), never a page's data or address.
+    if (slot === CUSTOM_CODE_PROP || slot.startsWith(`${CUSTOM_CODE_PROP}.`)) continue;
     // Nor into an FX scene (src/lib/fxScene): it is stored whole, after its own
     // check, and a bound value would reach the scene without it.
     if (isFxSceneProp(slot.split('.')[0], node.type)) continue;

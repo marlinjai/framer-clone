@@ -287,7 +287,10 @@ export function componentEntries(): Entry[] {
  * Cells come from pageItems.score.ts, and a cell nothing measured fails.
  */
 export function pageItemEntries(): Entry[] {
-  return pageItems.theme.map((id) => entry('page-item', `theme:${id}`, pageItems.source));
+  return [
+    ...pageItems.theme.map((id) => entry('page-item', `theme:${id}`, pageItems.source)),
+    ...pageItems.head.map((id) => entry('page-item', `head:${id}`, pageItems.source)),
+  ];
 }
 
 /**

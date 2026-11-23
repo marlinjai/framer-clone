@@ -1,8 +1,8 @@
 {
   "comparedWith": {
     "file": "docs/primitives-score/latest.json",
-    "generatedAt": "2026-11-12T18:46:20.939Z",
-    "included": 1845
+    "generatedAt": "2026-11-21T02:51:05.722Z",
+    "included": 1878
   },
   "framerPlugin": {
     "name": "framer-plugin",
@@ -10,16 +10,16 @@
     "typingsSha256": "38e57e89ce85f08f6624a203c31a9bde87d6449c8a94a269aa5bf22b0d11839e"
   },
   "totals": {
-    "rows": 1845,
+    "rows": 1878,
     "framer": {
       "native": 40,
       "partial": 509,
       "code-only": 1091,
-      "unknown": 205
+      "unknown": 238
     },
     "framerTyped": 549,
-    "ourRenderer": 1796,
-    "ourPanel": 1244,
+    "ourRenderer": 1829,
+    "ourPanel": 1369,
     "documentedNotMeasured": 83
   },
   "byKind": [
@@ -86,10 +86,10 @@
       },
       "framerTyped": 5,
       "ourRenderer": 92,
-      "ourPanel": 0,
+      "ourPanel": 92,
       "framerTypedOursFails": 0,
       "oursPassesFramerUntyped": 87,
-      "framerTypedPanelFails": 5
+      "framerTypedPanelFails": 0
     },
     {
       "kind": "svg-element",
@@ -280,19 +280,19 @@
     },
     {
       "kind": "page-item",
-      "label": "Page-level items: a site theme",
-      "total": 9,
+      "label": "Page-level items: a site theme and head items",
+      "total": 42,
       "framer": {
         "native": 2,
         "partial": 1,
         "code-only": 0,
-        "unknown": 6
+        "unknown": 39
       },
       "framerTyped": 3,
-      "ourRenderer": 9,
-      "ourPanel": 9,
+      "ourRenderer": 42,
+      "ourPanel": 42,
       "framerTypedOursFails": 0,
-      "oursPassesFramerUntyped": 6,
+      "oursPassesFramerUntyped": 39,
       "framerTypedPanelFails": 0
     },
     {
@@ -14320,7 +14320,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onanimationcancel",
@@ -14332,7 +14332,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onanimationend",
@@ -14344,7 +14344,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onanimationiteration",
@@ -14356,7 +14356,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onanimationstart",
@@ -14368,7 +14368,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onauxclick",
@@ -14380,7 +14380,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onbeforeinput",
@@ -14392,7 +14392,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onbeforematch",
@@ -14416,7 +14416,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onbeforexrselect",
@@ -14440,7 +14440,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncancel",
@@ -14452,7 +14452,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncanplay",
@@ -14464,7 +14464,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncanplaythrough",
@@ -14476,7 +14476,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onchange",
@@ -14488,7 +14488,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onclick",
@@ -14503,7 +14503,7 @@
       "documentedNotMeasured": true,
       "docUrl": "https://www.framer.com/academy/lessons/framer-animations-overview",
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onclose",
@@ -14515,7 +14515,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncommand",
@@ -14527,7 +14527,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncontentvisibilityautostatechange",
@@ -14539,7 +14539,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncontextlost",
@@ -14563,7 +14563,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncontextrestored",
@@ -14587,7 +14587,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncuechange",
@@ -14599,7 +14599,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oncut",
@@ -14611,7 +14611,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondblclick",
@@ -14623,7 +14623,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondrag",
@@ -14635,7 +14635,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondragend",
@@ -14647,7 +14647,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondragenter",
@@ -14659,7 +14659,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondragleave",
@@ -14671,7 +14671,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondragover",
@@ -14683,7 +14683,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondragstart",
@@ -14695,7 +14695,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondrop",
@@ -14707,7 +14707,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ondurationchange",
@@ -14719,7 +14719,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onemptied",
@@ -14731,7 +14731,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onencrypted",
@@ -14755,7 +14755,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onenterpictureinpicture",
@@ -14767,7 +14767,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onerror",
@@ -14779,7 +14779,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onfocus",
@@ -14791,7 +14791,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onformdata",
@@ -14803,7 +14803,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onfullscreenchange",
@@ -14815,7 +14815,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onfullscreenerror",
@@ -14827,7 +14827,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ongotpointercapture",
@@ -14839,7 +14839,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oninput",
@@ -14851,7 +14851,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:oninvalid",
@@ -14863,7 +14863,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onkeydown",
@@ -14875,7 +14875,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onkeyup",
@@ -14887,7 +14887,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onleavepictureinpicture",
@@ -14899,7 +14899,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onload",
@@ -14911,7 +14911,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onloadeddata",
@@ -14923,7 +14923,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onloadedmetadata",
@@ -14935,7 +14935,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onloadstart",
@@ -14947,7 +14947,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onlostpointercapture",
@@ -14959,7 +14959,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onmousedown",
@@ -14974,7 +14974,7 @@
       "documentedNotMeasured": true,
       "source": "docs/plans/2026-11-01-complete-primitives.md, \"What Framer does\" (editor and framer.app, 2026-11-01)",
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onmouseenter",
@@ -14989,7 +14989,7 @@
       "documentedNotMeasured": true,
       "docUrl": "https://www.framer.com/academy/lessons/framer-animations-overview",
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onmouseleave",
@@ -15004,7 +15004,7 @@
       "documentedNotMeasured": true,
       "docUrl": "https://www.framer.com/academy/lessons/framer-animations-overview",
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onmousemove",
@@ -15016,7 +15016,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onmouseout",
@@ -15028,7 +15028,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onmouseover",
@@ -15040,7 +15040,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onmouseup",
@@ -15052,7 +15052,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpaste",
@@ -15064,7 +15064,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpause",
@@ -15076,7 +15076,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onplay",
@@ -15088,7 +15088,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onplaying",
@@ -15100,7 +15100,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpointercancel",
@@ -15112,7 +15112,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpointerdown",
@@ -15127,7 +15127,7 @@
       "documentedNotMeasured": true,
       "source": "docs/plans/2026-11-01-complete-primitives.md, \"What Framer does\" (editor and framer.app, 2026-11-01)",
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpointerenter",
@@ -15139,7 +15139,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpointerleave",
@@ -15151,7 +15151,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpointermove",
@@ -15163,7 +15163,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpointerout",
@@ -15175,7 +15175,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpointerover",
@@ -15187,7 +15187,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onpointerup",
@@ -15199,7 +15199,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onprogress",
@@ -15211,7 +15211,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onratechange",
@@ -15223,7 +15223,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onreset",
@@ -15235,7 +15235,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onresize",
@@ -15247,7 +15247,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onscroll",
@@ -15259,7 +15259,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onscrollend",
@@ -15271,7 +15271,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onscrollsnapchange",
@@ -15283,7 +15283,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onscrollsnapchanging",
@@ -15295,7 +15295,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onsecuritypolicyviolation",
@@ -15319,7 +15319,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onseeking",
@@ -15331,7 +15331,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onselect",
@@ -15343,7 +15343,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onselectionchange",
@@ -15355,7 +15355,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onslotchange",
@@ -15379,7 +15379,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onsubmit",
@@ -15391,7 +15391,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onsuspend",
@@ -15403,7 +15403,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ontimeupdate",
@@ -15415,7 +15415,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ontoggle",
@@ -15427,7 +15427,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ontransitioncancel",
@@ -15439,7 +15439,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ontransitionend",
@@ -15451,7 +15451,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ontransitionrun",
@@ -15463,7 +15463,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:ontransitionstart",
@@ -15475,7 +15475,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onvolumechange",
@@ -15487,7 +15487,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onwaiting",
@@ -15499,7 +15499,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-event-handler:onwaitingforkey",
@@ -15523,7 +15523,7 @@
         "FramerPluginAPI.createCodeFile"
       ],
       "ourRenderer": true,
-      "ourPanel": false
+      "ourPanel": true
     },
     {
       "key": "html-global-attribute:accesskey",
@@ -16660,6 +16660,402 @@
       ],
       "ourRenderer": true,
       "ourPanel": false
+    },
+    {
+      "key": "page-item:head:jsonld",
+      "kind": "page-item",
+      "id": "head:jsonld",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:link:alternate",
+      "kind": "page-item",
+      "id": "head:link:alternate",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:link:author",
+      "kind": "page-item",
+      "id": "head:link:author",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:link:help",
+      "kind": "page-item",
+      "id": "head:link:help",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:link:license",
+      "kind": "page-item",
+      "id": "head:link:license",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:link:me",
+      "kind": "page-item",
+      "id": "head:link:me",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:link:privacy-policy",
+      "kind": "page-item",
+      "id": "head:link:privacy-policy",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:link:terms-of-service",
+      "kind": "page-item",
+      "id": "head:link:terms-of-service",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:ahrefs-site-verification",
+      "kind": "page-item",
+      "id": "head:meta:ahrefs-site-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:apple-mobile-web-app-title",
+      "kind": "page-item",
+      "id": "head:meta:apple-mobile-web-app-title",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:application-name",
+      "kind": "page-item",
+      "id": "head:meta:application-name",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:author",
+      "kind": "page-item",
+      "id": "head:meta:author",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:baidu-site-verification",
+      "kind": "page-item",
+      "id": "head:meta:baidu-site-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:facebook-domain-verification",
+      "kind": "page-item",
+      "id": "head:meta:facebook-domain-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:format-detection",
+      "kind": "page-item",
+      "id": "head:meta:format-detection",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:geo.placename",
+      "kind": "page-item",
+      "id": "head:meta:geo.placename",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:geo.position",
+      "kind": "page-item",
+      "id": "head:meta:geo.position",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:geo.region",
+      "kind": "page-item",
+      "id": "head:meta:geo.region",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:google-site-verification",
+      "kind": "page-item",
+      "id": "head:meta:google-site-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:msvalidate.01",
+      "kind": "page-item",
+      "id": "head:meta:msvalidate.01",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:p:domain_verify",
+      "kind": "page-item",
+      "id": "head:meta:p:domain_verify",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:rating",
+      "kind": "page-item",
+      "id": "head:meta:rating",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:twitter:creator",
+      "kind": "page-item",
+      "id": "head:meta:twitter:creator",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:twitter:site",
+      "kind": "page-item",
+      "id": "head:meta:twitter:site",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:meta:yandex-verification",
+      "kind": "page-item",
+      "id": "head:meta:yandex-verification",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:property:article:*",
+      "kind": "page-item",
+      "id": "head:property:article:*",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:property:book:*",
+      "kind": "page-item",
+      "id": "head:property:book:*",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:property:fb:app_id",
+      "kind": "page-item",
+      "id": "head:property:fb:app_id",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:property:og:audio",
+      "kind": "page-item",
+      "id": "head:property:og:audio",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:property:og:locale:alternate",
+      "kind": "page-item",
+      "id": "head:property:og:locale:alternate",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:property:og:video",
+      "kind": "page-item",
+      "id": "head:property:og:video",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:property:product:*",
+      "kind": "page-item",
+      "id": "head:property:product:*",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
+    },
+    {
+      "key": "page-item:head:property:profile:*",
+      "kind": "page-item",
+      "id": "head:property:profile:*",
+      "verdict": "unknown",
+      "reason": "a page-level item this mapping has not settled",
+      "symbols": [
+        "WithWebPageInfoTrait"
+      ],
+      "ourRenderer": true,
+      "ourPanel": true
     },
     {
       "key": "page-item:theme:color-token",

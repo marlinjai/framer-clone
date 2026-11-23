@@ -59,6 +59,8 @@ interface ProbeWindow {
     /** A second page of the project, with this slug. */
     addPage: (title: string) => string;
     pageSlug: () => string | undefined;
+    /** Store the site's head list as it is given, valid or not, as an older build or a hand edit could leave it. */
+    setSiteHead: (items: unknown[]) => void;
     notice: () => string | undefined;
   };
 }
@@ -182,5 +184,11 @@ const nodeById = (id: string): ComponentInstance | undefined => {
     return project.createPage(title).slug;
   },
   pageSlug: () => editorStore().editorUI.currentPage?.slug,
+  setSiteHead: (items) => {
+    const project = editorStore().editorUI.currentProject;
+    if (!project) throw new Error('the editor opened no project');
+    const result = project.updateSiteHead(items);
+    if (!result.ok) throw new Error(`the head list was refused: ${result.errors.join(' ')}`);
+  },
   notice: () => editorStore().editorUI.editorNotice?.message,
 };

@@ -12,6 +12,7 @@
  */
 
 import { getLayerSchema, listLayerSchemas } from "./registry";
+import { SETTING_GROUPS } from "./schemas";
 import type { Layer, ParamSchema, ParamsSchema, SceneConfig } from "./types";
 
 /** Defensive deep-clone for a `ParamSchema` entry. Vec2 has a tuple value. */
@@ -54,7 +55,7 @@ export function instantiateLayer(type: string, existing: Layer[]): Layer | null 
     type,
     name: def.label ?? type,
     visible: true,
-    blend: "normal",
+    blend: def.fixedBlend ?? "normal",
     params: cloneParams(def.defaultParams),
   };
 }
@@ -78,6 +79,136 @@ export function moveLayer(layers: Layer[], id: string, delta: number): Layer[] {
   const [item] = next.splice(idx, 1);
   next.splice(target, 0, item);
   return next;
+}
+
+/**
+ * The set of layers a layer moves among: content layers among content layers; effects that apply
+ * to the whole scene among themselves; effects that apply to one content layer among the effects
+ * of THAT layer (its siblings). Moving across sets would change nothing on screen. `null` for an
+ * unregistered type.
+ */
+function groupOf(layer: Layer): string | null {
+  const kind = getLayerSchema(layer.type)?.kind;
+  if (!kind) return null;
+  return kind === "content" ? "content" : `post:${layer.target ?? ""}`;
+}
+
+/**
+ * The kinds whose component reads a layer's `interactivity` (track mouse, momentum, spring,
+ * axes). The text layers and the distortion pass follow the pointer through their own
+ * `parallax` / strength settings instead and ignore it. A test reads the layer sources and
+ * fails when this list drifts from them.
+ */
+const POINTER_KINDS: ReadonlySet<string> = new Set(["noiseFill", "particleRing", "shape", "image", "gradient"]);
+
+/**
+ * What a layer of this kind does with its pointer BEFORE it has pointer settings of its own, as
+ * the values a first edit starts from (so changing one value never silently changes the rest):
+ *  - the noise field follows the pointer in a plain way of its own when it has none: a first-order
+ *    lerp, `mouse += (pointer - mouse) * 0.04` (layers/noiseFill.tsx). The engine's pointer
+ *    smoothing is a second-order spring, which at momentum 0 and spring 0.04 would overshoot and
+ *    wobble. Momentum 1 (damping 0.15) with spring 0.225 puts its dominant eigenvalue at the lerp's
+ *    0.96 with no overshoot: the same trajectory within 0.3% (pinned by a side-by-side test in
+ *    src/lib/fx/__tests__/interactivityReduce.test.tsx);
+ *  - the particle ring leans toward the pointer from the start, as the brand component does, so it
+ *    starts from the noise field's values (layers/particleRing.tsx);
+ *  - shape, image and gradient stand still: track mouse 0, but with the soft spring and momentum
+ *    the gold preset uses, so raising Track mouse alone makes the layer move (the engine's
+ *    smoothing is driven by the spring: a spring of 0 never moves).
+ */
+export function pointerBaseOf(type: string): { trackMouse: number; momentum: number; spring: number; axes: "x" | "y" | "both" } {
+  if (type === "noiseFill" || type === "particleRing") return { trackMouse: 1, momentum: 1, spring: 0.225, axes: "both" };
+  return { trackMouse: 0, momentum: 0.85, spring: 0.05, axes: "both" };
+}
+
+/** Whether a layer of this kind reads its pointer settings, so the panel may offer them. */
+export function layerReadsPointer(type: string): boolean {
+  return POINTER_KINDS.has(type);
+}
+
+/**
+ * The presentation group of one setting in the properties panel ("Text", "Type", "Layout",
+ * "Motion", ...), or `null` for the default group. A map by kind and key, never part of a
+ * layer's schema or of the stored scene: grouping cannot change what is serialized or drawn.
+ */
+export function settingGroupOf(type: string, key: string): string | null {
+  return SETTING_GROUPS[type]?.[key] ?? null;
+}
+
+export type MoveResult = { ok: true; layers: Layer[] } | { ok: false; reason: string };
+
+/**
+ * Move a layer to a place WITHIN ITS GROUP. `toIndex` counts inside the layer's own group, back
+ * to front, so `0` is the back of its group and `size - 1` the front. A group is: the content
+ * layers among themselves, the scene's effects among themselves, or the effects of one content
+ * layer among themselves (see `groupOf`).
+ *
+ * A layer is never moved across groups: where an effect sits among the content layers in
+ * the stored array changes nothing on screen (effects run after all content, in their own
+ * order), and an effect of one layer has no place among the scene's effects, so allowing it
+ * would only mislead. The slots of the other groups stay exactly where they are in the array.
+ *
+ * Refused, with a reason a person can act on, when the layer is unknown, when `toIndex`
+ * is outside the group or is where the layer already is.
+ */
+export function moveLayerTo(layers: Layer[], id: string, toIndex: number): MoveResult {
+  const layer = layers.find((l) => l.id === id);
+  if (!layer) return { ok: false, reason: "That layer is no longer in the scene." };
+  const group = groupOf(layer);
+  const slots: number[] = [];
+  layers.forEach((l, i) => {
+    if (groupOf(l) === group) slots.push(i);
+  });
+  const members = slots.map((i) => layers[i]);
+  const from = members.findIndex((l) => l.id === id);
+  if (!Number.isInteger(toIndex)) return { ok: false, reason: `${layer.name} cannot be moved to that place.` };
+  if (toIndex < 0 || toIndex >= members.length) {
+    const edge = toIndex < 0 ? "back" : "front";
+    return { ok: false, reason: `${layer.name} is already at the ${edge} of its group.` };
+  }
+  if (toIndex === from) return { ok: false, reason: `${layer.name} is already there.` };
+  const [item] = members.splice(from, 1);
+  members.splice(toIndex, 0, item);
+  const next = layers.slice();
+  slots.forEach((slot, i) => {
+    next[slot] = members[i];
+  });
+  return { ok: true, layers: next };
+}
+
+/** The place of a layer inside its own group, back to front, with the size of the group. `null` when the layer is unknown. */
+export function placeInGroup(layers: Layer[], id: string): { index: number; size: number } | null {
+  const layer = layers.find((l) => l.id === id);
+  if (!layer) return null;
+  const group = groupOf(layer);
+  const members = layers.filter((l) => groupOf(l) === group);
+  return { index: members.findIndex((l) => l.id === id), size: members.length };
+}
+
+export type DuplicateResult = { ok: true; layers: Layer[]; layerId: string } | { ok: false; reason: string };
+
+/**
+ * Copy a layer: a new id, the name followed by " copy", every setting copied (never
+ * shared with the original), placed directly in front of it in the stored order, so
+ * in the same group. Refused when the scene already holds `max` layers.
+ */
+export function duplicateLayer(layers: Layer[], id: string, max: number, maxName = 80): DuplicateResult {
+  const index = layers.findIndex((l) => l.id === id);
+  if (index < 0) return { ok: false, reason: "That layer is no longer in the scene." };
+  if (layers.length >= max) return { ok: false, reason: `A scene can hold at most ${max} layers. Remove one first.` };
+  const source = layers[index];
+  const layerId = uniqueLayerId(layers, source.type);
+  const copy: Layer = {
+    ...source,
+    id: layerId,
+    name: `${source.name} copy`.slice(0, maxName),
+    params: cloneParams(source.params),
+    ...(source.interactivity ? { interactivity: { ...source.interactivity } } : {}),
+    ...(source.animate ? { animate: JSON.parse(JSON.stringify(source.animate)) } : {}),
+  };
+  const next = layers.slice();
+  next.splice(index + 1, 0, copy);
+  return { ok: true, layers: next, layerId };
 }
 
 export function removeLayer(layers: Layer[], id: string): Layer[] {

@@ -71,6 +71,7 @@ const EXPECTED_MIGRATION_IDS = [
   '028_checkout_request',
   '029_company_erasure',
   '030_books_contact_person',
+  '031_checkout_session',
   '032_form_notification',
 ];
 

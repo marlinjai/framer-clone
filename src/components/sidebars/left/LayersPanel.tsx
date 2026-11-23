@@ -63,7 +63,9 @@ import type { BreakpointRef } from '@/lib/responsive/cascade';
 import { ancestorIdsOf, canDeleteLayer, deleteLayer, duplicateLayer } from '@/lib/layers/layerActions';
 import { layerActionsWidth } from '@/lib/layers/sidebarWidth';
 import { ContextMenu, type MenuItem, type MenuCloseReason } from './ContextMenu';
+import { derivedRowsOf } from '@/lib/layers/fxRows';
 import { breakpointRefsOf, layerIconOf, viewportIconOf } from '../layerIcon';
+import { FxSceneRows } from './FxSceneRows';
 
 // Touch screens (no hover): the selected row keeps its action cluster visible
 // and its name makes room for it (plan docs/plans/2026-10-24-editor-on-phones.md).
@@ -504,7 +506,9 @@ const LayerNode = observer(({ component, depth, breakpointId, breakpoints, hidde
   // Primary and extra (marquee / Shift+click) selections both highlight.
   const isSelected = editorUI.isSelected(component.id) &&
                     (!breakpointId || editorUI.selectedViewportNode?.breakpointId === breakpointId);
-  const hasChildren = component.children.length > 0;
+  // An FX scene box also lists its scene's layers under its own children (derived rows, not nodes).
+  const derived = derivedRowsOf(component);
+  const hasChildren = component.children.length > 0 || !!derived;
   const isFolded = hasChildren && editorUI.collapsedLayerIds.has(component.id);
   const isDraggable = !component.isViewportNode && component.hasParent;
   const isHidden = !component.canvasVisible;
@@ -684,6 +688,10 @@ const LayerNode = observer(({ component, depth, breakpointId, breakpoints, hidde
           breakpoints={breakpoints}
           hiddenByAncestor={isDimmed}
         />
+      )}
+
+      {derived && !isFolded && (
+        <FxSceneRows box={component} rows={derived.rows} depth={depth + 1} breakpointId={breakpointId} dimmed={isDimmed} />
       )}
     </div>
   );

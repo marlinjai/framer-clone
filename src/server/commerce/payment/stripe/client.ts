@@ -48,10 +48,25 @@ export interface StripeCheckoutSession {
   url: string;
 }
 
+/**
+ * A Checkout Session as `GET /v1/checkout/sessions/<id>` answers it (the fields read here; proven in the sandbox on
+ * 2026-11-23, docs/plans/2026-11-02-shop-backbone.md section 2.5). An open session has no PaymentIntent yet, and an
+ * expired one no `url`.
+ */
+export interface StripeCheckoutSessionState {
+  id: string;
+  status: 'open' | 'complete' | 'expired';
+  payment_status: 'paid' | 'unpaid' | 'no_payment_required';
+  url: string | null;
+  amount_total: number | null;
+  currency: string | null;
+  payment_intent: string | null;
+}
+
 /** What the platform asks of Stripe. */
 export interface StripeApi {
   createAccount(args: { email?: string; country: string }): Promise<StripeAccount>;
-  retrieveAccount(accountId: string): Promise<StripeAccount>;
+  retrieveAccount(accountId: string, signal?: AbortSignal): Promise<StripeAccount>;
   createAccountLink(args: { accountId: string; refreshUrl: string; returnUrl: string }): Promise<{ url: string }>;
   /** Exchange an OAuth code for the connected account id (connecting an existing account). */
   oauthToken(code: string): Promise<{ stripeUserId: string }>;
@@ -70,7 +85,12 @@ export interface StripeApi {
     /** Unix seconds; Stripe expires the session then (checkout.session.expired). */
     expiresAt: number;
     idempotencyKey: string;
+    signal?: AbortSignal;
   }): Promise<StripeCheckoutSession>;
+  /** How a Checkout Session on the connected account stands. The only way to read its state: a replayed create is not. */
+  retrieveCheckoutSession(args: { accountId: string; sessionId: string; signal?: AbortSignal }): Promise<StripeCheckoutSessionState>;
+  /** End an open Checkout Session now (`POST /v1/checkout/sessions/<id>/expire`): it can no longer be paid. */
+  expireCheckoutSession(args: { accountId: string; sessionId: string; signal?: AbortSignal }): Promise<StripeCheckoutSessionState>;
   createRefund(args: { accountId: string; paymentIntentId: string; idempotencyKey: string }): Promise<{ id: string }>;
 }
 
@@ -80,6 +100,15 @@ export class StripeApiError extends Error {
     readonly status: number,
     readonly stripeCode: string | null,
     message: string,
+    /**
+     * Stripe itself answered: the body carried its error object. A gateway's error page (a 502 with no Stripe body) is
+     * not an answer, and neither is a request that got no response or whose response could not be read (`status` 0:
+     * a timeout, a refused connection, a body cut off). Stripe stores an answered create under its idempotency key and
+     * replays it; the others it may not have seen, or not finished.
+     */
+    readonly answered: boolean = true,
+    /** Stripe's error type (`idempotency_error`, `invalid_request_error`, ...), when it answered. */
+    readonly stripeType: string | null = null,
   ) {
     super(message);
     this.name = 'StripeApiError';
@@ -106,12 +135,18 @@ export function formEncode(params: Record<string, unknown>, prefix = ''): string
   return parts;
 }
 
+/** A request Stripe gave no readable answer to; the cause's name only, since a message could carry the request. */
+function unanswered(method: string, path: string, cause: unknown): StripeApiError {
+  const name = cause instanceof Error ? cause.name : 'unknown';
+  return new StripeApiError(0, null, `Stripe gave no answer to ${method} ${path.split('/').slice(0, 3).join('/')} (${name})`, false);
+}
+
 /** The HTTPS client. `fetchImpl` is injectable for its own unit test. */
 export function httpStripeApi(config: StripeConfig, fetchImpl: typeof fetch = (...a) => globalThis.fetch(...a)): StripeApi {
   async function call<T>(
     method: 'GET' | 'POST',
     path: string,
-    opts: { params?: Record<string, unknown>; account?: string; idempotencyKey?: string; base?: string } = {},
+    opts: { params?: Record<string, unknown>; account?: string; idempotencyKey?: string; base?: string; signal?: AbortSignal } = {},
   ): Promise<T> {
     const headers: Record<string, string> = { authorization: `Bearer ${config.secretKey}` };
     if (opts.account) headers['stripe-account'] = opts.account;
@@ -121,10 +156,30 @@ export function httpStripeApi(config: StripeConfig, fetchImpl: typeof fetch = (.
       headers['content-type'] = 'application/x-www-form-urlencoded';
       body = formEncode(opts.params ?? {}).join('&');
     }
-    const res = await fetchImpl(`${opts.base ?? 'https://api.stripe.com'}${path}`, { method, headers, body });
-    const json = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string; type?: string } };
+    let res: Response;
+    try {
+      res = await fetchImpl(`${opts.base ?? 'https://api.stripe.com'}${path}`, { method, headers, body, signal: opts.signal });
+    } catch (err) {
+      throw unanswered(method, path, err);
+    }
+    let json: { error?: { code?: string; message?: string; type?: string } };
+    try {
+      json = (await res.json()) as typeof json;
+    } catch (err) {
+      // An answer that cannot be read is no answer when it was meant to carry the result; an error page without a body
+      // is still the status it came with.
+      if (res.ok) throw unanswered(method, path, err);
+      json = {};
+    }
     if (!res.ok) {
-      throw new StripeApiError(res.status, json.error?.code ?? json.error?.type ?? null, json.error?.message ?? `Stripe answered ${res.status}`);
+      const answered = typeof json.error === 'object' && json.error !== null;
+      throw new StripeApiError(
+        res.status,
+        json.error?.code ?? json.error?.type ?? null,
+        json.error?.message ?? `Stripe answered ${res.status}`,
+        answered,
+        json.error?.type ?? null,
+      );
     }
     return json as T;
   }
@@ -132,7 +187,7 @@ export function httpStripeApi(config: StripeConfig, fetchImpl: typeof fetch = (.
   return {
     createAccount: ({ email, country }) =>
       call<StripeAccount>('POST', '/v1/accounts', { params: { type: 'standard', email, country } }),
-    retrieveAccount: (accountId) => call<StripeAccount>('GET', `/v1/accounts/${encodeURIComponent(accountId)}`),
+    retrieveAccount: (accountId, signal) => call<StripeAccount>('GET', `/v1/accounts/${encodeURIComponent(accountId)}`, { signal }),
     createAccountLink: ({ accountId, refreshUrl, returnUrl }) =>
       call<{ url: string }>('POST', '/v1/account_links', {
         params: { account: accountId, refresh_url: refreshUrl, return_url: returnUrl, type: 'account_onboarding' },
@@ -148,6 +203,7 @@ export function httpStripeApi(config: StripeConfig, fetchImpl: typeof fetch = (.
       call<StripeCheckoutSession>('POST', '/v1/checkout/sessions', {
         account: args.accountId,
         idempotencyKey: args.idempotencyKey,
+        signal: args.signal,
         params: {
           mode: 'payment',
           customer_email: args.customerEmail,
@@ -172,6 +228,10 @@ export function httpStripeApi(config: StripeConfig, fetchImpl: typeof fetch = (.
           },
         },
       }),
+    retrieveCheckoutSession: ({ accountId, sessionId, signal }) =>
+      call<StripeCheckoutSessionState>('GET', `/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, { account: accountId, signal }),
+    expireCheckoutSession: ({ accountId, sessionId, signal }) =>
+      call<StripeCheckoutSessionState>('POST', `/v1/checkout/sessions/${encodeURIComponent(sessionId)}/expire`, { account: accountId, signal }),
     createRefund: ({ accountId, paymentIntentId, idempotencyKey }) =>
       call<{ id: string }>('POST', '/v1/refunds', {
         account: accountId,

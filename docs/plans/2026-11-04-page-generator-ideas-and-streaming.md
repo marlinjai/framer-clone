@@ -96,7 +96,10 @@ The goal: ideas to start from, a fast rewrite of a brief typed by hand, and a pa
 
 ## Progress
 
-- 2026-11-04: pull request 1 (the idea row and the streamed Enhance) merged as #327. Pull request 2 (the page that builds itself as a draft, branch `feat/pagegen-streaming`) is open; while it runs, the dialog gives way to a floating progress panel, so the idea row and Enhance live in the editing phase only, and the full dialog returns for the result.
+- 2026-11-04: pull request 1 (the idea row and the streamed Enhance) merged as #327. Pull request 2 (the page that builds itself as a draft, branch `feat/pagegen-streaming`) was open at the time; while it runs, the dialog gives way to a floating progress panel, so the idea row and Enhance live in the editing phase only, and the full dialog returns for the result.
+- 2026-11-04: pull request 2 merged as #329 (merge commit `d2dcebe1`). Both pull requests list the browser proof on app.lumitra.co after deploy as not yet done, because a local editor needs a dev database, the permissions service and a sign-in.
+- 2026-11-09: the live agent canvas reused this draft for agents (slice 6 of `docs/plans/2026-11-08-live-agent-canvas.md`, #346 and #349). That path was proven on app.lumitra.co on 2026-11-09; it covers an agent's `generate_page` drawing its draft in an open editor, not this plan's Generate dialog.
+- 2026-11-13, reconciled from read-only evidence: #327 (`0b3b1355`), #329 (`d2dcebe1`), #346 (`5f9fea0f`) and #349 (`49dc0d53`) are ancestors of the production deployment `7b32ea16` (GitHub deployment of 2026-11-09 06:54 UTC, status success) and of the release `b1e19a32` (tag `release/sites-2026-11-12`, started through the Coolify API because the shared deploy step failed with HTTP 405; recorded in `docs/plans/2026-11-10-site-branches.md` and `docs/plans/2026-11-02-shop-backbone.md`). The code is live. The plan stays in progress until the browser proof in Verification runs on app.lumitra.co: it writes a page and spends a generation, so it needs a named test site and the coordinator's go.
 
 ## Verification
 
