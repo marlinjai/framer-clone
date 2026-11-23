@@ -1221,21 +1221,30 @@ What is built, grounded in the code as it stands:
   `RightSidebar` and store through the four stateful paths (jsdom); the code editor's keyboard and accessible name in Chromium
   and WebKit (browser).
 
-**Proof, 2026-11-23.** Unit: the pure rules (`src/lib/customCode/__tests__/authoring.test.ts`), the route
+**Proof, 2026-11-23, at the final head.** Unit: the pure rules (`src/lib/customCode/__tests__/authoring.test.ts`), the route
 (`src/app/api/projects/__tests__/custom-code-route.test.ts`), the model actions (`PageModel.customCode.test.ts`), the tile and
 the fallback switch, the reserved prop and the Layers badge; the section on the real `RightSidebar` through the four stateful
-paths, 19 cases (`CustomCodeSection.test.tsx`). Integration against Postgres: 20 cases (`authoring.itest.ts`). Browser: the
-code field in Chromium and WebKit, 8 cases (`test/renderGate/customCodeEditor.gate.ts`). Full unit suite on hermes: 15,273
-passed, the one failure `rawSqlCatalogQualified` (expected there, no `.git`; locally it found two unqualified catalog
-functions in the budget query, fixed). Full `pnpm test:integration`: 1,303 of 1,304, the one failure a concurrency mutation
-case of `coordinationPostgres.itest.ts`, outside this slice, which passed 19 of 19 run alone.
+paths, with the page saved before the code, a taken-down block, a branch and a reader, 25 cases (`CustomCodeSection.test.tsx`).
+Integration against Postgres: 20 cases (`authoring.itest.ts`). Browser, Chromium and WebKit: the CodeMirror field, 10 cases
+(`test/renderGate/customCodeEditor.gate.ts`), and the field component in React, its name following the title, 2 cases
+(`customCodeEditorField.gate.ts`). Full unit suite on hermes: 15,279 passed, the one failure `rawSqlCatalogQualified`, which
+needs `.git` and passes locally (locally it had found two unqualified catalog functions in the budget query, fixed). Full
+`pnpm test:integration`: 1,302 of 1,304; the two failures are concurrency cases of `coordinationPostgres.itest.ts` and
+`prismaModels.itest.ts`, files this slice does not touch, which pass 41 of 41 run alone (the first case also failed in an
+earlier full run, the second not), so they are flaky under load, not caused here.
 
-**Weakening, 15 of 15 caught by a failed expectation** (record in the orchestration folder `c4-weakening/`): the availability
-gate, the switch reading `true`, the permission check, the size limit, a text state in a declaration, the branch refusal, the
-site switch, the takedown check, the declaration against the stored page, the hourly limit, the site row lock, the idempotent
-answer (it survived the first run, since the insert's `ON CONFLICT` also answers `created: false`; a case now proves that held
-code passes at the hourly limit), a hash ignoring the declaration, the panel applying an answer to a changed block, and Tab
-bound in the editor.
+**Weakening, 19 of 19 caught by a failed expectation** (record in the orchestration folder `c4-weakening/`): the availability
+gate on POST and on GET, the switch reading `true`, the insert item ignoring the switch, the permission check, the size limit,
+a text state in a declaration, the branch refusal, the site switch, the takedown check, the declaration against the stored page,
+the hourly limit, the site row lock, the idempotent answer, a hash ignoring the declaration, the panel applying an answer to a
+changed block, the panel posting while the page is unsaved, Tab bound in the editor, and the editor's name not following the
+title. Three survived a first run and each got the case that now catches it: the idempotent answer (the insert's `ON CONFLICT`
+also answers `created: false`; held code now passes at the hourly limit), the insert item's switch check (the provider never
+reaches `ready` with the switch off; the rule is now tested directly), and the editor's name (the field was mounted once with
+its first name).
+
+**Open:** the section with the real CodeMirror was not driven end to end in a browser (insert, type, save, the hash on the node);
+the jsdom cases cover that flow with the plain field, and the gates cover the field itself.
 
 ## Decided in slice C4, say so if you disagree
 
