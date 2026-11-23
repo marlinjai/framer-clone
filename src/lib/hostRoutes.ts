@@ -125,6 +125,7 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/projects/[projectId]/domains', why: 'authoring' },
   { route: '/api/projects/[projectId]/domains/[domainId]', why: 'authoring' },
   { route: '/api/projects/[projectId]/domains/[domainId]/verify', why: 'authoring' },
+  { route: '/api/projects/[projectId]/custom-code', why: 'authoring: write and read a site\'s sandboxed custom code (behind CUSTOM_CODE_AVAILABLE)' },
   { route: '/api/projects/[projectId]/erasures', why: 'authoring' },
   { route: '/api/projects/[projectId]/erasures/search', why: 'authoring' },
   { route: '/api/projects/[projectId]/forms/submissions', why: 'authoring' },
