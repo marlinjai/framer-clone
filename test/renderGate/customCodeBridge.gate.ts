@@ -155,13 +155,14 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
       (function send() { parent.postMessage({ kind: 'nothing', pad: pad }, '*'); if (Date.now() < stop) setTimeout(send, 0); })();
     `),
   },
+  // No hello at all: the flood is its first window message, from the document's start.
   preHeavy: {
     shell: false,
-    body: raw(`
+    body: `<!doctype html><meta charset="utf-8"><p>no hello</p><script>
       var pad = []; for (var i = 0; i < 300000; i++) pad.push({ a: i });
       var stop = Date.now() + 6000;
       (function send() { parent.postMessage({ kind: 'nothing', pad: pad }, '*'); if (Date.now() < stop) setTimeout(send, 0); })();
-    `, false),
+    </script>`,
   },
   // Review 3, M2: an honest slider, a write and an emit on every input.
   slider: {
@@ -1059,7 +1060,8 @@ describe('the custom code bridge in chromium with site isolation', () => {
       await until(page, shownOnce('heavy'), 10_000);
       await page.waitForTimeout(500);
       const started = Date.now();
-      await page.click('#toB', { timeout: 30_000 });
+      // Caught: a page that cannot answer fails on the time below, not on the click's own timeout.
+      await page.click('#toB', { timeout: 30_000 }).catch(() => {});
       await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
       const click = Date.now() - started;
       record(`costly window flood after hello, site isolation: click answered in ${click} ms; ${lines.filter((line) => line.startsWith('Custom code "Block heavy"')).join(' | ') || 'no line'}`);
@@ -1075,9 +1077,18 @@ describe('the custom code bridge in chromium with site isolation', () => {
   it('removes a frame whose first window message is not a hello, at that message, and answers a click', async () => {
     const { page, context, console: lines } = await open(browser, [{ id: 'pre', doc: 'preHeavy' }], { quiet: true });
     try {
-      await until(page, removed('pre'), 10_000);
+      // At its first message, sent while the frame's document is still parsing, so before its load starts the 5
+      // second clock for a missing hello: removed within 5 seconds of the frame's appearing.
+      const appeared = Date.now();
+      await until(page, "document.querySelector('#pre iframe')", 10_000);
+      await until(page, removed('pre'), 3_000);
+      const gone = Date.now() - appeared;
+      record(`costly first message without hello, site isolation: removed ${gone} ms after the frame was made`);
+      expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
+      expect(gone).toBeLessThan(3_000);
       const started = Date.now();
-      await page.click('#toB', { timeout: 30_000 });
+      // Caught: a page that cannot answer fails on the time below, not on the click's own timeout.
+      await page.click('#toB', { timeout: 30_000 }).catch(() => {});
       await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
       const click = Date.now() - started;
       record(`costly window flood without hello, site isolation: click answered in ${click} ms`);
