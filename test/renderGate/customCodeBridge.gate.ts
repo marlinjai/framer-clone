@@ -149,7 +149,7 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
     body: raw(`
       var at = Date.now();
       try { port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(4294967295) }); } catch (e) {}
-      probe({ sent: Date.now() - at });
+      probe({ sent: Date.now() - at, sentFrom: at, sentTo: Date.now() });
       setTimeout(function () { port.postMessage({ kind: 'setState', id: 'n', value: 2 }); }, 300);
     `),
   },
@@ -160,7 +160,7 @@ const DOCUMENTS: Record<string, { body: string; shell: boolean }> = {
     body: raw(`
       var at = Date.now();
       try { port.postMessage({ kind: 'setState', id: 'n', value: 1, pad: new Array(268435456) }); } catch (e) {}
-      probe({ sent: Date.now() - at });
+      probe({ sent: Date.now() - at, sentFrom: at, sentTo: Date.now() });
       setTimeout(function () { port.postMessage({ kind: 'setState', id: 'n', value: 2 }); }, 300);
     `),
   },
@@ -370,14 +370,21 @@ async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?:
   });
   // The page's own event loop, ticked every 20 ms from document creation: the longest gap between two ticks is how long
   // the page was unresponsive, however the click that follows it happens to be timed.
+  // Every gap over 100 ms is also kept with its start and end on the wall clock (`__gaps`), which the page and its frames
+  // share, so a gap can be set against a frame's own send window (review 6 of pull request #452).
   await context.addInitScript(() => {
-    const w = window as unknown as { __gap: number };
+    const w = window as unknown as { __gap: number; __gaps: [number, number][] };
     let at = performance.now();
+    let wall = Date.now();
     w.__gap = 0;
+    w.__gaps = [];
     setInterval(() => {
       const now = performance.now();
+      const wallNow = Date.now();
       w.__gap = Math.max(w.__gap, now - at);
+      if (now - at > 100 && w.__gaps.length < 200) w.__gaps.push([wall, wallNow]);
       at = now;
+      wall = wallNow;
     }, 20);
   });
   // When each block's frame was inserted and when it left the page, by block id, on the page's own clock.
@@ -427,19 +434,29 @@ const frameOf = (page: Page, id: string) => page.evaluate((box) => {
 }, id);
 /**
  * Milliseconds from a click on the page's button to the state it sets, with any frame beside it. The click goes to the
- * button's position, read before the clock starts: `page.click` first checks the target in several round trips to the
- * page (visible, stable over animation frames, hit), and a slow test runner stretches each of them while the page itself
- * answers at once (CI run 45102875034: 2172 ms in Firefox with the page's loop never held for a second). What is timed
- * is the input's own trip and the page's answer to it.
+ * button's position, read with one round trip to the page: `page.click` first checks the target in several round trips
+ * (visible, stable over animation frames, hit), and a slow test runner stretches each of them while the page itself
+ * answers at once (CI run 45102875034: 2172 ms in Firefox with the page's loop never held for a second). The clock starts
+ * before that read, so a page held when the click begins is counted (review 6 of pull request #452), and a read that
+ * fails is an infinite time, which fails the bound below rather than throwing.
  */
 const clickToState = async (page: Page): Promise<number> => {
-  const box = await page.locator('#toB').boundingBox({ timeout: 30_000 });
-  if (!box) throw new Error('the button is not on the page');
   const started = Date.now();
+  const box = await page.locator('#toB').boundingBox({ timeout: 30_000 }).catch(() => null);
+  if (!box) return Number.POSITIVE_INFINITY;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await until(page, "document.querySelector('[data-fc-scope]').getAttribute('data-fcs-tab') === 'b'", 30_000);
   return Date.now() - started;
 };
+/** The page's longest loop gap since its document began, in milliseconds. */
+const longestGap = (page: Page) => page.evaluate(() => (window as unknown as { __gap: number }).__gap).catch(() => Number.POSITIVE_INFINITY);
+/**
+ * The page's longest hold outside a window of time: each recorded gap less its overlap with the window. A frame's send
+ * holds the page only where the engine runs the frame in the page's thread, and then only during the send, so whatever
+ * else the page paid stays in the result, in one gap or in several.
+ */
+const outside = (gaps: [number, number][], from: number, to: number): number =>
+  Math.max(0, ...gaps.map(([a, b]) => b - a - Math.max(0, Math.min(b, to) - Math.max(a, from))));
 const fallbackShown = (page: Page, id: string) => page.evaluate((box) => !(document.querySelector(`#${box} [data-fallback]`) as HTMLElement).hidden, id);
 /** Waits up to `ms` for a condition in the page, then lets the expectations below decide. */
 const until = (page: Page, condition: string, ms: number) => page.waitForFunction(condition, undefined, { timeout: ms }).catch(() => {});
@@ -637,8 +654,10 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       await page.waitForTimeout(150);
       const click = await clickToState(page);
       await until(page, removed('sp'), 5_000);
-      record(`sparse flood in ${engine}: click answered in ${click} ms`);
+      const gap = await longestGap(page);
+      record(`sparse flood in ${engine}: click answered in ${click} ms, longest gap in the page's loop ${Math.round(gap)} ms`);
       expect(click).toBeLessThan(2_000);
+      expect(gap).toBeLessThan(1_000);
       expect(await stateOf(page, 'n')).toBe('0');
       expect(lines.filter((line) => line.startsWith('Custom code "Block sp"'))).toEqual([
         'Custom code "Block sp": dropped a message or error, then silent',
@@ -653,9 +672,11 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
   // runs the frame in the page's process, so the frame's send alone holds the page: 28 seconds on a laptop, 55 to 60 or
   // more on a runner. That is the residual M7 (a frozen frame holds the page there), reached through the engine's own
   // clone instead of a loop, and nothing in the page can refuse it before it is paid. What the broker owns is the page's
-  // cost once the message arrives, so that is what is bounded: the page's longest loop gap less the frame's own send.
+  // cost once the message arrives, so that is what is bounded: the page's longest hold outside the frame's own send
+  // window, from every recorded gap (review 6: separate gaps could hide a page cost behind a longest-gap-less-send).
   // Playwright's timeouts do not fire while WebKit's page process is held (a 10 second wait here returned after 28), so
-  // every wait is raced against the test's own clock, in a browser of its own that is closed by force.
+  // every wait is raced against the test's own clock, in a browser of its own, which the test stops waiting for after
+  // 10 seconds of closing.
   // WebKit gets an array of length 2^28 instead (`sparseLarge`): the greatest length would hold its page for a minute.
   it('drops one array of the greatest length there is (2^28 in WebKit) at the cost of a small message, and takes the next write', async () => {
     const own = await type.launch();
@@ -663,35 +684,40 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
       Promise.race([work, new Promise<'stuck'>((resolve) => setTimeout(() => resolve('stuck'), ms))]);
     try {
       const opened = await bounded(open(own, [{ id: 'huge', doc: engine === 'webkit' ? 'sparseLarge' : 'sparseHuge' }]), 15_000);
-      if (opened === 'stuck') throw new Error('the page did not open');
+      expect(opened).not.toBe('stuck');
+      if (opened === 'stuck') return;
       const { page } = opened;
       const done = "window.__probes.some(function (p) { return typeof p.sent === 'number'; }) && document.querySelector('[data-fc-scope]').getAttribute('data-fcs-n') === '2'";
       await bounded(page.waitForFunction(done, undefined, { timeout: 0 }).catch(() => {}), engine === 'webkit' ? 30_000 : 10_000);
       const seen = await bounded(page.evaluate(() => {
-        const w = window as unknown as { __gap: number; __probes: { sent?: number }[]; __settled: unknown[] };
-        return { gap: w.__gap, sent: w.__probes.find((p) => typeof p.sent === 'number')?.sent, settled: w.__settled, n: document.querySelector('[data-fc-scope]')?.getAttribute('data-fcs-n') };
+        const w = window as unknown as { __gap: number; __gaps: [number, number][]; __probes: { sent?: number; sentFrom?: number; sentTo?: number }[]; __settled: unknown[] };
+        const report = w.__probes.find((p) => typeof p.sent === 'number');
+        return { gap: w.__gap, gaps: w.__gaps, sent: report?.sent, from: report?.sentFrom, to: report?.sentTo, settled: w.__settled, n: document.querySelector('[data-fc-scope]')?.getAttribute('data-fcs-n') };
       }).catch(() => 'crashed' as const), 5_000);
       // A page that never answers, or whose process crashed (an unbounded walk of the array does that in WebKit), fails here.
       expect(seen).not.toBe('stuck');
       expect(seen).not.toBe('crashed');
       if (seen === 'stuck' || seen === 'crashed') return;
-      record(`one huge sparse array in ${engine}: the frame's send took ${seen.sent} ms, the page's longest loop gap ${Math.round(seen.gap)} ms`);
       expect(seen.n).toBe('2');
       expect(seen.settled).toEqual([{ id: 'huge', shown: true }]);
       expect(typeof seen.sent).toBe('number');
       const sent = seen.sent as number;
-      // The page's own share: in WebKit the gap holds the frame's send as well, elsewhere the send is free.
-      expect(seen.gap - (engine === 'webkit' ? sent : 0)).toBeLessThan(1_000);
+      // The page's own share, in every engine: its longest hold outside the frame's send window. Sound both ways: page
+      // work cannot overlap a send that holds its thread, and a frame of its own process overlaps nothing it paid.
+      const share = outside(seen.gaps, seen.from as number, seen.to as number);
+      record(`one huge sparse array in ${engine}: the frame's send took ${sent} ms, the page's longest loop gap ${Math.round(seen.gap)} ms, its longest hold outside the send ${share} ms`);
+      expect(share).toBeLessThan(1_000);
       // Asserted as the residual, both ways, so a change in any engine shows.
       if (engine === 'webkit') expect(sent).toBeGreaterThan(1_000);
       else expect(sent).toBeLessThan(1_000);
       // And the page answers a click afterwards.
-      const click = await bounded(clickToState(page), 35_000);
+      const click = await bounded(clickToState(page).catch(() => Number.POSITIVE_INFINITY), 35_000);
       record(`one huge sparse array in ${engine}: click answered in ${click} ms`);
       expect(click).not.toBe('stuck');
       expect(click as number).toBeLessThan(2_000);
     } finally {
-      await Promise.race([own.close(), new Promise((resolve) => setTimeout(resolve, 10_000))]);
+      // Closed, waited for 10 seconds at most: a browser that does not close by then is left to the run's end.
+      await Promise.race([own.close().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 10_000))]);
     }
   }, 90_000);
 
@@ -867,8 +893,8 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
   }, 90_000);
 
   // A frame that never returns to its event loop. Its own browser, launched with the isolation the
-  // desktop browser ships with (Chromium's site per process, Firefox's Fission), and closed by force, so a
-  // frame that holds the page too cannot hold the run: every read below is bounded and ends on an expectation.
+  // desktop browser ships with (Chromium's site per process, Firefox's Fission), and closed without waiting more
+  // than 10 seconds for it, so a frame that holds the page too cannot hold the run: every read below is bounded and ends on an expectation.
   it('removes a frozen frame, where the engine runs it apart from the page', async () => {
     const own = await type.launch(
       engine === 'chromium' ? { args: ['--site-per-process'] } : engine === 'firefox' ? { firefoxUserPrefs: { 'fission.autostart': true } } : {},
@@ -900,7 +926,8 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
         expect(report.removedLine).toBe(true);
       }
     } finally {
-      await Promise.race([own.close(), new Promise((resolve) => setTimeout(resolve, 10_000))]);
+      // Closed, waited for 10 seconds at most: a browser that does not close by then is left to the run's end.
+      await Promise.race([own.close().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 10_000))]);
     }
   }, 90_000);
 
@@ -1174,8 +1201,15 @@ describe('the custom code bridge in chromium with site isolation', () => {
       record(`costly window flood after hello, site isolation: click answered in ${click} ms; ${lines.filter((line) => line.startsWith('Custom code "Block heavy"')).join(' | ') || 'no line'}`);
       expect(await stateOf(page, 'tab')).toBe('b');
       expect(click).toBeLessThan(2_000);
-      // Never anything but a count's outcome: kept, or removed as a flood.
-      expect(lines.filter((line) => line.startsWith('Custom code "Block heavy"')).every((line) => line.endsWith('flooded: removed'))).toBe(true);
+      // Across the whole flood (6 seconds from connect), the page's loop was never held for a second.
+      await page.waitForTimeout(6_000);
+      const gap = await longestGap(page);
+      record(`costly window flood after hello, site isolation: longest gap in the page's loop ${Math.round(gap)} ms; ${lines.filter((line) => line.startsWith('Custom code "Block heavy"')).join(' | ') || 'no line'}`);
+      expect(gap).toBeLessThan(1_000);
+      // Never anything but a count's outcome: kept, a pong dropped past 30 in a second (its port shares the count with the
+      // flood, so the one warning may appear once the 6 seconds are over), or removed as a flood.
+      const own = lines.filter((line) => line.startsWith('Custom code "Block heavy"'));
+      expect(own.every((line) => line.endsWith('flooded: removed') || line.endsWith('dropped a message or error, then silent'))).toBe(true);
     } finally {
       await context.close();
     }
@@ -1194,8 +1228,10 @@ describe('the custom code bridge in chromium with site isolation', () => {
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
       expect(gone).toBeLessThan(3_000);
       const click = await clickToState(page);
-      record(`costly window flood without hello, site isolation: click answered in ${click} ms`);
+      const gap = await longestGap(page);
+      record(`costly window flood without hello, site isolation: click answered in ${click} ms, longest gap in the page's loop ${Math.round(gap)} ms`);
       expect(click).toBeLessThan(2_000);
+      expect(gap).toBeLessThan(1_000);
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
       expect(lines.filter((line) => line.startsWith('Custom code "Block pre"'))).toEqual(['Custom code "Block pre": no hello: removed']);
     } finally {
