@@ -298,6 +298,8 @@ export const FxCanvasLayer = observer(function FxCanvasLayer({ stored, ownPositi
 export const FX_STILL_DEBOUNCE_MS = 300;
 /** A still frame that failed for a reason that may pass is tried again this often, this long after. */
 const FX_STILL_RETRIES = 2;
+/** How long a first size must hold before its picture is asked for. */
+const FX_STILL_FIRST_MS = 120;
 const FX_STILL_RETRY_MS = 1500;
 
 /** One queue of still frames per editor (its store): one still context at a time, shared by every frame. */
@@ -409,8 +411,9 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
   // A failure that may pass (a lost context, a box out of the page for a moment) is tried again, twice, a moment later.
   const [attempt, setAttempt] = useState(0);
   const wanted = !hiddenUnder && near && size && size.width > 0 && size.height > 0 && scene ? `${size.width}x${size.height}|${projectId ?? ''}|${sceneJson}` : '';
-  // The first picture is asked for at once; a change waits until the edits settle.
-  const settledWanted = useSettled(wanted, hasPicture ? FX_STILL_DEBOUNCE_MS : 0);
+  // The first picture waits a moment for the layout to settle (a frame measured before its breakpoint is laid
+  // out has another size a moment later, measured: 1280 x 800 then 1280 x 240); a change waits until the edits settle.
+  const settledWanted = useSettled(wanted, hasPicture ? FX_STILL_DEBOUNCE_MS : FX_STILL_FIRST_MS);
   const latestStored = useRef(stored);
   useBeforePaint(() => {
     latestStored.current = stored;
