@@ -509,7 +509,7 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
                               updateRow(i, { days: on ? row.days.filter((d) => d !== day) : WEEKDAYS.filter((d) => d === day || row.days.includes(d)) });
                               touch(key)();
                             }}
-                            className={`h-7 rounded px-2 text-[11px] ${on ? 'bg-brand text-brand-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+                            className={`h-7 rounded px-2 text-[11px] ${on ? 'bg-brand-fill text-brand-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
                           >
                             {DAY_SHORT[day]}
                           </button>

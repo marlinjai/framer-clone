@@ -78,7 +78,7 @@ function BarButton({ label, ariaLabel, onClick, disabled, pressed, emphasis, exp
       aria-controls={controls}
       className={`flex h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40 ${
         emphasis
-          ? 'bg-brand text-brand-foreground'
+          ? 'bg-brand-fill text-brand-foreground'
           : pressed
             ? 'bg-brand/12 text-brand'
             : 'text-muted-foreground hover:bg-accent hover:text-foreground'

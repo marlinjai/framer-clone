@@ -355,7 +355,7 @@ const BindingPicker = observer(({ node, slot, meta, onCommit, onClose }: Binding
             type="button"
             onClick={applyFreeForm}
             disabled={freeFormInvalid || trimmed.length === 0}
-            className="h-7 rounded bg-brand px-2 text-xs text-brand-foreground disabled:opacity-40"
+            className="h-7 rounded bg-brand-fill px-2 text-xs text-brand-foreground disabled:opacity-40"
           >
             Apply
           </button>

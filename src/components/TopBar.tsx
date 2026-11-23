@@ -59,6 +59,7 @@ import PublishButton from '@/components/PublishButton';
 import DomainsButton from '@/components/domains/DomainsButton';
 import SiteSettingsButton from '@/components/site/SiteSettingsDialog';
 import ThemeButton from '@/components/site/ThemePanel';
+import AppearanceItems from '@/components/appearance/AppearanceItems';
 import FormSubmissionsButton from '@/components/forms/FormSubmissionsButton';
 import PublishedVersionsButton from '@/components/PublishedVersionsButton';
 import SaveStatus from '@/components/SaveStatus';
@@ -258,10 +259,13 @@ function useHapticsPreference(): [supported: boolean, enabled: boolean] {
 // pointer-events lock on <body>.
 // On the wide bar it shows only at fold level 3, and holds the icons that folded
 // into it (Generate and Polish stay in the bar as icons there).
-const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclude<TopBarDialog, null>) => void; className?: string }) => {
+const MoreMenu = observer(({ onOpen, folded, className = '' }: { onOpen: (dialog: Exclude<TopBarDialog, null>) => void; folded: boolean; className?: string }) => {
   const { editorUI } = useStore();
   // The compact bar's menu holds everything, the wide bar's only what folded into it.
   const compactBar = useMediaQuery(COMPACT_TOP_BAR_QUERY);
+  // The bar's own controls appear here only where the bar does not show them: the compact bar, or the wide
+  // bar at its last fold. The wide bar shows More at every level, for Appearance (this browser).
+  const holdsBar = compactBar || folded;
   const hasProject = !!editorUI.currentProject;
   const hasPage = !!editorUI.currentPage;
   const history = getHistoryStore();
@@ -298,7 +302,7 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
             </DropdownMenuItem>
           </>
         )}
-        {hasProject && (
+        {holdsBar && hasProject && (
           <>
             {compactBar && <DropdownMenuSeparator />}
             {!onBranch && (
@@ -326,7 +330,7 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
             )}
           </>
         )}
-        {hasColorMode && (
+        {holdsBar && hasColorMode && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -343,7 +347,7 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
             </DropdownMenuItem>
           </>
         )}
-        {history && (
+        {holdsBar && history && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => onOpen('history')}>
@@ -354,6 +358,9 @@ const MoreMenu = observer(({ onOpen, className = '' }: { onOpen: (dialog: Exclud
             </DropdownMenuItem>
           </>
         )}
+        {/* The editor's own look, per browser; apart from the site's Theme and its colour mode above. */}
+        {holdsBar && <DropdownMenuSeparator />}
+        <AppearanceItems />
         {hapticsAvailable && (
           <>
             <DropdownMenuSeparator />
@@ -542,8 +549,8 @@ const TopBar = observer(() => {
       </BarTooltip>
 
       {/* The compact bar's More menu holds everything that did not fit; the wide bar's, once folded, the
-          secondary icons. */}
-      <MoreMenu onOpen={setDialog} className={`mr-2 ${inMore ? '' : 'lg:hidden'}`} />
+          secondary icons. On every bar it holds Appearance (this browser), so it never hides. */}
+      <MoreMenu onOpen={setDialog} folded={inMore} className="mr-2" />
 
       {/* Right: undo / redo / history (wide bar; the bottom bar has undo and redo on every size). Undo and
           redo never fold; history moves into More at the last fold. */}

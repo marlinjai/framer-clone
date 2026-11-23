@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { unstable_rethrow } from "next/navigation";
+import { cookies } from "next/headers";
+import { parseUiTheme, UI_THEME_COOKIE, type UiTheme } from "@/lib/uiTheme";
 import { getRequestLanguage, resolveSiteForRequest } from "@/server/sites/requestSite";
 import { themeColorMode } from "@/lib/site/theme";
 // The root layout imports NO stylesheet. In the App Router only the root layout
@@ -68,6 +70,22 @@ async function htmlClass(): Promise<string> {
   }
 }
 
+// `<html data-ui-theme>`: the editor's interface mode (Light or Dark) from the browser's
+// `lumitra_ui_theme` cookie, written into the first HTML so there is no flash
+// (docs/plans/2026-11-23-sites-home-and-light-mode.md, slice S2). Only when no published
+// site resolves for the request: a published page never reads the cookie and never gets the
+// attribute. A failure to resolve the site counts as a site (no attribute), never the editor.
+// No cookie (System) means no attribute, and CSS follows the system setting.
+async function uiTheme(): Promise<UiTheme | null> {
+  try {
+    if (await resolveSiteForRequest()) return null;
+  } catch (err) {
+    unstable_rethrow(err);
+    return null;
+  }
+  return parseUiTheme((await cookies()).get(UI_THEME_COOKIE)?.value);
+}
+
 // `<html lang>`: a published site's language from its Site settings
 // (src/server/sites/requestSite.ts), `en` for the editor and unknown hosts.
 // Only the root layout may render `<html>`, so it reads the request's site
@@ -77,9 +95,9 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const [lang, className] = await Promise.all([getRequestLanguage(), htmlClass()]);
+  const [lang, className, theme] = await Promise.all([getRequestLanguage(), htmlClass(), uiTheme()]);
   return (
-    <html lang={lang} className={className}>
+    <html lang={lang} className={className} data-ui-theme={theme ?? undefined}>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

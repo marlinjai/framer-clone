@@ -1,62 +1,104 @@
-/* The editor's own colours: Lumitra's suite tokens (dark only), pinned over the
-   shared light values for the editor sheet alone (globals.css imports this file
-   right after theme-tokens.css). theme-tokens.css is also what a published site's
-   sheet imports, so a tenant site never sees these: only the editor routes link
-   globals.css (see the note at the top there). Names stay semantic: brand is the suite's primary, agent-presence its
-   accent. Mapping and rules: docs/plans/2026-11-22-lumitra-rebrand-mint-light.md in
-   the knowledge base. */
+/* The editor's own colours: Lumitra's suite interface modes (suite-theme's ui.css),
+   pinned over the shared light values for the editor sheet alone (globals.css imports
+   this file right after theme-tokens.css). theme-tokens.css is also what a published
+   site's sheet imports, so a tenant site never sees these: only the editor routes link
+   globals.css (see the note at the top there).
+
+   One attribute decides the mode (docs/plans/2026-11-23-sites-home-and-light-mode.md):
+   `<html data-ui-theme="light">` or `"dark"`, written by the root layout from the
+   `lumitra_ui_theme` cookie on the editor host only; with no attribute the system
+   setting decides. Never the `.dark` / `.light` classes: those mean a site's own colour
+   mode (Tailwind's `dark:` variant, the canvas frames, the data-table sheet).
+
+   Every semantic name below maps onto a `--ui-*` value, which ui.css switches per mode,
+   so nearly nothing here is written twice. The few editor-only values that are not a
+   suite token and differ per mode sit in the two light blocks at the end, which must
+   stay identical (src/app/__tests__/editorTheme.test.ts holds that).
+
+   Brand: `brand` is the primary as text, line, ring, dot and wash (mint in dark, the
+   dark green #06764a in light, where mint on white is 1.3 : 1); `brand-fill` is the mint
+   fill of a button, always with `brand-foreground` ink on it. */
 @import "@marlinjai/suite-theme-core/tokens.css";
+@import "@marlinjai/suite-theme-core/ui.css";
 :root {
-  --background: var(--suite-bg);
-  --foreground: var(--suite-text);
-  --card: var(--suite-surface);
-  --card-foreground: var(--suite-text);
-  --popover: var(--suite-surface);
-  --popover-foreground: var(--suite-text);
-  --primary: var(--suite-primary);
-  --primary-foreground: var(--suite-primary-ink);
-  --secondary: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
-  --secondary-foreground: var(--suite-text);
-  --muted: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
-  --muted-foreground: var(--suite-text-muted);
-  --accent: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
-  --accent-foreground: var(--suite-text);
+  --background: var(--ui-bg);
+  --foreground: var(--ui-text);
+  --card: var(--ui-surface);
+  --card-foreground: var(--ui-text);
+  --popover: var(--ui-raised);
+  --popover-foreground: var(--ui-text);
+  --primary: var(--ui-primary);
+  --primary-foreground: var(--ui-primary-ink);
+  --secondary: color-mix(in oklab, var(--ui-surface), var(--ui-text) 8%);
+  --secondary-foreground: var(--ui-text);
+  --muted: color-mix(in oklab, var(--ui-surface), var(--ui-text) 8%);
+  --muted-foreground: var(--ui-text-muted);
+  --accent: color-mix(in oklab, var(--ui-surface), var(--ui-text) 8%);
+  --accent-foreground: var(--ui-text);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: var(--suite-line);
-  --input: var(--suite-line);
-  --ring: var(--suite-primary-line);
-  --chart-1: var(--suite-accent);
-  --chart-2: var(--suite-primary);
+  --border: var(--ui-line);
+  /* Field and control edges: line-strong holds 3 : 1 against every ground. */
+  --input: var(--ui-line-strong);
+  --ring: var(--ui-primary-text);
+  --chart-1: var(--ui-accent);
+  --chart-2: var(--ui-primary);
   --chart-3: oklch(0.8 0.15 80);
   --chart-4: oklch(0.78 0.12 215);
   --chart-5: oklch(0.7 0.19 22);
-  --sidebar: var(--suite-surface);
-  --sidebar-foreground: var(--suite-text);
-  --sidebar-primary: var(--suite-primary);
-  --sidebar-primary-foreground: var(--suite-primary-ink);
-  --sidebar-accent: color-mix(in oklab, var(--suite-surface), var(--suite-text) 8%);
-  --sidebar-accent-foreground: var(--suite-text);
-  --sidebar-border: var(--suite-line);
-  --sidebar-ring: var(--suite-primary-line);
-  --brand: var(--suite-primary);
-  --brand-foreground: var(--suite-primary-ink);
-  --agent-presence: var(--suite-accent);
-  --agent-presence-foreground: var(--suite-accent-ink);
+  --sidebar: var(--ui-surface);
+  --sidebar-foreground: var(--ui-text);
+  --sidebar-primary: var(--ui-primary);
+  --sidebar-primary-foreground: var(--ui-primary-ink);
+  --sidebar-accent: color-mix(in oklab, var(--ui-surface), var(--ui-text) 8%);
+  --sidebar-accent-foreground: var(--ui-text);
+  --sidebar-border: var(--ui-line);
+  --sidebar-ring: var(--ui-primary-text);
+  --brand: var(--ui-primary-text);
+  --brand-fill: var(--ui-primary);
+  --brand-foreground: var(--ui-primary-ink);
+  --agent-presence: var(--ui-accent);
+  --agent-presence-foreground: var(--ui-accent-ink);
   /* Status colours stay distinct from the primary (mint) and the accent (light
      blue): published is a yellow-leaning green, scheduled a cyan, draft amber. */
   --status-published: oklch(0.78 0.17 135);
   --status-draft: oklch(0.83 0.16 82);
   --status-scheduled: oklch(0.78 0.12 215);
   --warning: oklch(0.80 0.15 80);
-  --warning-foreground: var(--suite-primary-ink);
-  /* The home and the welcome page (docs/plans/2026-11-23-sites-home-and-light-mode.md). The interface
-     modes of suite-theme's ui.css take these over per mode (slice S2); until then, the dark values. */
-  --brand-mark: var(--suite-primary);
+  --warning-foreground: var(--ui-primary-ink);
+  /* The home and the welcome page. */
+  --brand-mark: var(--ui-mark);
   --brand-edge: transparent;
-  --link: var(--suite-accent);
+  --link: var(--ui-accent-text);
   /* Selection is a complete ring that blooms outward, never a one-sided edge (Marlin, 2026-11-23). */
-  --selection-ring: 0 0 0 1px rgb(82 255 165 / 0.75), 0 0 0 3px rgb(82 255 165 / 0.16), 0 0 14px 1px rgb(82 255 165 / 0.22);
-  --home-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 8px 24px rgb(0 0 0 / 0.35);
+  --selection-ring: var(--ui-selection-ring);
+  --home-shadow: var(--ui-shadow);
   --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(88 46 255 / 0.22), rgb(59 132 255 / 0.08) 50%, transparent 80%);
-  --canvas-ground: color-mix(in oklab, var(--suite-bg), black 20%);
+  --canvas-ground: var(--ui-sunken);
+}
+
+/* Light: the editor-only values that are no suite token. Same block twice, once for the
+   chosen mode and once for System on a light system; keep them identical. Status
+   colours darken so a status word reads at 4.5 : 1 on white; mint fills get a dark
+   green edge, so a mint button still has a visible outline on white. */
+[data-ui-theme="light"] {
+  --destructive: oklch(0.55 0.2 25);
+  --status-published: oklch(0.5 0.14 140);
+  --status-draft: oklch(0.55 0.13 70);
+  --status-scheduled: oklch(0.5 0.1 220);
+  --warning: oklch(0.55 0.13 70);
+  --warning-foreground: #ffffff;
+  --brand-edge: var(--ui-primary-text);
+  --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(82 255 165 / 0.18), rgb(59 132 255 / 0.06) 50%, transparent 80%);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-ui-theme]) {
+    --destructive: oklch(0.55 0.2 25);
+    --status-published: oklch(0.5 0.14 140);
+    --status-draft: oklch(0.55 0.13 70);
+    --status-scheduled: oklch(0.5 0.1 220);
+    --warning: oklch(0.55 0.13 70);
+    --warning-foreground: #ffffff;
+    --brand-edge: var(--ui-primary-text);
+    --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(82 255 165 / 0.18), rgb(59 132 255 / 0.06) 50%, transparent 80%);
+  }
 }
