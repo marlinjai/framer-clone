@@ -49,6 +49,7 @@ export const REFUSAL_STATUS = {
   blocked: 410,
   node_not_saved: 409,
   not_a_block: 409,
+  replaces_mismatch: 409,
   declaration_state: 422,
   rate_limited: 429,
   site_budget: 413,

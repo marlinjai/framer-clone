@@ -142,11 +142,12 @@ Every refusal says why, in the panel, and the route answers with a code and a se
 | `declaration_invalid` | 400 | The declaration does not follow the rules above. |
 | `bad_json`, `bad_body` | 400 | The request is not what the route takes. |
 | `too_large` | 413 | Code plus declaration is over 256 KB, or the request over 1 MB. |
-| `site_budget` | 413 | Storing it would bring the site's kept code over 1 MB. |
+| `site_budget` | 413 | Storing it would bring the site's code over 1 MB: the code the saved page names plus the code any of the last 30 published versions names. A removed block stops counting once the page is saved if it was never published, and otherwise once none of the last 30 published versions holds it. |
 | `branch_site` | 409 | The project is a branch. Custom code is written on the main site. |
 | `custom_code_off` | 409 | The site's custom code is switched off. |
 | `node_not_saved` | 409 | The saved page does not hold the block yet. Wait for "Saved" and save again. |
 | `not_a_block` | 409 | The element is not a custom code block. |
+| `replaces_mismatch` | 409 | The request says it replaces code the saved block does not name. Reload the editor and save again. |
 | `blocked` | 410 | This exact code was taken down. |
 | `declaration_state` | 422 | The declaration names a state that is not in reach of the block, or a text state. |
 | `rate_limited` | 429 | 30 saves in the last hour. The answer's `Retry-After` header and the sentence say when. |

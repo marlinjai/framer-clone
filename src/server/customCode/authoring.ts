@@ -30,7 +30,8 @@ import {
   utf8ByteLength,
   type CustomCodeDeclaration,
 } from '@/lib/customCode/contract';
-import { hasCustomCode } from '@/lib/customCode/customCode';
+import { hasCustomCode, parseCustomCode } from '@/lib/customCode/customCode';
+import { REVISIONS_KEPT } from '@/server/sites/repository';
 import {
   CUSTOM_CODE_WRITES_PER_HOUR,
   declarationStateRefusal,
@@ -112,7 +113,7 @@ async function storedPageRoots(tx: Tx, siteId: string, pageId: string, component
 }
 
 /** The hashes named by the stored working copy (pages and component definitions) and by the kept revisions. */
-async function namedHashes(tx: Tx, siteId: string): Promise<{ workingCopy: Set<string>; revisions: Set<string> }> {
+async function namedHashes(tx: Tx, siteId: string): Promise<{ workingCopy: Map<string, number>; revisions: Set<string> }> {
   // `$.**` reaches every depth of the stored JSON; the hash is checked for its shape below, so
   // anything else stored under a key of that name is ignored.
   const rows = await tx.$queryRaw<{ origin: string; sha256: unknown }[]>`
@@ -124,11 +125,13 @@ async function namedHashes(tx: Tx, siteId: string): Promise<{ workingCopy: Set<s
     UNION ALL
     SELECT 'r', pg_catalog.jsonb_path_query(r.document, 'lax $.**.customCode.sha256') #>> '{}'
       FROM public.site_revisions r WHERE r.site_id = ${siteId}`;
-  const workingCopy = new Set<string>();
+  // The working copy's hashes with how many nodes name each: a hash two blocks name still counts when one is replaced.
+  const workingCopy = new Map<string, number>();
   const revisions = new Set<string>();
   for (const row of rows) {
     if (typeof row.sha256 !== 'string' || !BOX_SHA256_PATTERN.test(row.sha256)) continue;
-    (row.origin === 'r' ? revisions : workingCopy).add(row.sha256);
+    if (row.origin === 'r') revisions.add(row.sha256);
+    else workingCopy.set(row.sha256, (workingCopy.get(row.sha256) ?? 0) + 1);
   }
   return { workingCopy, revisions };
 }
@@ -143,9 +146,10 @@ function storedBlobBytes(documentBytes: number, declaration: unknown): number {
 /** What the site's live code comes to (D107): blobs named by the working copy or a kept revision, not blocked. */
 export async function liveCustomCodeBytes(tx: Tx, siteId: string, replaces?: string): Promise<number> {
   const { workingCopy, revisions } = await namedHashes(tx, siteId);
-  const counted = new Set<string>([...workingCopy, ...revisions]);
-  // The block being replaced stops counting once the save that names the new hash lands, unless a kept revision names it.
-  if (replaces && !revisions.has(replaces)) counted.delete(replaces);
+  const counted = new Set<string>([...workingCopy.keys(), ...revisions]);
+  // The block being replaced stops counting once the save that names the new hash lands, unless a kept revision or
+  // another node of the working copy still names it. The caller has checked that the node names `replaces`.
+  if (replaces && !revisions.has(replaces) && (workingCopy.get(replaces) ?? 0) <= 1) counted.delete(replaces);
   if (counted.size === 0) return 0;
   const hashes = [...counted];
   const rows = await tx.$queryRaw<{ sha256: string; document_bytes: number; declaration: unknown }[]>`
@@ -153,6 +157,12 @@ export async function liveCustomCodeBytes(tx: Tx, siteId: string, replaces?: str
       FROM public.custom_code_blobs b
      WHERE b.site_id = ${siteId} AND b.blocked_at IS NULL AND b.sha256 = ANY(${hashes}::text[])`;
   return rows.reduce((sum, row) => sum + storedBlobBytes(Number(row.document_bytes), row.declaration), 0);
+}
+
+/** "1 minute", "50 minutes": the wait a refusal names, never less than a minute. */
+function minutesInWords(seconds: number): string {
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
 }
 
 /** The states in reach of a stored node, as the declaration check reads them. */
@@ -209,6 +219,18 @@ export async function writeCustomCodeBlob(
       if (!hasCustomCode(node.props)) {
         return { ok: false, refusal: refusal('not_a_block', 'The element saved on the page is not a custom code block. Add a block from the Components panel and save the code there.') } as const;
       }
+      // `replaces` is the hash this very node names in the stored page, or nothing: it lowers the budget count and
+      // goes into the audit, so it is never taken on the request's word.
+      if (input.replaces !== undefined) {
+        const stored = parseCustomCode((node.props as Record<string, unknown>).customCode);
+        const named = stored.ok && stored.value.kind === 'block' ? stored.value.sha256 : null;
+        if (named !== input.replaces) {
+          return {
+            ok: false,
+            refusal: refusal('replaces_mismatch', 'The saved page names other code for this block than the request replaces. Reload the editor so it shows the block as saved, then save the code again.'),
+          } as const;
+        }
+      }
       const stateProblem = declarationStateRefusal(declaration, reachOf(roots, input.nodeId));
       if (stateProblem) return { ok: false, refusal: stateProblem } as const;
 
@@ -234,7 +256,7 @@ export async function writeCustomCodeBlob(
           ok: false,
           refusal: refusal(
             'rate_limited',
-            `This site saved new code ${CUSTOM_CODE_WRITES_PER_HOUR} times in the last hour, the most allowed. Try again in ${Math.ceil(retryAfterSeconds / 60)} minutes.`,
+            `This site saved new code ${CUSTOM_CODE_WRITES_PER_HOUR} times in the last hour, the most allowed. Try again in ${minutesInWords(retryAfterSeconds)}.`,
             { retryAfterSeconds },
           ),
         } as const;
@@ -247,7 +269,7 @@ export async function writeCustomCodeBlob(
           ok: false,
           refusal: refusal(
             'site_budget',
-            `This site's blocks already hold ${sizeInWords(used)} of code, and this one adds ${sizeInWords(code.bytes)}; a site holds at most ${sizeInWords(BOX_LIMITS.siteBytes)}. Make the code smaller, or remove a block and publish first.`,
+            `This site's saved page and its last ${REVISIONS_KEPT} published versions hold ${sizeInWords(used)} of code, and this block adds ${sizeInWords(code.bytes)}; a site holds at most ${sizeInWords(BOX_LIMITS.siteBytes)}. Make the code smaller. A block removed from the page stops counting once the page is saved if it was never published, and otherwise only once none of the last ${REVISIONS_KEPT} published versions holds it.`,
           ),
         } as const;
       }

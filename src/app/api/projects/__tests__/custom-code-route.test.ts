@@ -249,6 +249,7 @@ describe('POST: what the write refuses', () => {
     ['blocked', 410],
     ['node_not_saved', 409],
     ['not_a_block', 409],
+    ['replaces_mismatch', 409],
     ['declaration_state', 422],
     ['site_budget', 413],
   ])('passes %s on with its status and message', async (code, status) => {

@@ -43,7 +43,7 @@ const STATES = [
   { id: 'label', name: 'Label', type: 'text', initial: '' },
 ];
 
-function project(id: string, blockProps: Record<string, unknown> = { customCode: null }) {
+function project(id: string, blockProps: Record<string, unknown> = { customCode: null }, twinProps?: Record<string, unknown>) {
   return {
     id,
     metadata: { title: 'Custom code site', description: '', createdAt: 1, updatedAt: 2 },
@@ -62,6 +62,8 @@ function project(id: string, blockProps: Record<string, unknown> = { customCode:
               { id: 'fallback', type: 'p', componentType: 'host', props: { children: 'Fallback' }, children: [] },
             ] },
             { id: 'plain', type: 'div', componentType: 'host', props: {}, children: [] },
+            // A second block, for a hash two nodes name (a duplicated block).
+            ...(twinProps ? [{ id: 'twin', type: 'div', componentType: 'host', props: twinProps, children: [] }] : []),
           ],
         },
         canvasNodes: {},
@@ -251,7 +253,14 @@ describe('the hourly limit', () => {
     await seedWrites(CUSTOM_CODE_WRITES_PER_HOUR, new Date(now.getTime() - 10 * 60 * 1000));
     const refused = await writeCustomCodeBlob(input(), undefined, () => now);
     await expectRefusal(refused, 'rate_limited', 429);
-    if (!refused.ok && 'refusal' in refused) expect(refused.refusal.retryAfterSeconds).toBe(50 * 60);
+    if (!refused.ok && 'refusal' in refused) {
+      expect(refused.refusal.retryAfterSeconds).toBe(50 * 60);
+      expect(refused.refusal.message).toContain('Try again in 50 minutes.');
+    }
+    // Under a minute left reads as one minute, in the singular.
+    const almost = await writeCustomCodeBlob(input(), undefined, () => new Date(now.getTime() + 49 * 60 * 1000 + 30 * 1000));
+    if (!almost.ok && 'refusal' in almost) expect(almost.refusal.message).toContain('Try again in 1 minute.');
+    else throw new Error('expected the limit to hold half a minute before it frees');
     // An hour after those writes, the next one goes through.
     const later = new Date(now.getTime() + 51 * 60 * 1000);
     expect(await writeCustomCodeBlob(input(), undefined, () => later)).toMatchObject({ ok: true, created: true });
@@ -318,7 +327,12 @@ describe('the site budget (live code: named by the working copy or a kept revisi
     expect(status?.usedBytes).toBeGreaterThan(1000 * 1024);
     const refused = await writeCustomCodeBlob(input({ code: code('<p>one more</p>'.repeat(2000)) }));
     await expectRefusal(refused, 'site_budget', 413);
-    if (!refused.ok && 'refusal' in refused) expect(refused.refusal.message).toMatch(/MB/);
+    if (!refused.ok && 'refusal' in refused) {
+      // It says what counts and what frees space (review 1, L2).
+      expect(refused.refusal.message).toMatch(/1 MB/);
+      expect(refused.refusal.message).toContain('last 30 published versions');
+      expect(refused.refusal.message).toContain('stops counting once the page is saved if it was never published');
+    }
   });
 
   it('counts no blob that nothing names, and no blocked one', async () => {
@@ -329,18 +343,59 @@ describe('the site budget (live code: named by the working copy or a kept revisi
     expect(await readCustomCodeStatus({ siteId: SITE_ID, ...SCOPE })).toMatchObject({ usedBytes: 0 });
   });
 
-  it('leaves out the block being replaced unless a kept revision names it', async () => {
+  it('leaves out the block being replaced, the hash this node names, when nothing else names it', async () => {
     const hashes = await storeNamed(['g', 'h', 'i', 'j']);
-    // Three named by a revision, the fourth only by the working copy.
+    // Three named by a revision, the fourth only by this block in the working copy.
     await nameInRevision(hashes.slice(0, 3));
     await latestVersionRepository().saveProject(SCOPE, project(SITE_ID, { customCode: { sha256: hashes[3], title: 'Greeting' } }));
     try {
       const addition = code('<p>replacement</p>'.repeat(5000));
       await expectRefusal(await writeCustomCodeBlob(input({ code: addition })), 'site_budget', 413);
-      // Replacing the working copy's block frees its share.
       expect(await writeCustomCodeBlob(input({ code: addition, replaces: hashes[3] }))).toMatchObject({ ok: true, created: true });
-      // Replacing a block a kept revision names frees nothing.
-      await expectRefusal(await writeCustomCodeBlob(input({ code: code('<p>other</p>'.repeat(5000)), replaces: hashes[0] })), 'site_budget', 413);
+      const written = await audits();
+      expect(written.at(-1)?.detail).toMatchObject({ replaces: hashes[3] });
+    } finally {
+      await latestVersionRepository().saveProject(SCOPE, project(SITE_ID));
+    }
+  });
+
+  it('refuses a replaces the stored node does not name: it lowers no count and enters no audit line', async () => {
+    const hashes = await storeNamed(['k', 'l', 'm', 'n']);
+    // The block names the first; a kept revision names the other three.
+    await latestVersionRepository().saveProject(SCOPE, project(SITE_ID, { customCode: { sha256: hashes[0], title: 'Greeting' } }));
+    await nameInRevision(hashes.slice(1));
+    try {
+      const addition = code('<p>spoof</p>'.repeat(10000));
+      const before = (await audits()).length;
+      // A hash some other block names, or none at all: refused with the reason, never counted out.
+      for (const spoof of [hashes[1], 'e'.repeat(64)]) {
+        const refused = await writeCustomCodeBlob(input({ code: addition, replaces: spoof }));
+        await expectRefusal(refused, 'replaces_mismatch', 409);
+        if (!refused.ok && 'refusal' in refused) expect(refused.refusal.message).toMatch(/Reload the editor/);
+      }
+      expect(await audits()).toHaveLength(before);
+      expect(await prisma.customCodeBlob.count({ where: { siteId: SITE_ID, title: 'Greeting', document: addition.document } })).toBe(0);
+    } finally {
+      await latestVersionRepository().saveProject(SCOPE, project(SITE_ID));
+    }
+  });
+
+  it('refuses a replaces on a block that holds no code yet', async () => {
+    const refused = await writeCustomCodeBlob(input({ replaces: 'a'.repeat(64) }));
+    await expectRefusal(refused, 'replaces_mismatch', 409);
+  });
+
+  it('frees nothing for a hash a kept revision or another block still names', async () => {
+    const hashes = await storeNamed(['o', 'p', 'q', 'r']);
+    await nameInRevision(hashes.slice(0, 3));
+    const addition = code('<p>other</p>'.repeat(5000));
+    // The block names a hash a kept revision also names.
+    await latestVersionRepository().saveProject(SCOPE, project(SITE_ID, { customCode: { sha256: hashes[0], title: 'Greeting' } }, { customCode: { sha256: hashes[3], title: 'Twin' } }));
+    try {
+      await expectRefusal(await writeCustomCodeBlob(input({ code: addition, replaces: hashes[0] })), 'site_budget', 413);
+      // The block and its twin name the same hash, which no revision names.
+      await latestVersionRepository().saveProject(SCOPE, project(SITE_ID, { customCode: { sha256: hashes[3], title: 'Greeting' } }, { customCode: { sha256: hashes[3], title: 'Twin' } }));
+      await expectRefusal(await writeCustomCodeBlob(input({ code: addition, replaces: hashes[3] })), 'site_budget', 413);
     } finally {
       await latestVersionRepository().saveProject(SCOPE, project(SITE_ID));
     }
