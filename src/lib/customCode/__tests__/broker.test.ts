@@ -92,6 +92,17 @@ describe('sizeOf: the UTF-8 length of a message as JSON, of plain data only, wit
     }
   });
 
+  // Review 5 of pull request #452, L1: shared graphs whose JSON stays under the engine's string limit, so a walk that
+  // charged one per call would build tens of megabytes and return a size. Charged in characters, each is refused.
+  it('charges a long key and a long shared string by their characters, before building their JSON', () => {
+    let keyed: Record<string, unknown> = { leaf: 1 };
+    for (let i = 0; i < 10; i++) keyed = { ['k'.repeat(65_536)]: keyed, b: keyed };
+    expect(sizeOf(keyed)).toBe(-1);
+    let shared: Record<string, unknown> = { leaf: 1 };
+    for (let i = 0; i < 10; i++) shared = { a: shared, b: shared, c: 'x'.repeat(60_000) };
+    expect(sizeOf(shared)).toBe(-1);
+  });
+
   it('starts every message with a fresh budget', () => {
     const big = { pad: new Array(60_000).fill(0) };
     expect(sizeOf(big)).toBeGreaterThan(0);
