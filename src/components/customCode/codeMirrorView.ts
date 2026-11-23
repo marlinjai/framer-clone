@@ -7,7 +7,9 @@
 // Keyboard: Tab is NOT bound, so Tab and Shift+Tab leave the editor as they leave any
 // field, and nobody is trapped in it. Read-only is CodeMirror's read-only state alone: the
 // content stays editable to the browser, so Tab still reaches it and the arrow keys and
-// PageDown move through it, while no edit goes in (`aria-readonly` says so). Indenting is Mod-] and Mod-[ (the default keymap),
+// PageDown move through it, while no edit goes in.
+// CodeMirror itself sets `aria-readonly` on the content from that state, so this file does not
+// (the gates pin CodeMirror's own). Indenting is Mod-] and Mod-[ (the default keymap),
 // undo and redo the editor's own history. The content carries the field's accessible
 // name and description. No linting, no formatting, no completion: it never runs the code.
 
@@ -53,7 +55,6 @@ export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions)
   const attributes = () => {
     const values: Record<string, string> = { 'aria-label': label, 'aria-multiline': 'true' };
     if (options.describedBy) values['aria-describedby'] = options.describedBy;
-    if (readOnly) values['aria-readonly'] = 'true';
     return EditorView.contentAttributes.of(values);
   };
   let applying = false;
@@ -98,7 +99,7 @@ export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions)
     },
     setReadOnly(next: boolean) {
       readOnly = next;
-      view.dispatch({ effects: [editable.reconfigure(EditorState.readOnly.of(readOnly)), named.reconfigure(attributes())] });
+      view.dispatch({ effects: editable.reconfigure(EditorState.readOnly.of(readOnly)) });
     },
     setLabel(next: string) {
       label = next;
