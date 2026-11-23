@@ -783,3 +783,17 @@ describe('the rows of an FX scene box', () => {
     });
   });
 });
+
+describe('a custom code block\'s badge (sandboxed custom code, slice C4)', () => {
+  it('marks a block in its row with what it holds, read with the row by a screen reader', () => {
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    render(<LayersPanel />);
+    const badge = () => rowOf(block).querySelector('[data-layer-custom-code-badge]')!;
+    expect(badge().textContent).toBe('Custom code block, no code saved yet: No code');
+    act(() => { block.setCustomCode({ sha256: 'ab'.repeat(32), title: 'Clock' }); });
+    expect(badge().textContent).toBe('Custom code block: Code');
+    act(() => { block.setProps({ customCode: 'broken' }); });
+    expect(badge().textContent).toContain('not valid');
+    expect(rowOf(main).querySelector('[data-layer-custom-code-badge]')).toBeNull();
+  });
+});

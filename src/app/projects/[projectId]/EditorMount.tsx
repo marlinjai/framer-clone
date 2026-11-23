@@ -19,6 +19,7 @@ import type { ProjectSnapshotOut } from '@/models/ProjectModel';
 import { SiteAddressProvider, type SiteAddress } from '@/contexts/SiteAddressContext';
 import { SiteBranchProvider } from '@/contexts/SiteBranchContext';
 import type { EditorBranchState } from '@/lib/sites/branches';
+import { CustomCodeAuthoringProvider } from '@/components/customCode/CustomCodeAuthoring';
 
 const EditorApp = dynamic(() => import('@/components/EditorApp'), { ssr: false });
 
@@ -27,6 +28,7 @@ export default function EditorMount({
   projectVersion,
   site,
   branch = null,
+  customCodeAvailable = false,
 }: {
   projectSnapshot: ProjectSnapshotOut;
   /** The site version read with the snapshot (the version lock). */
@@ -35,11 +37,15 @@ export default function EditorMount({
   site?: SiteAddress;
   /** Main or a branch, when site branches are on for the company. */
   branch?: EditorBranchState | null;
+  /** CUSTOM_CODE_AVAILABLE on this server: may custom code blocks be written (slice C4). */
+  customCodeAvailable?: boolean;
 }) {
   return (
     <SiteAddressProvider initial={site}>
       <SiteBranchProvider initial={branch}>
-        <EditorApp projectSnapshot={projectSnapshot} projectVersion={projectVersion} />
+        <CustomCodeAuthoringProvider available={customCodeAvailable} projectId={projectSnapshot.id ?? null}>
+          <EditorApp projectSnapshot={projectSnapshot} projectVersion={projectVersion} />
+        </CustomCodeAuthoringProvider>
       </SiteBranchProvider>
     </SiteAddressProvider>
   );

@@ -11,13 +11,19 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
 import { customCodePreviewHref } from '@/lib/customCode/customCode';
 import { CustomCodeSurfaceContext, type CustomCodeSurfaceInfo } from '@/lib/renderer/customCode/customCodeSurfaceContext';
+import { useCustomCodeAuthoring } from '@/components/customCode/CustomCodeAuthoring';
 
 const EditorCustomCodeSurface = observer(({ children }: { children: React.ReactNode }) => {
   const { editorUI } = useStore();
   const project = editorUI.currentProject;
   const pageId = editorUI.currentPage?.id ?? null;
   const previewHref = project && !editorUI.isUnsavedDemo ? customCodePreviewHref(project.id, pageId) : null;
-  const value = useMemo<CustomCodeSurfaceInfo>(() => ({ standalone: false, previewHref }), [previewHref]);
+  // The blocks whose fallback the canvas shows instead of the tile (slice C4, D110).
+  const { fallbackShown } = useCustomCodeAuthoring();
+  const value = useMemo<CustomCodeSurfaceInfo>(
+    () => ({ standalone: false, previewHref, fallbackShown: (nodeId: string) => fallbackShown.has(nodeId) }),
+    [previewHref, fallbackShown],
+  );
   return <CustomCodeSurfaceContext.Provider value={value}>{children}</CustomCodeSurfaceContext.Provider>;
 });
 
