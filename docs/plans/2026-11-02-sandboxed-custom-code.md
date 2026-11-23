@@ -432,7 +432,7 @@ status page.
 - **Renderer tests (C2):** no `iframe` from any stored prop, `src` or `srcdoc`; `iframe` still in `BLOCKED_TAGS`; the tile on canvas
   and in-editor preview; the fallback for a proposal, an unknown hash and a blob of another site; the enforced `frame-src` read from a
   real document in the browser, and the map loading after consent under it.
-- **Bridge tests (C3):** a message from a frame the broker did not create is ignored; a second `hello` and a reload remove the frame;
+- **Bridge tests (C3):** a message from a frame the broker did not create is ignored; a first window message that is not a `hello` and a reload remove the frame, and a second `hello` is only counted;
   undeclared ids, wrong types, `text` state and oversize messages are dropped; `emit` cannot trigger `navigate`; the watchdog removes
   a frozen frame in Chromium and Firefox; the focus watch removes a frame that steals focus three times, and a non-interactive frame
   on the first move (D8). The behaviour plan marked the focus watch "designed, not probed": C3 proves it or replaces it.
@@ -957,17 +957,26 @@ after the first review of pull request #452 (C3), which proved in all three engi
 - The walk is bounded before its cost (review 2 of pull request #452, M1). A sparse array is plain data that costs its sender
   nothing, since structured clone carries only its length, while `JSON.stringify` in the page walks every slot: ten million
   slots 28 times a second kept a click from answering for 3.6 to 4.7 seconds, and with the frame in its own process (Chromium's
-  site isolation) for more than a minute. The replacer counts its calls, and each call writes at least one byte of JSON, so past
-  65,536 calls, or at any string or array longer than 65,536, it throws at once: such a message cannot be 64 kilobytes of JSON,
-  and it now costs the page no more than a small one. `sizeOf` in `broker.ts` holds this, with unit tests for escaped characters,
+  site isolation) for more than a minute. The replacer counts its calls and throws past 65,536 of them, or at any string or array
+  longer than 65,536, at once. Every call but one for `undefined` (which JSON leaves out, or writes as `null` in an array) writes
+  at least one byte, so such a message is either over 64 kilobytes of JSON or a mass of `undefined`, which nothing honest sends;
+  refusing both is harmless, and it now costs the page no more than a small message. Keys are not counted by length: one 10
+  megabyte key costs the page about 31 ms and is refused by its size, and a second such message ends the frame, so that is bounded. `sizeOf` in `broker.ts` holds this, with unit tests for escaped characters,
   an own `length` key and a fresh budget per message.
 - Over 64 kilobytes is treated like data that is not plain: dropped and warned of the first time, and after any earlier wrong
   message the frame is removed (`not plain data or over 64 KB`), so an expensive message cannot be repeated.
 - The rate: every message of the frame counts, on its port and to the page's window, before `hello` and after, and so does a window
   message from a frame nested in it at any depth (review 2, L1: a `srcdoc` child flooded the page's window uncounted); the page
   walks the message's source up through its parents, which any site may read. Each message is counted as it is handled, first,
-  before anything else is done with it, and with the walk bounded no message takes long enough to push the next into a fresh
-  second. Past 30 in a second
+  before its data is read. On the port a counted message past 30 is dropped without its data being read, and any other is measured
+  with the bounded walk. On the window, where the frame may send anything at any size, the page reads data at most once per frame
+  (review 3 of pull request #452, M1): Chromium deserialises a message's data at its first read, and an array of 300,000 small
+  objects posted to the window after `hello`, once per task, kept a click from answering for about a minute under site isolation,
+  with the frame never removed, because each read took long enough that fewer than 90 were handled in any second. Now the frame's
+  first window message must be its `hello`, read once (anything else removes the frame, `no hello`; the shell sends `hello` before
+  any author code runs), and after `hello` its window messages and its nested frames' are counted from `source` alone and never
+  read. The gate proves both under Chromium's site isolation with a page that reads no message itself: a click answers within 2
+  seconds while the costly flood runs, and a frame whose first message is the costly one is removed at it. Past 30 in a second
   a message is dropped; past 90 in a second the frame is removed (`flooded`), because each message costs the page's main thread a
   task whether it is used or not. The review measured a click beside a flooding frame at 8.9 seconds in Chromium, 584 ms in
   WebKit and 255 ms in Firefox, with the frame never removed. The bridge gate's new case floods the port and the window for 4
@@ -977,14 +986,22 @@ after the first review of pull request #452 (C3), which proved in all three engi
   second removes it.
 - `resize` shares the count and nothing else: the earlier rule that honoured it only among the first 10 messages of a second is
   gone (review 2, M3), since it dropped exactly the settled height at the end of a burst.
-- The shell client coalesces (shell version 3, review 2, M2 and M3). An honest block that writes a state from every animation
+- The shell client coalesces (shell version 3, review 2, M2 and M3; version 4, review 3, M2 and L1). An honest block that writes a state from every animation
   frame sends 120 messages a second on a 120 Hz screen, and was removed as `flooded`; dropping past 30 lost the last value (a
   growing block ended at 134 to 263 pixels instead of 400). `lumitra.setState` and `lumitra.resize` now keep the latest value
   of each state and the latest height and send them on the trailing edge of a timer, about one message per 50 milliseconds
   (after a flush of `n` messages the next waits `n` times 50), so an honest author stays near 20 a second and the last value
-  always arrives. An `emit` goes at once, after the writes before it; errors are reported at most once a second. The broker's
-  ceiling is then left for code that bypasses the client on purpose. The gate proves it in three engines: two writes per
-  animation frame and a 4 ms timer keep the block and end on their last values, and a block growing to 400 pixels ends at 400.
+  always arrives. Emits ride the same timer (review 3, M2: an `emit` sent at once made a slider that writes and emits on every
+  `input` send 120 to 240 messages a second while dragged, and it was removed in all three engines): an emit of a name already
+  pending is merged into it, and emits go after the pending writes and height, in the order of their first call, so the page
+  still sees a write before an event that followed it. A merged emit runs the page's handlers once where the author called it
+  several times within about 50 ms; handlers set state, so that is the same end state. The shell also never sends more than 25
+  messages in any second, counted as they leave (review 3, L1: a flush of 31 states at once passed 30 and lost the 31st); what
+  does not fit waits, latest only, for the next flush. Errors are reported at most once a second. The broker's ceiling is then
+  left for code that bypasses the client on purpose. The gate proves it in three engines: two writes per animation frame and a
+  4 ms timer keep the block and end on their last values, a block growing to 400 pixels ends at 400, a slider dragged with the
+  mouse (a write and an emit on every input) is kept and ends on its last value, and 31 states written at once all arrive at
+  their last values.
 - One warning a frame: the first wrong message or reported error says `dropped a message or error, then silent`, and every later
   one is silent, so a frame cannot fill the page's console with text of its choosing (review 1, L2). Removal is always said. The
   frame's own errors stay in its own console, where the developer tools show them.
@@ -994,7 +1011,12 @@ draws the rest as their fallback with a warning; the broker refuses a fifth on i
 of its own in HTML is counted: one on or inside a form part or inside a shop control (whose islands get the node without its value,
 D95), inside a shop part, the sticky bar, a map, a void or unnamed tag or a refused tag (none of which draw their children), or inside
 `svg` or `math`, itself stored as `svg` or `math`, or stored as a void tag under a parent where `customCodeBoxTag` draws no box (a
-table part, a select, an option), is refused with a reason, takes no slot, and brings no broker and no `<meta>`.
+table part, a select, an option), is refused with a reason, takes no slot, and brings no broker and no `<meta>`. So is a block on or
+inside a tag that draws no element child as a box (`FRAMELESS_TAGS` in `applyCustomCode.ts`: `select`, `option`, `optgroup`,
+`datalist`, `textarea`, `canvas`, `video`, `audio`, `template`, `noscript`, `colgroup`; review 3 of pull request #452, L2): a frame
+there measures 0 by 0 in all three engines (a `canvas` draws it in Firefox only), and only Chromium loads it, so its hello would
+replace a visible fallback, such as a select's options, with a frame nobody sees, while in WebKit and Firefox the block would take
+a slot for nothing.
 An HTML element directly under an SVG or MathML element is outside what those formats render (HTML belongs in a `foreignObject`, or
 in a MathML text element), so a frame there could not be seen and its hello would remove a fallback that was showing. That is
 reasoned from the specifications, not probed in a browser. A block inside a `foreignObject` stands in HTML again and runs. Decided while rebasing C3 onto C2's third review, say so
@@ -1015,10 +1037,13 @@ C4's read route. Only `applyCustomCode` gives a node the island's block (`custom
 page, with live code on or off, so the renderer never rests on the snapshot adapter leaving that field out.
 
 **D69. A frame is hidden until `hello`, and its fallback stays until then and for good after any failure.** The `hello` is accepted
-only from the frame's own window, with the opaque origin `null` a sandboxed frame has, once. The frame is laid out at the box's width
-but invisible before it, so a lazy frame still loads and the page never shows an empty box. A second `hello`, a second `load`,
-no `hello` within 5 seconds of `load`, or three unanswered pings (removed at the fourth tick, about 20 seconds after the last
-answer) take the frame away and bring the fallback back for good.
+only from the frame's own window, with the opaque origin `null` a sandboxed frame has, as the frame's first window message. The frame is laid out at the box's width
+but invisible before it, so a lazy frame still loads and the page never shows an empty box. A first window message that is not a
+valid `hello`, a second `load`, no `hello` within 5 seconds of `load`, or three unanswered pings (removed at the fourth tick, about 20 seconds after the last
+answer) take the frame away and bring the fallback back for good. After `hello` the page never reads a window message of the
+frame again, it only counts it (D65), so a second `hello` is ignored like any other: the rule that removed the frame for one went
+with the third review of pull request #452 (M1), since enforcing it meant reading every message's data. A reload still ends the
+frame by its second `load`.
 
 **D70. The frame is created only within one viewport of the screen,** so a block far down the page costs nothing until the
 visitor nears it, and its 5 second clock starts at its own `load`.
@@ -1064,7 +1089,9 @@ from Playwright:
 What remains: a frame that waits for the visitor to pause typing for more than half a second, then takes the keyboard under the
 pointer, is excused as a person's click would be. The visitor sees the caret leave the field. Once the frame holds the keyboard
 the page sees no keys, so a later grab under the pointer (after the visitor Tabs out of the frame, say) is excused the same way;
-that is the same residual, not a new one. The page cannot tell a click inside a
+that is the same residual, not a new one. The typing signal needs a key whose name is one character, so it never fires for a
+visitor typing through an input method editor (which reports `Process`) or most virtual keyboards on Android (`Unidentified`):
+for them only the pointer and Tab clause applies, the same residual again (noted by the third review of pull request #452). The page cannot tell a click inside a
 frame of another site from a script's `focus()` there, so no signal from the page closes this; the residual is accepted with D8.
 
 The per-engine moves are written to `custom-code-bridge.log` in the system's temporary folder on every run.
@@ -1080,7 +1107,10 @@ gzipped until the second review of pull request #452, when the real chunk stood 
 more: the bounded walk (`sizeOf` and its budget, M1), the walk up a message's parents for nested frames (L1), the check that a
 message is an object (L2) and the typing signal's text-field test (M4), against the bytes the removed first-10 resize rule and the
 merged oversize branch gave back. Cutting a fix to fit would cost correctness, so the limit is now 2,200 bytes gzipped (decided,
-inside the brief's ceiling of 2,400; say so if you disagree). esbuild measures 2107 bytes and Next's real chunk 2122, 78 bytes under the new limit (the core's stays at 4968 of 5000, unchanged by this review). It is
+inside the brief's ceiling of 2,400; say so if you disagree). esbuild measured 2107 bytes and Next's real chunk 2122. The third
+review's fixes made it smaller, with no raise needed: the window route now reads data once per frame and drops the second-hello
+rule (M1), and the coalescing of emits and the 25-a-second cap (M2, L1) live in the shell, which has no size limit. esbuild now
+measures 2096 bytes and Next's real chunk 2108, 92 under the limit of 2,200 (the core's stays at 4968 of 5000). It is
 held on esbuild's measure in the unit suite and on Next's real chunk in the behaviour suite. Next compiles `?.`, `??` and template strings into longer code than esbuild does
 (its first real chunk came to 2037 bytes against esbuild's 1990), so the broker is written without them, and its numbers are
 literals at their use, since a bundler keeps a module's constants as variables. The registry it shares with the island and the
