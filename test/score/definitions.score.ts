@@ -6,6 +6,7 @@
 // leave the site. Each of those has a control that shows the check can fail.
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type Page } from 'playwright';
@@ -29,7 +30,13 @@ async function editorStylesheet(): Promise<string> {
     base: path.dirname(entry),
     loadStylesheet: async (id, base) => {
       const file = id === 'tailwindcss' ? 'node_modules/tailwindcss/index.css' : id === 'tw-animate-css' ? 'node_modules/tw-animate-css/dist/tw-animate.css' : id;
-      const resolved = file.startsWith('node_modules') ? path.join(ROOT, file) : path.resolve(base, file);
+      // A package's sheet (editor-theme.css imports the suite's tokens and interface modes) resolves
+      // through the package's exports, the way the build finds it.
+      const resolved = file.startsWith('node_modules')
+        ? path.join(ROOT, file)
+        : file.startsWith('.') || path.isAbsolute(file)
+          ? path.resolve(base, file)
+          : createRequire(entry).resolve(file);
       return { path: resolved, base: path.dirname(resolved), content: fs.readFileSync(resolved, 'utf8') };
     },
   });
