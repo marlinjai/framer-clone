@@ -67,10 +67,11 @@ export function useLiveConnectionMessage(projectId: string | undefined): { text:
     return undefined;
   }, [down, state.phase]);
 
+  // A newer version waiting for the person's edit says what to do; it comes first.
+  if (state.held?.whileEditing) return { text: LIVE_WAITING_TEXT, tone: 'waiting' };
   if (state.unreadable) return { text: LIVE_UNREADABLE_TEXT, tone: 'paused' };
   if (paused && down) return { text: state.draftLost ? `${LIVE_PAUSED_TEXT} ${LIVE_DRAFT_LOST_TEXT}` : LIVE_PAUSED_TEXT, tone: 'paused' };
   if (back) return { text: LIVE_BACK_TEXT, tone: 'back' };
-  if (state.held?.whileEditing) return { text: LIVE_WAITING_TEXT, tone: 'waiting' };
   return { text: '', tone: 'none' };
 }
 

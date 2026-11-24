@@ -3057,15 +3057,16 @@ describe('documentBodyOf: a 200 of the document route is a document of this site
     ['an empty object', {}],
     ['an array', []],
     ['a page of text', '<html>Service unavailable</html>'],
-    ['no version', { snapshot: { id: SITE, pages: {} } }],
-    ['a version that is a string', { version: '3', snapshot: { id: SITE, pages: {} } }],
-    ['a negative version', { version: -1, snapshot: { id: SITE, pages: {} } }],
-    ['a fractional version', { version: 1.5, snapshot: { id: SITE, pages: {} } }],
+    ['no version', { snapshot: { id: SITE, pages: { home: {} } } }],
+    ['a version that is a string', { version: '3', snapshot: { id: SITE, pages: { home: {} } } }],
+    ['a negative version', { version: -1, snapshot: { id: SITE, pages: { home: {} } } }],
+    ['a fractional version', { version: 1.5, snapshot: { id: SITE, pages: { home: {} } } }],
     ['no snapshot', { version: 3 }],
-    ['a snapshot without an id', { version: 3, snapshot: { pages: {} } }],
-    ["another site's snapshot", { version: 3, snapshot: { id: 'site_other', pages: {} } }],
+    ['a snapshot without an id', { version: 3, snapshot: { pages: { home: {} } } }],
+    ["another site's snapshot", { version: 3, snapshot: { id: 'site_other', pages: { home: {} } } }],
     ['a snapshot without pages', { version: 3, snapshot: { id: SITE } }],
     ['pages that are a list', { version: 3, snapshot: { id: SITE, pages: [] } }],
+    ['no page at all (a site always keeps one)', { version: 3, snapshot: { id: SITE, pages: {} } }],
   ])('refuses %s', (_name, body) => {
     expect(documentBodyOf(body, SITE)).toBeNull();
   });
@@ -3133,7 +3134,7 @@ describe('liveSync: an answer that is not a document (a proxy, an outage page, a
 
   it('while the stream is live: retried after 2 s as a failed fetch, and adopted once the answer is a document', async () => {
     start();
-    oddBody = { body: { version: 2, snapshot: { id: 'site_other', pages: {} } } };
+    oddBody = { body: { version: 2, snapshot: { id: 'site_other', pages: { home: {} } } } };
     await agentWrites('announced');
     const sync = liveSyncFor(SITE)!;
     expect(fetches).toHaveLength(1);
@@ -3146,7 +3147,37 @@ describe('liveSync: an answer that is not a document (a proxy, an outage page, a
     expect(sync.unreadable).toBe(false);
   });
 
-  it('"Load the newer version" with such an answer loads nothing and says so', async () => {
+  it('a 304 after such an answer clears the state too', async () => {
+    start();
+    stream().fail(true);
+    oddBody = { body: {} };
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    const sync = liveSyncFor(SITE)!;
+    expect(sync.unreadable).toBe(true);
+    oddBody = undefined; // nothing newer on the server: the next poll answers 304
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_BACKOFF_MS[0]);
+    expect(fetches).toHaveLength(2);
+    expect(sync.unreadable).toBe(false);
+  });
+
+  it('a sign-out or a site gone while unreadable clears it: that state says what holds instead', async () => {
+    start();
+    stream().fail(true);
+    oddBody = { body: {} };
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    const sync = liveSyncFor(SITE)!;
+    expect(sync.unreadable).toBe(true);
+    oddBody = undefined;
+    server.status = 404;
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_BACKOFF_MS[0]);
+    expect(sync.phase).toBe('gone');
+    expect(sync.unreadable).toBe(false);
+    server.status = undefined;
+  });
+
+  // "Load the newer version" drops this tab's unsaved work by the person's choice (the dialog says so); when the
+  // copy cannot be read in place it falls back to the reload, exactly as after a network failure (loadNewerVersion).
+  it('"Load the newer version" with such an answer adopts nothing in place and says so', async () => {
     start();
     oddBody = { body: {} };
     await loadNewerVersion(SITE);

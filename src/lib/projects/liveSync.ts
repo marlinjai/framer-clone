@@ -173,8 +173,8 @@ export interface DocumentAnswer {
 }
 
 /**
- * The body of a 200 from the document route when it is one: a version and the snapshot of THIS project, with its
- * pages. Anything else (a proxy's or an outage page's 200, a changed route) answers null, and live sync treats it
+ * The body of a 200 from the document route when it is one: a version and the snapshot of THIS project, with at
+ * least one page (a site always keeps one: its last page cannot be deleted). Anything else (a proxy's or an outage page's 200, a changed route) answers null, and live sync treats it
  * as a failed fetch, never as a newer copy: adopting or holding it would put an empty project in the editor.
  */
 export function documentBodyOf(body: unknown, projectId: string): { version: number; snapshot: ProjectSnapshotOut } | null {
@@ -183,7 +183,7 @@ export function documentBodyOf(body: unknown, projectId: string): { version: num
   if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 0) return null;
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   const { id, pages } = snapshot as { id?: unknown; pages?: unknown };
-  if (id !== projectId || !pages || typeof pages !== 'object' || Array.isArray(pages)) return null;
+  if (id !== projectId || !pages || typeof pages !== 'object' || Array.isArray(pages) || Object.keys(pages).length === 0) return null;
   return { version, snapshot: snapshot as ProjectSnapshotOut };
 }
 
@@ -690,6 +690,9 @@ export class LiveSync {
   private setPhase(phase: LiveSyncPhase) {
     if (this.phaseValue === phase) return;
     this.phaseValue = phase;
+    // Signed out, gone or stopped: nothing is fetched any more, so no answer is "unreadable" (the save status or the
+    // editor says what holds instead). The next fetch after a sign-in decides again.
+    if (phase === 'signed-out' || phase === 'gone' || phase === 'stopped') this.unreadableValue = false;
     if (phase === 'live') {
       this.wasLiveValue = true;
       this.draftLostValue = false;

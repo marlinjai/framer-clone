@@ -218,6 +218,45 @@ describe('LiveConnectionStatus: a newer version waiting for the person\'s edit',
     });
     expect(region.textContent).toBe('');
   });
+
+  it('comes before "could not be read" when both hold: it says what to do', async () => {
+    let dirty = true;
+    let odd = false;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setLiveSyncDepsForTests({ ...deps, fetchDocument: async (url, known) => (odd ? { status: 200, body: {} as never } : deps.fetchDocument(url, known)) });
+    const { registerOpenDraft } = await import('@/lib/projects/openDrafts');
+    const unregister = registerOpenDraft({ isDirty: () => dirty, commit: () => {} });
+    render(<LiveConnectionStatus projectId={site} />);
+    act(() => {
+      startLiveSync(site, store);
+      stream().open();
+      stream().emit('state', { version: 1, plans: [], agents: [], feed: [] });
+    });
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    model.updateMetadata({ description: 'agent' });
+    server = { version: 2, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    await act(async () => {
+      stream().emit('site:version', { origin: 'mcp', version: 2, versionBefore: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // Held for the open edit; then the next announced version comes back unreadable.
+    odd = true;
+    await act(async () => {
+      stream().emit('site:version', { origin: 'mcp', version: 3, versionBefore: 2 });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const region = screen.getByTestId('live-connection-status');
+    expect(region.textContent).toContain(LIVE_WAITING_TEXT);
+    expect(region.textContent).not.toContain(LIVE_UNREADABLE_TEXT);
+    // Once the edit settled and the copy is adopted, the failure that still holds shows.
+    await act(async () => {
+      dirty = false;
+      unregister();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(region.textContent).toContain(LIVE_UNREADABLE_TEXT);
+    errors.mockRestore();
+  });
 });
 
 describe('SiteChangedDialog: the pages keeping mine restores (F4)', () => {
