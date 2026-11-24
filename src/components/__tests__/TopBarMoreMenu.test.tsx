@@ -111,7 +111,8 @@ describe('compact top bar', () => {
     for (const label of ['Generate', 'Polish', 'Published versions', 'Domains', 'Site settings', 'Theme', 'Form submissions']) {
       expect(screen.getByRole('button', { name: `${label} button` }).className).toContain('max-lg:hidden');
     }
-    expect(screen.getByRole('button', { name: 'More actions' }).className).toContain('lg:hidden');
+    // More shows on every bar: it also holds Appearance (this browser).
+    expect(screen.getByRole('button', { name: 'More actions' }).className).not.toContain('hidden');
   });
 
   it('the More menu lists every action that does not fit', () => {

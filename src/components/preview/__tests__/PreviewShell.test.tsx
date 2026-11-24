@@ -206,7 +206,7 @@ describe('PreviewShell', () => {
     pathname = '/preview';
     render(<PreviewShell />);
     fireEvent.click(screen.getByRole('button', { name: /editor/i }));
-    expect(push).toHaveBeenCalledWith(`/?page=${bakeryId}`);
+    expect(push).toHaveBeenCalledWith(`/?demo=1&page=${bakeryId}`);
     expect(leave).not.toHaveBeenCalled();
   });
 

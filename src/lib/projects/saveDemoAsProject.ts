@@ -7,6 +7,7 @@
 // workspace admin permission, like "New project" on the dashboard). Every
 // failure becomes a sentence plus, where there is one, the next step.
 
+import { DEMO_PATH } from './demoAddress';
 import { validateProjectName } from '@/lib/projectName';
 
 export interface NextStep {
@@ -74,13 +75,13 @@ export async function saveDemoAsProject(
       return {
         ok: false,
         message: 'Choose the company to save this project in, then save again. Your work comes along.',
-        next: { href: '/projects?switch=1&next=/', label: 'Choose a company', leavesPage: true },
+        next: { href: `/projects?switch=1&next=${encodeURIComponent(DEMO_PATH)}`, label: 'Choose a company', leavesPage: true },
       };
     case 'unauthorized':
       return {
         ok: false,
         message: 'Your session has ended. Sign in again, then save again. Your work comes along.',
-        next: { href: '/projects?next=/', label: 'Sign in', leavesPage: true },
+        next: { href: `/projects?next=${encodeURIComponent(DEMO_PATH)}`, label: 'Sign in', leavesPage: true },
       };
     case 'forbidden':
       return { ok: false, message: 'You need to be an administrator of this company to create a project in it.' };

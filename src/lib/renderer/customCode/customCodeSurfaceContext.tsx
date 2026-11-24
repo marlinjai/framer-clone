@@ -21,6 +21,8 @@ import {
 export interface CustomCodeSurfaceInfo {
   standalone: boolean;
   previewHref: string | null;
+  /** The editor only: the blocks whose fallback the canvas shows instead of the tile (decision D110). */
+  fallbackShown?: (nodeId: string) => boolean;
 }
 
 export const CustomCodeSurfaceContext = React.createContext<CustomCodeSurfaceInfo>({ standalone: false, previewHref: null });
@@ -30,8 +32,9 @@ export const CustomCodeSurfaceContext = React.createContext<CustomCodeSurfaceInf
  * is always the tile; the preview is the tile too, unless the standalone preview
  * route says otherwise through CustomCodeSurfaceContext.
  */
-export function CustomCodeOnEditorSurface({ mode, ...input }: CustomCodeElementInput & { mode: 'editor' | 'preview' }): React.ReactElement | null {
+export function CustomCodeOnEditorSurface({ mode, nodeId, ...input }: CustomCodeElementInput & { mode: 'editor' | 'preview'; nodeId?: string }): React.ReactElement | null {
   const info = React.useContext(CustomCodeSurfaceContext);
   const surface: CustomCodeSurface = mode === 'editor' ? 'editor' : info.standalone ? 'standalone' : 'preview';
-  return createCustomCodeElement(surface, { ...input, previewHref: info.previewHref });
+  const showFallback = surface === 'editor' && nodeId !== undefined && info.fallbackShown ? info.fallbackShown(nodeId) : false;
+  return createCustomCodeElement(surface, { ...input, previewHref: info.previewHref, showFallback });
 }

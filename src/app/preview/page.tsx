@@ -11,6 +11,7 @@
 // full reload drops the in-browser demo), the page says so and offers the way
 // on, instead of a blank screen or a 404.
 
+import { DEMO_PATH } from '@/lib/projects/demoAddress';
 import dynamic from 'next/dynamic';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { useStore } from '@/hooks/useStore';
@@ -69,7 +70,7 @@ function DemoPreview() {
           <a href="/projects" className="text-brand hover:underline">
             Your projects
           </a>
-          <a href="/" className="text-brand hover:underline">
+          <a href={DEMO_PATH} className="text-brand hover:underline">
             Open the demo editor
           </a>
           {/* eslint-enable @next/next/no-html-link-for-pages */}

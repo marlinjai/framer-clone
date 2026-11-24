@@ -160,7 +160,7 @@ const AgentInput = React.forwardRef<AgentInputHandle, AgentInputProps>(
               disabled={!canSend}
               aria-label="Send"
               data-testid="agent-send"
-              className="inline-flex size-7 items-center justify-center rounded-md bg-brand text-brand-foreground transition-colors hover:bg-brand/90 disabled:pointer-events-none disabled:opacity-40"
+              className="inline-flex size-7 items-center justify-center rounded-md bg-brand-fill text-brand-foreground transition-colors hover:bg-brand-fill/90 disabled:pointer-events-none disabled:opacity-40"
             >
               <ArrowUp className="size-[15px]" />
             </button>

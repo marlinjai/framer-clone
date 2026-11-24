@@ -8,6 +8,7 @@
 // (width, height, reload key) lives here so the toolbar's W/H inputs and
 // the gutters' drag deltas converge to a single source of truth.
 'use client';
+import { demoPageHref } from '@/lib/projects/demoAddress';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -250,8 +251,9 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
   const viewportNodes = page.sortedViewportNodes;
   // Back to the editor on the same page: over the editor, close; at a route,
   // the project's editor, or the browser-only demo editor at `/`.
-  const editorBase = rootStore.editorUI.isUnsavedDemo ? '/' : `/projects/${project.id}`;
-  const editorHref = `${editorBase}?page=${encodeURIComponent(page.id)}`;
+  const editorHref = rootStore.editorUI.isUnsavedDemo
+    ? demoPageHref(page.id)
+    : `/projects/${project.id}?page=${encodeURIComponent(page.id)}`;
   // Leaving the project's preview route is a full load (leavePreview: its frame policy
   // stays with the document); the demo's lives in this tab's memory, so it stays client-side.
   const onBack = onClose ?? (() => (rootStore.editorUI.isUnsavedDemo ? router.push(editorHref) : leavePreview(editorHref)));

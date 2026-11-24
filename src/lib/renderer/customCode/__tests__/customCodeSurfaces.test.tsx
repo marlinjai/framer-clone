@@ -21,11 +21,12 @@ import { isRenderedAttribute } from '@/lib/renderer/renderVocabulary';
 import ComponentModel, { ComponentTypeEnum, type ComponentInstance } from '@/models/ComponentModel';
 import HeadlessComponentRenderer from '@/lib/renderer/HeadlessComponentRenderer';
 import {
+  CUSTOM_CODE_FALLBACK_LABEL,
   CUSTOM_CODE_PREVIEW_LINK_TEXT,
   CUSTOM_CODE_TILE_TEXT,
   createCustomCodeElement,
 } from '../customCodeElement';
-import { CustomCodeSurfaceContext } from '../customCodeSurfaceContext';
+import { CustomCodeOnEditorSurface, CustomCodeSurfaceContext } from '../customCodeSurfaceContext';
 
 const HASH = '0123456789abcdef'.repeat(4);
 const OTHER_SITES_HASH = 'f'.repeat(64);
@@ -550,5 +551,55 @@ describe('the tile inside a control', () => {
   it('keeps its link inside a plain container', () => {
     const container = drawPreview({ type: 'section', id: 'p', props: {}, children: [block] }, info);
     expect(container.querySelector('[data-fc-custom-code-preview]')?.getAttribute('href')).toBe('/projects/s/preview?page=p');
+  });
+});
+
+describe('slice C4: a block before its first save, and the fallback on the canvas', () => {
+  it('names a block whose code was never saved (customCode: null) apart from a broken value', () => {
+    const draft = drawPreview(blockNode('cc', null));
+    expect(draft.querySelector('[data-fc-custom-code-badge]')?.textContent).toBe('No code saved yet');
+    expect(draft.querySelector('iframe')).toBeNull();
+  });
+
+  it('publishes a block whose code was never saved as its box and fallback, with no mark', async () => {
+    const html = await publish(blockNode('cc', null));
+    expect(html).toContain('Fallback of cc');
+    expect(html).not.toContain('data-fc-custom-code=');
+    expect(html).not.toContain('<iframe');
+  });
+
+  function drawCanvas(node: { id: string; config: unknown }, shown: ReadonlySet<string>) {
+    return render(
+      <CustomCodeSurfaceContext.Provider value={{ standalone: false, previewHref: null, fallbackShown: (id) => shown.has(id) }}>
+        <CustomCodeOnEditorSurface mode="editor" nodeId={node.id} tag="div" domProps={{ 'data-inner-component-id': node.id }} config={node.config}>
+          <p>Fallback of {node.id}</p>
+        </CustomCodeOnEditorSurface>
+      </CustomCodeSurfaceContext.Provider>,
+    ).container;
+  }
+
+  it('draws the fallback under its label on the canvas only for the blocks the editor asked for', () => {
+    const shown = drawCanvas({ id: 'cc', config: { sha256: HASH, title: TITLE } }, new Set(['cc']));
+    expect(shown.querySelector('[data-fc-custom-code-tile]')).toBeNull();
+    expect(shown.querySelector('[data-fc-custom-code-fallback]')?.textContent).toContain('Fallback of cc');
+    expect(shown.textContent).toContain(CUSTOM_CODE_FALLBACK_LABEL);
+    expect(shown.querySelector('iframe')).toBeNull();
+    expect(shown.innerHTML).not.toContain(HASH);
+    cleanup();
+    const other = drawCanvas({ id: 'cc', config: { sha256: HASH, title: TITLE } }, new Set(['another']));
+    expect(other.querySelector('[data-fc-custom-code-tile]')).not.toBeNull();
+    expect(other.textContent).not.toContain('Fallback of cc');
+  });
+
+  it('keeps the tile in the preview over the editor whatever the canvas shows', () => {
+    const container = render(
+      <CustomCodeSurfaceContext.Provider value={{ standalone: false, previewHref: null, fallbackShown: () => true }}>
+        <CustomCodeOnEditorSurface mode="preview" nodeId="cc" tag="div" domProps={{}} config={{ sha256: HASH, title: TITLE }}>
+          <p>Fallback of cc</p>
+        </CustomCodeOnEditorSurface>
+      </CustomCodeSurfaceContext.Provider>,
+    ).container;
+    expect(container.querySelector('[data-fc-custom-code-tile]')).not.toBeNull();
+    expect(container.textContent).not.toContain('Fallback of cc');
   });
 });

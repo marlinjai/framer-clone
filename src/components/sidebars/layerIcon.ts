@@ -16,6 +16,7 @@ import {
   AppWindow,
   AudioLines,
   Box,
+  Code2,
   Blend,
   Component,
   Database,
@@ -144,6 +145,7 @@ export function layerIconOf(component: ComponentInstance, at?: LayerIconBreakpoi
     case 'stickyCta': return COMPONENT_REGISTRY.stickyCta.icon;
     case 'mapEmbed': return COMPONENT_REGISTRY.mapEmbed.icon;
     case 'fxScene': return COMPONENT_REGISTRY.fxScene.icon;
+    case 'customCode': return Code2;
     case 'image': return COMPONENT_REGISTRY.image.icon;
     case 'link': return COMPONENT_REGISTRY.link.icon;
     case 'text': return Type;

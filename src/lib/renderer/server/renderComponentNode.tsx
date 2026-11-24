@@ -39,8 +39,9 @@ import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
 import { isFxSceneProp } from '@/lib/fxScene/marker';
 import MapEmbedIsland from '../mapEmbed/MapEmbedIsland';
-import { hasCustomCode, withoutCustomCodeTree } from '@/lib/customCode/customCode';
-import { createCustomCodeElement, customCodeBoxTag } from '../customCode/customCodeElement';
+import { customCodeTrace, hasCustomCode, parseCustomCode, withoutCustomCodeTree } from '@/lib/customCode/customCode';
+import { createCustomCodeElement, customCodeBoxTag, globalPropsOnly } from '../customCode/customCodeElement';
+import CustomCodeIsland from '../customCode/CustomCodeIsland';
 import { shopPartRoleOf } from '@/lib/commerce/parts';
 import { applyBindings } from '@/lib/bindings/resolver/applyBindings';
 import { ShopPartElement } from '@/lib/commerce/shopRuntime';
@@ -240,23 +241,29 @@ export function renderComponentNode(
   }
 
   // A sandboxed custom code block (src/lib/customCode): the box and its children, which
-  // are the fallback, with the hash's first characters when it names a block. The frame
-  // is the island's (slice C3); a proposal or an invalid value is the fallback for good.
+  // are the fallback, with the hash's first characters when it names a block. A block the
+  // server accepted for this request (applyCustomCode, `customCodeRun`) is the island, whose
+  // frame the broker draws (slice C3); every other block, a proposal and an invalid value
+  // are the fallback for good.
   if (hasCustomCode(node.props)) {
     const tag = resolveHtmlTag(node.type) ?? 'div';
-    // Null under a parent that holds only its own kinds of children: no box (D96).
+    // Null under a parent that holds only its own kinds of children: no box (D96), and no frame.
     const boxTag = customCodeBoxTag(tag, foreign, parentTag);
     if (boxTag === null) return null;
-    return createCustomCodeElement('published', {
-      // The stored tag: the element swaps a void one for boxTag and keeps only global attributes.
-      tag,
-      foreign,
-      parentTag,
-      domProps: nodeDomProps(node),
-      config: (node.props as Record<string, unknown>).customCode,
-      children: renderNodeChildren(node, scope, contentBelow(boxTag, foreign), inLink || !runLinksAllowedIn(boxTag), boxTag),
-      key,
-    });
+    const config = (node.props as Record<string, unknown>).customCode;
+    const children = renderNodeChildren(node, scope, contentBelow(boxTag, foreign), inLink || !runLinksAllowedIn(boxTag), boxTag);
+    const parsed = parseCustomCode(config);
+    if (node.customCodeRun && parsed.ok && parsed.value.kind === 'block') {
+      // A void tag's box keeps only the attributes any element may carry, as the fallback's does.
+      const domProps = boxTag === tag ? nodeDomProps(node) : globalPropsOnly(nodeDomProps(node));
+      return (
+        <CustomCodeIsland key={key} tag={boxTag} domProps={domProps} trace={customCodeTrace(parsed.value.sha256)} block={node.customCodeRun}>
+          {children}
+        </CustomCodeIsland>
+      );
+    }
+    // The stored tag: the element swaps a void one for boxTag and keeps only global attributes.
+    return createCustomCodeElement('published', { tag, foreign, parentTag, domProps: nodeDomProps(node), config, children, key });
   }
 
   // A shop part (src/lib/commerce/parts.ts): drawn as its control's island says

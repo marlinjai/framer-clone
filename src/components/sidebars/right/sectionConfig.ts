@@ -4,9 +4,10 @@ import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { isComponentPlaceholderType } from '@/lib/components/placement';
 import { isMapEmbed } from '@/lib/mapEmbed/mapEmbed';
 import { isFxScene } from '@/lib/fxScene/marker';
+import { hasCustomCode } from '@/lib/customCode/customCode';
 
-export type ComponentCategory = 'viewport' | 'placement' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta' | 'mapEmbed' | 'fxScene';
-export type SectionId = 'component' | 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'mapEmbed' | 'fxScene' | 'link' | 'custom';
+export type ComponentCategory = 'viewport' | 'placement' | 'container' | 'text' | 'link' | 'image' | 'generic' | 'form' | 'formField' | 'formSubmit' | 'stickyCta' | 'mapEmbed' | 'fxScene' | 'customCode';
+export type SectionId = 'component' | 'size' | 'position' | 'layout' | 'typography' | 'image' | 'styles' | 'effects' | 'form' | 'stickyCta' | 'mapEmbed' | 'fxScene' | 'customCode' | 'link' | 'custom';
 
 // Exported so the AI page generator's schema docs (src/lib/ai/pageGen/schema.ts)
 // offer exactly the tags this properties panel knows how to edit.
@@ -28,6 +29,9 @@ export function getComponentCategory(component: ComponentInstance): ComponentCat
   if (isMapEmbed(component.props)) return 'mapEmbed';
   // An FX scene box is a container that also draws a scene: its own section first.
   if (isFxScene(component.props, component.type)) return 'fxScene';
+  // A sandboxed custom code block is a div whose content is the frame: its own section first
+  // (plan docs/plans/2026-11-02-sandboxed-custom-code.md, slice C4).
+  if (hasCustomCode(component.props)) return 'customCode';
   if (component.type === 'img') return 'image';
   if (component.type === 'a') return 'link';
   if (TEXT_TYPES.has(component.type)) return 'text';
@@ -65,4 +69,7 @@ export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   // The scene first, then everything a container has: the box holds the content shown
   // over the scene, and its own background is what shows where the scene is not drawn.
   fxScene:    ['fxScene', 'size', 'position', 'layout', 'typography', 'styles', 'effects', 'custom'],
+  // The code first; then the box, sized and styled like any block. Layout and typography
+  // arrange and style the fallback, the elements inside it.
+  customCode: ['customCode', 'size', 'position', 'layout', 'typography', 'styles', 'effects', 'custom'],
 };

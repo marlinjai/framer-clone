@@ -94,6 +94,8 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/dev/books-engine', why: 'the Books engine browser harness' },
   { route: '/dev/books-engine/cases', why: 'the Books engine browser harness' },
   { route: '/dev/books-engine/files/[kind]/[sha256]', why: 'the Books engine browser harness' },
+  // The home page harness (slice S4): a dev-only build route.
+  { route: '/dev/home', why: 'the home page browser harness' },
 
   // The editor's APIs.
   { route: '/api/projects', why: 'authoring' },
@@ -125,6 +127,7 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/projects/[projectId]/domains', why: 'authoring' },
   { route: '/api/projects/[projectId]/domains/[domainId]', why: 'authoring' },
   { route: '/api/projects/[projectId]/domains/[domainId]/verify', why: 'authoring' },
+  { route: '/api/projects/[projectId]/custom-code', why: 'authoring: write and read a site\'s sandboxed custom code (behind CUSTOM_CODE_AVAILABLE)' },
   { route: '/api/projects/[projectId]/erasures', why: 'authoring' },
   { route: '/api/projects/[projectId]/erasures/search', why: 'authoring' },
   { route: '/api/projects/[projectId]/forms/submissions', why: 'authoring' },

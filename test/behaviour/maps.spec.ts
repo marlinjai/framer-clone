@@ -21,6 +21,7 @@ import { getPrismaClient } from '@/server/db';
 import { node, type StoredNode } from './pages';
 import { publishPages } from './site';
 import { CONSENT_TAP_GUARD_MS } from '@/lib/consent/consent';
+import { BOX_ORIGIN } from './box';
 
 const SHARE = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2419.6!2d13.2834!3d52.6871!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1sde!2sde!4v1730000000000';
 const ADDRESS = 'Hauptstraße 1, 16547 Birkenwerder';
@@ -208,7 +209,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     expect(await link.getAttribute('rel')).toBe('noopener noreferrer');
     // The report-only policy: any frame reports for a visitor without maps consent,
     // and there is no frame to report.
-    expect(response?.headers()['content-security-policy-report-only']).toContain("frame-src 'self';");
+    expect(response?.headers()['content-security-policy-report-only']).toContain(`frame-src 'self' ${BOX_ORIGIN}/box/;`);
     expect(cspReports).toEqual([]);
     expect(errors).toEqual([]);
   });
@@ -256,7 +257,7 @@ describe.each(ENGINES)('in %s', (engineName, engine) => {
     requests = [];
     cspReports = [];
     const response = await open(`${mapsOnly}/map`);
-    expect(response?.headers()['content-security-policy-report-only']).toContain("frame-src 'self' https://www.google.com;");
+    expect(response?.headers()['content-security-policy-report-only']).toContain(`frame-src 'self' ${BOX_ORIGIN}/box/ https://www.google.com;`);
     await expect.poll(() => frame().count()).toBe(1);
     expect(await banner().isVisible()).toBe(false);
     expect(cspReports).toEqual([]);

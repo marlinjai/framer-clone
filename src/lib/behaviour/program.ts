@@ -31,6 +31,8 @@ export interface BehaviourProgram {
   rove?: true;
   /** Some action touches the page beyond state, or a trigger reads keys: the page needs the `verbs` chunk. */
   verbs?: true;
+  /** The page holds a sandboxed custom code block: it needs the broker chunk (src/lib/customCode/broker.ts). */
+  broker?: true;
 }
 
 /** One trigger firing: where it stands and what fired it. */
@@ -58,6 +60,14 @@ export interface Kit {
   settle(): void;
   /** Charges the page for a full scan. False when it may not run now. */
   charge(cost: number): boolean;
+  /** Writes a state from the nearest scope holding it, as `set` does. True when the value changed. */
+  write(id: string, value: unknown, from: Element): boolean;
+  /**
+   * Fires `custom:<name>` on `from` and up the nodes around it, for a frame (the broker). What it
+   * reaches runs as a replayed press does: `set`, `toggle` and `step` only, so a frame, which is not
+   * a person, never drives `navigate`, a focus verb or any other action.
+   */
+  emit(name: string, from: Element): void;
 }
 
 export interface Rover {
@@ -84,6 +94,9 @@ export interface Extras {
   /** Says when an element enters or leaves the viewport, and nothing for one never in view. Null where the browser cannot. */
   viewObserver(report: (element: Element, entered: boolean) => void): IntersectionObserver | null;
 }
+
+/** The broker of sandboxed custom code: serves the page's blocks, returns what stops it. */
+export type CreateBroker = (kit: Kit) => () => void;
 
 export type RunVerb = (action: Action, run: Run) => void;
 export type CreateVerbs = (kit: Kit) => RunVerb;

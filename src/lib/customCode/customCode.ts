@@ -137,7 +137,7 @@ function largestCluster(text: string): number {
  * control character, an invisible formatting character or a lone surrogate half is
  * refused, never repaired further.
  */
-function readTitle(value: unknown): string | null {
+export function readCustomCodeTitle(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   if (CONTROL_CHARACTERS.test(value.replace(/[\t\n\r]/g, ' '))) return null;
   if (LONE_SURROGATE.test(value)) return null;
@@ -166,7 +166,7 @@ export function parseCustomCode(input: unknown): CustomCodeParse {
     if (typeof sha256 !== 'string' || !BOX_SHA256_PATTERN.test(sha256)) {
       return { ok: false, reason: 'sha256 must be 64 lower case hex characters' };
     }
-    const title = readTitle(rawTitle);
+    const title = readCustomCodeTitle(rawTitle);
     if (title === null) return { ok: false, reason: 'a block needs a printable title' };
     return { ok: true, value: { kind: 'block', sha256, title } };
   }
@@ -175,7 +175,7 @@ export function parseCustomCode(input: unknown): CustomCodeParse {
     if (typeof proposal !== 'string' || !PROPOSAL_ID_PATTERN.test(proposal)) {
       return { ok: false, reason: 'a proposal id is not of the right shape' };
     }
-    const title = readTitle(rawTitle);
+    const title = readCustomCodeTitle(rawTitle);
     if (title === null) return { ok: false, reason: 'a proposal needs a printable title' };
     return { ok: true, value: { kind: 'proposal', proposal, title } };
   }

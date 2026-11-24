@@ -15,6 +15,7 @@ import { ShopPartNote, ShopStyleNote, isLockedShopText } from './right/sections/
 import { InteractionsSection } from './right/sections/InteractionsSection';
 import { PageStatePanel } from './right/sections/PageStatePanel';
 import { holdsBehaviour } from './right/sections/behaviourShared';
+import { CustomCodeSection } from './right/sections/CustomCodeSection';
 
 const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: ComponentInstance; breakpointId?: string }>> = {
   component: ComponentSection,
@@ -29,6 +30,7 @@ const SECTION_COMPONENTS: Record<SectionId, React.ComponentType<{ component: Com
   stickyCta: StickyCtaSection,
   mapEmbed: MapEmbedSection,
   fxScene: FxSceneSection,
+  customCode: CustomCodeSection,
   link: LinkSection,
   custom: CustomSection,
 };

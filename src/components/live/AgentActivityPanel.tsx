@@ -61,7 +61,7 @@ export function breakpointFor(page: PageModelType, preferred?: string): string |
 }
 
 /** The amber of a refusal or a wait: darker in light mode, where the status token is under 3:1 on white. */
-const WARNING_CLASS = 'text-amber-700 dark:text-status-draft';
+const WARNING_CLASS = 'text-warning';
 
 /** The line's status mark: an image with its name, so a screen reader says it in the line. */
 function StatusMark({ outcome }: { outcome: LiveFeedLine['outcome'] }) {

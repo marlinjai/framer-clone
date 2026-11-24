@@ -98,6 +98,32 @@ async function buildLoginUrl(next: string): Promise<string> {
   return loginUrl.toString();
 }
 
+/** What `/` needs to know about the visitor (docs/plans/2026-11-23-sites-home-and-light-mode.md). */
+export type HomeEntry =
+  | { status: 'signed_in' }
+  | { status: 'signed_out'; loginUrl: string }
+  /** auth-brain could not answer: shown as signed out with a note, never sent to the login. */
+  | { status: 'auth_unavailable'; loginUrl: string };
+
+/**
+ * Whether the request carries a valid session, for the home at `/`. Only the
+ * session is verified: everything about companies stays with the dashboard,
+ * which a signed-in visitor is sent to. A stale cookie counts as signed out.
+ */
+export async function loadHomeEntry(): Promise<HomeEntry> {
+  const cookie = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!cookie) return { status: 'signed_out', loginUrl: await buildLoginUrl('/projects') };
+  try {
+    const session = await verifySessionOrThrowUnavailable(cookie);
+    if (session) return { status: 'signed_in' };
+  } catch (err) {
+    if (!(err instanceof AuthUnavailableError)) throw err;
+    console.error('[auth] auth-brain unavailable during session verify (home)', err.cause);
+    return { status: 'auth_unavailable', loginUrl: await buildLoginUrl('/projects') };
+  }
+  return { status: 'signed_out', loginUrl: await buildLoginUrl('/projects') };
+}
+
 /** The one-time legacy-cookie migration handler, continuing to `next`. */
 function migrateUrlFor(next: string): string {
   return next === '/projects'

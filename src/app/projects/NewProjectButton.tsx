@@ -15,7 +15,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 
-export default function NewProjectButton() {
+export default function NewProjectButton({ variant = 'button' }: { variant?: 'button' | 'card' }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +68,31 @@ export default function NewProjectButton() {
       setError(err instanceof Error ? err.message : 'Could not create a new project.');
       setBusy(false);
     }
+  }
+
+  if (variant === 'card') {
+    // The "New project" card in the home's grid (Direction A).
+    return (
+      <div className="flex h-full flex-col gap-2">
+        <button
+          type="button"
+          onClick={createProject}
+          disabled={busy}
+          aria-busy={busy}
+          className="grid min-h-[150px] flex-1 place-items-center rounded-xl border-[1.5px] border-dashed border-input px-4 text-center text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:shadow-selection disabled:opacity-70 sm:min-h-[190px]"
+        >
+          <span>
+            <span className="block font-semibold text-foreground">{busy ? 'Creating…' : '+ New project'}</span>
+            Start blank, then design or generate
+          </span>
+        </button>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    );
   }
 
   return (

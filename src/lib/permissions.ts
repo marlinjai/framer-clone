@@ -65,6 +65,12 @@ export const FRAMER_PERMISSIONS = definePermissions({
     requires: 'workspace.admin',
     description: "Search and erase personal data in a site's published versions (with the company owner role).",
   },
+  // Writing a site's sandboxed custom code (docs/plans/2026-11-02-sandboxed-custom-code.md, M8 and slice C4):
+  // the same bar as editing, as its own action so it can be tightened alone, and named in every write's audit line.
+  manageCustomCode: {
+    requires: 'workspace.admin',
+    description: "Write a site's sandboxed custom code blocks (and, from slice C7, switch custom code on or off).",
+  },
   // The Books (invoicing). Checked on the active company's editor workspace,
   // AFTER the company's auth-brain app grant `books` (src/server/books/http).
   // Reading invoices discloses customers and revenue, so even the read needs a

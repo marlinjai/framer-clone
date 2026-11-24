@@ -12,14 +12,15 @@
 // runtime it runs in already has as a global (Web Crypto, TextEncoder).
 //
 // From slice C2 the application reads the hash's shape and the host name rule
-// from here (src/lib/customCode/customCode.ts); nothing in the application
-// serves or frames a block yet.
+// from here (src/lib/customCode/customCode.ts). From slice C3 the shell below
+// carries the bridge client the author's code calls, and the broker in the page
+// (src/lib/customCode/broker.ts) speaks protocol version 1 with it.
 
 /** The version of the postMessage protocol between the page and a frame. */
 export const BOX_PROTOCOL_VERSION = 1;
 
 /** The version of the shell, sent in `hello`. The shell is in no hash, so it can change with a deploy. */
-export const BOX_SHELL_VERSION = 1;
+export const BOX_SHELL_VERSION = 4;
 
 /** Present in every served document: what the canary monitor looks for. */
 export const BOX_SHELL_MARKER = 'fc-box-shell';
@@ -262,9 +263,51 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
 // ---------------------------------------------------------------------------
 
 /**
- * The script that runs first in every document. Version 1 removes the WebRTC
- * constructors and says `hello` to the page; the bridge client (`lumitra.read`
- * and the rest) joins it in slice C3.
+ * The script that runs first in every document. It removes the WebRTC
+ * constructors, says `hello` to the page, and gives the author's code the
+ * bridge client, `window.lumitra` (slice C3, decision D60 onward of the plan):
+ *
+ *   lumitra.read(id)            the last value of a declared read, or undefined
+ *   lumitra.onState(id, fn)     calls fn with every new value of a declared read
+ *                               (at once with the value it already has); returns
+ *                               a function that stops it
+ *   lumitra.setState(id, value) asks the page to set a declared write; writes
+ *                               are coalesced (below), so the latest value of
+ *                               each state always arrives
+ *   lumitra.emit(name)          fires a declared `custom:<name>` event (`name` or
+ *                               `custom:name`); coalesced too: emits of one name
+ *                               made while one batch gathers (about 50 ms)
+ *                               arrive as one, after that batch's writes, so a page
+ *                               handler that toggles or steps a state runs once
+ *                               for them; to count, write the count as a number
+ *                               state instead
+ *   lumitra.resize(height)      asks for a height in pixels (sizing `content`);
+ *                               coalesced like writes
+ *   lumitra.ready()             a promise, resolved once the page has connected
+ *                               and sent every declared read its first value
+ *
+ * Writes, resizes and emits are coalesced (shell version 4, decision D65): the
+ * client keeps the latest value of each state, the latest height and each
+ * emitted name once, and sends them on a timer, on the trailing edge, about one
+ * message per 50 milliseconds on average (after a flush of `n` messages the next
+ * waits `n` times 50): writes first, then the height, then the emits in the order
+ * of their first call, so the page sees a write before an event that followed
+ * it. A flush takes everything pending as one batch; an emit of a name already
+ * in the batch being gathered is merged into it, while one made after the batch
+ * was taken goes into the next batch, after that batch's writes. No more than
+ * 25 messages leave in any one second, counted as they are sent, so the page's
+ * limit of 30 is never reached however many states change at once; what does
+ * not fit stays in its batch for the next flush, and newer values wait for the
+ * batch after it, so a batch's older value is still sent before a newer one. An author may call
+ * `setState` and `emit` from every animation frame or every `input` of a slider:
+ * the page gets about 20 messages a second, and the last value of each always
+ * arrives. Errors are reported at most once a second. Until the page connects,
+ * all of it waits (errors in a short queue of 20), so code that runs at once
+ * loses nothing. Nothing here is a
+ * boundary for the page: the author's code shares this realm and can post
+ * anything on the port, and the broker in the page checks every message
+ * (src/lib/customCode/broker.ts). An uncaught error or rejection in the frame is
+ * reported to the page as an `error` message, shortened.
  *
  * Removing the constructors is a mitigation, not a boundary (behaviour plan,
  * "The frame"): a script can reach a fresh set through a new realm, such as an
@@ -278,14 +321,70 @@ export function isCrossSiteFrameRequest(secFetchDest: unknown, secFetchSite: unk
  * The text must never hold the character sequence that closes a script
  * element; a test holds that.
  */
-export const BOX_SHELL_SCRIPT =
-  `/*${BOX_SHELL_MARKER} v${BOX_SHELL_VERSION}*/(function(){'use strict';` +
-  "var w=window,n=['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel','RTCIceTransport','RTCSessionDescription','RTCIceCandidate'];" +
-  'for(var i=0;i<n.length;i++){' +
-  'try{Object.defineProperty(w,n[i],{value:undefined,writable:false,configurable:false,enumerable:false});}' +
-  'catch(e){try{delete w[n[i]];}catch(f){}}}' +
-  `try{w.parent.postMessage({fc:${BOX_PROTOCOL_VERSION},kind:'hello',shell:${BOX_SHELL_VERSION}},'*');}catch(e){}` +
-  '})();';
+export const BOX_SHELL_SCRIPT = [
+  `/*${BOX_SHELL_MARKER} v${BOX_SHELL_VERSION}*/(function(){'use strict';`,
+  "var w=window,n=['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel','RTCIceTransport','RTCSessionDescription','RTCIceCandidate'];",
+  'for(var i=0;i<n.length;i++){',
+  'try{Object.defineProperty(w,n[i],{value:undefined,writable:false,configurable:false,enumerable:false});}',
+  'catch(e){try{delete w[n[i]];}catch(f){}}}',
+  `try{w.parent.postMessage({fc:${BOX_PROTOCOL_VERSION},kind:'hello',shell:${BOX_SHELL_VERSION}},'*');}catch(e){}`,
+  // The bridge client. Everything below is the author's convenience; the broker trusts none of it.
+  'try{',
+  'var port=null,queue=[],values={},subs={},wait=[],reads=null,done=false,own=Object.prototype.hasOwnProperty;',
+  // `sent`: when each of the last messages left, so no second holds more than 25.
+  // A monotonic clock: a wall clock stepped back would hold every send until it caught up.
+  'var now=function(){return w.performance.now();};',
+  'var sent=[],send=function(m){if(port){try{port.postMessage(m);}catch(e){}sent.push(now());if(sent.length>25)sent.shift();}else if(queue.length<20){queue.push(m);}};',
+  'var room=function(){var t=now()-1000,c=25;for(var i=0;i<sent.length;i++){if(sent[i]>t)c--;}return c;};',
+  // Coalescing: the latest write per state, the latest height and each emitted name, sent on the trailing edge of a
+  // timer. No prototype, so a state id such as `__proto__` is a key like any other.
+  'var pend=Object.create(null),grow=null,ems=[],bat=null,timer=null,last=-1e9,gap=50,errAt=-1e9;',
+  // Before the page connects, everything waits as it is. A flush works through one batch: what was pending when it
+  // began (writes, then the height, then the emits). What the second has no room for stays in the batch for the
+  // next flush, and newer writes wait in `pend` until the batch is empty, so continuous writes never starve the
+  // height or the emits.
+  'var flush=function(){if(timer!==null){clearTimeout(timer);timer=null;}if(!port)return;',
+  'if(bat===null){bat={w:pend,g:grow,e:ems};pend=Object.create(null);grow=null;ems=[];}',
+  'var r=room(),c=0,k;',
+  'for(k in bat.w){if(c>=r)break;send({kind:"setState",id:k,value:bat.w[k]});delete bat.w[k];c++;}',
+  'var wl=false;for(k in bat.w){wl=true;break;}',
+  'if(bat.g!==null&&c<r){send({kind:"resize",height:bat.g});bat.g=null;c++;}',
+  'while(bat.e.length&&c<r){send({kind:"emit",name:bat.e.shift()});c++;}',
+  'if(c){last=now();gap=50*c;}',
+  'var left=wl||bat.g!==null||bat.e.length>0;if(!left)bat=null;',
+  'if(!left){left=grow!==null||ems.length>0;for(k in pend){left=true;break;}}',
+  'if(left)timer=setTimeout(flush,Math.max(100,last+gap-now()));};',
+  'var later=function(){if(timer===null)timer=setTimeout(flush,Math.max(0,last+gap-now()));};',
+  'var settle=function(){if(done||!reads)return;for(var j=0;j<reads.length;j++){if(!own.call(values,reads[j]))return;}',
+  'done=true;for(var k=0;k<wait.length;k++){try{wait[k]();}catch(e){}}wait=[];};',
+  'var onPort=function(e){var d=e.data;if(!d||typeof d!=="object")return;',
+  'if(d.kind==="ping"){send({kind:"pong"});return;}',
+  'if(d.kind==="state"&&typeof d.id==="string"){values[d.id]=d.value;var l=own.call(subs,d.id)?subs[d.id].slice():[];',
+  'for(var j=0;j<l.length;j++){try{l[j](d.value);}catch(x){report(x);}}settle();}};',
+  'var report=function(x){var t=now();if(t-errAt<1000)return;errAt=t;var m;try{m=x&&x.message!==undefined?String(x.message):String(x);}catch(e){m="error";}',
+  'send({kind:"error",message:m.slice(0,500)});};',
+  'w.addEventListener("message",function(e){var d=e.data;',
+  'if(port||e.source!==w.parent||!d||d.fc!==1||d.kind!=="connect"||!e.ports||!e.ports[0])return;',
+  'port=e.ports[0];port.onmessage=onPort;',
+  'var r=d.declaration&&d.declaration.reads;reads=Object.prototype.toString.call(r)==="[object Array]"?r.slice():[];',
+  'for(var j=0;j<queue.length;j++){send(queue[j]);}queue=[];flush();settle();});',
+  'w.addEventListener("error",function(e){report(e.error!==undefined&&e.error!==null?e.error:e.message);});',
+  'w.addEventListener("unhandledrejection",function(e){report(e.reason);});',
+  'var api={',
+  'read:function(id){return own.call(values,id)?values[id]:undefined;},',
+  'onState:function(id,fn){if(typeof fn!=="function")return function(){};id=String(id);',
+  '(own.call(subs,id)?subs[id]:(subs[id]=[])).push(fn);',
+  'if(own.call(values,id)){try{fn(values[id]);}catch(x){report(x);}}',
+  'return function(){var l=own.call(subs,id)?subs[id]:[];var at=l.indexOf(fn);if(at>=0)l.splice(at,1);};},',
+  'setState:function(id,value){pend[String(id)]=value;later();},',
+  'emit:function(name){name=String(name);name=name.indexOf("custom:")===0?name:"custom:"+name;if(ems.indexOf(name)<0)ems.push(name);later();},',
+  'resize:function(height){grow=Number(height);later();},',
+  'ready:function(){return new Promise(function(resolve){if(done)resolve();else wait.push(resolve);});}',
+  '};',
+  'Object.defineProperty(w,"lumitra",{value:Object.freeze(api),writable:false,configurable:false,enumerable:false});',
+  '}catch(e){}',
+  '})();',
+].join('');
 
 /** What stands before the author's document in every answer. */
 export const BOX_DOCUMENT_PREFIX = `<!doctype html><meta charset="utf-8"><script>${BOX_SHELL_SCRIPT}</script>`;

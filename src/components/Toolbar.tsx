@@ -106,7 +106,7 @@ const Toolbar = observer(({ editorUI }: ToolbarProps) => {
                   flex items-center justify-center w-10 h-10 rounded-lg 
                   transition-all duration-200 group relative
                   ${isActive 
-                    ? 'bg-brand text-brand-foreground shadow-sm scale-105' 
+                    ? 'bg-brand-fill text-brand-foreground shadow-sm scale-105' 
                     : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                   }
                 `}

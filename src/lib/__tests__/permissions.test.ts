@@ -41,6 +41,8 @@ describe('FRAMER_PERMISSIONS vocabulary', () => {
     expect(FRAMER_PERMISSIONS.editSite.requires).toBe('workspace.admin');
     expect(FRAMER_PERMISSIONS.publishSite.requires).toBe('workspace.admin');
     expect(FRAMER_PERMISSIONS.manageDomain.requires).toBe('workspace.admin');
+    // Custom code is written at the same bar as editing (sandboxed custom code plan, M8), under its own name.
+    expect(FRAMER_PERMISSIONS.manageCustomCode.requires).toBe('workspace.admin');
   });
 
   it('carries a human description for every action', () => {

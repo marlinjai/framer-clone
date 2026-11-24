@@ -176,7 +176,7 @@ export default function ReceiptEmailCard() {
       ) : null}
 
       {keyLeft ? (
-        <p role="status" className="mt-3 text-sm text-amber-600 dark:text-amber-400">
+        <p role="status" className="mt-3 text-sm text-warning">
           The shop no longer sends mail. Its key in Lumitra Mail is still there, because you are not an admin of that
           workspace: ask an admin to revoke &quot;Lumitra Sites shop&quot; under API keys in{' '}
           <a className="underline" href={MAIL_DASHBOARD} target="_blank" rel="noreferrer">
@@ -187,7 +187,7 @@ export default function ReceiptEmailCard() {
       ) : null}
 
       {connection && connection.failed.count > 0 ? (
-        <p role="status" className="mt-3 text-sm text-amber-600 dark:text-amber-400">
+        <p role="status" className="mt-3 text-sm text-warning">
           {connection.failed.count === 1 ? 'One letter' : `${connection.failed.count} letters`} of the last 30 days could not be sent
           {connection.failed.latestReason ? `: ${connection.failed.latestReason}` : '.'}
         </p>

@@ -21,6 +21,8 @@ import {
 import ProjectNameInput from '@/components/ProjectNameInput';
 import DeleteProjectDialog from './DeleteProjectDialog';
 import { renameProject } from '@/lib/projects/renameProject';
+import type { SiteCardColors } from '@/lib/site/cardColors';
+import ProjectPicture from './ProjectPicture';
 
 const FALLBACK_NAME = 'Untitled Project';
 
@@ -34,6 +36,8 @@ export interface ProjectCardProps {
   customDomains?: string[];
   /** Open site branches, shown when site branches are on for the company (null: not shown). */
   openBranches?: number | null;
+  /** The site's own colours for the card's picture (src/lib/site/cardColors.ts); null draws a neutral one. */
+  cardColors?: SiteCardColors | null;
 }
 
 export default function ProjectCard({
@@ -44,6 +48,7 @@ export default function ProjectCard({
   liveHost = null,
   customDomains = [],
   openBranches = null,
+  cardColors = null,
 }: ProjectCardProps) {
   const router = useRouter();
   const [name, setName] = useState(serverName);
@@ -110,15 +115,24 @@ export default function ProjectCard({
     setError(result.message);
   };
 
+  const published = status === 'published';
+  const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+
   return (
-    <div className="relative flex items-center justify-between gap-4 rounded-lg border p-4 transition-colors hover:bg-accent">
+    // A card of the projects home (Direction A, docs/plans/2026-11-23-sites-home-and-light-mode.md): the
+    // site's own colours as a picture, then the name, state and date. Keyboard focus on the name rings the
+    // whole card (a complete ring on the card itself, never a one-sided edge; the card clips its picture, so
+    // the ring cannot sit on the link's overlay).
+    <div className="relative flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-home transition-colors hover:border-input has-[a:focus-visible]:border-transparent has-[a:focus-visible]:shadow-selection">
+      <ProjectPicture colors={cardColors} name={shown} />
+      <div className="flex items-start gap-2 p-3.5">
       <div className="min-w-0 flex-1">
         {editing ? (
           <ProjectNameInput
             initialName={name}
             onSubmit={(next) => void save(next)}
             onCancel={close}
-            className="w-full max-w-sm font-medium"
+            className="relative z-10 w-full font-medium"
           />
         ) : (
           // The link covers the whole card (after:inset-0) so the card stays
@@ -127,11 +141,22 @@ export default function ProjectCard({
             ref={linkRef}
             href={`/projects/${siteId}`}
             aria-busy={saving || undefined}
-            className="block truncate font-medium after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-brand"
+            className="block truncate font-semibold after:absolute after:inset-0 after:content-[''] focus-visible:outline-none"
           >
             {shown}
           </Link>
         )}
+        <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span
+            aria-hidden="true"
+            className={`inline-block h-[7px] w-[7px] shrink-0 rounded-full ${published ? 'bg-status-published' : 'bg-status-draft'}`}
+          />
+          <span className="truncate">
+            {statusLabel}
+            {/* The address only while it is live: a draft keeps its reserved subdomain, but nobody reaches it. */}
+            {published && liveHost ? ` · ${liveHost}` : null}
+          </span>
+        </span>
         <span className="mt-0.5 block text-xs text-muted-foreground">
           Updated {updatedLabel}
           {openBranches ? ` · ${openBranches} ${openBranches === 1 ? 'open branch' : 'open branches'}` : null}
@@ -142,14 +167,11 @@ export default function ProjectCard({
           </p>
         ) : null}
       </div>
-      <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-        {status}
-      </span>
       <DropdownMenu>
         <DropdownMenuTrigger
           ref={triggerRef}
           aria-label={`More actions for ${shown}`}
-          className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="relative z-10 -mr-1.5 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:shadow-selection"
         >
           <MoreHorizontal size={16} aria-hidden="true" />
         </DropdownMenuTrigger>
@@ -192,6 +214,7 @@ export default function ProjectCard({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
       <DeleteProjectDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}

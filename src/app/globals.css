@@ -24,6 +24,23 @@
 @import "./editor-theme.css";
 
 @custom-variant dark (&:is(.dark *));
+
+/* Editor-only colour names (the shared theme-tokens.css also reaches published sites). */
+@theme inline {
+  --color-brand-fill: var(--brand-fill);
+  --color-brand-mark: var(--brand-mark);
+  --color-brand-edge: var(--brand-edge);
+}
+@utility home-glow {
+  background: var(--home-glow);
+}
+/* Named, not `shadow-[var(...)]`: Tailwind reads a bare var() there as a shadow colour. */
+@utility shadow-selection {
+  box-shadow: var(--selection-ring);
+}
+@utility shadow-home {
+  box-shadow: var(--home-shadow);
+}
 /* A phone: under 768px wide, or a touch screen held sideways (at most 500px
    high). The two queries must stay identical to the two halves of
    PHONE_MEDIA_QUERY in src/hooks/use-mobile.ts (a test compares them); plan
@@ -49,13 +66,23 @@
    - glass: a floating panel (bars, toolbars, menus, dialogs);
    - glass-inset: a sunken well inside a panel (a switch track, a search field). */
 :root {
-  --glass-ground: var(--suite-bg);
-  --glass-ground-light: color-mix(in oklab, var(--suite-bg), var(--suite-text) 6%);
-  --glass-fill: color-mix(in oklab, var(--suite-surface) 72%, transparent);
-  --glass-edge: oklch(1 0 0 / 0.1);
+  /* Built from the interface mode's values (editor-theme.css), so the glass follows
+     Light and Dark: edges and wells are the text colour at a low strength. */
+  --glass-ground: var(--ui-bg);
+  --glass-ground-light: color-mix(in oklab, var(--ui-bg), var(--ui-text) 6%);
+  --glass-fill: color-mix(in oklab, var(--ui-surface) 72%, transparent);
+  --glass-edge: color-mix(in oklab, var(--ui-text) 10%, transparent);
   --glass-highlight: oklch(1 0 0 / 0.08);
   --glass-shade: oklch(0 0 0 / 0.55);
-  --glass-inset: oklch(1 0 0 / 0.05);
+  --glass-inset: color-mix(in oklab, var(--ui-text) 5%, transparent);
+}
+[data-ui-theme="light"] {
+  --glass-shade: oklch(0.2 0.02 160 / 0.14);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-ui-theme]) {
+    --glass-shade: oklch(0.2 0.02 160 / 0.14);
+  }
 }
 @utility glass-ground {
   background-color: var(--glass-ground);

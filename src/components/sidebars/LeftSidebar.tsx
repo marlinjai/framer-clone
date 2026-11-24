@@ -306,7 +306,7 @@ const LeftSidebar = observer(({ variant = 'docked', onComponentInserted }: LeftS
               aria-labelledby={paneTabId(tabsId, activeTab)}
               className="flex-1 overflow-y-auto p-3"
             >
-              {activeTab === 'components' && <ComponentsPanel onTapInsert={isSheet ? insertOnTap : undefined} onTapPlace={isSheet ? placeOnTap : undefined} />}
+              {activeTab === 'components' && <ComponentsPanel onTapInsert={isSheet ? insertOnTap : undefined} onTapPlace={isSheet ? placeOnTap : undefined} onCustomCodeInserted={isSheet ? onComponentInserted : undefined} />}
               {activeTab === 'layers' && <LayersPanel />}
               {activeTab === 'content' && <ContentManagerPanel />}
             </div>
