@@ -39,10 +39,12 @@
 import { useEffect } from 'react';
 import { FX_INDEX_ATTR, FX_STATE_ATTR, type FxState } from '@/lib/fxScene/marker';
 import { showFxPlaceholder, type FxPlaceholder } from '@/lib/fxScene/placeholder';
+import type { StoredFx } from '@/lib/fx/format';
+import { ringStillSpecOf, showFxRingStill, type FxRingStill } from '@/lib/fxScene/ringStill';
 import { FX_REDUCED_MOTION_QUERY, FX_SETTLE_IDLE_MS, FX_WARNING, fxStartDecision, whenStarted, type FxStartSettings } from '@/lib/fxScene/start';
 
-/** The shape of one program entry the island itself reads (the rest is the mount's). */
-export type FxProgramEntry = FxStartSettings;
+/** The shape of one program entry the island itself reads (the rest is the mount's): its start, and its scene for a ring's still. */
+export type FxProgramEntry = FxStartSettings & Pick<StoredFx, 'scene'>;
 
 export { FX_SETTLE_IDLE_MS };
 
@@ -99,17 +101,32 @@ function run(program: readonly FxProgramEntry[]): () => void {
   let left = false;
   let unmount: (() => void) | undefined;
   const reduce = window.matchMedia(FX_REDUCED_MOTION_QUERY).matches;
+  // A particle ring shows its own first frame while the engine comes (src/lib/fxScene/ringStill.ts); any
+  // other scene, or a ring this browser cannot draw that way, shows the loading placeholder.
+  const ringStill = ringStillSpecOf(scene);
+  let still: FxRingStill | null = null;
+  let stillTried = false;
   let placeholder: FxPlaceholder | undefined;
   const showPlaceholder = () => {
+    if (still) return;
+    if (ringStill && !stillTried) {
+      stillTried = true;
+      still = showFxRingStill(box, ringStill);
+      if (still) return;
+    }
     placeholder ??= showFxPlaceholder(box, { reduce });
   };
   const dropPlaceholder = (now = false) => {
     placeholder?.remove({ now });
     placeholder = undefined;
   };
+  const dropStill = (afterLive = false) => {
+    still?.remove({ afterLive });
+    if (!afterLive) still = null;
+  };
   setState(box, 'waiting');
-  // A scene that is certain to start fetches its engine while it waits, and shows the placeholder if
-  // the wait gets noticeable. Its failure is handled where it is awaited, below.
+  // A scene that is certain to start fetches its engine while it waits, and shows its still (or the
+  // placeholder, if the wait gets noticeable). Its failure is handled where it is awaited, below.
   if (scene.start !== 'visible') {
     loadEngine().catch(() => {});
     showPlaceholder();
@@ -126,11 +143,17 @@ function run(program: readonly FxProgramEntry[]): () => void {
         unmount = mountFxScene(box, scene, {
           onLive: () => {
             dropPlaceholder();
+            // Under the live layer until its fade is over, then gone: no dip in brightness.
+            dropStill(true);
             setState(box, 'live');
           },
           onOff: (reason) => {
             unmount = undefined;
             dropPlaceholder();
+            // The still is the scene's own first frame: it stays when the engine cannot draw (the scene is
+            // decoration, and this is the picture a visitor asking for reduced motion gets anyway), but not
+            // for a scene the engine refused.
+            if (reason === 'refused') dropStill();
             setState(box, 'off');
             console.warn(WARNING, `Reason: ${reason}.`);
           },
@@ -139,6 +162,7 @@ function run(program: readonly FxProgramEntry[]): () => void {
       .catch((error: unknown) => {
         if (left) return;
         dropPlaceholder();
+        // The still stays, as for an engine that cannot draw (above).
         setState(box, 'off');
         console.warn(WARNING, 'The engine did not load.', error);
       });
@@ -147,6 +171,7 @@ function run(program: readonly FxProgramEntry[]): () => void {
   return () => {
     left = true;
     dropPlaceholder(true);
+    dropStill();
     cancelStart();
     unmount?.();
     unmount = undefined;

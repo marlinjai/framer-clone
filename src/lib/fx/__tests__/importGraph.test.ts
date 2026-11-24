@@ -154,3 +154,16 @@ describe('the editor-only pick entry (pick.ts)', () => {
     }
   });
 });
+
+describe("the ring's render-free entry (ring.ts), which every published page's island carries", () => {
+  const graph = graphOf(path.join(FX_DIR, 'ring.ts'));
+
+  it('resolves every import it follows', () => {
+    expect(graph.unresolved).toEqual([]);
+  });
+
+  it('imports no package and is exactly the ring core and the pixel ratio rule', () => {
+    expect(graph.packages).toEqual([]);
+    expect(graph.files).toEqual(['particleRingCore.ts', 'pixelRatio.ts', 'ring.ts']);
+  });
+});
