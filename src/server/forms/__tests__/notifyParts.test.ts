@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-import { summaryText } from '../notify';
+import { formMailKey, summaryText } from '../notify';
 import { notificationNote } from '@/components/forms/FormSubmissionsPanel';
 
 describe('summaryText', () => {
@@ -53,5 +53,29 @@ describe('what the owner is told in the inbox', () => {
     const none = notificationNote({ status: 'skipped', reason: 'no_recipient', recipient: null });
     expect(none).toMatchObject({ tone: 'warn', canResend: true });
     expect(none?.text).toMatch(/notification address/);
+  });
+});
+
+describe('the idempotency key of a letter', () => {
+  const letter = { workspaceId: 'ws-a', merge: { site_name: 'Bakery' } };
+  it('is the same for the same frozen letter, so a retry is replayed, never sent twice', () => {
+    expect(formMailKey('c', 's', 1, letter)).toBe(formMailKey('c', 's', 1, { ...letter, merge: { site_name: 'Bakery' } } as typeof letter));
+  });
+  it('differs when the letter was rebuilt with another body, as after a reconnect A to B to A with the site renamed', () => {
+    expect(formMailKey('c', 's', 1, letter)).not.toBe(formMailKey('c', 's', 1, { ...letter, merge: { site_name: 'Bakery 2' } } as typeof letter));
+  });
+  it('keeps the round and the workspace in the key', () => {
+    expect(formMailKey('c', 's', 2, letter)).toContain(':2:ws-a:');
+  });
+});
+
+describe('the new inbox lines', () => {
+  it('tells the owner a notice that could not be prepared, with no resend', () => {
+    expect(notificationNote({ status: 'skipped', reason: 'internal_error', recipient: null })).toMatchObject({ tone: 'warn', canResend: false });
+  });
+  it('tells the owner the hourly cap was reached, and allows a later resend', () => {
+    const note = notificationNote({ status: 'skipped', reason: 'rate_limited', recipient: 'a@b.example' });
+    expect(note).toMatchObject({ tone: 'warn', canResend: true });
+    expect(note?.text).toMatch(/100/);
   });
 });

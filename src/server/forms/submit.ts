@@ -396,6 +396,8 @@ export async function handleFormSubmit(req: Request, deps: SubmitDeps): Promise<
     notification = { companyId, recipient, at: new Date(now) };
   } catch (err) {
     deps.log('error', `[forms] site ${site.siteId}: resolving the company for a notification email failed`, err);
+    // The submission is stored and says so: a row that tells the owner no email was prepared, never a silent gap.
+    notification = { companyId: null, recipient: null, at: new Date(now), failed: true };
   }
   try {
     const stored = await deps.store(db, {

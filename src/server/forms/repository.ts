@@ -177,6 +177,15 @@ export async function insertFormSubmission(
       } catch (err) {
         await sql`ROLLBACK TO SAVEPOINT notice_sp`.execute(tx);
         console.error(`[forms] site ${row.siteId}: the notification email of submission ${row.id} could not be written, the submission is stored without it:`, err);
+        // A row of its own that says so (a second savepoint: a schema without the table fails here too, and the submission still stands).
+        await sql`SAVEPOINT notice_fallback_sp`.execute(tx);
+        try {
+          await writeFormNotification(tx, row.tenantId, row.id, { companyId: null, recipient: null, at: row.notification.at, failed: true });
+          await sql`RELEASE SAVEPOINT notice_fallback_sp`.execute(tx);
+        } catch (fallbackErr) {
+          await sql`ROLLBACK TO SAVEPOINT notice_fallback_sp`.execute(tx);
+          console.error(`[forms] site ${row.siteId}: the fallback notice row of submission ${row.id} could not be written either:`, fallbackErr);
+        }
       }
     }
     return inserted;

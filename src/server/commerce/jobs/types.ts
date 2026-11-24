@@ -175,7 +175,7 @@ export interface JobMail {
 /** What a handler may do to a deleted project's form submissions, bound to the job's tenant group (src/server/forms/purgeJob.ts). */
 export interface JobForms {
   /** Delete every submission of the site once its row is gone; throws `JobRetryLater` while that cannot be done yet. */
-  purgeSite(siteId: string, workspaceId: string): Promise<void>;
+  purgeSite(siteId: string, workspaceId: string, notAfter?: string | null): Promise<void>;
 }
 
 export interface JobContext<P> {

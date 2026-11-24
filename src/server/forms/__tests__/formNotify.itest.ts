@@ -42,7 +42,7 @@ import { __resetFormRateLimiterForTests } from '../rateLimit';
 import { FormBusyError, deleteFormSubmission, insertFormSubmission, listFormSubmissions, type NewFormSubmission } from '../repository';
 import { deleteProjectSubmissions } from '../projectDelete';
 import { purgeSiteSubmissions } from '../purge';
-import { deliverFormNotification, resendFormNotification, writeFormNotification } from '../notify';
+import { deliverFormNotification, formMailKey, resendFormNotification, writeFormNotification } from '../notify';
 
 const SEAL_KEY = randomBytes(32);
 const FORM_ID = 'form-1';
@@ -269,7 +269,7 @@ describe('1. forward', () => {
     expect(company.mail.sent).toHaveLength(1);
     const letter = company.mail.sent[0];
     expect(letter).toMatchObject({ kind: 'form_notification', to: 'owner@bakery.example', locale: 'de', templateId: 'tpl-form', providerId: company.providerId });
-    expect(letter.key).toBe(`form:${company.id}:${submissionId}:1:${company.workspaceId}`);
+    expect(letter.key).toMatch(new RegExp(`^form:${company.id}:${submissionId}:1:${company.workspaceId}:[0-9a-f]{16}$`));
     expect(letter.merge).toMatchObject({ site_name: 'Bakery', form_name: 'Contact', page_path: '/kontakt', inbox_url: `https://app.example/projects/${site.siteId}` });
     expect(letter.merge.summary_text).toContain('Name: Ana Beispiel');
     // Sent with the company's own sealed key.
@@ -311,7 +311,7 @@ describe('2. backtrack', () => {
     expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now)).toBe('queued');
     expect(await notificationOf(s.id)).toMatchObject({ status: 'pending', round: 2, last_error: null });
     expect(await drain(company)).toEqual(['done']);
-    expect(company.mail.sent.map((l) => l.key)).toEqual([`form:${company.id}:${s.id}:2:${company.workspaceId}`]);
+    expect(company.mail.sent.map((l) => l.key)).toEqual([expect.stringMatching(new RegExp(`^form:${company.id}:${s.id}:2:${company.workspaceId}:[0-9a-f]{16}$`))]);
     // Sent: nothing to resend.
     expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id }, company.clock.now)).toBe('not_resendable');
   });
@@ -448,7 +448,7 @@ describe('2. backtrack', () => {
     await connect(company, { workspaceId: other });
     company.clock.now = new Date(company.clock.now.getTime() + 2 * 60 * 1000);
     expect(await drain(company)).toEqual(['done']);
-    expect(company.mail.sent[0].key).toBe(`form:${company.id}:${s.id}:1:${other}`);
+    expect(company.mail.sent[0].key).toMatch(new RegExp(`^form:${company.id}:${s.id}:1:${other}:[0-9a-f]{16}$`));
   });
 });
 
@@ -462,7 +462,8 @@ describe('a failure writing the notice never costs the submission', () => {
     logged.mockRestore();
     const { submissions } = await listFormSubmissions(appDb, { tenantId: tgId, siteId: site.siteId });
     expect(submissions.map((x) => x.id)).toEqual([s.id]);
-    expect(submissions[0].notification).toBeNull();
+    // The owner is told instead of left with a blank: a row of its own says the email could not be prepared, and no job exists.
+    expect(submissions[0].notification).toMatchObject({ status: 'skipped', reason: 'internal_error' });
     expect(await jobsOf(s.id)).toHaveLength(0);
   });
 });
@@ -608,7 +609,7 @@ describe('3. resume', () => {
     expect(await notificationOf(s.id)).toMatchObject({ status: 'pending', round: 3 });
     // The round-2 job and the round-3 job both run the same delivery: the first sends, the second finds it sent.
     expect(await drain(company)).toEqual(['done', 'done']);
-    expect(company.mail.sent.map((l) => l.key)).toEqual([`form:${company.id}:${s.id}:3:${company.workspaceId}`]);
+    expect(company.mail.sent.map((l) => l.key)).toEqual([expect.stringMatching(new RegExp(`^form:${company.id}:${s.id}:3:${company.workspaceId}:[0-9a-f]{16}$`))]);
   }, 30_000);
 
   it('a send transaction that fails after Lumitra Mail took the letter leaves the frozen letter in place: the retry sends the same body under the same key', async () => {
@@ -666,7 +667,7 @@ describe('3. resume', () => {
     expect(await deliverFormNotification({ ...company.outbox, db: between }, company.id, s.id)).toBe('sent');
     // prepare, send (finds the old letter, hands back), prepare (new workspace), send.
     expect(transactions).toBe(4);
-    expect(company.mail.sent.map((l) => l.key)).toEqual([`form:${company.id}:${s.id}:1:${other}`]);
+    expect(company.mail.sent.map((l) => l.key)).toEqual([expect.stringMatching(new RegExp(`^form:${company.id}:${s.id}:1:${other}:[0-9a-f]{16}$`))]);
   }, 30_000);
 
   it('a project delete that cannot get past an email being sent leaves the rows for the purge job (written before the delete), and the purge job treats the busy row as a retry', async () => {
@@ -718,8 +719,13 @@ describe('3. resume', () => {
     await connect(company);
     const s = submission();
     await insertFormSubmission(appDb, s);
-    // The dead worker's send: it reached Lumitra Mail (the fake keeps it by key) and nothing was recorded.
-    const key = `form:${company.id}:${s.id}:1:${company.workspaceId}`;
+    // The dead worker built and froze the letter (a first attempt that failed after the freeze keeps it), then its send reached
+    // Lumitra Mail (the fake keeps it by key) and nothing was recorded.
+    company.mail.failNext('send', new MailRetryLater('Lumitra Mail could not be reached while creating the form_notification letter.'));
+    expect(await drain(company)).toEqual(['retry']);
+    const frozen = (await appDb.selectFrom('form_notification').select('letter').where('submission_id', '=', s.id).executeTakeFirstOrThrow()).letter as { workspaceId: string };
+    const key = formMailKey(company.id, s.id, 1, frozen);
+    company.clock.now = new Date(company.clock.now.getTime() + 2 * 60 * 1000);
     await company.mail.send(`fake-send-key-${company.id}`, { key, kind: 'form_notification', locale: 'de', templateId: 'tpl-form', providerId: company.providerId, to: 'owner@bakery.example', merge: { site_name: 'Bakery' } });
     expect(await notificationOf(s.id)).toMatchObject({ status: 'pending' });
     expect(await drain(company)).toEqual(['done']);
@@ -775,6 +781,22 @@ describe('4. re-entry', () => {
     const { deleteSiteSubmissions } = await import('../repository');
     expect(await deleteSiteSubmissions(appDb, { tenantId: tgId, siteId: site.siteId })).toBe(1);
     expect(await notificationOf(s.id)).toBeUndefined();
+  });
+
+  it('a company over its hourly cap gets the submissions stored and a skipped row that says so, and "send again" works later', async () => {
+    await connect(company);
+    const rows = [submission(), submission(), submission()];
+    for (const s of rows) {
+      await insertFormSubmission(appDb, { ...s, notification: undefined });
+      await appDb.transaction().execute((trx) =>
+        writeFormNotification(trx, tgId, s.id, { companyId: company.id, recipient: 'owner@bakery.example', at: company.clock.now }, 2),
+      );
+    }
+    expect((await notificationOf(rows[0].id))?.status).toBe('pending');
+    expect((await notificationOf(rows[1].id))?.status).toBe('pending');
+    expect(await notificationOf(rows[2].id)).toMatchObject({ status: 'skipped', last_error: 'rate_limited' });
+    expect(await jobsOf(rows[2].id)).toHaveLength(0);
+    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: rows[2].id }, company.clock.now)).toBe('queued');
   });
 
   it('writeFormNotification alone is idempotent per submission', async () => {

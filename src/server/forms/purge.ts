@@ -14,8 +14,6 @@ import 'server-only';
 // and refuses a job of another tenant, and every delete filters group, site AND the workspace the delete was made from (so a
 // caller who names another workspace's site id can enqueue nothing that removes that workspace's rows).
 
-import { randomUUID } from 'node:crypto';
-
 import { isTenantGroupId } from '@marlinjai/tenant-db';
 import type { PrismaClient } from '@prisma/client';
 import type { Kysely } from 'kysely';
@@ -48,6 +46,11 @@ export async function countStuckPurges(db: Kysely<CommerceDB>): Promise<number> 
   return Number(row.jobs);
 }
 
+/** How long past its first look a purge job keeps waiting for a delete that has not committed yet (a long lock wait on the site row). */
+export const PURGE_PATIENCE_MS = 2 * 60 * 60 * 1000;
+
+const purgeJobKey = (siteId: string, workspaceId: string, at: Date) => `formpurge:${siteId}:${workspaceId}:${Math.floor(at.getTime() / PURGE_DELAY_MS)}`;
+
 /** How long after the delete starts the job first looks: past the delete itself and its own retries, so it is a backstop. */
 export const PURGE_DELAY_MS = 10 * 60 * 1000;
 
@@ -76,9 +79,10 @@ export async function scheduleProjectSubmissionsPurge(
     await scheduleJob(trx, {
       tenantId: tenantGroupId,
       kind: FORM_PURGE_JOB_KIND,
-      // One per delete attempt: an earlier attempt that was refused leaves a finished no-op job that must not swallow this one.
-      dedupeKey: `formpurge:${siteId}:${randomUUID()}`,
-      payload: { siteId, workspaceId },
+      // One per site, workspace and ten minutes: a refused earlier attempt's job has finished by the time a later delete is
+      // asked for (it runs ten minutes after its own), and repeated deletes of a nonexistent project within the window share one row.
+      dedupeKey: purgeJobKey(siteId, workspaceId, now),
+      payload: { siteId, workspaceId, notAfter: new Date(now.getTime() + PURGE_DELAY_MS + PURGE_PATIENCE_MS).toISOString() },
       runAt: new Date(now.getTime() + PURGE_DELAY_MS),
       at: now,
     });
@@ -98,11 +102,32 @@ export async function purgeSiteSubmissions(
   siteId: string,
   workspaceId: string,
   prisma: PrismaClient = getPrismaClient(),
+  options: { notAfter?: string | null; now?: Date } = {},
 ): Promise<'kept' | 'purged'> {
   // The job is written in its own tenant group: a payload cannot point the purge at another group's schema.
   if (jobTenantId !== group.id) throw new JobRefused('tenant_mismatch');
   const site = await prisma.site.findUnique({ where: { id: siteId }, select: { id: true } });
-  if (site) return 'kept';
+  if (site) {
+    // The row is still there: the delete was refused, or it has not committed yet (it may be waiting on a lock for longer than
+    // the ten minutes this job waited). Until its patience runs out the job hands the look over to a fresh one ten minutes on, a job
+    // of its own so the retry count of a failing purge (the watchdog's "stuck") never moves for a refused delete.
+    const now = options.now ?? new Date();
+    const notAfter = options.notAfter ? new Date(options.notAfter) : null;
+    if (notAfter && !Number.isNaN(notAfter.getTime()) && now < notAfter) {
+      const runAt = new Date(now.getTime() + PURGE_DELAY_MS);
+      await group.db.transaction().execute(async (trx) => {
+        await scheduleJob(trx, {
+          tenantId: group.id,
+          kind: FORM_PURGE_JOB_KIND,
+          dedupeKey: purgeJobKey(siteId, workspaceId, runAt),
+          payload: { siteId, workspaceId, notAfter: notAfter.toISOString() },
+          runAt,
+          at: now,
+        });
+      });
+    }
+    return 'kept';
+  }
   try {
     await deleteSiteSubmissions(group.db, { tenantId: group.id, siteId, workspaceId });
   } catch (err) {

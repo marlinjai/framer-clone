@@ -370,7 +370,17 @@ each reversible (say so if you disagree):
    and hides the next real failure (a failed pass, a job more than ten minutes late) on the same route. A stuck purge is exactly that kind of
    condition (it never dies and stays until fixed), so turning the route non-2xx would break that contract and make monitor 39 ambiguous;
    the fourth keyword monitor is the consistent fix.
-9. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then
+9. **Decided in review (2026-11-24), all reversible:** (a) the form's own address is not proven to be the owner's, so what a form pointed
+   at a stranger can send is bounded by a durable cap of 100 notices per company and hour (the visitor limiter is in memory and per
+   process); over it the submission is stored and the row says `rate_limited` (resendable later). Confirming an address by a link is a
+   product decision and not built. (b) A notice that could not be prepared (the company lookup or the row write failed) leaves a
+   `skipped` row `internal_error`, never a blank. (c) The purge job whose site row is still there looks again ten minutes later as a fresh
+   job (not a retry, so a refused delete never counts toward `purgesStuck`) until two hours past its first look; a delete asked twice in ten
+   minutes is one job. (d) The Lumitra Mail idempotency key carries a digest of the frozen letter, so a letter rebuilt after a
+   reconnect A to B to A is another key, never a reused key with another body. (e) The inbox re-reads the email status every five
+   seconds while any email is pending (up to five minutes) and after a refused resend. (f) The first template install of a company is
+   serialised on its connection row.
+10. **Tests:** `formNotify.itest.ts` (real Postgres, fake Lumitra Mail) covers forward, a repeated post, not connected then
    connected plus resend, refusal then resend, blocked, an old connection installing the template, a failing install,
    reconnect to another workspace, Lumitra Mail down then back with the letter unchanged, three days of failures, a deleted
    submission mid-retry, and a second company of the same tenant group; `formPurge.itest.ts` covers the purge in both race directions,

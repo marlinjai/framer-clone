@@ -26,7 +26,7 @@ import {
 } from '@/server/commerce/__tests__/storefrontFixtures';
 import { runJobNow } from '@/server/commerce/jobs/run';
 import { JobRefused } from '@/server/commerce/jobs/types';
-import { PURGE_DELAY_MS, STUCK_PURGE_ATTEMPTS, countStuckPurges, purgeSiteSubmissions, scheduleProjectSubmissionsPurge } from '../purge';
+import { PURGE_DELAY_MS, PURGE_PATIENCE_MS, STUCK_PURGE_ATTEMPTS, countStuckPurges, purgeSiteSubmissions, scheduleProjectSubmissionsPurge } from '../purge';
 import { insertFormSubmission } from '../repository';
 import { deleteProjectSubmissions } from '../projectDelete';
 
@@ -82,6 +82,7 @@ async function submit(db: Kysely<CommerceDB>, tg: TenantGroupId, site: Site) {
 const rowsOf = async (schemaName: string, siteId: string) =>
   fx.owner`SELECT id FROM ${fx.owner(schemaName)}.form_submission WHERE site_id = ${siteId}`;
 
+const list = async (site: { siteId: string }) => fx.owner`SELECT id FROM ${fx.owner(schema)}.form_submission WHERE site_id = ${site.siteId}`;
 const purgeJobs = async () => fx.owner`SELECT * FROM ${fx.owner(schema)}.commerce_job WHERE kind = 'form_purge' ORDER BY created_at`;
 
 /** The job's way: a brand new handle (a restarted process knows nothing of the one that wrote the job). */
@@ -115,12 +116,41 @@ describe('the intent, written before the delete', () => {
     const jobs = await purgeJobs();
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ tenant_id: tgId, kind: 'form_purge', status: 'pending' });
-    expect(jobs[0].payload).toEqual({ siteId: siteA.siteId, workspaceId: siteA.workspaceId });
+    expect(jobs[0].payload).toEqual({ siteId: siteA.siteId, workspaceId: siteA.workspaceId, notAfter: new Date(clock.now.getTime() + PURGE_DELAY_MS + PURGE_PATIENCE_MS).toISOString() });
     expect(new Date(jobs[0].run_at).getTime()).toBe(clock.now.getTime() + PURGE_DELAY_MS);
     expect(JSON.stringify(jobs[0])).not.toContain('Ana Beispiel');
-    // Another attempt is another job: an earlier refused attempt cannot swallow it.
+    // The same delete asked again in the same ten minutes is the same pending job (no unbounded rows); a later attempt, after the
+    // earlier job has had its look, is another job: an earlier refused attempt cannot swallow it.
+    await intent(siteA);
+    expect(await purgeJobs()).toHaveLength(1);
+    clock.now = new Date(clock.now.getTime() + PURGE_DELAY_MS);
     await intent(siteA);
     expect(await purgeJobs()).toHaveLength(2);
+  });
+
+  it('a delete that has not committed when the job first looks is looked at again, until its patience ends', async () => {
+    await submit(appDb, tgId, siteA);
+    const group = { id: tgId, db: appDb };
+    const present = { site: { findUnique: async () => ({ id: siteA.siteId }) } } as never;
+    const notAfter = new Date(clock.now.getTime() + PURGE_PATIENCE_MS).toISOString();
+    // Still inside its patience: nothing purged, a fresh job ten minutes on (a job of its own, no retry counted as a failure).
+    expect(await purgeSiteSubmissions(group, tgId, siteA.siteId, siteA.workspaceId, present, { notAfter, now: clock.now })).toBe('kept');
+    const jobs = await purgeJobs();
+    expect(jobs).toHaveLength(1);
+    expect(new Date(jobs[0].run_at).getTime()).toBe(clock.now.getTime() + PURGE_DELAY_MS);
+    expect(jobs[0].payload).toEqual({ siteId: siteA.siteId, workspaceId: siteA.workspaceId, notAfter });
+    expect(Number(jobs[0].attempts)).toBe(0);
+    expect(await countStuckPurges(appDb)).toBe(0);
+    // The row is still there after the patience ended: the delete was refused, the job ends and writes nothing more.
+    const later = new Date(new Date(notAfter).getTime() + 1);
+    expect(await purgeSiteSubmissions(group, tgId, siteA.siteId, siteA.workspaceId, present, { notAfter, now: later })).toBe('kept');
+    expect(await purgeJobs()).toHaveLength(1);
+    // And its submissions are untouched either way.
+    expect((await list(siteA)).length).toBe(1);
+    // The delete commits at last: the next look purges.
+    const gone = { site: { findUnique: async () => null } } as never;
+    expect(await purgeSiteSubmissions(group, tgId, siteA.siteId, siteA.workspaceId, gone, { notAfter, now: clock.now })).toBe('purged');
+    expect((await list(siteA)).length).toBe(0);
   });
 
   it('is skipped for a tenant group with no schema (a legacy site) and is not a tenant id at all', async () => {
@@ -199,6 +229,8 @@ describe('purging once the project is gone', () => {
   it('is idempotent: a second run, or a second job for the same delete, finds nothing and ends', async () => {
     await submit(appDb, tgId, siteA);
     await intent(siteA);
+    // A second delete asked ten minutes later (the first attempt was refused) is a second job.
+    clock.now = new Date(clock.now.getTime() + PURGE_DELAY_MS);
     await intent(siteA);
     await deleteSiteRow(siteA);
     expect(await runJobs(later())).toEqual(['done', 'done']);

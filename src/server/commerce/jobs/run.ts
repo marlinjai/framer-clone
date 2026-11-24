@@ -102,8 +102,8 @@ function jobMail(group: JobTenantGroup, tenantId: string, now: () => Date, wirin
 /** A deleted project's form submissions, in the job's tenant group (src/server/forms/purge.ts). */
 function jobForms(group: JobTenantGroup, jobTenantId: string): JobForms {
   return {
-    async purgeSite(siteId, workspaceId) {
-      await purgeSiteSubmissions(group, jobTenantId, siteId, workspaceId);
+    async purgeSite(siteId, workspaceId, notAfter) {
+      await purgeSiteSubmissions(group, jobTenantId, siteId, workspaceId, undefined, { notAfter });
     },
   };
 }

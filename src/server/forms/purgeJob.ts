@@ -21,8 +21,8 @@ export const formPurgeKind = defineJobKind({
     // Never dies on a transient error: the data must go.
     giveUpAfterMs: null,
   },
-  payload: z.object({ siteId: z.string().min(1).max(200), workspaceId: z.string().min(1).max(200) }).strict(),
-  async run({ forms, payload: { siteId, workspaceId } }) {
-    await forms.purgeSite(siteId, workspaceId);
+  payload: z.object({ siteId: z.string().min(1).max(200), workspaceId: z.string().min(1).max(200), notAfter: z.string().max(40).optional() }).strict(),
+  async run({ forms, payload: { siteId, workspaceId, notAfter } }) {
+    await forms.purgeSite(siteId, workspaceId, notAfter ?? null);
   },
 });

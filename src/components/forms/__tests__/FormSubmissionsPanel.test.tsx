@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import FormSubmissionsPanel, { type SubmissionItem } from '../FormSubmissionsPanel';
 
 const BASE = '/api/projects/proj-1/forms/submissions';
@@ -167,6 +167,37 @@ describe('FormSubmissionsPanel', () => {
       await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === `${BASE}/s3/resend`)).toBe(true));
       await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('is being sent'));
       expect(screen.queryByRole('button', { name: /Send email again/ })).toBeNull();
+    });
+
+    it('after "Send email again" the line follows the server: "being sent" turns into "sent" without a reload', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        rows = [item('s3', { notification: failed })];
+        render(<FormSubmissionsPanel projectId="proj-1" />);
+        fireEvent.click(await screen.findByRole('button', { name: /Visitor s3/ }));
+        await waitFor(() => expect((screen.getByRole('button', { name: /Send email again/ }) as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByRole('button', { name: /Send email again/ }));
+        await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('is being sent'));
+        // The job ran meanwhile.
+        rows = [item('s3', { readAt: 'now', notification: { status: 'sent', reason: null, recipient: 'owner@bakery.example' } })];
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5500);
+        });
+        await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('Email sent'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a resend refused because the email was sent meanwhile shows the true state, not the old line', async () => {
+      resendAnswer = { status: 409, code: 'not_resendable', message: 'this email was already sent or is waiting to be sent' };
+      rows = [item('s3', { notification: failed })];
+      render(<FormSubmissionsPanel projectId="proj-1" />);
+      fireEvent.click(await screen.findByRole('button', { name: /Visitor s3/ }));
+      await waitFor(() => expect((screen.getByRole('button', { name: /Send email again/ }) as HTMLButtonElement).disabled).toBe(false));
+      rows = [item('s3', { readAt: 'now', notification: { status: 'sent', reason: null, recipient: 'owner@bakery.example' } })];
+      fireEvent.click(screen.getByRole('button', { name: /Send email again/ }));
+      await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('Email sent'));
     });
 
     it('a resend the server refuses shows its message and keeps the button', async () => {

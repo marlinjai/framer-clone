@@ -19,6 +19,8 @@ import 'server-only';
 // its own. The visitor's words travel only inside the frozen `letter`, which is emptied as soon as the letter is
 // settled, and the job payload carries the submission id and nothing else.
 
+import { createHash } from 'node:crypto';
+
 import { sql, type Kysely, type Transaction } from 'kysely';
 
 import { toJsonb } from '@/server/books/snapshots';
@@ -33,12 +35,26 @@ import type { StoredField } from '@/lib/forms/validation';
 
 export const FORM_MAIL_JOB_KIND = 'form_mail';
 /** The job's dedupe key: one per submission and round (a "send again" starts the next round). */
+/**
+ * The idempotency key of one letter: company, submission, round, workspace, and the letter's own digest. A letter rebuilt after
+ * a reconnect (workspace A, B, then A again, the site renamed meanwhile) is another body and so another key, never a reused key
+ * with a different body, which Lumitra Mail refuses. The same frozen letter, retried, is the same key and is replayed.
+ */
+export const formMailKey = (companyId: string, submissionId: string, round: number, letter: { workspaceId: string }) =>
+  `form:${companyId}:${submissionId}:${round}:${letter.workspaceId}:${createHash('sha256').update(JSON.stringify(letter)).digest('hex').slice(0, 16)}`;
+
 export const formMailJobKey = (submissionId: string, round: number) => `formmail:${submissionId}:${round}`;
 
 /** Why a notification was never sent, kept in `last_error` of a `skipped` row. */
 export const SKIPPED_NOT_CONNECTED = 'not_connected';
 export const SKIPPED_NO_RECIPIENT = 'no_recipient';
 export const SKIPPED_NO_COMPANY = 'no_company';
+/** The submission was stored but its notice could not be prepared (a lookup or a write failed): never a silent gap. */
+export const SKIPPED_INTERNAL = 'internal_error';
+/** A company's notices in the last hour reached the cap: a bound on a form pointed at a third party's address. */
+export const SKIPPED_RATE_LIMITED = 'rate_limited';
+/** Notices one company may have queued or sent per hour (every form together); the submissions themselves are never capped here. */
+export const NOTICES_PER_COMPANY_HOUR = 100;
 
 export interface NewFormNotification {
   /** The company the site belongs to: the connection's key and the job's tenant. Null: the site is not linked to one. */
@@ -46,6 +62,8 @@ export interface NewFormNotification {
   /** The address decided from the published form, or null when neither it nor the site names one. */
   recipient: string | null;
   at: Date;
+  /** Set when the company or the recipient could not be decided because a lookup failed: the row says so and sends nothing. */
+  failed?: boolean;
 }
 
 /**
@@ -57,6 +75,7 @@ export async function writeFormNotification(
   tenantGroupId: string,
   submissionId: string,
   notification: NewFormNotification,
+  perHourLimit: number = NOTICES_PER_COMPANY_HOUR,
 ): Promise<'pending' | 'skipped'> {
   const { recipient, at } = notification;
   // No company: no connection can exist, so nothing is sent, but the owner still sees why (the empty company id marks it).
@@ -64,8 +83,30 @@ export async function writeFormNotification(
   const connected = recipient && companyId
     ? await trx.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', companyId).executeTakeFirst()
     : undefined;
-  const status = recipient && connected ? 'pending' : 'skipped';
-  const skippedWhy = !companyId ? SKIPPED_NO_COMPANY : recipient ? SKIPPED_NOT_CONNECTED : SKIPPED_NO_RECIPIENT;
+  // A cap per company and hour over every form: the recipient of a form is the editor's own choice (it is not proven to be
+  // theirs), so what a form pointed at a stranger can send is bounded here, durably (the visitor limiter is in memory).
+  const recent =
+    recipient && connected && !notification.failed
+      ? await trx
+          .selectFrom('form_notification')
+          .select(sql<number>`count(*)::int`.as('n'))
+          .where('tenant_id', '=', tenantGroupId)
+          .where('company_id', '=', companyId)
+          .where('created_at', '>', new Date(at.getTime() - 60 * 60 * 1000))
+          .where('status', '!=', 'skipped')
+          .executeTakeFirst()
+      : undefined;
+  const capped = (recent?.n ?? 0) >= perHourLimit;
+  const status = recipient && connected && !notification.failed && !capped ? 'pending' : 'skipped';
+  const skippedWhy = notification.failed
+    ? SKIPPED_INTERNAL
+    : !companyId
+      ? SKIPPED_NO_COMPANY
+      : !recipient
+        ? SKIPPED_NO_RECIPIENT
+        : !connected
+          ? SKIPPED_NOT_CONNECTED
+          : SKIPPED_RATE_LIMITED;
   await trx
     .insertInto('form_notification')
     .values({
@@ -76,6 +117,7 @@ export async function writeFormNotification(
       status,
       last_error: status === 'skipped' ? skippedWhy : null,
       round_started_at: at,
+      created_at: at,
       updated_at: at,
     })
     .onConflict((oc) => oc.column('submission_id').doNothing())
@@ -320,7 +362,7 @@ async function attemptUnderLock(
     }
     if (phase === 'prepare') return { type: 'prepared' };
     const sent = await deps.mail.send(apiKey, {
-      key: `form:${companyId}:${submissionId}:${row.round}:${letter.workspaceId}`,
+      key: formMailKey(companyId, submissionId, row.round, letter),
       kind: FORM_MAIL_KIND,
       locale: letter.locale,
       templateId: letter.templateId,
@@ -404,7 +446,7 @@ export async function resendFormNotification(
     const resendable =
       row.status === 'failed' ||
       row.status === 'blocked' ||
-      (row.status === 'skipped' && (row.lastError === SKIPPED_NOT_CONNECTED || row.lastError === SKIPPED_NO_RECIPIENT));
+      (row.status === 'skipped' && (row.lastError === SKIPPED_NOT_CONNECTED || row.lastError === SKIPPED_NO_RECIPIENT || row.lastError === SKIPPED_RATE_LIMITED));
     if (!resendable) return 'not_resendable';
     const recipient = live === undefined ? row.recipient : live;
     if (!recipient) return 'no_recipient';

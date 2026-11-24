@@ -265,9 +265,9 @@ describe('the owner notification', () => {
     const res = await handleFormSubmit(jsonPost(body()), h.deps);
     expect(res.status).toBe(200);
     expect(h.stored).toHaveLength(1);
-    // The lookup itself failed (the fake database answers nothing): no notice, logged. A site that simply has no
-    // company gets a row saying so (formNotify.itest.ts).
-    expect(h.stored[0].notification).toBeUndefined();
+    // The lookup itself failed (the fake database answers nothing): logged, and the stored notice says so (a row that
+    // sends nothing and tells the owner), never a silent gap. A site that simply has no company gets its own row (formNotify.itest.ts).
+    expect(h.stored[0].notification).toMatchObject({ failed: true, companyId: null, recipient: null });
     expect(h.logs.join('\n')).toMatch(/company/);
   });
 

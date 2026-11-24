@@ -90,6 +90,12 @@ export function notificationNote(n: NotificationItem | null | undefined): { text
       if (n.reason === 'no_company') {
         return { text: 'No email was sent: this site is not linked to a company yet, so there is no Lumitra Mail connection to send from.', tone: 'warn', canResend: false };
       }
+      if (n.reason === 'internal_error') {
+        return { text: 'No email was sent: it could not be prepared when this message arrived (the message itself is stored). New messages are not affected.', tone: 'warn', canResend: false };
+      }
+      if (n.reason === 'rate_limited') {
+        return { text: 'No email was sent: this company reached the limit of 100 notification emails in an hour. The message is stored here; send the email again later.', tone: 'warn', canResend: true };
+      }
       return n.reason === 'not_connected'
         ? { text: 'No email was sent: connect Lumitra Mail on the payments page to be told about new messages.', tone: 'warn', canResend: true }
         : { text: 'No email was sent: neither this form nor the site settings name an address. Set a notification address in the form settings, publish, then send again.', tone: 'warn', canResend: true };
@@ -149,6 +155,30 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // The email status of the rows on screen, read again without touching the list (no loading state, same rows, same cursor):
+  // after "send again", and while any email is still being sent, so the line never keeps saying "being sent" for a letter that
+  // was sent or failed meanwhile. Stops by itself after about five minutes; a reload or another "send again" starts it again.
+  const [syncTick, setSyncTick] = useState(0);
+  const syncNotifications = useCallback(async () => {
+    try {
+      const res = await fetch(query(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = (await res.json()) as ListResponse;
+      const fresh = new Map(data.submissions.map((s) => [s.id, s.notification]));
+      setItems((prev) => prev.map((s) => (fresh.has(s.id) ? { ...s, notification: fresh.get(s.id) ?? null } : s)));
+    } catch {
+      // The next tick tries again.
+    }
+  }, [query]);
+  const anyPending = items.some((s) => s.notification?.status === 'pending');
+  useEffect(() => {
+    if (!anyPending || syncTick >= 60) return undefined;
+    const timer = setTimeout(() => {
+      void syncNotifications().finally(() => setSyncTick((n) => n + 1));
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [anyPending, syncTick, syncNotifications, items]);
 
   const loadMore = async () => {
     if (!cursor) return;
@@ -235,8 +265,11 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
       }
       if (!res.ok) {
         setRowError({ id: item.id, message: await readError(res, 'Could not send the email again') });
+        // The line on screen may be out of date (it was sent, or another round started): show what is true now.
+        void syncNotifications();
         return;
       }
+      setSyncTick(0);
       setItems((prev) =>
         prev.map((s) => (s.id === item.id && s.notification ? { ...s, notification: { ...s.notification, status: 'pending', reason: null } } : s)),
       );
