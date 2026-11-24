@@ -53,6 +53,22 @@ async function open(browser: Browser, server: Server): Promise<Page> {
     const blobs = new Map<string, { title: string; document: string; declaration: CustomCodeDeclaration }>();
     // The open editor's live stream (another tab's saves): open, and quiet.
     await p.route('**/api/projects/*/events?*', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': quiet\n\n' }));
+    // The stream above ends with its answer, so after a reconnect the editor's live sync falls
+    // back to polling the document. This stands in for the real route
+    // (src/app/api/projects/[projectId]/document/route.ts): GET only, answering the stored version
+    // with its snapshot, the last page this test's save route kept. The real route answers 304
+    // when If-None-Match already names that version; Playwright cannot fulfill a 304, so that case
+    // gets the same version with 200, which live sync drops as nothing newer (take's version check).
+    // Before this route the catch-all answered 200 with `{}`, which live sync took for a newer
+    // copy without a snapshot. On a loaded runner the poll came while the inserted block was
+    // unsaved, the copy was held, and the conflict sentence read its pages during render, which
+    // took the whole editor down (the WebKit timeout on main after #459, the slice that added
+    // this gate).
+    await p.route('**/api/projects/*/document', async (route) => {
+      if (route.request().method() !== 'GET') return route.fulfill({ status: 405 });
+      const kept = server.saves.at(-1)?.project ?? snapshot;
+      return route.fulfill({ status: 200, contentType: 'application/json', headers: { etag: `"${version}"` }, body: JSON.stringify({ version, snapshot: kept }) });
+    });
     await p.route('**/api/projects/save', async (route) => {
       const body = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
       server.saves.push(body);
@@ -169,6 +185,7 @@ describe.each([
     expect(await customCodeOf(page, id)).toBeNull();
     // The draft is kept for the next try.
     expect(await section.locator('.cm-content').textContent()).toBe('tick');
+    expect((page as unknown as { __crashes: string[] }).__crashes).toEqual([]);
     await page.close();
   }, 180_000);
 
