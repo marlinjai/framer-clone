@@ -69,6 +69,17 @@ const PAGES: Readonly<Record<string, () => StoredNode>> = {
   'still-noise': () => box('hero', { scene: noise }, HERO),
 };
 
+/** Makes WebGL report a graphics card as its renderer (UNMASKED_RENDERER_WEBGL), whatever draws underneath. */
+const SAY_GRAPHICS_CARD = () => {
+  const UNMASKED_RENDERER = 0x9246;
+  for (const proto of [WebGL2RenderingContext.prototype, WebGLRenderingContext.prototype]) {
+    const original = proto.getParameter;
+    proto.getParameter = function (this: WebGLRenderingContext, name: number) {
+      return name === UNMASKED_RENDERER ? 'Test graphics card (fxRingStill.spec)' : original.call(this, name);
+    } as typeof original;
+  }
+};
+
 let origin: string;
 beforeAll(async () => {
   origin = await publishPages(process.env.BEHAVIOUR_PORT!, { pages: PAGES });
@@ -83,7 +94,7 @@ describe.each(ENGINES)('in %s', (name, engine) => {
   /** The engine's chunks, by address: learnt once from a page that loads them. */
   let engineUrls: Set<string>;
 
-  const newPage = async (options: { size?: Size; reducedMotion?: 'reduce' | 'no-preference' } = {}) => {
+  const newPage = async (options: { size?: Size; reducedMotion?: 'reduce' | 'no-preference'; software?: boolean } = {}) => {
     await context?.close();
     const size = options.size;
     context = await browser.newContext({
@@ -92,6 +103,10 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       reducedMotion: options.reducedMotion ?? 'no-preference',
     });
     page = await context.newPage();
+    // The test machines draw WebGL on the processor (SwiftShader), where the still is left out on purpose
+    // (isSoftwareRenderer). These tests are about the still, so the renderer names a graphics card; the one test
+    // about software rendering opens its page without this.
+    if (!options.software) await page.addInitScript(SAY_GRAPHICS_CARD);
     warnings = [];
     problems = [];
     page.on('console', (message) => {
@@ -260,6 +275,25 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     await waitForState('live');
     // The still leaves once the live layer's fade is over: then the live canvas is the only one.
     await expect.poll(() => page.locator('canvas').count(), { timeout: 5000 }).toBe(1);
+  });
+
+  it('where WebGL draws on the processor: no still (it would hold the page), the placeholder instead', async () => {
+    await newPage({ software: true });
+    const renderer = await page.evaluate(() => {
+      const gl = document.createElement('canvas').getContext('webgl2');
+      const info = gl?.getExtension('WEBGL_debug_renderer_info');
+      return gl && info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
+    });
+    if (!/swiftshader|llvmpipe|softpipe|software|basic render|lavapipe/i.test(renderer)) {
+      console.info(`ring still (${name}): this machine draws WebGL on a graphics card (${renderer}); the software case is not checked here`);
+      return;
+    }
+    const release = await holdEngine();
+    await page.goto(`${origin}/still-hero`);
+    await page.locator('[data-fc-fx-placeholder]').waitFor({ state: 'attached', timeout: 10_000 });
+    expect(await stills().count()).toBe(0);
+    release();
+    await waitForState('live');
   });
 
   it('a scene that is not one ring gets no still: the loading placeholder is its sign of life', async () => {

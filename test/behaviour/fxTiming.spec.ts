@@ -21,6 +21,12 @@ import { publishPages } from './site';
 const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
 const RUNS = 5;
 
+/**
+ * FX_TIMING_GPU=1: Chromium draws on the Mac's graphics card (Metal through ANGLE) instead of on the processor
+ * (SwiftShader, its default here), so the numbers are those of a real visitor's browser. WebKit always uses the card.
+ */
+const LAUNCH = process.env.FX_TIMING_GPU === '1' ? { args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] } : {};
+
 /** Where the numbers go (the runner keeps a test's console to itself): FX_TIMING_OUT, or test/behaviour/.out. */
 const OUT = process.env.FX_TIMING_OUT ?? path.join(__dirname, '.out', 'fx-timing.jsonl');
 const record = (line: unknown) => {
@@ -99,7 +105,7 @@ const median = (values: (number | null)[]) => {
 describe.each(ENGINES)('in %s', (name, engine) => {
   let browser: Browser;
   beforeAll(async () => {
-    browser = await engine.launch();
+    browser = await engine.launch(name === 'chromium' ? LAUNCH : {});
   });
   afterAll(async () => {
     await browser?.close();

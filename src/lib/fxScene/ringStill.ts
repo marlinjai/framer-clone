@@ -17,6 +17,9 @@
 // ~/software-dev/orchestration/fx-ring-scratch/poster). Drawing costs no download and is
 // exact at every size.
 //
+// Only on a graphics card: where WebGL draws on the processor, the still would hold
+// the page's main thread for most of a second (isSoftwareRenderer), so it is left out.
+//
 // Only for a scene that is one particle ring on its background (ringStillSpecOf): any
 // other layer, a post pass, a ring with param animation or a scoped target changes the
 // first frame in ways this short path does not draw, and those scenes keep the loading
@@ -109,6 +112,21 @@ function colourBytes(colour: string): [number, number, number] {
   return [0, 0, 0];
 }
 
+/** Renderer names of WebGL drawn on the processor, not a graphics card. */
+const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|software|basic render|lavapipe/i;
+
+/**
+ * True when the context draws on the processor. There the ring's frame (about 91,000 points, the glow pass as
+ * large ones) takes most of a second, and copying it out waits for all of it on the page's main thread: measured
+ * 2026-11-24 in Chromium on a machine without a graphics card, the page's largest paint moved from 0.64 s to about
+ * 1.5 s and the ring was seen later than without the still. On a graphics card the same frame takes milliseconds.
+ */
+export function isSoftwareRenderer(gl: WebGL2RenderingContext): boolean {
+  const info = gl.getExtension('WEBGL_debug_renderer_info');
+  const name = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+  return SOFTWARE_RENDERER.test(name);
+}
+
 function compile(gl: WebGL2RenderingContext, type: number, body: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) throw new Error('no shader');
@@ -130,9 +148,18 @@ export function drawRingStill(into: HTMLCanvasElement, spec: RingStillSpec, widt
   scratch.width = w;
   scratch.height = h;
   // The component's canvas, and the ring's own buffer in the engine: four samples per pixel, no premultiplying.
-  const gl = scratch.getContext('webgl2', { antialias: true, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+  // A browser that would draw it slowly (software) may refuse the context outright; where it does not say so, the
+  // renderer's name does (the still is then left out, and the placeholder shows, as before).
+  const gl = scratch.getContext('webgl2', {
+    antialias: true,
+    premultipliedAlpha: false,
+    preserveDrawingBuffer: false,
+    powerPreference: 'high-performance',
+    failIfMajorPerformanceCaveat: true,
+  });
   if (!gl) return false;
   try {
+    if (isSoftwareRenderer(gl)) return false;
     const program = gl.createProgram();
     if (!program) return false;
     gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, RING_VERTEX));

@@ -108,6 +108,28 @@ describe('drawing the still', () => {
     expect(fake.lose).toHaveBeenCalledTimes(1);
   });
 
+  it('asks for a context the browser may refuse when it would draw slowly', () => {
+    drawRingStill(document.createElement('canvas'), SPEC, 960, 540, 1);
+    const options = vi.mocked(HTMLCanvasElement.prototype.getContext).mock.calls.find(([kind]) => kind === 'webgl2')![1] as WebGLContextAttributes;
+    expect(options.failIfMajorPerformanceCaveat).toBe(true);
+  });
+
+  it.each(['ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0)), SwiftShader driver)', 'llvmpipe (LLVM 15.0.7, 256 bits)', 'Microsoft Basic Render Driver'])(
+    'a software renderer (%s) draws nothing, and the context is released',
+    (renderer) => {
+      (fake.gl as unknown as { getParameter: () => string }).getParameter = () => renderer;
+      expect(drawRingStill(document.createElement('canvas'), SPEC, 960, 540, 1)).toBe(false);
+      expect(fake.calls.some((c) => c.startsWith('draw'))).toBe(false);
+      expect(drawImage).not.toHaveBeenCalled();
+      expect(fake.lose).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('a graphics card draws it', () => {
+    (fake.gl as unknown as { getParameter: () => string }).getParameter = () => 'ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)';
+    expect(drawRingStill(document.createElement('canvas'), SPEC, 960, 540, 1)).toBe(true);
+  });
+
   it('no WebGL 2 draws nothing and says so', () => {
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockImplementation(() => null);
     expect(drawRingStill(document.createElement('canvas'), SPEC, 960, 540, 1)).toBe(false);
