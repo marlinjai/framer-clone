@@ -168,7 +168,7 @@ const SPECS: Record<MailKind, MailSpec> = {
         subject: 'Neue Nachricht über {{form_name}} auf {{site_name}}',
         preheader: '{{summary_text}}',
         blocks: [
-          { id: 'what', html: p('über das Formular <strong>{{form_name}}</strong> auf {{site_name}} ist eine neue Nachricht eingegangen.') },
+          { id: 'what', html: p('Über das Formular <strong>{{form_name}}</strong> auf {{site_name}} ist eine neue Nachricht eingegangen.') },
           { id: 'when', html: p('Eingegangen: {{received_text}}<br>Seite: {{page_path}}') },
           { id: 'summary', html: p('{{summary_text}}') },
           { id: 'inbox', html: p('<a href="{{inbox_url}}">Alle Nachrichten im Editor ansehen</a>') },
@@ -180,7 +180,7 @@ const SPECS: Record<MailKind, MailSpec> = {
         subject: 'New message through {{form_name}} on {{site_name}}',
         preheader: '{{summary_text}}',
         blocks: [
-          { id: 'what', html: p('a new message arrived through the form <strong>{{form_name}}</strong> on {{site_name}}.') },
+          { id: 'what', html: p('A new message arrived through the form <strong>{{form_name}}</strong> on {{site_name}}.') },
           { id: 'when', html: p('Received: {{received_text}}<br>Page: {{page_path}}') },
           { id: 'summary', html: p('{{summary_text}}') },
           { id: 'inbox', html: p('<a href="{{inbox_url}}">See all messages in the editor</a>') },

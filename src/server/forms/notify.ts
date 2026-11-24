@@ -274,6 +274,13 @@ async function attemptUnderLock(
       // company's own send key (what connecting does), keep the ids, and go on.
       let templateIds = connection.template_ids as Record<string, string>;
       if (!templateIds[FORM_MAIL_KIND]) {
+        // Two first notices of one company run at once, each holding only its own notification row: serialise the install on
+        // the connection row and read the ids again after the wait, so a second install never finds the first one's template
+        // and refuses for good ("holds 2 templates").
+        const locked = await trx.selectFrom('shop_mail_connection').select('template_ids').where('tenant_id', '=', companyId).forUpdate().executeTakeFirst();
+        templateIds = (locked?.template_ids ?? templateIds) as Record<string, string>;
+      }
+      if (!templateIds[FORM_MAIL_KIND]) {
         templateIds = await deps.mail.installTemplates(apiKey);
         await trx
           .updateTable('shop_mail_connection')
