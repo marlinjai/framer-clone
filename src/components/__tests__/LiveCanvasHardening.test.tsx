@@ -10,8 +10,8 @@ import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { openProject } from '@/stores/openProject';
 import { autosaveFor, resetAutosaveForTests } from '@/lib/projects/autosave';
-import { LIVE_RECONNECT_MS, setLiveSyncDepsForTests, startLiveSync, type LiveEventSource, type LiveSyncDeps } from '@/lib/projects/liveSync';
-import LiveConnectionStatus, { LIVE_BACK_MS, LIVE_PAUSED_GRACE_MS, LIVE_PAUSED_TEXT, LIVE_BACK_TEXT, LIVE_WAITING_TEXT } from '../live/LiveConnectionStatus';
+import { LIVE_FETCH_RETRY_MS, LIVE_RECONNECT_MS, setLiveSyncDepsForTests, startLiveSync, type LiveEventSource, type LiveSyncDeps } from '@/lib/projects/liveSync';
+import LiveConnectionStatus, { LIVE_BACK_MS, LIVE_PAUSED_GRACE_MS, LIVE_PAUSED_TEXT, LIVE_BACK_TEXT, LIVE_UNREADABLE_TEXT, LIVE_WAITING_TEXT } from '../live/LiveConnectionStatus';
 import EditorNotice from '../EditorNotice';
 import SiteChangedDialog from '../SiteChangedDialog';
 
@@ -136,6 +136,36 @@ describe('LiveConnectionStatus (H1)', () => {
     render(<LiveConnectionStatus projectId={site} />);
     act(() => vi.advanceTimersByTime(LIVE_PAUSED_GRACE_MS * 2));
     expect(screen.getByTestId('live-connection-status').textContent).toBe('');
+  });
+});
+
+describe('LiveConnectionStatus: the server answers the newest version with something that is not one', () => {
+  it('says so until an answer is a document again', async () => {
+    let odd = true;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setLiveSyncDepsForTests({
+      ...deps,
+      fetchDocument: async (url, known) => (odd ? { status: 200, body: '<html>Bad gateway</html>' as never } : deps.fetchDocument(url, known)),
+    });
+    render(<LiveConnectionStatus projectId={site} />);
+    act(() => {
+      startLiveSync(site, store);
+      stream().open();
+    });
+    const region = screen.getByTestId('live-connection-status');
+    server = { ...server, version: 2 };
+    await act(async () => {
+      stream().emit('site:version', { origin: 'mcp', version: 2, versionBefore: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(region.textContent).toContain(LIVE_UNREADABLE_TEXT);
+    expect(region.querySelector('[aria-hidden="true"].md\\:hidden')?.textContent).toBe('Paused');
+    odd = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LIVE_FETCH_RETRY_MS[0]);
+    });
+    expect(region.textContent).toBe('');
+    errors.mockRestore();
   });
 });
 

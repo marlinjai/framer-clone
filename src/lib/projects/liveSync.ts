@@ -138,6 +138,12 @@ export const LIVE_HEARTBEAT_MS = SSE_HEARTBEAT_MS;
 export const LIVE_WATCHDOG_MS = Math.round(LIVE_HEARTBEAT_MS * 2.5);
 /** The waits before a failed fetch of the stored copy is tried again while the stream is live; the last repeats. */
 export const LIVE_FETCH_RETRY_MS = [2_000, 5_000, 15_000] as const;
+/**
+ * The waits between polls after polls in a row failed (a network failure, a server error, an answer that is not a
+ * document); the last repeats, and a success goes back to LIVE_POLL_VISIBLE_MS. A hidden tab never polls faster than
+ * LIVE_POLL_HIDDEN_MS.
+ */
+export const LIVE_POLL_BACKOFF_MS = [15_000, 30_000, 60_000] as const;
 /** A refusal's dialog held for the newer copy (of a marked edit, or of a settled one the refusal found replayable) waits for it at most this long. */
 export const LIVE_HELD_FETCH_MS = 10_000;
 /** The most steps of the person one replay carries (all unsaved steps since the last saved copy, or none). */
@@ -164,6 +170,29 @@ const CLOSED = 2;
 export interface DocumentAnswer {
   status: number;
   body?: { version: number; snapshot: ProjectSnapshotOut };
+}
+
+/**
+ * The body of a 200 from the document route when it is one: a version and the snapshot of THIS project, with its
+ * pages. Anything else (a proxy's or an outage page's 200, a changed route) answers null, and live sync treats it
+ * as a failed fetch, never as a newer copy: adopting or holding it would put an empty project in the editor.
+ */
+export function documentBodyOf(body: unknown, projectId: string): { version: number; snapshot: ProjectSnapshotOut } | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const { version, snapshot } = body as { version?: unknown; snapshot?: unknown };
+  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 0) return null;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const { id, pages } = snapshot as { id?: unknown; pages?: unknown };
+  if (id !== projectId || !pages || typeof pages !== 'object' || Array.isArray(pages)) return null;
+  return { version, snapshot: snapshot as ProjectSnapshotOut };
+}
+
+/** A 200 from the document route whose body is not a document of this project (documentBodyOf). */
+export class UnreadableDocumentError extends Error {
+  constructor() {
+    super('the document route answered 200 with something that is not a document of this site');
+    this.name = 'UnreadableDocumentError';
+  }
 }
 
 export interface LiveSyncDeps {
@@ -234,7 +263,9 @@ export const browserLiveSyncDeps: LiveSyncDeps = {
       cache: 'no-store',
     });
     if (res.status !== 200) return { status: res.status };
-    return { status: 200, body: (await res.json()) as DocumentAnswer['body'] };
+    // An answer that is not JSON at all (an outage page) is no document either: live sync says so (documentBodyOf).
+    const body = (await res.json().catch(() => undefined)) as DocumentAnswer['body'];
+    return { status: 200, body };
   },
   isVisible: () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
   onVisibilityChange: (listener) => {
@@ -377,6 +408,10 @@ export class LiveSync {
   private wantedAt = 0;
   private fetchRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private fetchRetries = 0;
+  /** Polls in a row that failed: the next waits longer (LIVE_POLL_BACKOFF_MS). */
+  private pollFailures = 0;
+  /** The last answer of the document route was a 200 that is not a document (until one is, or a 304). */
+  private unreadableValue = false;
   private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
   /** The open stream sent a ping: its silence now means it is stuck. */
   private heartbeatSeen = false;
@@ -438,6 +473,11 @@ export class LiveSync {
   /** The stream was live at least once in this run: a fall to polling is a lost connection, not a browser without streams. */
   get wasLive(): boolean {
     return this.wasLiveValue;
+  }
+
+  /** The document route's last answer was a 200 that is not a document of this site; cleared by the next good answer. */
+  get unreadable(): boolean {
+    return this.unreadableValue;
   }
 
   /** An agent's streamed draft was dropped while the stream was down (cleared once it is back). */
@@ -988,13 +1028,17 @@ export class LiveSync {
 
   private startPolling() {
     if (this.phaseValue === 'signed-out' || this.phaseValue === 'gone' || this.phaseValue === 'stopped') return;
+    // Only polls that failed in a row slow polling down; a fetch that failed while the stream was live does not.
+    if (this.phaseValue !== 'polling') this.pollFailures = 0;
     this.setPhase('polling');
     if (!this.pollTimer) this.schedulePoll();
   }
 
   private schedulePoll() {
     this.clearPoll();
-    const wait = this.deps.isVisible() ? LIVE_POLL_VISIBLE_MS : LIVE_POLL_HIDDEN_MS;
+    const pace = this.deps.isVisible() ? LIVE_POLL_VISIBLE_MS : LIVE_POLL_HIDDEN_MS;
+    const backoff = this.pollFailures > 0 ? LIVE_POLL_BACKOFF_MS[Math.min(this.pollFailures, LIVE_POLL_BACKOFF_MS.length) - 1] : 0;
+    const wait = Math.max(pace, backoff);
     this.pollTimer = setTimeout(() => {
       this.pollTimer = undefined;
       void this.poll();
@@ -1010,8 +1054,15 @@ export class LiveSync {
     if (this.phaseValue !== 'polling') return;
     // Their `expired` update may never come while the stream is down.
     this.plans.dropExpired(Date.now());
-    await this.fetchNewest();
-    if (this.phaseValue === 'polling') this.schedulePoll();
+    try {
+      await this.fetchNewest();
+    } catch (err) {
+      // Whatever went wrong with this copy, the next poll still comes: a throw here once stopped polling for good.
+      this.pollFailures++;
+      console.error('[live] a poll of the newest version failed:', err);
+    } finally {
+      if (this.phaseValue === 'polling') this.schedulePoll();
+    }
   }
 
   private visibilityChanged() {
@@ -1029,10 +1080,35 @@ export class LiveSync {
     }
   }
 
+  /**
+   * GET the document route. A 200 must carry a document of this site (documentBodyOf), or this throws
+   * UnreadableDocumentError, which each caller handles as it handles a network failure; the failure is logged
+   * once per run of them and shown in the top bar (LiveConnectionStatus) until a good answer comes.
+   */
+  private async readDocument(knownVersion: number | undefined): Promise<DocumentAnswer> {
+    const answer = await this.deps.fetchDocument(`${this.base}/document`, knownVersion);
+    if (answer.status === 304) this.setUnreadable(false);
+    if (answer.status !== 200) return answer;
+    const body = documentBodyOf(answer.body, this.projectId);
+    if (!body) {
+      if (!this.unreadableValue) console.error(`[live] the newest version of site ${this.projectId} could not be read: the document route answered 200 without a document of this site`);
+      this.setUnreadable(true);
+      throw new UnreadableDocumentError();
+    }
+    this.setUnreadable(false);
+    return { status: 200, body };
+  }
+
+  private setUnreadable(unreadable: boolean) {
+    if (this.unreadableValue === unreadable) return;
+    this.unreadableValue = unreadable;
+    this.notify();
+  }
+
   private async checkBack() {
     let answer: DocumentAnswer;
     try {
-      answer = await this.deps.fetchDocument(`${this.base}/document`, knownServerVersion(this.projectId));
+      answer = await this.readDocument(knownServerVersion(this.projectId));
     } catch {
       return;
     }
@@ -1115,12 +1191,13 @@ export class LiveSync {
         this.again = false;
         let answer: DocumentAnswer;
         try {
-          answer = await this.deps.fetchDocument(`${this.base}/document`, knownServerVersion(this.projectId));
+          answer = await this.readDocument(knownServerVersion(this.projectId));
         } catch {
-          // A network failure: polling asks again by itself; a live stream may say nothing
+          // A network failure, or a 200 that is not a document (readDocument): polling asks again by itself, later; a live stream may say nothing
           // more for a long time, so the fetch is tried again after a while.
           // That later copy is catch-up: it appears at once, never as the agent's live write.
           if (this.wanted) this.wanted = { ...this.wanted, retry: true };
+          if (this.phaseValue === 'polling') this.pollFailures++;
           this.retryFetchLater();
           return;
         }
@@ -1141,7 +1218,10 @@ export class LiveSync {
           this.setPhase('gone');
           return;
         }
-        if (answer.status === 200 || answer.status === 304) this.clearFetchRetry();
+        if (answer.status === 200 || answer.status === 304) {
+          this.clearFetchRetry();
+          this.pollFailures = 0;
+        } else if (this.phaseValue === 'polling') this.pollFailures++;
         if (answer.status === 200 && answer.body) {
           const wanted = this.wanted;
           const covers = !!wanted && answer.body.version >= wanted.version;
@@ -1419,7 +1499,7 @@ export class LiveSync {
       let answer: DocumentAnswer;
       try {
         // No If-None-Match: the working copy may hold edits the known version does not describe.
-        answer = await this.deps.fetchDocument(`${this.base}/document`, undefined);
+        answer = await this.readDocument(undefined);
       } catch {
         return false;
       }

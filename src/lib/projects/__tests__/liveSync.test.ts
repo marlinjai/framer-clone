@@ -34,8 +34,10 @@ import {
   pagesRemovedBy,
   restoredPagesSentence,
   heldStepSentence,
+  LIVE_POLL_BACKOFF_MS,
   LIVE_POLL_HIDDEN_MS,
   LIVE_POLL_VISIBLE_MS,
+  documentBodyOf,
   LIVE_STREAM_RETRY_MS,
   loadNewerVersion,
   revealsOnAdoption,
@@ -96,6 +98,8 @@ let fetches: Array<number | undefined>;
 let holdFetch: { release: () => void } | undefined;
 /** The next fetch fails on the network. */
 let failFetch = false;
+/** While set, every fetch answers 200 with this body instead of the document (a proxy's or an outage page's 200). */
+let oddBody: { body: unknown } | undefined;
 let saves: Array<{ expectedVersion: number | undefined; snapshot: ProjectSnapshotOut }>;
 
 const deps: LiveSyncDeps = {
@@ -115,6 +119,7 @@ const deps: LiveSyncDeps = {
         holdFetch = { release: resolve };
       });
     }
+    if (oddBody) return { status: 200, body: oddBody.body as DocumentAnswer['body'] };
     if (server.status) return { status: server.status };
     if (knownVersion === server.version) return { status: 304 };
     return { status: 200, body: { version: server.version, snapshot: server.snapshot } };
@@ -172,6 +177,7 @@ beforeEach(() => {
   saves = [];
   holdFetch = undefined;
   failFetch = false;
+  oddBody = undefined;
   server = { version: 1, snapshot: baseSnapshot() };
   resetAutosaveForTests({
     write: async (snapshot, expectedVersion): Promise<ProjectWriteResult> => {
@@ -3037,6 +3043,135 @@ describe('liveSync: the new page notice and other notices (review of PR #353)', 
     store.editorUI.setCurrentPage(project().getPage(pageId)!);
     expect(store.editorUI.editorNotice).toBeUndefined();
     stop();
+  });
+});
+
+describe('documentBodyOf: a 200 of the document route is a document of this site, or nothing', () => {
+  it('takes a version and the snapshot of this site with its pages', () => {
+    const snapshot = baseSnapshot();
+    expect(documentBodyOf({ version: 3, snapshot }, SITE)).toEqual({ version: 3, snapshot });
+  });
+
+  it.each([
+    ['nothing', undefined],
+    ['an empty object', {}],
+    ['an array', []],
+    ['a page of text', '<html>Service unavailable</html>'],
+    ['no version', { snapshot: { id: SITE, pages: {} } }],
+    ['a version that is a string', { version: '3', snapshot: { id: SITE, pages: {} } }],
+    ['a negative version', { version: -1, snapshot: { id: SITE, pages: {} } }],
+    ['a fractional version', { version: 1.5, snapshot: { id: SITE, pages: {} } }],
+    ['no snapshot', { version: 3 }],
+    ['a snapshot without an id', { version: 3, snapshot: { pages: {} } }],
+    ["another site's snapshot", { version: 3, snapshot: { id: 'site_other', pages: {} } }],
+    ['a snapshot without pages', { version: 3, snapshot: { id: SITE } }],
+    ['pages that are a list', { version: 3, snapshot: { id: SITE, pages: [] } }],
+  ])('refuses %s', (_name, body) => {
+    expect(documentBodyOf(body, SITE)).toBeNull();
+  });
+});
+
+describe('liveSync: an answer that is not a document (a proxy, an outage page, a changed route)', () => {
+  let errors: { mock: { calls: unknown[][] }; mockRestore(): void };
+  beforeEach(() => {
+    errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    errors.mockRestore();
+  });
+  const unreadableLogs = () => errors.mock.calls.filter((call) => String(call[0]).includes('could not be read')).length;
+
+  it('keeps polling with a back-off, adopts and holds nothing, says so, logs once, and recovers', async () => {
+    start();
+    stream().fail(true); // refused: polling from now on
+    await agentWrites('behind the proxy', false);
+    oddBody = { body: {} };
+    const before = working();
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    const sync = liveSyncFor(SITE)!;
+    expect(fetches).toHaveLength(1);
+    expect(sync.unreadable).toBe(true);
+    expect(sync.phase).toBe('polling');
+    expect(knownServerVersion(SITE)).toBe(1);
+    expect(sync.heldVersion).toBeUndefined();
+    expect(working()).toEqual(before);
+    expect(unreadableLogs()).toBe(1);
+
+    // The next polls wait longer: 15 s, then 30 s. The log does not repeat for every failed poll.
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_BACKOFF_MS[0] - 1);
+    expect(fetches).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetches).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_BACKOFF_MS[1] - 1);
+    expect(fetches).toHaveLength(2);
+    expect(unreadableLogs()).toBe(1);
+
+    // The server answers properly again: the copy is adopted, the state clears, and the pace is back to 5 s.
+    oddBody = undefined;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetches).toHaveLength(3);
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(sync.unreadable).toBe(false);
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(fetches).toHaveLength(4);
+  });
+
+  it('with unsaved work in the tab: nothing is held and no dialog is asked for, and the work stays', async () => {
+    start();
+    stream().fail(true);
+    await agentWrites('behind the proxy', false);
+    project().updateMetadata({ description: 'unsaved' });
+    oddBody = { body: { version: 9 } };
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    const sync = liveSyncFor(SITE)!;
+    expect(fetches.length).toBeGreaterThan(0);
+    expect(sync.unreadable).toBe(true);
+    expect(sync.heldVersion).toBeUndefined();
+    expect(working().metadata.description).toBe('unsaved');
+    expect(knownServerVersion(SITE)).toBe(1);
+  });
+
+  it('while the stream is live: retried after 2 s as a failed fetch, and adopted once the answer is a document', async () => {
+    start();
+    oddBody = { body: { version: 2, snapshot: { id: 'site_other', pages: {} } } };
+    await agentWrites('announced');
+    const sync = liveSyncFor(SITE)!;
+    expect(fetches).toHaveLength(1);
+    expect(sync.unreadable).toBe(true);
+    expect(knownServerVersion(SITE)).toBe(1);
+    oddBody = undefined;
+    await vi.advanceTimersByTimeAsync(LIVE_FETCH_RETRY_MS[0]);
+    expect(fetches).toHaveLength(2);
+    expect(knownServerVersion(SITE)).toBe(2);
+    expect(sync.unreadable).toBe(false);
+  });
+
+  it('"Load the newer version" with such an answer loads nothing and says so', async () => {
+    start();
+    oddBody = { body: {} };
+    await loadNewerVersion(SITE);
+    expect(liveSyncFor(SITE)!.unreadable).toBe(true);
+    expect(knownServerVersion(SITE)).toBe(1);
+  });
+
+  it('a poll whose copy throws while it is looked at still schedules the next poll', async () => {
+    start();
+    stream().fail(true);
+    await agentWrites('throws', false);
+    const sync = liveSyncFor(SITE)! as unknown as { take: (...args: unknown[]) => void };
+    const take = sync.take.bind(sync);
+    let throws = true;
+    sync.take = (...args: unknown[]) => {
+      if (throws) throw new Error('boom');
+      take(...args);
+    };
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_VISIBLE_MS);
+    expect(fetches).toHaveLength(1);
+    expect(errors.mock.calls.some((call) => String(call[0]).includes('a poll of the newest version failed'))).toBe(true);
+    throws = false;
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_BACKOFF_MS[0]);
+    expect(fetches).toHaveLength(2);
+    expect(knownServerVersion(SITE)).toBe(2);
   });
 });
 
