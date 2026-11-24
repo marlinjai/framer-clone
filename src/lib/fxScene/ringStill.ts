@@ -257,7 +257,11 @@ export function showFxRingStill(box: HTMLElement, spec: RingStillSpec): FxRingSt
         return;
       }
       removed = true;
+      // No redraw from here on, not even one already asked for: the live scene's context is up, and a redraw
+      // during its fade would open a second one.
       resized?.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = 0;
       if (afterLive) timer = window.setTimeout(finish, FX_FADE_MS);
       else finish();
     },

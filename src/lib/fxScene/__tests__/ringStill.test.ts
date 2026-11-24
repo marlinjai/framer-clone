@@ -187,4 +187,37 @@ describe('drawing the still', () => {
     expect(showFxRingStill(box, SPEC)).toBeNull();
     expect(box.children).toHaveLength(0);
   });
+
+  it('a resize already asked for is dropped once the live scene is up: no second context during the fade', () => {
+    let observed: (() => void) | undefined;
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback: () => void) {
+        observed = callback;
+      }
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    try {
+      const box = boxOf(1440, 800);
+      const still = showFxRingStill(box, SPEC)!;
+      const contexts = () => vi.mocked(HTMLCanvasElement.prototype.getContext).mock.calls.filter(([kind]) => kind === 'webgl2').length;
+      const before = contexts();
+      vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(() => ({ width: 1200, height: 800, top: 0, left: 0, right: 1200, bottom: 800, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect);
+      observed!();
+      still.remove({ afterLive: true });
+      vi.advanceTimersByTime(100);
+      expect(contexts()).toBe(before);
+      // Without the live scene the same resize draws again.
+      const other = showFxRingStill(boxOf(1440, 800), SPEC)!;
+      const ready = contexts();
+      vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(() => ({ width: 1000, height: 800, top: 0, left: 0, right: 1000, bottom: 800, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect);
+      observed!();
+      vi.advanceTimersByTime(100);
+      expect(contexts()).toBe(ready + 1);
+      other.remove();
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
+  });
 });

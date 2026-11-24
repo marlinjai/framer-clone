@@ -20,13 +20,18 @@
 //      `settled` or `immediate` scene fetches the engine chunk at once, while it
 //      waits; a `visible` one only once it starts, so a scene nobody scrolls to
 //      costs nothing.
-//   5. The scene is mounted; it fades in on its first frame. While the wait is
-//      noticeable the box shows a quiet placeholder (src/lib/fxScene/placeholder.ts),
-//      which cross-fades with the scene.
+//   5. The scene is mounted; it fades in on its first frame. A scene that is one
+//      particle ring shows its own first frame meanwhile, drawn at once without the
+//      engine (src/lib/fxScene/ringStill.ts), which stays under the live layer until
+//      its fade is over. Any other scene shows a quiet placeholder while the wait is
+//      noticeable (src/lib/fxScene/placeholder.ts), which cross-fades with the scene.
 //
 // Whatever fails (no WebGL, a chunk that does not arrive, a refused scene, a
 // renderer error, a lost context) leaves the box as the server sent it, with one
-// console warning. The scene is decoration, so there is no visible error.
+// console warning; the scene is decoration, so there is no visible error. The one
+// exception is a particle ring's still (src/lib/fxScene/ringStill.ts): when the
+// engine cannot draw, the still stays as the picture, because it is the scene's own
+// first frame (a refused scene takes it away).
 //
 // What the island is doing is written on the box as `data-fc-fx-state`
 // (src/lib/fxScene/marker.ts), for tests and for diagnosis.
