@@ -1195,11 +1195,19 @@ radius continuously), and storing it touches the site image quota, the in-use sc
    calm setting: `background` draws nothing (as before), `frame` shows the still, which is also the frame the engine
    then holds. A second scene on a page stays calm with neither. Scenes that are not one ring keep the loading
    placeholder.
-4. **Fallback.** No WebGL 2, a shader that does not compile or a box without a size: no still, and the placeholder as
+4. **Only on a graphics card.** Where WebGL draws on the processor (SwiftShader, llvmpipe and the like: machines
+   without a usable graphics card, some virtual machines, blocklisted drivers), the ring's frame takes most of a
+   second and copying it out waits for all of it on the page's main thread. Measured in Chromium on hermes (no
+   graphics card), cold: the page's largest paint went from 0.64 s to about 1.5 s, the longest task from 0.73 s to
+   about 1.2 s, and the ring was seen later (1.4 to 1.6 s) than the live scene alone (0.94 s). So the still asks for a
+   context the browser may refuse when it would be slow (`failIfMajorPerformanceCaveat`), and, because Chromium's
+   SwiftShader does not refuse it, also checks the renderer's name; on software it is left out and the placeholder
+   shows, exactly as before.
+5. **Fallback.** No WebGL 2, a shader that does not compile or a box without a size: no still, and the placeholder as
    before. When the engine cannot draw (its chunk does not arrive, a renderer error), the still stays as the picture:
    it is the scene's own first frame, and the frame a visitor asking for reduced motion gets anyway. A scene the engine
    refuses takes its still with it.
-5. **Its own small entry.** The island is part of every published page's code, so it reaches the ring core through a
+6. **Its own small entry.** The island is part of every published page's code, so it reaches the ring core through a
    new render-free entry `@/lib/fx/ring` that is exactly two files (pinned in `src/lib/fx/__tests__/importGraph.test.ts`),
    not through `@/lib/fx/format`, which would bring the scene format, the schemas and the presets onto pages without
    a scene.
