@@ -53,6 +53,14 @@ async function open(browser: Browser, server: Server): Promise<Page> {
     const blobs = new Map<string, { title: string; document: string; declaration: CustomCodeDeclaration }>();
     // The open editor's live stream (another tab's saves): open, and quiet.
     await p.route('**/api/projects/*/events?*', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': quiet\n\n' }));
+    // The stream above ends with its answer, so after a reconnect the editor's live sync falls
+    // back to polling the document. The real route (src/app/api/projects/[projectId]/document)
+    // answers 304 when nothing is newer than the version the tab sends, which is the case here:
+    // no other writer exists. Without this route the catch-all answered 200 with `{}`, which live
+    // sync took for a newer copy without a snapshot. On a loaded runner the poll came while the
+    // inserted block was unsaved, the copy was held, and the conflict sentence read its pages
+    // during render, which took the whole editor down (the WebKit timeout on main after #459).
+    await p.route('**/api/projects/*/document', (route) => route.fulfill({ status: 304 }));
     await p.route('**/api/projects/save', async (route) => {
       const body = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
       server.saves.push(body);
