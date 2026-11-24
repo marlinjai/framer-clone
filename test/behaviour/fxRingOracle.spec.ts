@@ -199,7 +199,8 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
     await page.goto(`${origin}/${slug(size, variant)}`);
     await page.waitForFunction(() => document.querySelector('[data-t="hero"]')?.getAttribute('data-fc-fx-state') === 'live', undefined, { timeout: 30_000 });
     await expect.poll(() => page.locator('[data-fc-fx-layer]').evaluate((layer) => getComputedStyle(layer).opacity), { timeout: 5000 }).toBe('1');
-    return settled(page, '[data-t="hero"] canvas', size);
+    // The live layer's canvas (the ring's first still sits beside it until the layer's fade is over).
+    return settled(page, '[data-t="hero"] [data-fc-fx-layer] canvas', size);
   };
 
   /** The ring as the component draws it, seeded and with the clock stopped, on a blank page. */
