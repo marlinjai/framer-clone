@@ -20,10 +20,10 @@
 // block still wins by coming later:
 //   - base `reset`: the published base layer paints `body` with `--background` and
 //     `--foreground`. The frame's page box gets the same rule in that layer
-//     (src/app/theme-tokens.css), read from the site's tokens on the frame, because the
+//     (src/app/editor-theme.css), read from the site's tokens on the frame, because the
 //     editor's own body follows the interface's Light and Dark and is never what a frame
-//     shows. A frame box may also carry a white background utility (the preview's), which
-//     outranks that layer, so a forced `dark` frame gets its ground written here as well.
+//     shows. A `reset` frame box carries no background utility, which would outrank that
+//     layer. A forced `dark` frame also gets its ground written here, unlayered.
 //   - base `browser`: that layer is rolled back, so the page shows the canvas colour and
 //     text colour of its colour scheme, `Canvas` and `CanvasText` on the frame. The page
 //     base's surface sheet writes `CanvasText` on the frame too, but the ground does not
