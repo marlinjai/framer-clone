@@ -329,22 +329,22 @@ export const ViewportFrame = observer(({
       */}
       <div
         ref={frameRef}
-        className="relative bg-white shadow-lg rounded-lg transition-shadow"
+        className="relative bg-white shadow-lg ring-1 ring-border rounded-lg transition-shadow"
         style={{ width: `${width}px` }}
         data-viewport-id={viewport.id}
         data-breakpoint-id={viewport.breakpointId}
       >
         {/* Viewport label - clickable for viewport selection */}
         <div
-          className="absolute -top-8 left-0 text-sm font-medium text-gray-600 cursor-pointer hover:bg-gray-100 rounded px-2 py-1 -mx-2 -my-1"
+          className="absolute -top-8 left-0 text-sm font-medium text-muted-foreground cursor-pointer hover:bg-accent hover:text-foreground rounded px-2 py-1 -mx-2 -my-1"
           onClick={interact ? undefined : (e) => {
             e.stopPropagation();
             editorUI.setSelectedViewportNode(viewport);
           }}
         >
           <div className="flex items-center gap-2 whitespace-nowrap">
-            <div className="text-gray-600">{viewport.label}</div>
-            <div className="px-2 py-0.5 bg-gray-200 rounded text-xs">
+            <div>{viewport.label}</div>
+            <div className="px-2 py-0.5 bg-muted rounded text-xs">
               {viewport.breakpointMinWidth}px
             </div>
             <div
