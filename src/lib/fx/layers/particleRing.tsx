@@ -57,6 +57,18 @@ interface RingValues {
   speed: number;
 }
 
+/**
+ * Shows the glow passes a glow asks for and gives each its strength (`ringGlowWeights`), in one step: pass `i` is
+ * drawn when the glow has a weight for it, at that weight; a pass it has none for is hidden.
+ */
+export function applyGlowPasses(passes: readonly THREE.Points[], weights: readonly number[]): void {
+  passes.forEach((points, i) => {
+    const weight = weights[i] ?? 0;
+    points.visible = weight > 0;
+    ((points.material as THREE.RawShaderMaterial).uniforms.gain as { value: number }).value = weight;
+  });
+}
+
 function ringMaterial(glow: 0 | 1): THREE.RawShaderMaterial {
   return new THREE.RawShaderMaterial({
     glslVersion: THREE.GLSL3,
@@ -203,13 +215,13 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
 
   // The points live in a scene of their own, drawn into the buffer before the frame; the layer's place in
   // the main scene is the full-box quad that adds the buffer.
-  const weights = ringGlowWeights(v.glow);
-  const passes = weights.length;
   const ringScene = useMemo(() => new THREE.Scene(), []);
+  // Both glow passes are always in the scene; each frame shows the ones the glow asks for and gives them their
+  // strength in one step (`applyGlowPasses`), so a frame never draws the passes of one value with the strengths of
+  // another (a jump from 0.5 to 2 would otherwise show one frame of glow 1).
+  const glowPoints = useMemo(() => glowMaterials.map((m) => new THREE.Points(geometry, m)), [geometry, glowMaterials]);
   useEffect(() => {
-    const objects: THREE.Points[] = [];
-    for (let i = 0; i < passes; i++) objects.push(new THREE.Points(geometry, glowMaterials[i]));
-    objects.push(new THREE.Points(geometry, coreMaterial));
+    const objects = [...glowPoints, new THREE.Points(geometry, coreMaterial)];
     objects.forEach((o, i) => {
       o.frustumCulled = false;
       o.renderOrder = i;
@@ -218,7 +230,7 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
     return () => {
       for (const o of objects) ringScene.remove(o);
     };
-  }, [ringScene, geometry, glowMaterials, coreMaterial, passes]);
+  }, [ringScene, geometry, glowPoints, coreMaterial]);
 
   const quad = useRef<THREE.Mesh | null>(null);
   useEffect(() => {
@@ -239,7 +251,7 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
     // The engine's pointer runs -1 to 1 over the window; the component's lean runs -0.5 to 0.5 over its box.
     lean.current.set(interactivity.mouse.x * 0.5, interactivity.mouse.y * 0.5);
     const R = ringRadius(size.width, size.height);
-    for (let i = 0; i < glowMaterials.length; i++) glowMaterials[i].uniforms.gain.value = weights[i] ?? 0;
+    applyGlowPasses(glowPoints, ringGlowWeights(v.glow));
     for (const m of [...glowMaterials, coreMaterial]) {
       const u = m.uniforms;
       u.t.value = t;
