@@ -73,7 +73,11 @@
   --selection-ring: var(--ui-selection-ring);
   --home-shadow: var(--ui-shadow);
   --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(88 46 255 / 0.22), rgb(59 132 255 / 0.08) 50%, transparent 80%);
+  /* The canvas around the site frames follows the interface mode (Marlin, 2026-11-25: dark in Dark);
+     the frames themselves show each site's own page. The grid is the text colour at 12 %, so it
+     reads on both grounds. */
   --canvas-ground: var(--ui-sunken);
+  --canvas-grid: color-mix(in oklab, var(--ui-text) 12%, transparent);
 }
 
 /* Light: the editor-only values that are no suite token. Same block twice, once for the

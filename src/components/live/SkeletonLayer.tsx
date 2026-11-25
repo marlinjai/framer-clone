@@ -423,15 +423,15 @@ export const SkeletonPageFrames = observer(function SkeletonPageFrames({ frames,
             <div
               {...{ [SKELETON_FRAME_ATTR]: f.breakpointId }}
               aria-hidden="true"
-              className="relative rounded-lg bg-white shadow-lg ring-2 ring-gray-300/70"
+              className="relative rounded-lg bg-white shadow-lg ring-2 ring-border"
               style={{ width: `${f.width}px`, opacity: leaving ? 0 : 1, transition: 'opacity 200ms ease-out' }}
             >
-              <div className="absolute -top-8 left-0 flex max-w-full items-center gap-2 whitespace-nowrap text-sm font-medium text-gray-600">
+              <div className="absolute -top-8 left-0 flex max-w-full items-center gap-2 whitespace-nowrap text-sm font-medium text-muted-foreground">
                 <span className="min-w-0 truncate" title={plan.newPage?.title}>
                   {plan.newPage?.title}
                 </span>
-                <span className="shrink-0 rounded bg-gray-200 px-2 py-0.5 text-xs">Planned</span>
-                <span className="shrink-0 rounded bg-gray-200 px-2 py-0.5 text-xs">{f.label}</span>
+                <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-xs">Planned</span>
+                <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-xs">{f.label}</span>
               </div>
               <div
                 className={editorUI.frameDarkClass ? 'rounded-lg dark' : 'rounded-lg'}

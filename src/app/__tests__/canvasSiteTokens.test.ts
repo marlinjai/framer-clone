@@ -22,7 +22,7 @@ function propsOf(rule: Rule): Set<string> {
 }
 
 /** The editor's own names: chrome only, which no site content reads. */
-const EDITOR_ONLY = new Set(['--brand-edge', '--brand-fill', '--brand-mark', '--canvas-ground', '--home-glow', '--home-shadow', '--link', '--selection-ring']);
+const EDITOR_ONLY = new Set(['--brand-edge', '--brand-fill', '--brand-mark', '--canvas-ground', '--canvas-grid', '--home-glow', '--home-shadow', '--link', '--selection-ring']);
 
 describe('the shared tokens on the canvas', () => {
   const tokens = read('theme-tokens.css');

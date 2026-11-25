@@ -260,12 +260,12 @@ export const DraftPageFrames = observer(function DraftPageFrames({ framesRight, 
             className="relative rounded-lg bg-white shadow-lg ring-2 ring-brand/40"
             style={{ width: `${v.width}px` }}
           >
-            <div className="absolute -top-8 left-0 right-0 flex min-w-0 items-center gap-2 whitespace-nowrap text-sm font-medium text-gray-600">
+            <div className="absolute -top-8 left-0 right-0 flex min-w-0 items-center gap-2 whitespace-nowrap text-sm font-medium text-muted-foreground">
               <span className="min-w-0 truncate" title={target.title}>
                 {target.title}
               </span>
               <span className="shrink-0 rounded bg-brand/15 px-2 py-0.5 text-xs text-brand">Draft</span>
-              <span className="shrink-0 rounded bg-gray-200 px-2 py-0.5 text-xs">{v.label}</span>
+              <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-xs">{v.label}</span>
             </div>
             <div
               className={editorUI.frameDarkClass ? 'rounded-lg dark' : 'rounded-lg'}

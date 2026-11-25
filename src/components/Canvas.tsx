@@ -1065,7 +1065,7 @@ const CanvasInner = observer(() => {
   if (!rootStore.editorUI.currentPage) {
     return (
       <main className="flex-1 p-8 flex items-center justify-center">
-        <div className="text-gray-500 text-center">
+        <div className="text-muted-foreground text-center">
           <div className="text-lg font-medium">No page selected</div>
           <div className="text-sm">Create a project to start designing</div>
         </div>
@@ -1081,9 +1081,9 @@ const CanvasInner = observer(() => {
   return (
     <div
       role={interact ? undefined : 'main'}
-      className="w-screen h-screen bg-gray-100 relative"
+      className="w-screen h-screen bg-[var(--canvas-ground)] relative"
     >
-      <div className="w-full h-full bg-gray-100 overflow-hidden relative">
+      <div className="w-full h-full bg-[var(--canvas-ground)] overflow-hidden relative">
         {/* Canvas viewport. data-ground marks this as the drop region that
             resolves to `{kind:'floating', x, y}` for the new DragManager when
             the cursor is over empty canvas. */}
@@ -1112,13 +1112,14 @@ const CanvasInner = observer(() => {
           // image in the page would hijack the pointer mid-pan or mid-marquee.
           onDragStartCapture={preventNativeDrag}
         >
-          {/* Fixed grid background - stays in viewport, doesn't transform */}
+          {/* Fixed grid background - stays in viewport, doesn't transform. Its lines follow the interface mode. */}
           <div
-            className="absolute inset-0 opacity-40 pointer-events-none"
+            data-canvas-grid=""
+            className="absolute inset-0 pointer-events-none"
             style={{
               backgroundImage: `
-                linear-gradient(to right, #e5e7eb 1px, transparent 1px),
-                linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)
+                linear-gradient(to right, var(--canvas-grid) 1px, transparent 1px),
+                linear-gradient(to bottom, var(--canvas-grid) 1px, transparent 1px)
               `,
               backgroundSize: '20px 20px',
             }}
