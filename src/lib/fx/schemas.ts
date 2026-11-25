@@ -75,8 +75,9 @@ export const noiseFillSchema: LayerSchemaDefinition = {
 // --- layers/particleRing.tsx
 
 const PARTICLE_RING_DEFAULT_PARAMS: ParamsSchema = {
-  // Passes of large faint points under the fine ones: 0 (none), 1 (the brand ring) or 2 (brighter).
-  glow: { type: "number", value: 1, min: 0, max: 2, step: 1 },
+  // Passes of large faint points under the fine ones: 0 (none), 1 (the brand ring), 2 (brighter), and any
+  // hundredth between (a part of a number is a pass at that strength, particleRingCore `ringGlowWeights`).
+  glow: { type: "number", value: 1, min: 0, max: 2, step: 0.01 },
   // Share of the points drawn along each strand (0.25 to 1); fewer points cost less on weak devices.
   density: { type: "number", value: 1, min: 0.25, max: 1, step: 0.05 },
   // Which particles: the same seed is the same ring on every load.

@@ -1097,3 +1097,57 @@ inside a group.
 
 P3's colour restyle does not need P2 and can go first; only the hero scene waits for the deploy. The rest of the new
 site (the hub page) is still black and gold; it belongs to R1 and is not part of this request.
+
+### Addendum: the ring's glow in hundredths (2026-11-25)
+
+Asked by Marlin through the coordinator on 2026-11-25: the particle ring's Glow should move in steps of 0.01, so the look
+can be tuned between the brand ring (1) and no glow (0), and between 1 and 2.
+
+**Before.** Glow counted whole passes of large faint points, as the component's loop does
+(`for (g = 0; g < glow; g += 1)`): the schema's step was 1, and a stored 0.4 drew a whole pass, the same picture as 1.
+
+**Decided here (say so if you disagree):**
+
+1. **A part of a number is a pass that draws that share of its points.** `ringGlowWeights`
+   (`src/lib/fx/particleRingCore.ts`) gives every started whole number a pass, the whole ones at strength 1 and the
+   last at the part that is left: 0.02 is one pass at 0.02, 1.3 is passes at 1 and 0.3. A pass at strength 0.3 draws
+   30 percent of its glow points, each as bright as ever, picked by a scramble of each point's random number so the
+   share is spread evenly round the ring (a `gain` uniform in the vertex shader). The layer keeps one material per
+   pass, two at most, each with its own strength.
+   *Tried first and dropped:* dimming every glow point by the strength. A glow point adds so little light that most
+   of a dimmed one rounds to nothing in the 8-bit buffer. Measured: 0.01 drew exactly the picture of 0, 0.1 added
+   0.004 percent, and 1.25 barely more than 1.
+2. **Whole numbers stay the component's picture.** A strength of exactly 1 changes no bit of the arithmetic, so 0, 1
+   and 2 are the component's ring pixel for pixel. Between whole numbers the component has no picture to compare
+   with: its glow only has the steps 0, 1 and 2.
+3. **The control.** The schema's step is 0.01, so the slider moves in hundredths and the number field shows two
+   decimals. The panel already took its step from the schema, so nothing else in it changed. The stored format
+   already kept any number from 0 to 2. Stored scenes (all whole numbers, for example the `/services` draft's 0)
+   draw as before.
+
+**Proof.**
+- Unit tests: the weights for 0, 0.01, 0.02, 1, 1.3, 2, out of range and not a number; the summed strength rises
+  with every hundredth; a fractional glow survives the reader and the serializer.
+- A panel test: the slider steps 0.01, and a typed 0.02 is stored and shown as 0.02. It fails with the old step.
+- The pixel oracle (`test/behaviour/fxRingOracle.spec.ts`) now also compares glow 0 and 2 with the component's
+  `glow` attribute (0 pixels differ in Chromium and WebKit). It measures the light of the published ring at 0,
+  0.01, 0.1, 0.25 and so on up to 2:
+  - every step gives strictly more light than the one before;
+  - every quarter adds between 8 and 50 percent of its whole step.
+
+  The first, dimming version fails this test (0.01 equal to 0).
+
+**Measured** (published page, 960 x 540, the same in Chromium and WebKit): already 0.01 adds light over 0, and
+every quarter adds a fair part of a whole step. From 0 to 1 the quarters add 35, 28, 21 and 16 percent; from 1 to 2
+they add 33, 27, 22 and 18 percent. The share falls as more glow points overlap and the 8-bit sum clips, as on the
+component's canvas.
+
+**Other numeric FX controls.** They already moved in fractions. Of the 65 number settings in `schemas.ts`, only
+seven have a whole step, and each counts something whole:
+- the lockup's three text sizes (steps 2 and 10);
+- the ring's seed;
+- the text box's rotation in degrees;
+- the god rays' samples;
+- the pixelate granularity.
+
+The pointer settings step 0.01 and 0.005.

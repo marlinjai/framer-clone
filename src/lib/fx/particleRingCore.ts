@@ -12,7 +12,10 @@
  *  - the particles come from a seeded generator (mulberry32) instead of `Math.random`, drawn in the
  *    component's order (per strand one phase, per point one random), so a stored scene is the same ring
  *    on every load;
- *  - nothing else: the glow passes are counted as the component's loop counts them (`ringGlowPasses`).
+ *  - the glow between whole numbers: the component draws a whole pass for every started whole number, so its
+ *    glow only has the steps 0, 1 and 2. Here a part of a number is a pass that draws that share of its points
+ *    (`ringGlowWeights`), so the glow can be tuned between them. At a whole number the passes are the component's,
+ *    pixel for pixel.
  *
  * RENDER-FREE: no React, no three.js.
  */
@@ -67,11 +70,25 @@ export function ringRadius(width: number, height: number): number {
 }
 
 /**
- * Glow passes for a stored value, as the component counts them: its loop `for (g = 0; g < glow; g += 1)` draws
- * one pass for every started whole number, so 0.4 draws one pass and 1.2 two. Kept inside 0 to 2.
+ * The strength of each glow pass for a stored glow (0 to 2): one pass per started whole number, as the component's
+ * loop `for (g = 0; g < glow; g += 1)` counts them, every whole pass at full strength and the last at the part of a
+ * number that is left. So 1 is one pass at 1, 1.3 is passes at 1 and 0.3, 0.02 one pass at 0.02, and 2 two whole
+ * passes. A pass at a strength draws that share of its points, each at full light (`gain` in the vertex shader),
+ * so the light rises evenly with the value; at strength 1 every point is drawn, so whole numbers draw the
+ * component's ring. Dimming every point instead does not work: a glow point adds so little that most of a
+ * dimmed one rounds to nothing in the 8-bit buffer (measured 2026-11-25: 0.01 drew exactly 0, 1.25 barely more
+ * than 1).
  */
+export function ringGlowWeights(glow: number): number[] {
+  const value = Math.max(0, Math.min(2, Number.isFinite(glow) ? glow : 1));
+  const weights: number[] = [];
+  for (let left = value; left > 0; left -= 1) weights.push(Math.min(1, left));
+  return weights;
+}
+
+/** How many glow passes a stored glow draws (`ringGlowWeights`): 0, 1 or 2. */
 export function ringGlowPasses(glow: number): number {
-  return Math.max(0, Math.min(2, Math.ceil(Number.isFinite(glow) ? glow : 1)));
+  return ringGlowWeights(glow).length;
 }
 
 /** The decided 60/30/10 mix along the ring: mint leads, light blue rims, indigo only inside the glow. */
@@ -101,7 +118,7 @@ const PAL = (() => {
 /** Vertex shader (GLSL ES 3.00 body; three.js adds the version line). */
 export const RING_VERTEX = `
 in vec3 position;
-uniform float t; uniform vec2 res; uniform vec2 ptr; uniform float R; uniform float W; uniform float dpr; uniform float glow;
+uniform float t; uniform vec2 res; uniform vec2 ptr; uniform float R; uniform float W; uniform float dpr; uniform float glow; uniform float gain;
 out float vT; out float vA;
 void main(){
  float th=position.x, u=position.y, rnd=position.z;
@@ -119,6 +136,10 @@ void main(){
  float edge=1.0-abs(u-0.5)*1.6;
  float al=(0.30+0.45*rnd)*(0.45+0.55*edge)*(0.75+0.25*sin(t*2.0+rnd*40.0));
  vA=glow>0.5 ? al*0.028 : al;
+ // A glow pass below full strength draws that share of its points, each as bright as ever, chosen by a scramble of
+ // the point's random so the share is spread evenly round the ring. At strength 1 every point is drawn and nothing
+ // above changed. (Dimming every point instead loses the faint glow light to the 8-bit buffer's rounding.)
+ if(glow>0.5 && fract(rnd*997.0)>=gain){ gl_Position=vec4(0.0,0.0,2.0,1.0); vA=0.0; }
 }`;
 
 /** Fragment shader (GLSL ES 3.00 body). Writes the component's colours as they are: no output conversion. */
