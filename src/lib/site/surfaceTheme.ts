@@ -18,9 +18,12 @@
 // the published page that is the `body` of the base sheet, which no frame has, so it is
 // written here, before the theme's sheet and at the same specificity, so the document
 // block still wins by coming later:
-//   - base `reset`: the editor's base layer paints `body` with `--background` and
-//     `--foreground`, which only `class="dark"` changes, so only a forced `dark` frame
-//     needs them; every other frame already shows that white.
+//   - base `reset`: the published base layer paints `body` with `--background` and
+//     `--foreground`. The frame's page box gets the same rule in that layer
+//     (src/app/theme-tokens.css), read from the site's tokens on the frame, because the
+//     editor's own body follows the interface's Light and Dark and is never what a frame
+//     shows. A frame box may also carry a white background utility (the preview's), which
+//     outranks that layer, so a forced `dark` frame gets its ground written here as well.
 //   - base `browser`: that layer is rolled back, so the page shows the canvas colour and
 //     text colour of its colour scheme, `Canvas` and `CanvasText` on the frame. The page
 //     base's surface sheet writes `CanvasText` on the frame too, but the ground does not

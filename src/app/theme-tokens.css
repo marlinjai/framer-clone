@@ -176,4 +176,15 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* A frame's page box on the canvas and in the preview stands for the published page's body, so
+     it takes the same ground and text colour from the site's tokens instead of inheriting the
+     editor's interface colours (which follow Light and Dark). A floating element takes the text
+     colour and never a page background. A theme's surface sheet and the `browser` base are
+     unlayered, so both still win. */
+  [data-fc-theme="frame"] {
+    @apply bg-background text-foreground;
+  }
+  [data-fc-theme="floating"] {
+    @apply text-foreground;
+  }
 }
