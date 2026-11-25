@@ -1,6 +1,6 @@
 // The particle ring's rules that hold without drawing (the picture itself is held by the pixel oracle,
 // test/behaviour/fxRingOracle.spec.ts): the particles repeat for a seed, the radius follows the
-// component's rule, the glow is whole passes, and the ring's one blend holds through the reader and
+// component's rule, the glow is the component's passes at whole numbers and weighted passes between, and the ring's one blend holds through the reader and
 // through the reader (the editor's side: src/lib/fxScene/__tests__/particleRingEdit.test.ts).
 
 import { describe, expect, it } from 'vitest';
@@ -11,7 +11,9 @@ import {
   RING_STRANDS,
   buildRingParticles,
   mulberry32,
+  RING_VERTEX,
   ringGlowPasses,
+  ringGlowWeights,
   ringPointsPerStrand,
   ringRadius,
 } from '../particleRingCore';
@@ -73,6 +75,87 @@ describe('the radius and the glow', () => {
   it("draws the glow passes the component's loop draws: one per started whole number, 0 to 2", () => {
     expect([0, 0.4, 0.6, 1, 1.2, 1.6, 2, 5, -1].map(ringGlowPasses)).toEqual([0, 1, 1, 1, 2, 2, 2, 2, 0]);
     expect(ringGlowPasses(Number.NaN)).toBe(1);
+  });
+
+  it('gives every whole pass full strength and the last the part of a number that is left', () => {
+    expect(ringGlowWeights(0)).toEqual([]);
+    expect(ringGlowWeights(0.01)).toEqual([0.01]);
+    expect(ringGlowWeights(0.02)).toEqual([0.02]);
+    expect(ringGlowWeights(1)).toEqual([1]);
+    expect(ringGlowWeights(2)).toEqual([1, 1]);
+    const between = ringGlowWeights(1.3);
+    expect(between).toHaveLength(2);
+    expect(between[0]).toBe(1);
+    expect(between[1]).toBeCloseTo(0.3, 12);
+    // Outside 0 to 2 it is held at the ends; a value that is no number is the brand ring.
+    expect(ringGlowWeights(5)).toEqual([1, 1]);
+    expect(ringGlowWeights(-1)).toEqual([]);
+    expect(ringGlowWeights(Number.NaN)).toEqual([1]);
+  });
+
+  it('a whole number is exactly the component: every pass at strength 1', () => {
+    for (const glow of [1, 2]) expect(ringGlowWeights(glow).every((w) => w === 1)).toBe(true);
+  });
+
+  it('more glow never means less light: the summed strength rises with the stored value, a hundredth at a time', () => {
+    let last = -1;
+    for (let i = 0; i <= 200; i++) {
+      const sum = ringGlowWeights(i / 100).reduce((a, b) => a + b, 0);
+      expect(sum).toBeCloseTo(i / 100, 9);
+      expect(sum).toBeGreaterThan(last);
+      last = sum;
+    }
+  });
+
+  it("the strength picks a share of the glow points and leaves the component's arithmetic as it is", () => {
+    expect(RING_VERTEX).toContain('uniform float gain;');
+    // The component's line, unchanged; a point outside the share is moved out of the picture.
+    expect(RING_VERTEX).toContain('vA=glow>0.5 ? al*0.028 : al;');
+    expect(RING_VERTEX).toContain('if(glow>0.5 && fract(rnd*997.0)>=gain)');
+  });
+
+  it('the scramble spreads a share evenly: about that share of the points, in every part of the ring', () => {
+    const particles = buildRingParticles(1, mulberry32(1));
+    const points = particles.length / 3;
+    for (const share of [0.01, 0.25, 0.5, 0.9]) {
+      const sectors = new Array(12).fill(0);
+      const totals = new Array(12).fill(0);
+      for (let i = 0; i < points; i++) {
+        const th = particles[i * 3];
+        const sector = Math.min(11, Math.floor(((th % (2 * Math.PI)) / (2 * Math.PI)) * 12));
+        totals[sector]++;
+        // The shader's test in single precision: fract(rnd * 997) < share.
+        const scrambled = Math.fround(Math.fround(particles[i * 3 + 2]) * 997);
+        if (scrambled - Math.floor(scrambled) < share) sectors[sector]++;
+      }
+      const drawn = sectors.reduce((a, b) => a + b, 0);
+      expect(drawn / points).toBeCloseTo(share, 2);
+      for (let k = 0; k < 12; k++) expect(Math.abs(sectors[k] / totals[k] - share)).toBeLessThan(0.02);
+    }
+  });
+});
+
+describe('a glow between whole numbers through the reader', () => {
+  const sceneWithGlow = (glow: number) => {
+    const scene = serializeScene(PRESETS.find((p) => p.id === 'lumitra-light')!.load()) as unknown as { layers: Array<{ params: Record<string, unknown> }> };
+    scene.layers[0].params.glow = glow;
+    return scene;
+  };
+
+  it.each([0.01, 0.02, 0.37, 1.5, 1.99])('keeps %s as it is stored', (glow) => {
+    const read = parseFxScene(sceneWithGlow(glow));
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    const again = serializeScene(read.scene) as unknown as { layers: Array<{ params: Record<string, unknown> }> };
+    expect(again.layers[0].params.glow).toBe(glow);
+  });
+
+  it('holds a value outside 0 to 2 at the ends', () => {
+    for (const [stored, kept] of [[3, 2], [-0.5, 0]] as const) {
+      const read = parseFxScene(sceneWithGlow(stored));
+      expect(read.ok).toBe(true);
+      if (read.ok) expect((serializeScene(read.scene) as unknown as { layers: Array<{ params: Record<string, unknown> }> }).layers[0].params.glow).toBe(kept);
+    }
   });
 });
 

@@ -4,7 +4,9 @@
  * Particle Ring content layer: Lumitra's brand light, a ring of fine light particles with a glow pass.
  *
  * The shaders and the particle data are in ../particleRingCore (render-free, shared with the tests). The
- * points are drawn as `glow` passes of large faint points, then one pass of fine points, all added (ONE, ONE)
+ * points are drawn as up to two passes of large faint points (the glow: a whole pass per whole number of
+ * `glow`, the part of a number that is left as a pass drawing that share of its points, `ringGlowWeights`), then one pass of
+ * fine points, all added (ONE, ONE)
  * with no depth, placed straight in clip space from the box size, so the ring sits centred with the radius
  * `min(0.37 W, 0.47 H)` whatever the camera does.
  *
@@ -42,7 +44,7 @@ import {
   RING_VERTEX,
   buildRingParticles,
   mulberry32,
-  ringGlowPasses,
+  ringGlowWeights,
   ringRadius,
 } from "../particleRingCore";
 import { particleRingSchema } from "../schemas";
@@ -68,6 +70,8 @@ function ringMaterial(glow: 0 | 1): THREE.RawShaderMaterial {
       W: { value: 0.2 },
       dpr: { value: 1 },
       glow: { value: glow },
+      // A glow pass's strength, the share of its points it draws (`ringGlowWeights`); the fine points do not read it.
+      gain: { value: 1 },
     },
     transparent: true,
     depthTest: false,
@@ -163,7 +167,8 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
   }, [v.density, v.seed]);
   useEffect(() => () => geometry.dispose(), [geometry]);
 
-  const glowMaterial = useMemo(() => ringMaterial(1), []);
+  // One material per glow pass (two at most), so each carries its own strength.
+  const glowMaterials = useMemo(() => [ringMaterial(1), ringMaterial(1)], []);
   const coreMaterial = useMemo(() => ringMaterial(0), []);
 
   // The light is summed in a buffer of its own, 8 bits per channel and no colour conversion, the same
@@ -188,21 +193,22 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
   const composite = useMemo(() => compositeMaterial(target.texture), [target]);
   useEffect(
     () => () => {
-      glowMaterial.dispose();
+      for (const m of glowMaterials) m.dispose();
       coreMaterial.dispose();
       composite.dispose();
       target.dispose();
     },
-    [glowMaterial, coreMaterial, composite, target],
+    [glowMaterials, coreMaterial, composite, target],
   );
 
   // The points live in a scene of their own, drawn into the buffer before the frame; the layer's place in
   // the main scene is the full-box quad that adds the buffer.
-  const passes = ringGlowPasses(v.glow);
+  const weights = ringGlowWeights(v.glow);
+  const passes = weights.length;
   const ringScene = useMemo(() => new THREE.Scene(), []);
   useEffect(() => {
     const objects: THREE.Points[] = [];
-    for (let i = 0; i < passes; i++) objects.push(new THREE.Points(geometry, glowMaterial));
+    for (let i = 0; i < passes; i++) objects.push(new THREE.Points(geometry, glowMaterials[i]));
     objects.push(new THREE.Points(geometry, coreMaterial));
     objects.forEach((o, i) => {
       o.frustumCulled = false;
@@ -212,7 +218,7 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
     return () => {
       for (const o of objects) ringScene.remove(o);
     };
-  }, [ringScene, geometry, glowMaterial, coreMaterial, passes]);
+  }, [ringScene, geometry, glowMaterials, coreMaterial, passes]);
 
   const quad = useRef<THREE.Mesh | null>(null);
   useEffect(() => {
@@ -233,7 +239,8 @@ function ParticleRingComponent({ layer, values, ctx }: LayerComponentProps) {
     // The engine's pointer runs -1 to 1 over the window; the component's lean runs -0.5 to 0.5 over its box.
     lean.current.set(interactivity.mouse.x * 0.5, interactivity.mouse.y * 0.5);
     const R = ringRadius(size.width, size.height);
-    for (const m of [glowMaterial, coreMaterial]) {
+    for (let i = 0; i < glowMaterials.length; i++) glowMaterials[i].uniforms.gain.value = weights[i] ?? 0;
+    for (const m of [...glowMaterials, coreMaterial]) {
       const u = m.uniforms;
       u.t.value = t;
       (u.res.value as THREE.Vector2).set(size.width, size.height);
