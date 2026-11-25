@@ -244,6 +244,8 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
     const light: number[] = [];
     for (const glow of GLOW_STEPS) {
       const shot = await sites(size, glowVariant(glow));
+      // FX_GLOW_SHOTS=<folder>: keep each picture, for a person to compare the steps.
+      if (process.env.FX_GLOW_SHOTS) fs.writeFileSync(path.join(process.env.FX_GLOW_SHOTS, `${name}-glow-${glow}.png`), PNG.sync.write(shot));
       let sum = 0;
       for (let i = 0; i < shot.data.length; i += 4) sum += shot.data[i] + shot.data[i + 1] + shot.data[i + 2];
       light.push(sum);
