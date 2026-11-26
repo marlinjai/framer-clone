@@ -101,6 +101,8 @@ interface Seen {
 }
 
 interface CanvasSeen {
+  /** The machine's colour scheme the editor was opened under. */
+  system: 'light' | 'dark';
   scheme: string;
   dark: boolean;
   frame: { background: string; color: string; font: string };
@@ -349,7 +351,7 @@ describe('page-level item rows', () => {
       await page.locator('style[data-fc-theme-sheet="surface"]').waitFor({ state: 'attached' });
       await page.evaluate(() => document.fonts.load('16px Fraunces'));
       if (crashes.length > 0) throw new Error(`the editor crashed: ${crashes[0]}`);
-      return await page.evaluate(() => {
+      const seen = await page.evaluate(() => {
         const box = document.querySelector('[data-viewport-content-id]') as HTMLElement;
         const style = (el: Element) => getComputedStyle(el);
         const node = (id: string) => style(box.querySelector(`[data-inner-component-id="${id}"]`)!);
@@ -376,6 +378,7 @@ describe('page-level item rows', () => {
           },
         };
       });
+      return { ...seen, system };
     } finally {
       await page.close();
     }
@@ -384,9 +387,11 @@ describe('page-level item rows', () => {
   /** Canvas: the frame shows what the published page shows, and nothing outside a frame changes. */
   async function canvasCells(): Promise<SurfaceResults> {
     const out: SurfaceResults = {};
-    // Outside the frames the editor stays as it is: no token, no scheme, its own fonts.
+    // Outside the frames the editor stays as it is: no token, its own fonts, and its own colour
+    // scheme. Since the interface follows Light and Dark (System by default, docs/plans/
+    // 2026-11-23-sites-home-and-light-mode.md, slice S2), that scheme is the machine's, never the site's.
     const untouched = (seen: CanvasSeen) =>
-      seen.editor.token === '' && seen.editor.scheme === 'normal' && seen.editor.labelFont === seen.editor.bodyFont && !/fraunces/i.test(seen.editor.labelFont);
+      seen.editor.token === '' && seen.editor.scheme === seen.system && seen.editor.labelFont === seen.editor.bodyFont && !/fraunces/i.test(seen.editor.labelFont);
     out[key('color-token')] = await probe(async () => {
       const seen = await seeOnCanvas(theme(undefined), 'light');
       return cell(seen.token === INK.light && untouched(seen), `a reference computed ${seen.token}, editor ${JSON.stringify(seen.editor)}`);

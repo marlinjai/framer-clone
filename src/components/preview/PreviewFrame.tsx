@@ -132,13 +132,17 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
     );
   }
 
+  // The `browser` base needs a white backing under its canvas colour. A `reset` frame takes the
+  // site's `--background` from the base layer (editor-theme.css), which a utility would outrank.
+  const backing = pageBase === 'browser' ? 'bg-white ' : '';
+
   return (
     <div
       ref={frameRef}
-      className={`${
+      className={`${backing}${
         fill
-          ? 'bg-white overflow-auto w-full h-full outline-none'
-          : 'bg-white shadow-2xl overflow-auto outline-none'
+          ? 'overflow-auto w-full h-full outline-none'
+          : 'shadow-2xl overflow-auto outline-none'
       }${editorUI.frameDarkClass ? ' dark' : ''}`}
       style={fill ? undefined : { width, height }}
       // The page: the theme's tokens, scheme and document block land here (SurfaceThemeStyles).
