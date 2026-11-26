@@ -8,7 +8,8 @@
 // the generator the layer uses (its own source, from particleRingCore), and the clock is stopped:
 // performance.now and the time every animation frame is given are both 0, so each frame it draws, whichever
 // observer asks for it, is the frame at its starting time (7 seconds). Reduced motion is asked for on both
-// sides, as in F4's oracle.
+// sides, as in F4's oracle. The component leans toward the pointer even then (this app's still does not), so
+// pointer events are stopped before they reach it, and counted.
 //
 // THIS APP'S SIDE is the real thing: a stored page published through the real repository, served by the real
 // route of a real production build, drawn by FxIsland.
@@ -52,6 +53,17 @@ const changedReference = (source: string): string => {
   if (!source.includes(CHANGED_STOP)) throw new Error('the component no longer has the stop this test changes');
   return source.replace(CHANGED_STOP, '[0.3, [255, 0, 0]]');
 };
+
+/**
+ * Holds every pointer event back from the component (a listener on the window, capturing, runs before the
+ * element's own) and counts them. One pointer position at the box's top left corner gives the other pictures
+ * the comparisons failed with in CI.
+ */
+const NO_POINTER =
+  "window.ringPointerEvents = 0; for (const type of ['pointermove', 'pointerleave']) addEventListener(type, (event) => { window.ringPointerEvents += 1; event.stopImmediatePropagation(); }, true);";
+/** A pointer at the box's top left corner, sent as soon as the component has its listeners and before its first frame. */
+const POINTER_AT_THE_CORNER =
+  "customElements.whenDefined('lumitra-light').then(() => document.querySelector('lumitra-light').dispatchEvent(new PointerEvent('pointermove', { clientX: 0, clientY: 0 })));";
 
 /** Stops the page's clock: performance.now and the time every animation frame is given are 0. */
 const STOP_THE_CLOCK = (): void => {
@@ -144,8 +156,26 @@ function whereTheyDiffer(ours: PNG, theirs: PNG): string {
   return `differing pixels: ${box}; summed light: this app ${ourLight}, the component ${theirLight}`;
 }
 
+/**
+ * One line per captured picture, in passing runs too: a short hash of its pixels, and the renderer and samples of
+ * its canvas. A picture that differs from the other side's can then be held against the same case in a green run,
+ * which says which side drew something else. It never fails a case: what cannot be read is said in the line.
+ */
+async function describeCapture(canvas: Locator, label: string, shot: PNG): Promise<void> {
+  const hash = createHash('sha256').update(shot.data).digest('hex').slice(0, 12);
+  const drawnBy = await canvas
+    .evaluate((element) => {
+      const gl = (element as HTMLCanvasElement).getContext('webgl2');
+      if (!gl) return 'no webgl2 context to read';
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      return `renderer ${gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER)}, samples ${gl.getParameter(gl.SAMPLES)}, antialias ${gl.getContextAttributes()?.antialias}`;
+    })
+    .catch((error: unknown) => `not read: ${String(error)}`);
+  console.info(`ring oracle picture (${label}): ${hash}, ${drawnBy}`);
+}
+
 /** The canvas at `selector`, once it has the box's size in device pixels and two screenshots apart are the same. */
-async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
+async function settled(page: Page, selector: string, size: Size, label: string): Promise<PNG> {
   const canvas = page.locator(selector);
   await canvas.waitFor({ state: 'attached', timeout: 30_000 });
   // A canvas's size in pixels is the box times the ratio rounded down (the browser truncates it; three.js floors it).
@@ -166,6 +196,7 @@ async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
       // above would be compared scaled: say so here, not as a count of differing pixels.
       const now = await backingSize(canvas);
       if (now[0] !== want[0] || now[1] !== want[1]) throw new Error(`the canvas at ${selector} became ${now[0]}x${now[1]} while it was captured, from ${want[0]}x${want[1]}`);
+      await describeCapture(canvas, label, next);
       return next;
     }
     previous = next;
@@ -199,11 +230,11 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
     await page.goto(`${origin}/${slug(size, variant)}`);
     await page.waitForFunction(() => document.querySelector('[data-t="hero"]')?.getAttribute('data-fc-fx-state') === 'live', undefined, { timeout: 30_000 });
     await expect.poll(() => page.locator('[data-fc-fx-layer]').evaluate((layer) => getComputedStyle(layer).opacity), { timeout: 5000 }).toBe('1');
-    return settled(page, '[data-t="hero"] canvas', size);
+    return settled(page, '[data-t="hero"] canvas', size, `${name}, this app, ${slug(size, variant)}`);
   };
 
   /** The ring as the component draws it, seeded and with the clock stopped, on a blank page. */
-  const reference = async (size: Size, script = source, glow?: number): Promise<PNG> => {
+  const reference = async (size: Size, script = source, glow?: number, { pointed = false } = {}): Promise<PNG> => {
     const page = await newPage(size);
     const problems: string[] = [];
     page.on('pageerror', (error) => problems.push(error.message));
@@ -214,7 +245,9 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       // column of the screenshot is half canvas and half what is behind it, on both sides alike.
       `<lumitra-light${glow === undefined ? '' : ` glow="${glow}"`} style="display:block;width:${size.width}px;height:${size.height}px;background:#04090b"></lumitra-light>` +
       // Seeded just before the component loads, so nothing else draws from the generator first.
-      `<script>Math.random = (${mulberry32.toString()})(${SEED});</script>` +
+      // Counted, so a picture that differs can be told from one whose generator something else drew from too.
+      `<script>{ const next = (${mulberry32.toString()})(${SEED}); window.ringDraws = 0; Math.random = () => { window.ringDraws += 1; return next(); }; }</script>` +
+      `<script>${NO_POINTER}${pointed ? POINTER_AT_THE_CORNER : ''}</script>` +
       '<script type="module" src="/lumitra-light.js"></script>';
     await page.route(`${REFERENCE_ORIGIN}/**`, (route) =>
       new URL(route.request().url()).pathname === '/lumitra-light.js'
@@ -222,7 +255,15 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
         : route.fulfill({ contentType: 'text/html', body: html }),
     );
     await page.goto(`${REFERENCE_ORIGIN}/`);
-    const shot = await settled(page, 'lumitra-light canvas', size);
+    const variant = `${size.name}${glow === undefined ? '' : `, glow ${glow}`}${script === source ? '' : ', a changed stop'}${pointed ? ', a pointer' : ''}`;
+    const shot = await settled(page, 'lumitra-light canvas', size, `${name}, the component, ${variant}`);
+    const seen = await page.evaluate(() => {
+      const counted = window as unknown as { ringDraws: number; ringPointerEvents: number };
+      return { draws: counted.ringDraws, pointerEvents: counted.ringPointerEvents };
+    });
+    console.info(`ring oracle draws (${name}, the component, ${variant}): ${seen.draws} from the seeded generator, ${seen.pointerEvents} pointer events held back`);
+    // The case that sends a pointer proves nothing unless the pointer arrived.
+    if (pointed && seen.pointerEvents === 0) throw new Error('the pointer sent to the reference never arrived');
     if (problems.length > 0) throw new Error(`the reference page threw: ${problems.join('; ')}`);
     return shot;
   };
@@ -255,11 +296,21 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
     }, 120_000);
 
     it('a post pass after the ring leaves it as it is', async () => {
-      const result = difference(await sites(size, 'post'), await reference(size));
+      const ours = await sites(size, 'post');
+      const theirs = await reference(size);
+      const result = difference(ours, theirs);
       console.info(`ring oracle (${name}, ${sizeName}, with a post pass): ${(result.share * 100).toFixed(4)} percent differ, largest ${result.largest}`);
-      expect(result.differing).toBe(0);
+      expect(result.differing, whereTheyDiffer(ours, theirs)).toBe(0);
     }, 120_000);
   });
+
+  it('a pointer over the reference does not change its picture', async () => {
+    const size = SIZES.find((s) => s.name === 'tall')!;
+    const plain = await reference(size);
+    const pointed = await reference(size, source, undefined, { pointed: true });
+    // Both pictures are the component's here: the message's "this app" is the one without the pointer.
+    expect(difference(plain, pointed).differing, whereTheyDiffer(plain, pointed)).toBe(0);
+  }, 120_000);
 
   describe.each(WHOLE_GLOWS.map((glow) => [glow] as const))('glow %s, a whole number', (glow) => {
     it('this app draws the same picture as the component with that glow', async () => {
@@ -269,7 +320,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       const result = difference(app, component);
       console.info(`ring oracle (${name}, glow ${glow}): ${result.differing} pixels differ by more than ${CHANNEL_TOLERANCE}, largest difference in a channel ${result.largest}`);
       expect(colours(app)).toBeGreaterThan(50);
-      expect(result.differing).toBe(0);
+      expect(result.differing, whereTheyDiffer(app, component)).toBe(0);
     }, 120_000);
   });
 
