@@ -303,4 +303,18 @@ describe('PublishedVersionsButton: Unpublish site', () => {
     openDialog();
     await screen.findByRole('button', { name: 'Unpublish site' });
   });
+
+  it('keeps the unpublish retry when reloading the list fails too', async () => {
+    fetchMock.mockResolvedValueOnce(json(LIST));
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    openDialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpublish site' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Take offline' }));
+
+    await screen.findByRole('button', { name: 'Try unpublishing again' });
+    expect(screen.getByText(/not known whether the site went offline/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Try again/ })).toBeTruthy();
+  });
 });

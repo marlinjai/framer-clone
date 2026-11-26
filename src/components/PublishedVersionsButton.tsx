@@ -251,6 +251,16 @@ function VersionsPanel({ projectId }: { projectId: string }) {
     await refresh();
   };
 
+  const unpublishControl = (
+    <Unpublish
+      online={load.kind === 'ready' && load.list.status === 'published'}
+      state={unpublish}
+      disabled={busy !== null || confirm !== null}
+      onAsk={() => setUnpublish({ kind: 'asking' })}
+      onConfirm={() => void takeOffline()}
+      onCancel={() => setUnpublish({ kind: 'idle' })}
+    />
+  );
   if (load.kind === 'loading') return <p className="text-sm text-muted-foreground">Loading...</p>;
   if (load.kind === 'error') {
     return (
@@ -259,22 +269,14 @@ function VersionsPanel({ projectId }: { projectId: string }) {
         <Button type="button" size="sm" variant="outline" onClick={() => void refresh()}>
           <RefreshCw size={14} /> Try again
         </Button>
+        {/* An unpublish that did not finish keeps its reason and retry when the reload fails too. */}
+        {unpublish.kind === 'failed' && unpublishControl}
       </div>
     );
   }
 
   const { list } = load;
   const online = list.status === 'published';
-  const unpublishControl = (
-    <Unpublish
-      online={online}
-      state={unpublish}
-      disabled={busy !== null || confirm !== null}
-      onAsk={() => setUnpublish({ kind: 'asking' })}
-      onConfirm={() => void takeOffline()}
-      onCancel={() => setUnpublish({ kind: 'idle' })}
-    />
-  );
   if (list.revisions.length === 0) {
     return (
       <div className="space-y-2">

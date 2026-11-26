@@ -86,7 +86,25 @@ describe('ProjectCard: Unpublish', () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it('cannot be closed or sent twice while the request runs', async () => {
+    fetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    const dialog = await openDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Unpublish site' }));
+
+    const busy = await screen.findByRole('button', { name: 'Unpublishing…' });
+    fireEvent.click(busy);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
+    ['an ended session', () => Promise.resolve(json({ error: { code: 'unauthorized' } }, 401)), 'Sign in again'],
+    ['a project of another company', () => Promise.resolve(json({ error: { code: 'site_not_found' } }, 404)), 'not in the selected company'],
+    ['no selected company', () => Promise.resolve(json({ error: { code: 'no_active_company' } }, 403)), 'No company is selected'],
+    ['a sign-in outage', () => Promise.resolve(json({ error: { code: 'authz_unavailable' } }, 503)), 'temporarily unavailable'],
+    ['another refusal', () => Promise.resolve(json({ error: { code: 'sites_not_enabled', message: 'no Sites' } }, 403)), 'Could not unpublish the site: no Sites'],
     ['a refusal', () => Promise.resolve(json({ error: { code: 'forbidden', message: 'no' } }, 403)), 'do not have permission'],
     ['an unfinished unpublish', () => Promise.resolve(json({ error: { code: 'unpublish_failed', message: 'cache' } }, 500)), 'may still see the site'],
     ['a lost answer', () => Promise.reject(new Error('offline')), 'not known whether the site went offline'],
