@@ -4,6 +4,12 @@ All notable changes to the Framer Clone (Visual Builder) project will be documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Unpublish a site from the Published versions dialog or from its card on the projects page. The project, its versions, address and domains are kept.
+
 ## [0.4.0] - 2026-03-01
 
 ### Changed

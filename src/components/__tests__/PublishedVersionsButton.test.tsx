@@ -5,6 +5,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import PublishedVersionsButton from '../PublishedVersionsButton';
+import { SiteAddressProvider } from '@/contexts/SiteAddressContext';
 
 let currentStore: { editorUI: { currentProject: unknown; isUnsavedDemo?: boolean } };
 vi.mock('@/hooks/useStore', () => ({ useStore: () => currentStore }));
@@ -229,6 +230,7 @@ describe('PublishedVersionsButton', () => {
     fetchMock.mockResolvedValueOnce(json({ status: 'draft', live: null, revisions: [] }));
     openDialog();
     await screen.findByText(/Nothing published yet/);
+    expect(screen.queryByRole('button', { name: /npublish/ })).toBeNull();
   });
 
   it('marks nothing live on an unpublished site, and says what Make live does', async () => {
@@ -238,5 +240,108 @@ describe('PublishedVersionsButton', () => {
     await screen.findByText(/This site is offline/);
     expect(screen.queryByText('Live')).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Make live' })).toHaveLength(2);
+  });
+});
+
+describe('PublishedVersionsButton: Unpublish site', () => {
+  const OFFLINE = { ...LIST, status: 'draft' };
+  const posts = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
+
+  it('asks first, and Cancel sends nothing', async () => {
+    fetchMock.mockResolvedValue(json(LIST));
+    openDialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpublish site' }));
+    const question = screen.getByRole('group', { name: 'Confirm unpublish' });
+    expect(question.textContent).toContain('every connected domain');
+    fireEvent.click(within(question).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByRole('button', { name: 'Unpublish site' })).toBeTruthy();
+    expect(posts()).toHaveLength(0);
+  });
+
+  it('unpublishes this site, then shows the server state', async () => {
+    fetchMock.mockResolvedValueOnce(json(LIST));
+    fetchMock.mockResolvedValueOnce(json({ siteId: 'site 1', status: 'draft' }));
+    fetchMock.mockResolvedValueOnce(json(OFFLINE));
+    openDialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpublish site' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Take offline' }));
+
+    await screen.findByText(/This site is offline/);
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0][0]).toBe('/api/projects/unpublish');
+    expect(JSON.parse(String(posts()[0][1]?.body))).toEqual({ siteId: 'site 1' });
+    expect(screen.queryByText('Live')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps a retry when it did not finish, although the site already reads as offline', async () => {
+    fetchMock.mockResolvedValueOnce(json(LIST));
+    fetchMock.mockResolvedValueOnce(json({ error: { code: 'unpublish_failed', message: 'cache' } }, 500));
+    fetchMock.mockResolvedValueOnce(json(OFFLINE));
+    fetchMock.mockResolvedValueOnce(json({ siteId: 'site 1', status: 'draft' }));
+    fetchMock.mockResolvedValueOnce(json(OFFLINE));
+    openDialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpublish site' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Take offline' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Visitors may still see the site');
+    fireEvent.click(await screen.findByRole('button', { name: 'Try unpublishing again' }));
+
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(posts()).toHaveLength(2);
+  });
+
+  it('moves the focus into the question, on Cancel, and back to the button', async () => {
+    fetchMock.mockResolvedValue(json(LIST));
+    openDialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpublish site' }));
+    const cancel = within(screen.getByRole('group', { name: 'Confirm unpublish' })).getByRole('button', { name: 'Cancel' });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    fireEvent.click(cancel);
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Unpublish site' })));
+  });
+
+  it('offers it again on an offline site that was published and keeps no versions', async () => {
+    fetchMock.mockResolvedValueOnce(json({ status: 'draft', live: null, revisions: [] }));
+    render(
+      <SiteAddressProvider initial={{ host: 'abc.sites.lumitra.co', everPublished: true }}>
+        <PublishedVersionsButton />
+      </SiteAddressProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Published versions' }));
+
+    await screen.findByText(/not online and no published versions/);
+    expect(screen.getByRole('button', { name: 'Still visible to visitors? Unpublish again' })).toBeTruthy();
+  });
+
+  it('can be asked again on an offline site, and on a live one that keeps no versions', async () => {
+    fetchMock.mockResolvedValueOnce(json(OFFLINE));
+    openDialog();
+    await screen.findByRole('button', { name: 'Still visible to visitors? Unpublish again' });
+    cleanup();
+
+    fetchMock.mockResolvedValueOnce(json({ status: 'published', live: null, revisions: [] }));
+    openDialog();
+    await screen.findByRole('button', { name: 'Unpublish site' });
+  });
+
+  it('keeps the unpublish retry when reloading the list fails too', async () => {
+    fetchMock.mockResolvedValueOnce(json(LIST));
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    openDialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpublish site' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Take offline' }));
+
+    await screen.findByRole('button', { name: 'Try unpublishing again' });
+    expect(screen.getByText(/not known whether the site went offline/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Try again/ })).toBeTruthy();
   });
 });
