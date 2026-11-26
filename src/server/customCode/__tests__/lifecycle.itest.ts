@@ -106,8 +106,9 @@ beforeEach(async () => {
   await prisma.siteBranch.deleteMany({ where: { siteId: SITE_ID } });
   await prisma.customCodeAudit.deleteMany({ where: { siteId: SITE_ID } });
   await prisma.customCodeBlob.deleteMany({ where: { siteId: { in: [SITE_ID, PLAIN_SITE_ID] } } });
-  await prisma.siteRevision.deleteMany({ where: { siteId: SITE_ID } });
+  // The site's pointer first: it holds the live revision by a foreign key.
   await prisma.site.updateMany({ where: { id: SITE_ID }, data: { publishedRevisionId: null, status: 'draft' } });
+  await prisma.siteRevision.deleteMany({ where: { siteId: SITE_ID } });
   await repo.saveProject(SCOPE, project(SITE_ID, []));
   await repo.saveProject(SCOPE, project(BRANCH_ID, []));
 });
