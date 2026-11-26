@@ -215,11 +215,22 @@ describe.each([
     await page.keyboard.type(' tock');
     expect(await field.textContent()).toBe('tick');
 
+    // Every text the field shows from here on. A poll reads it at one moment only, so a field that
+    // goes empty for a few milliseconds as the save lands would pass or fail by chance. This section
+    // is not the one that pressed Save, so it has the code from the save's record or not at all.
+    await page.evaluate(() => {
+      const shown: string[] = ((window as unknown as { __shown: string[] }).__shown = []);
+      new MutationObserver(() => {
+        const text = document.querySelector('[data-testid="custom-code-section"] .cm-content')?.textContent;
+        if (typeof text === 'string' && shown.at(-1) !== text) shown.push(text);
+      }).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    });
     release();
     await expect.poll(() => customCodeOf(page, id), { timeout: 15_000 }).not.toBeNull();
     await expect.poll(() => section.locator('[data-custom-code-notice]').textContent()).toBe('Code saved. Publish the page to put it live.');
     await expect.poll(() => field.getAttribute('aria-readonly')).toBeNull();
     expect(await field.textContent()).toBe('tick');
+    expect(await page.evaluate(() => (window as unknown as { __shown: string[] }).__shown.filter((text) => text !== 'tick'))).toEqual([]);
     expect(await page.locator('[data-custom-code-announcement]').textContent()).toBe('Code saved. Publish the page to put it live.');
     expect(server.posts).toHaveLength(1);
     expect((page as unknown as { __crashes: string[] }).__crashes).toEqual([]);
