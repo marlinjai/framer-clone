@@ -8,7 +8,8 @@
 // the generator the layer uses (its own source, from particleRingCore), and the clock is stopped:
 // performance.now and the time every animation frame is given are both 0, so each frame it draws, whichever
 // observer asks for it, is the frame at its starting time (7 seconds). Reduced motion is asked for on both
-// sides, as in F4's oracle.
+// sides, as in F4's oracle. The component leans toward the pointer even then (this app's still does not), so
+// pointer events are stopped before they reach it, and counted.
 //
 // THIS APP'S SIDE is the real thing: a stored page published through the real repository, served by the real
 // route of a real production build, drawn by FxIsland.
@@ -52,6 +53,17 @@ const changedReference = (source: string): string => {
   if (!source.includes(CHANGED_STOP)) throw new Error('the component no longer has the stop this test changes');
   return source.replace(CHANGED_STOP, '[0.3, [255, 0, 0]]');
 };
+
+/**
+ * Holds every pointer event back from the component (a listener on the window, capturing, runs before the
+ * element's own) and counts them. One pointer position at the box's top left corner gives the other pictures
+ * the comparisons failed with in CI.
+ */
+const NO_POINTER =
+  "window.ringPointerEvents = 0; for (const type of ['pointermove', 'pointerleave']) addEventListener(type, (event) => { window.ringPointerEvents += 1; event.stopImmediatePropagation(); }, true);";
+/** A pointer at the box's top left corner, sent as soon as the component has its listeners and before its first frame. */
+const POINTER_AT_THE_CORNER =
+  "customElements.whenDefined('lumitra-light').then(() => document.querySelector('lumitra-light').dispatchEvent(new PointerEvent('pointermove', { clientX: 0, clientY: 0 })));";
 
 /** Stops the page's clock: performance.now and the time every animation frame is given are 0. */
 const STOP_THE_CLOCK = (): void => {
@@ -223,7 +235,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
   };
 
   /** The ring as the component draws it, seeded and with the clock stopped, on a blank page. */
-  const reference = async (size: Size, script = source, glow?: number): Promise<PNG> => {
+  const reference = async (size: Size, script = source, glow?: number, { pointed = false } = {}): Promise<PNG> => {
     const page = await newPage(size);
     const problems: string[] = [];
     page.on('pageerror', (error) => problems.push(error.message));
@@ -236,6 +248,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       // Seeded just before the component loads, so nothing else draws from the generator first.
       // Counted, so a picture that differs can be told from one whose generator something else drew from too.
       `<script>{ const next = (${mulberry32.toString()})(${SEED}); window.ringDraws = 0; Math.random = () => { window.ringDraws += 1; return next(); }; }</script>` +
+      `<script>${NO_POINTER}${pointed ? POINTER_AT_THE_CORNER : ''}</script>` +
       '<script type="module" src="/lumitra-light.js"></script>';
     await page.route(`${REFERENCE_ORIGIN}/**`, (route) =>
       new URL(route.request().url()).pathname === '/lumitra-light.js'
@@ -243,9 +256,15 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
         : route.fulfill({ contentType: 'text/html', body: html }),
     );
     await page.goto(`${REFERENCE_ORIGIN}/`);
-    const variant = `${size.name}${glow === undefined ? '' : `, glow ${glow}`}${script === source ? '' : ', a changed stop'}`;
+    const variant = `${size.name}${glow === undefined ? '' : `, glow ${glow}`}${script === source ? '' : ', a changed stop'}${pointed ? ', a pointer' : ''}`;
     const shot = await settled(page, 'lumitra-light canvas', size, `${name}, the component, ${variant}`);
-    console.info(`ring oracle draws (${name}, the component, ${variant}): ${await page.evaluate(() => (window as unknown as { ringDraws: number }).ringDraws)} from the seeded generator`);
+    const seen = await page.evaluate(() => {
+      const counted = window as unknown as { ringDraws: number; ringPointerEvents: number };
+      return { draws: counted.ringDraws, pointerEvents: counted.ringPointerEvents };
+    });
+    console.info(`ring oracle draws (${name}, the component, ${variant}): ${seen.draws} from the seeded generator, ${seen.pointerEvents} pointer events held back`);
+    // The case that sends a pointer proves nothing unless the pointer arrived.
+    if (pointed && seen.pointerEvents === 0) throw new Error('the pointer sent to the reference never arrived');
     if (problems.length > 0) throw new Error(`the reference page threw: ${problems.join('; ')}`);
     return shot;
   };
@@ -285,6 +304,14 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       expect(result.differing, whereTheyDiffer(ours, theirs)).toBe(0);
     }, 120_000);
   });
+
+  it('a pointer over the reference does not change its picture', async () => {
+    const size = SIZES.find((s) => s.name === 'tall')!;
+    const plain = await reference(size);
+    const pointed = await reference(size, source, undefined, { pointed: true });
+    // Both pictures are the component's here: the message's "this app" is the one without the pointer.
+    expect(difference(plain, pointed).differing, whereTheyDiffer(plain, pointed)).toBe(0);
+  }, 120_000);
 
   describe.each(WHOLE_GLOWS.map((glow) => [glow] as const))('glow %s, a whole number', (glow) => {
     it('this app draws the same picture as the component with that glow', async () => {
