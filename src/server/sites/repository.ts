@@ -315,6 +315,11 @@ interface CustomCodeEraseSource {
   location: EraseLocation;
   /** `{ code, title }`, the text the erase searches. */
   document: { code: string; title: string };
+  /**
+   * For a block: deletes its old row, before any block's new row is written, so blocks whose rewritten code meets
+   * another's old code or another's new code each end up with exactly one row under that hash.
+   */
+  removeOld?: (tx: Prisma.TransactionClient) => Promise<void>;
   /** Writes the rewritten document; for a block, under the hash `renamed` maps its old one to. */
   write: (tx: Prisma.TransactionClient, rewritten: { code: string; title: string }, renamed: ReadonlyMap<string, string>, erasedBy: string, scope: TenantScope) => Promise<void>;
   /** For a block: the hash its rewritten code and declaration give, or why the code cannot be rewritten. */
@@ -1596,6 +1601,7 @@ export class SiteRepository {
       // The code itself (D9): each block whose code changed is written under its new hash and its old row goes;
       // a proposal is rewritten in place. After the copies, which already name the new hashes.
       const rewrittenCode: string[] = [];
+      for (const { source, rewrite } of codeRewrites) if (rewrite.erased.length > 0) await source.removeOld?.(tx);
       for (const { source, found: inCode, rewrite, left } of codeRewrites) {
         found.push(...inCode);
         remaining += left;
@@ -1812,6 +1818,7 @@ export class SiteRepository {
       const row = await tx.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId, sha256 } } });
       if (!row) continue; // pruned by a write that committed after the list was read: not part of this snapshot
       const parsed = parseDeclaration(row.declaration);
+      let listed = false;
       yield {
         location: { kind: 'custom-code', sha256, title: row.title },
         document: { code: row.document, title: row.title },
@@ -1823,15 +1830,20 @@ export class SiteRepository {
           }
           return customCodeHash(rewritten.code, parsed.declaration);
         },
+        removeOld: async (client) => {
+          listed = (await client.customCodeBlockedHash.findUnique({ where: { sha256 }, select: { sha256: true } })) !== null;
+          await client.customCodeBlob.delete({ where: { siteId_sha256: { siteId, sha256 } } });
+        },
         write: async (client, rewritten, renamed, erasedBy, writeScope) => {
           const to = renamed.get(sha256) ?? sha256;
-          const listed = (await client.customCodeBlockedHash.findUnique({ where: { sha256 }, select: { sha256: true } })) !== null;
           const takenDown = row.blockedAt !== null || listed;
-          await client.customCodeBlob.delete({ where: { siteId_sha256: { siteId, sha256 } } });
-          const existing = to === sha256 ? null : await client.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId, sha256: to } }, select: { blockedAt: true } });
+          // A row under the new hash that is still there after every rewritten block's old row went: code no block
+          // of this erase held before, or a block of this erase that met the same code first. It is kept, and
+          // blocked when this one was taken down, so an erase never brings taken-down code back to life.
+          const existing = await client.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId, sha256: to } }, select: { blockedAt: true } });
           if (existing) {
             if (takenDown && existing.blockedAt === null) {
-              await client.customCodeBlob.update({ where: { siteId_sha256: { siteId, sha256: to } }, data: { blockedAt: new Date() } });
+              await client.customCodeBlob.update({ where: { siteId_sha256: { siteId, sha256: to } }, data: { blockedAt: row.blockedAt ?? new Date() } });
             }
           } else {
             await client.customCodeBlob.create({
