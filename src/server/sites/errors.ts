@@ -122,6 +122,28 @@ export class SiteImageMissingError extends SiteRepositoryError {
 }
 
 /**
+ * A save or publish would name new custom code that takes the site past its budget (plan
+ * docs/plans/2026-11-02-sandboxed-custom-code.md, D107 and D114). Only a write that ADDS named code
+ * is refused this way: one that removes a block, or names nothing new, always saves. Nothing was
+ * written. 400, so the editor's autosave tries again after the next change, which may be the
+ * removal the sentence asks for.
+ */
+export class CustomCodeBudgetError extends SiteRepositoryError {
+  readonly usedBytes: number;
+  readonly limitBytes: number;
+
+  constructor(usedBytes: number, limitBytes: number, sizeInWords: (bytes: number) => string) {
+    super(
+      'custom_code_budget',
+      `The custom code blocks on this site would hold ${sizeInWords(usedBytes)} of code with this change, and a site holds at most ${sizeInWords(limitBytes)}. Remove a custom code block, or make one smaller in its panel; the page then saves again.`,
+      400,
+    );
+    this.usedBytes = usedBytes;
+    this.limitBytes = limitBytes;
+  }
+}
+
+/**
  * A rename lost a race: the caller named the project it expected to rename
  * (`expectedName`), and the stored name is different, because someone renamed
  * it in the meantime. Nothing was written. Carries the current name so the

@@ -48,10 +48,23 @@ import {
   ErasePreviewStaleError,
   NothingToEraseError,
   SiteImageMissingError,
+  CustomCodeBudgetError,
   BranchCannotPublishError,
   SiteIsBranchError,
 } from './errors';
 import { closedBranchError } from './branches/closed';
+import {
+  SITE_CODE_BUDGET_BYTES,
+  allNamed,
+  bytesOfBlobs,
+  namedHashes,
+  namedOutside,
+  pruneUnnamedBlobs,
+  siteHoldsBlobs,
+  workingCopyHashes,
+  type NamedHashes,
+} from '@/server/customCode/named';
+import { sizeInWords } from '@/lib/customCode/authoring';
 import { isDatabaseConflict } from './dbConflict';
 import { validateBranchName } from '@/lib/sites/branches';
 import { clearExpiredKeptCopies, forgetBranchContent, freeOpenName } from './branches/repository';
@@ -146,6 +159,17 @@ function carriesSiteImagePath(persisted: PersistedSite): boolean {
     SITE_IMAGE_PATH.test(JSON.stringify(persisted.siteSettings)) ||
     (persisted.components != null && SITE_IMAGE_PATH.test(JSON.stringify(persisted.components))) ||
     persisted.pages.some((p) => SITE_IMAGE_PATH.test(JSON.stringify(p.snapshot)))
+  );
+}
+
+/** A custom code block's hash in any text: a save carrying one may bring code to life (D114). */
+const CUSTOM_CODE_HASH = /"sha256":"[0-9a-f]{64}"/;
+
+/** Whether the working copy a save carries names a custom code hash: on a page or in a component definition. */
+function carriesCustomCodeHash(persisted: PersistedSite): boolean {
+  return (
+    (persisted.components != null && CUSTOM_CODE_HASH.test(JSON.stringify(persisted.components))) ||
+    persisted.pages.some((p) => CUSTOM_CODE_HASH.test(JSON.stringify(p.snapshot)))
   );
 }
 
@@ -637,8 +661,8 @@ export class SiteRepository {
     const write = await withSerializationRetry(() => this.prisma.$transaction(
       async (tx) => {
         if (options.signal?.aborted) throw new SaveAbortedError();
-        await this.lockSiteForSave(tx, scope, persisted);
-        const written = await this.writeWorkingCopy(tx, scope, persisted, options);
+        const mainId = await this.lockSiteForSave(tx, scope, persisted);
+        const written = await this.aroundCustomCode(tx, persisted.siteId, mainId, 'save', () => this.writeWorkingCopy(tx, scope, persisted, options));
         // Thrown inside the transaction, so an abort that came while it waited rolls the write back.
         if (options.signal?.aborted) throw new SaveAbortedError();
         return written;
@@ -657,6 +681,61 @@ export class SiteRepository {
   }
 
   /**
+   * Custom code around a working-copy write of `siteId` (a save, or a publish's write), in its transaction (plan
+   * docs/plans/2026-11-02-sandboxed-custom-code.md, D113 and D114). Every write that can be refused or prune holds the
+   * main site's row: a main save or publish FOR UPDATE, a branch save that names code FOR NO KEY UPDATE
+   * (lockSiteForSave), and the guarded write FOR NO KEY UPDATE, all conflicting, so their reads of the site's code
+   * never interleave and the budget is a hard limit, not a per-transaction one. A branch save that names no code
+   * holds only its own row; it can only remove names, so it is never refused and prunes nothing.
+   *
+   *  - A site whose main site stores no blob pays one indexed read and nothing else: it names no live code, so it
+   *    can never be over budget, and there is nothing to prune.
+   *  - Otherwise the hashes the site's own working copy names are read before and after the write. When they did
+   *    not change (every save that edits text, styles or layout), nothing more happens.
+   *  - When the write names a hash that nothing else named, the code that brings to life is counted with all the
+   *    site's live code, and a total over the budget refuses the write (CustomCodeBudgetError, the transaction rolls
+   *    back). A write that only removes blocks, or names code something else already keeps, is never refused.
+   *  - When the names changed on the main site, its unnamed blobs older than a week are pruned (D4). A branch's save
+   *    prunes nothing: the blobs are its main site's, whose next save, publish or code write prunes them.
+   *
+   * `mainId` is the site's main site as the caller's lock read it (the site itself for a main site), or null for a
+   * site being created, which stores no blob yet (blobs are keyed by an existing site's id). `kind` is for the
+   * reasons only; the publish prunes once more after freezing its revision.
+   */
+  private async aroundCustomCode(
+    tx: Prisma.TransactionClient,
+    siteId: string,
+    mainId: string | null,
+    kind: 'save' | 'publish',
+    write: () => Promise<WorkingCopyWrite>,
+  ): Promise<WorkingCopyWrite> {
+    if (mainId === null) return write();
+    if (!(await siteHoldsBlobs(tx, mainId))) return write();
+    const before = await workingCopyHashes(tx, siteId);
+    const written = await write();
+    if (!written.wrote) return written;
+    const after = await workingCopyHashes(tx, siteId);
+    const added = [...after.keys()].filter((sha256) => !before.has(sha256));
+    const removed = [...before.keys()].some((sha256) => !after.has(sha256));
+    if (added.length === 0 && !removed) return written;
+    let named: NamedHashes | undefined;
+    if (added.length > 0) {
+      named = await namedHashes(tx, mainId);
+      const outside = namedOutside(named, siteId, mainId);
+      const broughtToLife = new Set(added.filter((sha256) => !outside.has(sha256)));
+      if ((await bytesOfBlobs(tx, mainId, broughtToLife)) > 0) {
+        const total = await bytesOfBlobs(tx, mainId, allNamed(named));
+        if (total > SITE_CODE_BUDGET_BYTES) {
+          console.info(`[custom code] site ${siteId}: a ${kind} was refused, it would name ${total} bytes of code`);
+          throw new CustomCodeBudgetError(total, SITE_CODE_BUDGET_BYTES, sizeInWords);
+        }
+      }
+    }
+    if (siteId === mainId) await pruneUnnamedBlobs(tx, mainId, new Date(), named);
+    return written;
+  }
+
+  /**
    * The locks a save takes before it reads anything, in this order:
    *
    *  1. A transaction advisory lock on the site id, so two creators of one id queue even though there is no row
@@ -668,19 +747,32 @@ export class SiteRepository {
    *     the delete then sees this branch's pages, or this save then finds the image gone. Shared, so branch saves
    *     do not wait for one another here. Main is always taken before the branch, the order of the branch merge
    *     (lockPair) and of an erase of personal data, so no two writers wait for each other in a circle.
+   *     A branch whose document names a custom code hash takes main's row FOR NO KEY UPDATE instead (D113, D114):
+   *     its budget reads main's blobs and every copy naming them, so it must not interleave with a guarded write
+   *     (FOR NO KEY UPDATE), a main save or publish (FOR UPDATE), or another branch save naming code. That lock also
+   *     conflicts with an image delete's FOR UPDATE, so it covers what FOR SHARE was taken for. A branch save naming
+   *     no code can only remove names, is never refused and never prunes, so it keeps the shared lock.
    *  3. The site's own row FOR UPDATE, as publish takes it: every other writer of this site's row waits.
    *
-   * A site in another workspace matches no row here; writeWorkingCopy refuses it as before.
+   * A site in another workspace matches no row here; writeWorkingCopy refuses it as before. Returns the site's main
+   * site as that last lock read it (the site itself for a main site), or null when there is no such row yet.
    */
-  private async lockSiteForSave(tx: Prisma.TransactionClient, scope: TenantScope, persisted: PersistedSite): Promise<void> {
+  private async lockSiteForSave(tx: Prisma.TransactionClient, scope: TenantScope, persisted: PersistedSite): Promise<string | null> {
     const siteId = persisted.siteId;
     await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_save:${siteId}`}))`;
-    if (carriesSiteImagePath(persisted)) {
+    const namesCode = carriesCustomCodeHash(persisted);
+    if (namesCode || carriesSiteImagePath(persisted)) {
       const own = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`SELECT branch_of_site_id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId}`;
       const mainId = own[0]?.branch_of_site_id;
-      if (mainId) await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
+      if (mainId && namesCode) {
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR NO KEY UPDATE`;
+      } else if (mainId) {
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
+      }
     }
-    await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
+    const locked = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`SELECT branch_of_site_id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
+    // Read under the lock, so it is the site's main site for the whole transaction (a branch is never re-parented).
+    return locked.length === 0 ? null : (locked[0].branch_of_site_id ?? siteId);
   }
 
   /**
@@ -1152,13 +1244,14 @@ export class SiteRepository {
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
       // Only main is ever published (the database's CHECK would refuse it too, after the write).
       await this.refuseBranch(tx, scope, siteId);
-      const write = await this.writeWorkingCopy(tx, scope, persisted, {
+      // Main only (refused above), and it exists (the write below must find it), so it is its own main site.
+      const write = await this.aroundCustomCode(tx, siteId, siteId, 'publish', () => this.writeWorkingCopy(tx, scope, persisted, {
         mustExist: true,
         companyId: options.companyId,
         expectedVersion: options.expectedVersion,
         // A save of this tab whose answer was lost may be the latest write: publish on top of it.
         ...(options.previousRequestKeys ? { previousRequestKeys: options.previousRequestKeys } : {}),
-      });
+      }));
       const revision = await this.freezeRevision(tx, scope, siteId, {
         kind: 'publish',
         publishedBy: options.publishedBy ?? null,
@@ -1171,6 +1264,8 @@ export class SiteRepository {
       await tx.siteRevision.deleteMany({
         where: { siteId, number: { lte: revision.number - REVISIONS_KEPT } },
       });
+      // D4 and D113: in the transaction that prunes revisions, the blobs nothing names any more, once a week old.
+      if (await siteHoldsBlobs(tx, siteId)) await pruneUnnamedBlobs(tx, siteId, new Date());
       return { revision: revision.number, write };
     }, PROJECT_WRITE_TRANSACTION));
     announceWrite(siteId, published.write, { ...options.event, origin: 'publish' }, persisted);

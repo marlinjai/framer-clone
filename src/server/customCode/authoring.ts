@@ -12,7 +12,9 @@ import 'server-only';
 //   3. the node is looked up in the STORED working copy of the page the request names, and its
 //      declaration checked against the states in reach of it there (D108);
 //   4. the same code already stored for the site is answered as it is, nothing written (D105);
-//   5. the site's writes of the last hour (D106) and its live code (D107) are counted;
+//   5. the site's writes of the last hour (D106) and its live code (D107) are counted, and its blobs
+//      that nothing names and are older than 7 days are pruned (D4, D113), with the same reading of
+//      what is named (src/server/customCode/named.ts);
 //   6. the blob and its `blob-write` audit line are written.
 // Every refusal comes back as a CustomCodeRefusal with its reason; nothing is swallowed, and an
 // unexpected database error is thrown to the route, which answers 500.
@@ -21,15 +23,8 @@ import 'server-only';
 
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '@/server/db';
-import {
-  BOX_LIMITS,
-  BOX_SHA256_PATTERN,
-  canonicalDeclarationJson,
-  customCodeHash,
-  parseDeclaration,
-  utf8ByteLength,
-  type CustomCodeDeclaration,
-} from '@/lib/customCode/contract';
+import { BOX_LIMITS, BOX_SHA256_PATTERN, canonicalDeclarationJson, customCodeHash, parseDeclaration, type CustomCodeDeclaration } from '@/lib/customCode/contract';
+import { allNamed, bytesOfBlobs, liveCustomCodeBytes, namedHashes, pruneUnnamedBlobs } from '@/server/customCode/named';
 import { hasCustomCode, parseCustomCode } from '@/lib/customCode/customCode';
 import { REVISIONS_KEPT } from '@/server/sites/repository';
 import {
@@ -110,53 +105,6 @@ async function storedPageRoots(tx: Tx, siteId: string, pageId: string, component
     }
   }
   return null;
-}
-
-/** The hashes named by the stored working copy (pages and component definitions) and by the kept revisions. */
-async function namedHashes(tx: Tx, siteId: string): Promise<{ workingCopy: Map<string, number>; revisions: Set<string> }> {
-  // `$.**` reaches every depth of the stored JSON; the hash is checked for its shape below, so
-  // anything else stored under a key of that name is ignored.
-  const rows = await tx.$queryRaw<{ origin: string; sha256: unknown }[]>`
-    SELECT 'w' AS origin, pg_catalog.jsonb_path_query(p.snapshot, 'lax $.**.customCode.sha256') #>> '{}' AS sha256
-      FROM public.site_pages p WHERE p.site_id = ${siteId}
-    UNION ALL
-    SELECT 'w', pg_catalog.jsonb_path_query(s.components, 'lax $.**.customCode.sha256') #>> '{}'
-      FROM public.sites s WHERE s.id = ${siteId}
-    UNION ALL
-    SELECT 'r', pg_catalog.jsonb_path_query(r.document, 'lax $.**.customCode.sha256') #>> '{}'
-      FROM public.site_revisions r WHERE r.site_id = ${siteId}`;
-  // The working copy's hashes with how many nodes name each: a hash two blocks name still counts when one is replaced.
-  const workingCopy = new Map<string, number>();
-  const revisions = new Set<string>();
-  for (const row of rows) {
-    if (typeof row.sha256 !== 'string' || !BOX_SHA256_PATTERN.test(row.sha256)) continue;
-    if (row.origin === 'r') revisions.add(row.sha256);
-    else workingCopy.set(row.sha256, (workingCopy.get(row.sha256) ?? 0) + 1);
-  }
-  return { workingCopy, revisions };
-}
-
-/** Bytes a stored blob counts against the site budget: its code and its canonical declaration, as at its write. */
-function storedBlobBytes(documentBytes: number, declaration: unknown): number {
-  const parsed = parseDeclaration(declaration);
-  const declarationBytes = parsed.ok ? utf8ByteLength(canonicalDeclarationJson(parsed.declaration)) : utf8ByteLength(JSON.stringify(declaration ?? null));
-  return documentBytes + declarationBytes;
-}
-
-/** What the site's live code comes to (D107): blobs named by the working copy or a kept revision, not blocked. */
-export async function liveCustomCodeBytes(tx: Tx, siteId: string, replaces?: string): Promise<number> {
-  const { workingCopy, revisions } = await namedHashes(tx, siteId);
-  const counted = new Set<string>([...workingCopy.keys(), ...revisions]);
-  // The block being replaced stops counting once the save that names the new hash lands, unless a kept revision or
-  // another node of the working copy still names it. The caller has checked that the node names `replaces`.
-  if (replaces && !revisions.has(replaces) && (workingCopy.get(replaces) ?? 0) <= 1) counted.delete(replaces);
-  if (counted.size === 0) return 0;
-  const hashes = [...counted];
-  const rows = await tx.$queryRaw<{ sha256: string; document_bytes: number; declaration: unknown }[]>`
-    SELECT b.sha256, pg_catalog.octet_length(b.document)::int AS document_bytes, b.declaration
-      FROM public.custom_code_blobs b
-     WHERE b.site_id = ${siteId} AND b.blocked_at IS NULL AND b.sha256 = ANY(${hashes}::text[])`;
-  return rows.reduce((sum, row) => sum + storedBlobBytes(Number(row.document_bytes), row.declaration), 0);
 }
 
 /** "1 minute", "50 minutes": the wait a refusal names, never less than a minute. */
@@ -262,8 +210,17 @@ export async function writeCustomCodeBlob(
         } as const;
       }
 
-      // D107: the site's live code plus this block.
-      const used = await liveCustomCodeBytes(tx, input.siteId, input.replaces);
+      // D4 and D113: what nothing names any more goes first, so a site that writes and never saves cannot pile up
+      // blobs past the week an open tab may need. Then D107: the site's live code plus this block. One reading of
+      // "named" for both (src/server/customCode/named.ts).
+      const named = await namedHashes(tx, input.siteId);
+      await pruneUnnamedBlobs(tx, input.siteId, at, named);
+      const counted = allNamed(named);
+      // The block being replaced stops counting once the save that names the new hash lands, unless a kept revision,
+      // a branch or another node of the working copy still names it. The node names `replaces`, checked above.
+      const replaces = input.replaces;
+      if (replaces && !named.revisions.has(replaces) && !named.branches.has(replaces) && (named.workingCopy.get(replaces) ?? 0) <= 1) counted.delete(replaces);
+      const used = await bytesOfBlobs(tx, input.siteId, counted);
       if (used + code.bytes > BOX_LIMITS.siteBytes) {
         return {
           ok: false,

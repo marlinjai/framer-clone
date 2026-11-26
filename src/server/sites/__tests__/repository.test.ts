@@ -478,7 +478,11 @@ describe('SiteRepository.saveProject concurrency', () => {
     prisma.siteImage.findMany.mockResolvedValue([{ sha256: sha }]);
     const named = { ...(project() as object), siteSettings: { faviconUrl: `/site-images/${sha}.png` } } as never;
     await repo.saveProject(SCOPE, named, { expectedVersion: 1 });
-    expect(seen).toHaveLength(4);
+    // The four locks, then (after every lock) the one read of whether main stores custom code (D114).
+    const blobRead = (q: string | undefined) => expect(q).toMatch(/FROM public\.custom_code_blobs b WHERE b\.site_id = \? LIMIT 1$/);
+    expect(seen).toHaveLength(5);
+    blobRead(seen[4]);
+    expect(prisma.$queryRaw.mock.calls[4].slice(1)).toEqual(['main_1']);
     expect(seen[1]).toMatch(/SELECT branch_of_site_id/);
     expect(seen[2]).toMatch(/FOR SHARE$/);
     expect(prisma.$queryRaw.mock.calls[2].slice(1)).toEqual(['main_1', SCOPE.workspaceId]);
@@ -490,13 +494,15 @@ describe('SiteRepository.saveProject concurrency', () => {
     prisma.$queryRaw.mockClear();
     const inNode = { id: 'site_1', metadata: { title: 'S', description: '', createdAt: 1, updatedAt: 2 }, pages: { home: { id: 'home', slug: '', metadata: { title: 'Home' }, appComponentTree: { id: 'r', type: 'img', props: { src: `/site-images/${sha}.png` } } } } } as never;
     await repo.saveProject(SCOPE, inNode, { expectedVersion: 1 });
-    expect(seen).toHaveLength(4);
+    expect(seen).toHaveLength(5);
+    blobRead(seen[4]);
     expect(seen[2]).toMatch(/FOR SHARE$/);
 
     seen.length = 0;
     prisma.$queryRaw.mockClear();
     await repo.saveProject(SCOPE, project(), { expectedVersion: 1 });
-    expect(seen).toHaveLength(2);
+    expect(seen).toHaveLength(3);
+    blobRead(seen[2]);
     expect(seen.some((q) => /FOR SHARE/.test(q))).toBe(false);
   });
 
