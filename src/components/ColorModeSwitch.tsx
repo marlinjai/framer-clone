@@ -7,7 +7,8 @@
 // site with no choice shows light, so neither gets the switch.
 //
 // Two toggle buttons in a group, each with aria-pressed, so a keyboard reaches both with
-// Tab and presses one with Enter or Space. `tone` matches the bar it sits in.
+// Tab and presses one with Enter or Space. It follows the interface's Light and Dark, in the
+// editor and the preview toolbar alike.
 'use client';
 import React from 'react';
 import { observer } from 'mobx-react-lite';
