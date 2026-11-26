@@ -32,8 +32,9 @@
 //  - drawn into a short-lived WebGL context, copied into the visible canvas and the
 //    context released at once, so the page holds no second context while the engine
 //    starts (one WebGL context per page);
-//  - redrawn, in a fresh short-lived context, when the box changes size before the
-//    live scene is there;
+//  - redrawn, in a fresh short-lived context, when the box changes size or the
+//    device's pixel ratio changes (the window moves to another display, a zoom)
+//    before the live scene is there;
 //  - removed once the live layer is fully opaque over it, as read from that layer on
 //    each frame (no two-sided cross-fade, which would dip in brightness, and no clock,
 //    which the engine's set-up can outlast), at once when the page is put away.
@@ -222,6 +223,31 @@ export function drawRingStill(into: HTMLCanvasElement, spec: RingStillSpec, widt
 }
 
 /**
+ * Call `changed` each time the device's pixel ratio changes, until the returned function is called. A ratio
+ * alone does not resize the box, so a ResizeObserver says nothing of it; a resolution query for the current
+ * ratio stops matching when it changes, and is then asked again for the new one.
+ */
+function watchDeviceRatio(changed: () => void): () => void {
+  if (typeof window.matchMedia !== 'function') return () => {};
+  let query: MediaQueryList | null = null;
+  const stop = () => {
+    query?.removeEventListener?.('change', onChange);
+    query = null;
+  };
+  const arm = () => {
+    query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    query.addEventListener?.('change', onChange);
+  };
+  const onChange = () => {
+    stop();
+    arm();
+    changed();
+  };
+  arm();
+  return stop;
+}
+
+/**
  * Show the ring's first frame in `box` now. Null when it cannot be drawn here (the caller shows the
  * placeholder instead). The box is held (./box.ts) while the still is there.
  */
@@ -243,14 +269,15 @@ export function showFxRingStill(box: HTMLElement, spec: RingStillSpec): FxRingSt
   });
   const release = holdFxBox(box);
   box.insertBefore(canvas, box.firstChild);
-  const ratio = canvasPixelRatio(liveDprRange(spec.dpr, isTouchLikely()), window.devicePixelRatio || 1);
 
   // The live layer is the same box (inset 0 in the box), measured as the engine measures it.
   let drawn = '';
   const draw = (): boolean => {
     const rect = canvas.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return false;
-    const key = `${rect.width}x${rect.height}`;
+    // Read on each draw: the ratio can change while the engine loads, and the live canvas takes the current one.
+    const ratio = canvasPixelRatio(liveDprRange(spec.dpr, isTouchLikely()), window.devicePixelRatio || 1);
+    const key = `${rect.width}x${rect.height}@${ratio}`;
     if (key === drawn) return true;
     if (!drawRingStill(canvas, spec, rect.width, rect.height, ratio)) return false;
     drawn = key;
@@ -266,17 +293,22 @@ export function showFxRingStill(box: HTMLElement, spec: RingStillSpec): FxRingSt
   canvas.style.opacity = '1';
 
   let frame = 0;
-  const resized = typeof ResizeObserver === 'function'
-    ? new ResizeObserver(() => {
-        if (frame) return;
-        frame = window.requestAnimationFrame(() => {
-          frame = 0;
-          // A redraw that fails keeps the last picture, stretched to the box, until the live scene is there.
-          draw();
-        });
-      })
-    : null;
+  const redraw = () => {
+    if (frame) return;
+    frame = window.requestAnimationFrame(() => {
+      frame = 0;
+      // A redraw that fails keeps the last picture, stretched to the box, until the live scene is there.
+      draw();
+    });
+  };
+  const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(redraw) : null;
   resized?.observe(canvas);
+  const unwatchRatio = watchDeviceRatio(redraw);
+  /** No further redraw is asked for. */
+  const unwatch = () => {
+    resized?.disconnect();
+    unwatchRatio();
+  };
 
   /** The live scene is up: no redraw from here on. */
   let settled = false;
@@ -285,7 +317,7 @@ export function showFxRingStill(box: HTMLElement, spec: RingStillSpec): FxRingSt
   const finish = () => {
     if (gone) return;
     gone = true;
-    resized?.disconnect();
+    unwatch();
     if (frame) window.cancelAnimationFrame(frame);
     if (watch) window.cancelAnimationFrame(watch);
     frame = 0;
@@ -305,7 +337,7 @@ export function showFxRingStill(box: HTMLElement, spec: RingStillSpec): FxRingSt
       settled = true;
       // No redraw from here on, not even one already asked for: the live scene's context is up, and a redraw
       // during its fade would open a second one.
-      resized?.disconnect();
+      unwatch();
       if (frame) window.cancelAnimationFrame(frame);
       frame = 0;
       // Gone on the second frame in a row that reads the layer fully opaque: the first may still be on its way

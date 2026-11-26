@@ -310,4 +310,63 @@ describe('drawing the still', () => {
       globalThis.ResizeObserver = original;
     }
   });
+
+  /** The resolution queries asked for, each with the listeners still on it. */
+  const withResolutionQueries = (run: (queries: { media: string; listeners: Set<() => void> }[]) => void) => {
+    const original = window.matchMedia;
+    const queries: { media: string; listeners: Set<() => void> }[] = [];
+    window.matchMedia = ((media: string) => {
+      const listeners = new Set<() => void>();
+      if (media.includes('resolution')) queries.push({ media, listeners });
+      return { matches: false, media, addEventListener: (_: string, l: () => void) => listeners.add(l), removeEventListener: (_: string, l: () => void) => listeners.delete(l) };
+    }) as unknown as typeof window.matchMedia;
+    try {
+      run(queries);
+    } finally {
+      window.matchMedia = original;
+    }
+  };
+  const listening = (queries: { listeners: Set<() => void> }[]) => queries.reduce((sum, q) => sum + q.listeners.size, 0);
+  const change = (query: { listeners: Set<() => void> }) => [...query.listeners].forEach((l) => l());
+
+  it('a change of the device pixel ratio alone draws it again at the new ratio, each time', () => {
+    withResolutionQueries((queries) => {
+      ratio = 1;
+      const box = boxOf(1440, 800);
+      const still = showFxRingStill(box, SPEC)!;
+      const canvas = box.querySelector<HTMLCanvasElement>('[data-fc-fx-ring-still]')!;
+      expect([canvas.width, canvas.height]).toEqual([1440, 800]);
+      ratio = 1.75;
+      change(queries[0]);
+      frames(1);
+      expect([canvas.width, canvas.height]).toEqual([2520, 1400]);
+      expect(fake.uniforms.dpr).toEqual([1.75]);
+      // Asked again for the new ratio, so the way back is heard too.
+      expect(queries.map((q) => q.media)).toEqual(['(resolution: 1dppx)', '(resolution: 1.75dppx)']);
+      expect(listening(queries)).toBe(1);
+      ratio = 1.25;
+      change(queries[1]);
+      frames(1);
+      expect([canvas.width, canvas.height]).toEqual([1800, 1000]);
+      still.remove();
+      expect(listening(queries)).toBe(0);
+    });
+  });
+
+  it('a resize after a ratio change draws at the new ratio; once the live scene is up, no ratio is watched', () => {
+    withResolutionQueries((queries) => {
+      ratio = 1;
+      const box = boxOf(1440, 800);
+      const still = showFxRingStill(box, SPEC)!;
+      ratio = 1.5;
+      change(queries[0]);
+      vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(() => ({ width: 1000, height: 600, top: 0, left: 0, right: 1000, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect);
+      frames(1);
+      const canvas = box.querySelector<HTMLCanvasElement>('[data-fc-fx-ring-still]')!;
+      expect([canvas.width, canvas.height]).toEqual([1500, 900]);
+      still.remove({ under: layerIn(box, '0') });
+      expect(listening(queries)).toBe(0);
+      still.remove();
+    });
+  });
 });

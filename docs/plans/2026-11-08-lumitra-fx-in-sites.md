@@ -1186,7 +1186,8 @@ radius continuously), and storing it touches the site image quota, the in-use sc
    (z-index -2 against -1, inside the box hold), taking no pointer, hidden from assistive technology, faded in over
    150 ms. When the live scene's first frame is drawn, the still stays under the live layer until that layer's 300 ms
    fade is over and only then goes, so the hand-over is never a two-sided cross-fade (which dips in brightness). A box
-   that changes size before the live scene is there gets the still drawn again. When the page is put away it goes at
+   that changes size, or a device pixel ratio that changes (another display, a zoom), before the live scene is there
+   gets the still drawn again, at the ratio current then. When the page is put away it goes at
    once.
 3. **When it is drawn.** Only for a scene that is one visible particle ring on its background (no other visible layer,
    no post pass, no param animation, no scoped target: those change the first frame in ways this short path does not
