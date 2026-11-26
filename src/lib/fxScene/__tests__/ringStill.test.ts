@@ -205,6 +205,22 @@ describe('drawing the still', () => {
     expect(box.style.isolation).toBe('');
   });
 
+  it('two frames in a row: one opaque frame between translucent ones does not take it away', () => {
+    const box = boxOf(1440, 800);
+    const still = showFxRingStill(box, SPEC)!;
+    const layer = layerIn(box, '1');
+    still.remove({ under: layer });
+    frames(1);
+    layer.style.opacity = '0.9';
+    frames(1);
+    layer.style.opacity = '1';
+    frames(1);
+    expect(stillIn(box)).not.toBeNull();
+    frames(1);
+    expect(stillIn(box)).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('a set-up that holds the main thread longer than the fade does not take it away before the fade has run', () => {
     // The engine's first frame came, and its set-up then held the page for longer than the fade: on the first
     // frame after that, the layer's fade has only just begun. A clock started at the first frame had run out.
@@ -230,6 +246,8 @@ describe('drawing the still', () => {
     layer.remove();
     frames(10);
     expect(stillIn(box)).not.toBeNull();
+    // And it stops watching: no frame callback left running for a layer that is gone.
+    expect(vi.getTimerCount()).toBe(0);
     expect(box.style.isolation).toBe('isolate');
     still.remove();
     expect(stillIn(box)).toBeNull();

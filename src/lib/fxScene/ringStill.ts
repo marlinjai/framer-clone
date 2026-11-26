@@ -97,6 +97,7 @@ export interface FxRingStill {
    * thread for longer than the fade, and a timer started at the first frame then ran out before the fade had
    * begun: the still left at the start of the fade and the ring dipped, seen in Chromium on a graphics card,
    * 2026-11-26). Should that layer leave before it is opaque (the engine stopped), the still stays as the picture.
+   * In a hidden tab no frame runs, so the still waits, unseen and costing nothing, until the tab is shown.
    * Otherwise (by default): gone at once, the box given back.
    */
   remove: (options?: { under?: HTMLElement }) => void;

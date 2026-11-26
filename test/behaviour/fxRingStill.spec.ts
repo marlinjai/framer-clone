@@ -220,7 +220,12 @@ describe.each(ENGINES)('in %s', (name, engine) => {
         const hero = document.querySelector('[data-t="hero"]');
         const now = performance.now();
         if (hero?.querySelector('[data-fc-fx-ring-still]')) marks.still ??= now;
-        else if (marks.still !== undefined) marks.stillGone ??= now;
+        else if (marks.still !== undefined && marks.stillGone === undefined) {
+          marks.stillGone = now;
+          // The live layer's opacity at the moment the still leaves: it must already be fully opaque.
+          const layer = hero?.querySelector('[data-fc-fx-layer]');
+          marks.layerAtStillGone = layer ? Number.parseFloat(getComputedStyle(layer).opacity) : -1;
+        }
         if (hero?.getAttribute('data-fc-fx-state') === 'live') marks.live ??= now;
       }).observe(document, { subtree: true, childList: true, attributes: true });
     });
@@ -238,8 +243,10 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     await waitForState('live');
     await expect.poll(() => stills().count(), { timeout: 5000 }).toBe(0);
     const marks = await page.evaluate(() => (window as unknown as { __marks: Record<string, number> }).__marks);
-    // The live layer fades in over 300 ms; the still stays under it all that time.
+    // The live layer fades in over 300 ms; the still stays under it all that time, and leaves only once the layer
+    // reads fully opaque (read from the layer, not timed: the engine's set-up can hold the page longer than the fade).
     expect(marks.stillGone - marks.live).toBeGreaterThanOrEqual(290);
+    expect(marks.layerAtStillGone).toBe(1);
     expect(await page.locator('[data-fc-fx-layer]').evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
     // The box given back: the live layer holds it now, the still's hold is gone with it.
     expect(await page.locator('canvas').count()).toBe(1);
