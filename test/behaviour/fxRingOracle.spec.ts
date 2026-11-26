@@ -17,7 +17,7 @@
 // app's side and one changed colour stop on the reference's side are both far over the tolerance.
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, type Page } from 'playwright';
+import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, type Locator, type Page } from 'playwright';
 import { PNG } from 'pngjs';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -116,6 +116,34 @@ const PAGES: Readonly<Record<string, () => StoredNode>> = Object.fromEntries([
   ...GLOW_STEPS.map((glow) => [slug(SIZES[0], glowVariant(glow)), () => fxPage(ringScene({ glow }), SIZES[0])]),
 ]);
 
+/** A canvas's size in pixels (its backing store, not its box). */
+const backingSize = (canvas: Locator): Promise<number[]> => canvas.evaluate((element) => [(element as HTMLCanvasElement).width, (element as HTMLCanvasElement).height]);
+
+/**
+ * What a failed comparison says besides the count, since the pictures themselves are not kept: the box around the
+ * differing pixels (the whole ring, or a part of it) and each side's summed light (one side dimmer, or only moved).
+ */
+function whereTheyDiffer(ours: PNG, theirs: PNG): string {
+  let left = ours.width, top = ours.height, right = -1, bottom = -1, ourLight = 0, theirLight = 0;
+  for (let i = 0; i < ours.data.length; i += 4) {
+    let delta = 0;
+    for (let c = 0; c < 3; c++) {
+      ourLight += ours.data[i + c];
+      theirLight += theirs.data[i + c];
+      delta = Math.max(delta, Math.abs(ours.data[i + c] - theirs.data[i + c]));
+    }
+    if (delta <= CHANNEL_TOLERANCE) continue;
+    const x = (i / 4) % ours.width;
+    const y = Math.floor(i / 4 / ours.width);
+    left = Math.min(left, x);
+    right = Math.max(right, x);
+    top = Math.min(top, y);
+    bottom = Math.max(bottom, y);
+  }
+  const box = right < 0 ? 'none' : `x ${left} to ${right}, y ${top} to ${bottom} of ${ours.width}x${ours.height}`;
+  return `differing pixels: ${box}; summed light: this app ${ourLight}, the component ${theirLight}`;
+}
+
 /** The canvas at `selector`, once it has the box's size in device pixels and two screenshots apart are the same. */
 async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
   const canvas = page.locator(selector);
@@ -124,7 +152,7 @@ async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
   const want = [Math.floor(size.width * size.dpr), Math.floor(size.height * size.dpr)];
   const deadline = Date.now() + 15_000;
   for (;;) {
-    const got = await canvas.evaluate((element) => [(element as HTMLCanvasElement).width, (element as HTMLCanvasElement).height]);
+    const got = await backingSize(canvas);
     if (got[0] === want[0] && got[1] === want[1]) break;
     if (Date.now() > deadline) throw new Error(`the canvas at ${selector} is ${got[0]}x${got[1]}, not ${want[0]}x${want[1]}`);
     await page.waitForTimeout(100);
@@ -133,7 +161,13 @@ async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
   for (let attempt = 0; attempt < 40; attempt++) {
     await page.waitForTimeout(350);
     const next = PNG.sync.read(await canvas.screenshot({ scale: 'device' }));
-    if (difference(previous, next).differing === 0) return next;
+    if (difference(previous, next).differing === 0) {
+      // A screenshot has the box's size whatever the canvas holds, so a canvas that was resized since the wait
+      // above would be compared scaled: say so here, not as a count of differing pixels.
+      const now = await backingSize(canvas);
+      if (now[0] !== want[0] || now[1] !== want[1]) throw new Error(`the canvas at ${selector} became ${now[0]}x${now[1]} while it was captured, from ${want[0]}x${want[1]}`);
+      return next;
+    }
     previous = next;
   }
   throw new Error(`the canvas at ${selector} never settled`);
@@ -217,7 +251,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       expect(colours(ours)).toBeGreaterThan(50);
       expect(colours(theirs)).toBeGreaterThan(50);
       // Measured: no pixel differs by more than the channel tolerance, so none may (stricter than F4's share).
-      expect(result.differing).toBe(0);
+      expect(result.differing, whereTheyDiffer(ours, theirs)).toBe(0);
     }, 120_000);
 
     it('a post pass after the ring leaves it as it is', async () => {
