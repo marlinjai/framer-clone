@@ -254,7 +254,8 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
 
   // `loaded` follows a new value only in an effect. What was just saved is known in the render that
   // first sees the value, so the field never shows empty in between.
-  const written = saveNow(component.id)?.written;
+  // From the provider's state, not its live record: a render reads the snapshot it was rendered for.
+  const written = authoring.saveOf(component.id)?.written;
   const known = loaded.key === storedKey ? loaded : written?.key === storedKey ? written : null;
   const current: Loaded = known ? known.value : { phase: 'loading' };
   const baseDeclaration = current.phase === 'ready' ? current.declaration : DEFAULT_DECLARATION;
@@ -317,7 +318,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
     const keyAtStart = storedKey;
     const nodeId = component.id;
     const posted: Fields = { title: checked.value.title, document: checked.value.document, declaration: checked.value.declaration, emitsText: fields.emitsText };
-    updateSave(nodeId, { running: true, ownWrite: null, outcome: null });
+    updateSave(nodeId, { running: true, ownWrite: null, written: null, outcome: null });
     announce('Saving the code. The fields are locked until the server answers.');
     // Every end goes through the provider, so a section rebuilt meanwhile says it (review 2 of #459, M1).
     const end = (kind: 'done' | 'refused', message: string) => updateSave(nodeId, { running: false, outcome: { kind, message } });
@@ -388,6 +389,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
       authoring.reload();
     } catch (error) {
       console.error('[custom code] save failed', error instanceof Error ? error.name : error);
+      updateSave(nodeId, { ownWrite: null, written: null });
       end('refused', 'The code could not be saved. Nothing was changed; try again.');
     }
   };
