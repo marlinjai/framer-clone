@@ -411,7 +411,9 @@ describe('review of part 2: every copy, the takedown boundary, and refusals', ()
     const fresh = await customCodeHash('say("[entfernt]")', DECLARATION);
     // The taken-down block first in the walk, then last.
     for (const [down, live] of [[coded[0], coded[1]], [coded[3], coded[2]]]) {
-      await prisma.customCodeBlob.deleteMany({ where: { siteId } });
+      // A fresh site per order: after an erase, a save from before it is refused (the erase epoch).
+      siteId = randomUUID();
+      await repo.saveProject(scope, project([]));
       await blob(down.code, { blockedAt: new Date() });
       await blob(live.code);
       await repo.saveProject(scope, project([down.sha256, live.sha256]), { mustExist: true });
@@ -421,7 +423,7 @@ describe('review of part 2: every copy, the takedown boundary, and refusals', ()
   });
 
   it('refuses code that would grow past 256 KB, and a block whose declaration no longer parses, changing nothing', async () => {
-    const big = await blob(`${'x'.repeat(256 * 1024)}${VALUE}`);
+    const big = await blob(`${'x'.repeat(256 * 1024)} ${VALUE}`);
     await repo.saveProject(scope, project([big]), { mustExist: true });
     await expect(erase()).rejects.toMatchObject({ code: 'custom_code_too_large' });
     expect((await rows()).map((row) => row.sha256)).toEqual([big]);
