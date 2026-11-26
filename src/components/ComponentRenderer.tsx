@@ -32,7 +32,7 @@ import { DraftSections, useDraftHook } from '@/components/ai/PageGenDraftLayer';
 import { SkeletonGroupView, useSkeletonGroups, withSkeletons } from '@/components/live/SkeletonLayer';
 import { REVEAL_ATTR } from '@/lib/live/reveal';
 import { FX_PROP, isFxScene } from '@/lib/fxScene/marker';
-import { FxCanvasLayer } from '@/components/fx/FxLayer';
+import { FxCanvasLayer, FxStillLayer } from '@/components/fx/FxLayer';
 
 interface ComponentRendererProps {
   component: ComponentInstance;
@@ -417,12 +417,18 @@ const NodeRenderer = observer(({ component, breakpointId, allBreakpoints, scope,
     !isEditing &&
     !editorUI.previewOpen &&
     isFxScene(component.props, component.type);
-  const children = drawsFx
-    ? [
-        <FxCanvasLayer key="fx-live" stored={(component.props as Record<string, unknown>)[FX_PROP]} ownPosition={effectiveStyle.position} />,
-        ...contentChildren,
-      ]
-    : contentChildren;
+  // Every frame the box is not drawn live in shows a still frame of its scene, at that frame's own size
+  // (FxStillLayer): the scene is visible in every breakpoint at once, with one live context on the canvas.
+  // In the live frame the still stays under the live scene until that one is drawn, so switching frames
+  // never shows an empty box in between. Same exceptions as the live layer: not while its text is typed,
+  // not under the preview over the editor.
+  const stillFx = !isEditing && !editorUI.previewOpen && isFxScene(component.props, component.type);
+  const storedFx = (component.props as Record<string, unknown>)[FX_PROP];
+  const fxLayers = [
+    ...(stillFx ? [<FxStillLayer key="fx-still" stored={storedFx} ownPosition={effectiveStyle.position} covered={drawsFx && editorUI.fxLiveStatus.state === 'live'} />] : []),
+    ...(drawsFx ? [<FxCanvasLayer key="fx-live" stored={storedFx} ownPosition={effectiveStyle.position} />] : []),
+  ];
+  const children = fxLayers.length > 0 ? [...fxLayers, ...contentChildren] : contentChildren;
 
   if (placement) finalProps[DATA_PLACEMENT_ROOT] = `${frameId}-${component.id}`;
 
