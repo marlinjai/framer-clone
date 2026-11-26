@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-21T02:51:05.722Z",
+  "generatedAt": "2026-11-26T00:53:56.662Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 769,
+  "durationSeconds": 542,
   "matrix": {
     "surfaces": {
       "format": {
@@ -7079,7 +7079,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0.000058487557507319116,
+            "ratio": 0,
             "elementsCompared": 754,
             "elementsDiffering": 0,
             "differences": 0,
@@ -7193,7 +7193,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.000011910280181293779,
             "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
@@ -10825,7 +10825,7 @@
               "viewport": "Desktop",
               "state": "initial",
               "check": "screenshot",
-              "detail": "0.36 percent of pixels differ"
+              "detail": "0.33 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -10843,7 +10843,7 @@
               "viewport": "Desktop",
               "state": "hover",
               "check": "screenshot",
-              "detail": "0.36 percent of pixels differ"
+              "detail": "0.33 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -10867,7 +10867,7 @@
               "viewport": "Desktop",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "0.38 percent of pixels differ"
+              "detail": "0.36 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -10891,7 +10891,7 @@
               "viewport": "Tablet",
               "state": "initial",
               "check": "screenshot",
-              "detail": "0.46 percent of pixels differ"
+              "detail": "0.43 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10909,7 +10909,7 @@
               "viewport": "Tablet",
               "state": "hover",
               "check": "screenshot",
-              "detail": "0.46 percent of pixels differ"
+              "detail": "0.43 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10933,7 +10933,7 @@
               "viewport": "Tablet",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "0.49 percent of pixels differ"
+              "detail": "0.46 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -10957,7 +10957,7 @@
               "viewport": "Mobile",
               "state": "initial",
               "check": "screenshot",
-              "detail": "1.46 percent of pixels differ"
+              "detail": "1.36 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -10975,7 +10975,7 @@
               "viewport": "Mobile",
               "state": "hover",
               "check": "screenshot",
-              "detail": "1.46 percent of pixels differ"
+              "detail": "1.36 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -10999,7 +10999,7 @@
               "viewport": "Mobile",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "1.54 percent of pixels differ"
+              "detail": "1.46 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -11082,7 +11082,7 @@
               "viewport": "Desktop",
               "state": "initial",
               "check": "screenshot",
-              "detail": "0.36 percent of pixels differ"
+              "detail": "0.34 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -11100,7 +11100,7 @@
               "viewport": "Desktop",
               "state": "hover",
               "check": "screenshot",
-              "detail": "0.36 percent of pixels differ"
+              "detail": "0.33 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -11124,7 +11124,7 @@
               "viewport": "Desktop",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "0.38 percent of pixels differ"
+              "detail": "0.36 percent of pixels differ"
             },
             {
               "viewport": "Desktop",
@@ -11148,7 +11148,7 @@
               "viewport": "Tablet",
               "state": "initial",
               "check": "screenshot",
-              "detail": "0.47 percent of pixels differ"
+              "detail": "0.44 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -11166,7 +11166,7 @@
               "viewport": "Tablet",
               "state": "hover",
               "check": "screenshot",
-              "detail": "0.47 percent of pixels differ"
+              "detail": "0.43 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -11190,7 +11190,7 @@
               "viewport": "Tablet",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "0.49 percent of pixels differ"
+              "detail": "0.47 percent of pixels differ"
             },
             {
               "viewport": "Tablet",
@@ -11214,7 +11214,7 @@
               "viewport": "Mobile",
               "state": "initial",
               "check": "screenshot",
-              "detail": "1.48 percent of pixels differ"
+              "detail": "1.37 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -11232,7 +11232,7 @@
               "viewport": "Mobile",
               "state": "hover",
               "check": "screenshot",
-              "detail": "1.48 percent of pixels differ"
+              "detail": "1.37 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
@@ -11256,7 +11256,7 @@
               "viewport": "Mobile",
               "state": "keyboard focus",
               "check": "screenshot",
-              "detail": "1.55 percent of pixels differ"
+              "detail": "1.48 percent of pixels differ"
             },
             {
               "viewport": "Mobile",
