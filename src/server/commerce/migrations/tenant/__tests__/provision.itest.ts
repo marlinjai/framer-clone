@@ -72,6 +72,7 @@ const EXPECTED_MIGRATION_IDS = [
   '029_company_erasure',
   '030_books_contact_person',
   '031_checkout_session',
+  '032_form_notification',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -107,6 +108,7 @@ const EXPECTED_TABLES = [
   'document_number_counter',
   'document_template',
   'document_template_version',
+  'form_notification',
   'form_submission',
   'fulfillment_location_default',
   'historical_import_extraction',
@@ -242,7 +244,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   });
 
   // --- tables -------------------------------------------------------------
-  it('creates exactly the 30 commerce, 13 Books and 1 forms tables in the schema', async () => {
+  it('creates exactly the 30 commerce, 13 Books and 2 forms tables in the schema', async () => {
     const rows = await owner!`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = ${SCHEMA} AND table_type = 'BASE TABLE'

@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import FormSubmissionsPanel, { type SubmissionItem } from '../FormSubmissionsPanel';
 
 const BASE = '/api/projects/proj-1/forms/submissions';
@@ -32,11 +32,13 @@ const forms = () => [
   { formId: 'form-b', formName: 'Booking', total: rows.filter((r) => r.formId === 'form-b').length, unread: 0 },
 ];
 let failList = false;
+let resendAnswer: { status: number; code?: string; message?: string } = { status: 200 };
 let calls: { method: string; url: string; body?: unknown }[];
 
 beforeEach(() => {
   rows = [item('s3'), item('s2', { readAt: '2026-10-24T11:00:00.000Z' }), item('s1', { formId: 'form-b', formName: 'Booking' })];
   failList = false;
+  resendAnswer = { status: 200 };
   calls = [];
   vi.stubGlobal(
     'fetch',
@@ -52,6 +54,12 @@ beforeEach(() => {
         if (!form && !cursor) list = list.slice(0, 2);
         else if (!form && cursor) list = rows.slice(2);
         return Response.json({ submissions: list, hasMore: !form && !cursor, nextCursor: !form && !cursor ? 'c1' : null, forms: forms() });
+      }
+      if (method === 'POST' && url.endsWith('/resend')) {
+        if (resendAnswer.status !== 200) {
+          return new Response(JSON.stringify({ error: { code: resendAnswer.code, message: resendAnswer.message } }), { status: resendAnswer.status });
+        }
+        return Response.json({ id: url.split('/').slice(-2)[0], queued: true });
       }
       const id = url.split('/').pop()!;
       if (method === 'PATCH') {
@@ -132,5 +140,147 @@ describe('FormSubmissionsPanel', () => {
     rows = [];
     render(<FormSubmissionsPanel projectId="proj-1" />);
     await screen.findByText(/No submissions yet/);
+  });
+
+  describe('the email to the owner', () => {
+    const failed = { status: 'failed' as const, reason: 'Lumitra Mail refused sending: api_key_revoked (401).', recipient: 'owner@bakery.example' };
+
+    it('says nothing for a submission from before notifications, and "sent" without a resend button', async () => {
+      rows = [item('s3', { notification: { status: 'sent', reason: null, recipient: 'owner@bakery.example' } }), item('s2')];
+      render(<FormSubmissionsPanel projectId="proj-1" />);
+      fireEvent.click(await screen.findByRole('button', { name: /Visitor s3/ }));
+      expect(screen.getByTestId('submission-email-status').textContent).toContain('Email sent to owner@bakery.example');
+      expect(screen.queryByRole('button', { name: /Send email again/ })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /Visitor s2/ }));
+      expect(screen.queryAllByTestId('submission-email-status')).toHaveLength(0);
+    });
+
+    it('a failed one is flagged in the list, shows why, and "Send email again" queues it', async () => {
+      rows = [item('s3', { notification: failed })];
+      render(<FormSubmissionsPanel projectId="proj-1" />);
+      expect(await screen.findByText(/no email sent/)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: /Visitor s3/ }));
+      expect(screen.getByRole('alert').textContent).toContain('api_key_revoked');
+      // Opening marks it read first; the button waits for that to finish.
+      await waitFor(() => expect((screen.getByRole('button', { name: /Send email again/ }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: /Send email again/ }));
+      await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === `${BASE}/s3/resend`)).toBe(true));
+      await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('is being sent'));
+      expect(screen.queryByRole('button', { name: /Send email again/ })).toBeNull();
+    });
+
+    it('after "Send email again" the line follows the server: "being sent" turns into "sent" without a reload', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        rows = [item('s3', { notification: failed })];
+        render(<FormSubmissionsPanel projectId="proj-1" />);
+        fireEvent.click(await screen.findByRole('button', { name: /Visitor s3/ }));
+        await waitFor(() => expect((screen.getByRole('button', { name: /Send email again/ }) as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByRole('button', { name: /Send email again/ }));
+        await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('is being sent'));
+        // The job ran meanwhile.
+        rows = [item('s3', { readAt: 'now', notification: { status: 'sent', reason: null, recipient: 'owner@bakery.example' } })];
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5500);
+        });
+        await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('Email sent'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a pending row beyond the first page of the list is still followed, and the loaded rows stay as they are', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const old = (status: 'pending' | 'sent') =>
+          item('s1', { createdAt: '2026-10-23T10:00:00.000Z', notification: { status, reason: null, recipient: 'owner@bakery.example' } });
+        rows = [item('s3'), item('s2'), old('pending')];
+        render(<FormSubmissionsPanel projectId="proj-1" />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Load older submissions' }));
+        fireEvent.click(await screen.findByRole('button', { name: /Visitor s1/ }));
+        expect(screen.getByTestId('submission-email-status').textContent).toContain('is being sent');
+        rows = [item('s3'), item('s2'), { ...old('sent'), readAt: 'now' }];
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5500);
+        });
+        await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('Email sent'));
+        expect(screen.getAllByRole('listitem')).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a tick reads only as far as the pending rows reach, not every page of loaded rows', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const pending = { status: 'pending' as const, reason: null, recipient: 'owner@bakery.example' };
+        rows = [item('s3', { notification: pending }), item('s2'), item('s1', { createdAt: '2026-10-23T10:00:00.000Z' })];
+        render(<FormSubmissionsPanel projectId="proj-1" />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Load older submissions' }));
+        await screen.findByRole('button', { name: /Visitor s1/ });
+        const before = calls.length;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5500);
+        });
+        const ticks = calls.slice(before).filter((c) => c.method === 'GET');
+        expect(ticks.length).toBeGreaterThan(0);
+        expect(ticks.filter((c) => c.url.includes('cursor='))).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('polling stops after its round, and a reload starts a new one', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        rows = [item('s3', { notification: { status: 'pending', reason: null, recipient: 'owner@bakery.example' } })];
+        render(<FormSubmissionsPanel projectId="proj-1" />);
+        await screen.findByRole('list');
+        const reads = () => calls.filter((c) => c.method === 'GET').length;
+        const wait = async (ticks: number) => {
+          for (let i = 0; i < ticks; i += 1) {
+            await act(async () => {
+              await vi.advanceTimersByTimeAsync(5100);
+            });
+          }
+        };
+        await wait(65);
+        const stopped = reads();
+        await wait(3);
+        expect(reads()).toBe(stopped);
+        fireEvent.click(screen.getByRole('button', { name: /Reload|Refresh/ }));
+        await screen.findByRole('list');
+        const reloaded = reads();
+        await wait(2);
+        expect(reads()).toBeGreaterThan(reloaded);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a resend refused because the email was sent meanwhile shows the true state, not the old line', async () => {
+      resendAnswer = { status: 409, code: 'not_resendable', message: 'this email was already sent or is waiting to be sent' };
+      rows = [item('s3', { notification: failed })];
+      render(<FormSubmissionsPanel projectId="proj-1" />);
+      fireEvent.click(await screen.findByRole('button', { name: /Visitor s3/ }));
+      await waitFor(() => expect((screen.getByRole('button', { name: /Send email again/ }) as HTMLButtonElement).disabled).toBe(false));
+      rows = [item('s3', { readAt: 'now', notification: { status: 'sent', reason: null, recipient: 'owner@bakery.example' } })];
+      fireEvent.click(screen.getByRole('button', { name: /Send email again/ }));
+      await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('Email sent'));
+    });
+
+    it('a resend the server refuses shows its message and keeps the button', async () => {
+      resendAnswer = { status: 409, code: 'mail_not_connected', message: 'connect Lumitra Mail on the payments page first, then send this again' };
+      rows = [item('s3', { notification: { status: 'skipped', reason: 'not_connected', recipient: 'owner@bakery.example' } })];
+      render(<FormSubmissionsPanel projectId="proj-1" />);
+      fireEvent.click(await screen.findByRole('button', { name: /Visitor s3/ }));
+      expect(screen.getByTestId('submission-email-status').textContent).toContain('payments page');
+      await waitFor(() => expect((screen.getByRole('button', { name: /Send email again/ }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: /Send email again/ }));
+      await waitFor(() =>
+        expect(screen.getAllByRole('alert').some((el) => el.textContent?.includes('connect Lumitra Mail on the payments page first'))).toBe(true),
+      );
+      expect(screen.getByRole('button', { name: /Send email again/ })).toBeTruthy();
+    });
   });
 });

@@ -246,10 +246,10 @@ describe('deletion and erasure', () => {
     await insertFormSubmission(appDb, row());
     const otherSite = await createPublishedSite(fx, tgId, 'forms-other-delete');
     await insertFormSubmission(appDb, row({ siteId: otherSite.siteId, workspaceId: otherSite.workspaceId }));
-    expect(await deleteProjectSubmissions(tgId, site.siteId)).toBe(2);
+    expect(await deleteProjectSubmissions(tgId, site.workspaceId, site.siteId)).toEqual({ deleted: 2, pending: false });
     expect(await countInSchema(fx, schema, 'form_submission')).toBe(1);
     // A legacy site without a commerce schema has nothing to delete.
-    expect(await deleteProjectSubmissions('not-a-tenant-group', site.siteId)).toBe(0);
+    expect(await deleteProjectSubmissions('not-a-tenant-group', site.workspaceId, site.siteId)).toEqual({ deleted: 0, pending: false });
   });
 
   // A company erasure's delete of submissions (by workspace and site, other companies' rows kept) is proven

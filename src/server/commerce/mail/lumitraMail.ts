@@ -35,11 +35,11 @@ import {
   DECLARING_APP,
   MAIN_LOCALE,
   MAIL_INPUTS,
-  SHOP_MAIL_KINDS,
+  MAIL_TEMPLATE_KINDS,
   TEMPLATE_LOCALES,
   templateCreate,
   templateName,
-  type ShopMailKind,
+  type MailKind,
   type ShopMailLocale,
 } from './templates';
 
@@ -91,7 +91,7 @@ export interface MailSender {
 export interface Letter {
   /** The shop's own key for this letter (`<tenant>:<order>:<kind>`): repeats send one mail. */
   key: string;
-  kind: ShopMailKind;
+  kind: MailKind;
   locale: ShopMailLocale;
   templateId: string;
   providerId: string;
@@ -106,8 +106,8 @@ export interface LumitraMail {
   ensureLanguages(subject: string, workspace: MailWorkspace): Promise<void>;
   createKey(subject: string, workspaceId: string, attempt: string): Promise<{ id: string; key: string }>;
   revokeKey(subject: string, workspaceId: string, keyId: string): Promise<void>;
-  /** Creates or updates the two templates and declares their inputs; answers their ids. */
-  installTemplates(apiKey: string): Promise<Record<ShopMailKind, string>>;
+  /** Creates or updates the templates and declares their inputs; answers their ids. */
+  installTemplates(apiKey: string): Promise<Record<MailKind, string>>;
   /** Sends one letter: `blocked` when the address is blocked for transactional mail (bounce, complaint, by hand). */
   send(apiKey: string, letter: Letter): Promise<{ mailingId: string; delivery: 'sent' | 'blocked' }>;
 }
@@ -181,7 +181,7 @@ export function lumitraMailOver(
   }
 
   /** One template, found by name and brought to what this repository holds; answers its id. */
-  async function installOne(client: MailClient, kind: ShopMailKind, existing: Map<string, string[]>): Promise<string> {
+  async function installOne(client: MailClient, kind: MailKind, existing: Map<string, string[]>): Promise<string> {
     const wanted = templateCreate(kind);
     const ids = existing.get(templateName(kind)) ?? [];
     if (ids.length > 1) {
@@ -261,8 +261,8 @@ export function lumitraMailOver(
         }
         const existing = new Map<string, string[]>([...archived].map(([name, ids]) => [name, ids.slice(0, 1)]));
         for (const [name, ids] of live) existing.set(name, ids);
-        const ids = {} as Record<ShopMailKind, string>;
-        for (const kind of SHOP_MAIL_KINDS) ids[kind] = await installOne(client, kind, existing);
+        const ids = {} as Record<MailKind, string>;
+        for (const kind of MAIL_TEMPLATE_KINDS) ids[kind] = await installOne(client, kind, existing);
         return ids;
       }),
 
@@ -272,7 +272,7 @@ export function lumitraMailOver(
       try {
         const mailing = await client.mailings.create(
           {
-            name: `Shop: ${letter.kind}`,
+            name: letter.kind === 'form_notification' ? 'Form notification' : `Shop: ${letter.kind}`,
             template_id: letter.templateId,
             provider_id: letter.providerId,
             // No topic and transactional: a letter that answers what its reader did, written from one language.

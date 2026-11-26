@@ -251,7 +251,17 @@ export async function resolvePublishedSiteByKey(
 ): Promise<PublishedSite | null> {
   const siteId = await siteIdForKey(key, prisma);
   if (!siteId) return null;
+  return resolvePublishedSiteById(siteId, prisma);
+}
 
+/**
+ * The published site with this id, as a visitor would be served it. Null when the site is missing or not `published`.
+ * For a caller that already knows the site (the owner's "send the notification again" re-reads the live form).
+ */
+export async function resolvePublishedSiteById(
+  siteId: string,
+  prisma: PrismaClient = getPrismaClient(),
+): Promise<PublishedSite | null> {
   // One snapshot: Prisma runs this as one statement per relation, and a first save
   // committing between them would otherwise yield "no revision, no pages", a site
   // with nothing on it that the cross-request cache then keeps with no expiry.

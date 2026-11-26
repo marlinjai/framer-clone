@@ -906,6 +906,25 @@ export interface CommerceJobTable {
   finished_at: Timestamp | null;
 }
 
+/**
+ * 032_form_notification: the outbox of the email that tells the site owner about a submission, one row per submission (its primary key), deleted with it (ON DELETE CASCADE). `letter` is emptied once settled.
+ */
+export interface FormNotificationTable {
+  submission_id: string;
+  tenant_id: string;
+  company_id: string;
+  recipient: string | null;
+  status: Generated<string>;
+  round: Generated<number>;
+  round_started_at: Generated<Timestamp>;
+  admitted_at: Generated<Date[]>;
+  last_error: string | null;
+  mailing_id: string | null;
+  letter: ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -960,6 +979,7 @@ export interface CommerceDB {
   shop_mail_connection: ShopMailConnectionTable;
   shop_mail: ShopMailTable;
   commerce_job: CommerceJobTable;
+  form_notification: FormNotificationTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

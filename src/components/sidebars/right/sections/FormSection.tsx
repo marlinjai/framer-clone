@@ -93,6 +93,20 @@ const FormSettingsControls = observer(({ component }: { component: ComponentInst
           onChange={(e) => component.setProps({ formName: e.target.value })}
         />
       </PropertyRow>
+      <PropertyRow label="Email me at" hint="Leave empty to use the contact email in Site settings">
+        <TextInput
+          type="email"
+          value={str(props.notifyEmail)}
+          maxLength={254}
+          placeholder="hello@example.com"
+          onChange={(e) => component.setProps({ notifyEmail: e.target.value })}
+        />
+      </PropertyRow>
+      {str(props.notifyEmail).trim() !== '' && settings.notifyEmail === '' && (
+        <p className={HINT} role="alert">
+          This is not an email address like hello@example.com, so the contact email in Site settings is used instead.
+        </p>
+      )}
       <PropertyRow label="On success">
         <PropertySelect
           label=""
@@ -152,7 +166,8 @@ const FormSettingsControls = observer(({ component }: { component: ComponentInst
       )}
       <p className={HINT}>
         Submissions are stored with your company and listed under Form submissions (the inbox button in the top bar).
-        Email notifications are not available yet.
+        When Lumitra Mail is connected on the payments page, each new submission is also emailed to the address above,
+        or to the contact email in Site settings. The address is never shown to visitors.
       </p>
     </>
   );
