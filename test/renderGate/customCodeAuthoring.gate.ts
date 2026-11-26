@@ -35,6 +35,8 @@ beforeAll(async () => {
 
 interface Server {
   saves: Record<string, unknown>[];
+  /** The hashes the editor read back from the blob route. */
+  reads?: string[];
   posts: Record<string, unknown>[];
   refuse: boolean;
   /** While set, the custom code post waits for it. */
@@ -79,6 +81,7 @@ async function open(browser: Browser, server: Server): Promise<Page> {
       const request = route.request();
       if (request.method() === 'GET') {
         const sha256 = new URL(request.url()).searchParams.get('sha256');
+        if (sha256) (server.reads ??= []).push(sha256);
         const blob = sha256 ? blobs.get(sha256) : undefined;
         const json = !sha256 ? STATUS : blob ? { sha256, ...blob, createdAt: '2026-11-23T00:00:00.000Z', blocked: false } : null;
         await route.fulfill(json
@@ -163,6 +166,14 @@ describe.each([
     expect(await customCodeOf(page, id)).toEqual({ sha256, title: 'Clock' });
     await expect.poll(() => page.locator('[data-custom-code-announcement]').textContent()).toBe('Code saved. Publish the page to put it live.');
 
+    // A title-only change (D105) is written on the node, and the panel shows the code it already had: no read back.
+    await section.getByLabel('Title of the custom code block').fill('Clock face');
+    await section.getByRole('button', { name: 'Save code' }).click();
+    await expect.poll(() => customCodeOf(page, id)).toEqual({ sha256, title: 'Clock face' });
+    await expect.poll(() => section.locator('[data-custom-code-notice]').textContent()).toBe('Title saved.');
+    expect(await section.locator('.cm-content').textContent()).toBe('tick');
+    expect(server.reads ?? []).toEqual([]);
+
     // Layers marks the block as one with code.
     await page.getByRole('tab', { name: /Layers/i }).first().click();
     const badge = page.locator(`[data-layer-row="${id}"] [data-layer-custom-code-badge]`).first();
@@ -230,6 +241,8 @@ describe.each([
     await expect.poll(() => section.locator('[data-custom-code-notice]').textContent()).toBe('Code saved. Publish the page to put it live.');
     await expect.poll(() => field.getAttribute('aria-readonly')).toBeNull();
     expect(await field.textContent()).toBe('tick');
+    // It never read the code back: a freshly inserted block has no stored code, so any read is a read back.
+    expect(server.reads ?? [], 'blob reads after its own save').toEqual([]);
     expect(await page.evaluate(() => (window as unknown as { __shown: string[] }).__shown.filter((text) => text !== 'tick'))).toEqual([]);
     expect(await page.locator('[data-custom-code-announcement]').textContent()).toBe('Code saved. Publish the page to put it live.');
     expect(server.posts).toHaveLength(1);
