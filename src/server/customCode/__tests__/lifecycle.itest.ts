@@ -23,6 +23,8 @@ import { writeCustomCodeBlob } from '../authoring';
 import { UNNAMED_BLOB_GRACE_MS } from '../named';
 import { loadLiveCustomCode } from '../liveBlocks';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
+import { SiteBranchRepository } from '@/server/sites/branches/repository';
+import { SiteBranchMergeService } from '@/server/sites/branches/merge';
 
 const SCOPE: TenantScope = {
   workspaceId: `ws_cc_life_${randomUUID().slice(0, 8)}`,
@@ -294,4 +296,82 @@ describe('re-entry: a blocked blob', () => {
     // The blob row is still there (blocked), and the revision still names it: only its block falls back.
     expect(await stored()).toEqual([later, shown].sort());
   });
+});
+
+describe('review of part 1: the edges of pruning and the budget', () => {
+  const big = (label: string) => hashOf(`edge-${label}`);
+
+  it('prunes when a save only removes a block', async () => {
+    const dropped = hashOf('dropped');
+    const kept = hashOf('kept-on-removal');
+    await blob(dropped, { createdAt: OLD() });
+    await blob(kept, { createdAt: OLD() });
+    await repo.saveProject(SCOPE, project(SITE_ID, [dropped, kept]));
+    await repo.saveProject(SCOPE, project(SITE_ID, [kept]));
+    expect(await stored()).toEqual([kept]);
+  });
+
+  it('keeps an unnamed blob a minute short of the week', async () => {
+    const almost = hashOf('almost-a-week');
+    await blob(almost, { createdAt: new Date(Date.now() - UNNAMED_BLOB_GRACE_MS + 60_000) });
+    await repo.saveProject(SCOPE, project(SITE_ID, [hashOf('other-name')]));
+    expect(await stored()).toEqual([almost]);
+  });
+
+  it('does not count a blocked blob against the budget at save', async () => {
+    for (const label of ['a', 'b', 'c']) await blob(big(label), { bytes: 300 * 1024 });
+    await blob(big('d'), { bytes: 300 * 1024, blockedAt: new Date() });
+    // Four blocks of 300 KB, one of them taken down: 900 KB of live code, under the budget.
+    await expect(repo.saveProject(SCOPE, project(SITE_ID, [big('a'), big('b'), big('c'), big('d')]))).resolves.toBeDefined();
+  });
+
+  it('serialises a branch save that names code with the writers of its main site, and not one that names none', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const ready = new Promise<void>((resolve) => (locked = resolve));
+    // What the guarded write holds while it counts the site's code.
+    const hold = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${SITE_ID} FOR NO KEY UPDATE`;
+        locked();
+        await gate;
+      },
+      { timeout: 60_000 },
+    );
+    await ready;
+    // Naming no code: it can only remove names, so it does not wait.
+    await repo.saveProject(SCOPE, project(BRANCH_ID, [], 'no code'));
+    let settled = false;
+    const withCode = repo.saveProject(SCOPE, project(BRANCH_ID, [hashOf('branch-code')])).then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(settled).toBe(false);
+    release();
+    await Promise.all([hold, withCode]);
+    expect(settled).toBe(true);
+  }, 60_000);
+
+  it('merges a branch into main without a budget check: what the branch names is already alive', async () => {
+    const mainId = randomUUID();
+    await repo.saveProject(SCOPE, project(mainId, []));
+    for (const label of ['a', 'b', 'c', 'd']) await blob(big(label), { bytes: 300 * 1024, siteId: mainId });
+    await repo.saveProject(SCOPE, project(mainId, [big('a'), big('b'), big('c')]), { mustExist: true });
+    const actor = { kind: 'user' as const, id: ACTOR };
+    const { branch } = await new SiteBranchRepository(prisma).createBranch(SCOPE, mainId, { name: 'Over', actor });
+    // The branch names all four, past the budget, by a route the save check does not see.
+    await prisma.$executeRaw`UPDATE public.site_pages SET snapshot = jsonb_set(snapshot, '{appComponentTree,children}', ${JSON.stringify(
+      ['a', 'b', 'c', 'd'].map((label, index) => block(`block-${index}`, big(label))),
+    )}::jsonb) WHERE site_id = ${branch.branchId}`;
+    const merges = new SiteBranchMergeService(prisma, repo);
+    const first = await merges.changes(SCOPE, branch.branchId);
+    await merges.approve(SCOPE, branch.branchId, { token: first.token }, actor).catch(() => undefined);
+    const { token } = await merges.changes(SCOPE, branch.branchId);
+    await expect(merges.merge(SCOPE, branch.branchId, { token }, actor)).resolves.toBeDefined();
+    const home = await prisma.sitePage.findFirstOrThrow({ where: { siteId: mainId, pageId: 'home' }, select: { snapshot: true } });
+    expect(JSON.stringify(home.snapshot)).toContain(big('d'));
+    await prisma.siteBranch.deleteMany({ where: { siteId: mainId } });
+    await prisma.site.deleteMany({ where: { OR: [{ id: mainId }, { branchOfSiteId: mainId }] } });
+  }, 60_000);
 });

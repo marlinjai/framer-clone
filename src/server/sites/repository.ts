@@ -162,6 +162,17 @@ function carriesSiteImagePath(persisted: PersistedSite): boolean {
   );
 }
 
+/** A custom code block's hash in any text: a save carrying one may bring code to life (D114). */
+const CUSTOM_CODE_HASH = /"sha256":"[0-9a-f]{64}"/;
+
+/** Whether the working copy a save carries names a custom code hash: on a page or in a component definition. */
+function carriesCustomCodeHash(persisted: PersistedSite): boolean {
+  return (
+    (persisted.components != null && CUSTOM_CODE_HASH.test(JSON.stringify(persisted.components))) ||
+    persisted.pages.some((p) => CUSTOM_CODE_HASH.test(JSON.stringify(p.snapshot)))
+  );
+}
+
 /** The uploaded images a save names: in the settings, as a page's sharing image, in an FX scene on a page or in a component. */
 function namedImagesOf(persisted: PersistedSite): ReturnType<typeof namedSiteImages> {
   return namedSiteImages(persisted.siteSettings, [
@@ -670,8 +681,12 @@ export class SiteRepository {
   }
 
   /**
-   * Custom code around a working-copy write of `siteId` (a save, or a publish's write), in its transaction and under
-   * the site's lock (plan docs/plans/2026-11-02-sandboxed-custom-code.md, D113 and D114):
+   * Custom code around a working-copy write of `siteId` (a save, or a publish's write), in its transaction (plan
+   * docs/plans/2026-11-02-sandboxed-custom-code.md, D113 and D114). Every write that can be refused or prune holds the
+   * main site's row: a main save or publish FOR UPDATE, a branch save that names code FOR NO KEY UPDATE
+   * (lockSiteForSave), and the guarded write FOR NO KEY UPDATE, all conflicting, so their reads of the site's code
+   * never interleave and the budget is a hard limit, not a per-transaction one. A branch save that names no code
+   * holds only its own row; it can only remove names, so it is never refused and prunes nothing.
    *
    *  - A site whose main site stores no blob pays one indexed read and nothing else: it names no live code, so it
    *    can never be over budget, and there is nothing to prune.
@@ -734,6 +749,11 @@ export class SiteRepository {
    *     the delete then sees this branch's pages, or this save then finds the image gone. Shared, so branch saves
    *     do not wait for one another here. Main is always taken before the branch, the order of the branch merge
    *     (lockPair) and of an erase of personal data, so no two writers wait for each other in a circle.
+   *     A branch whose document names a custom code hash takes main's row FOR NO KEY UPDATE instead (D113, D114):
+   *     its budget reads main's blobs and every copy naming them, so it must not interleave with a guarded write
+   *     (FOR NO KEY UPDATE), a main save or publish (FOR UPDATE), or another branch save naming code. That lock also
+   *     conflicts with an image delete's FOR UPDATE, so it covers what FOR SHARE was taken for. A branch save naming
+   *     no code can only remove names, is never refused and never prunes, so it keeps the shared lock.
    *  3. The site's own row FOR UPDATE, as publish takes it: every other writer of this site's row waits.
    *
    * A site in another workspace matches no row here; writeWorkingCopy refuses it as before.
@@ -741,10 +761,15 @@ export class SiteRepository {
   private async lockSiteForSave(tx: Prisma.TransactionClient, scope: TenantScope, persisted: PersistedSite): Promise<void> {
     const siteId = persisted.siteId;
     await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_save:${siteId}`}))`;
-    if (carriesSiteImagePath(persisted)) {
+    const namesCode = carriesCustomCodeHash(persisted);
+    if (namesCode || carriesSiteImagePath(persisted)) {
       const own = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`SELECT branch_of_site_id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId}`;
       const mainId = own[0]?.branch_of_site_id;
-      if (mainId) await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
+      if (mainId && namesCode) {
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR NO KEY UPDATE`;
+      } else if (mainId) {
+        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
+      }
     }
     await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
   }
