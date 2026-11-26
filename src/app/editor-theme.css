@@ -73,7 +73,11 @@
   --selection-ring: var(--ui-selection-ring);
   --home-shadow: var(--ui-shadow);
   --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(88 46 255 / 0.22), rgb(59 132 255 / 0.08) 50%, transparent 80%);
+  /* The canvas around the site frames follows the interface mode (Marlin, 2026-11-25: dark in Dark);
+     the frames themselves show each site's own page. The grid is the text colour at 12 %, so it
+     reads on both grounds. */
   --canvas-ground: var(--ui-sunken);
+  --canvas-grid: color-mix(in oklab, var(--ui-text) 12%, transparent);
 }
 
 /* Light: the editor-only values that are no suite token. Same block twice, once for the
@@ -100,5 +104,20 @@
     --warning-foreground: #ffffff;
     --brand-edge: var(--ui-primary-text);
     --home-glow: radial-gradient(60% 80% at 15% 0%, rgb(82 255 165 / 0.18), rgb(59 132 255 / 0.06) 50%, transparent 80%);
+  }
+}
+
+@layer base {
+  /* A frame's page box on the canvas and in the preview stands for the published page's body, so
+     it takes the same ground and text colour from the site's tokens instead of inheriting the
+     editor's interface colours (which follow Light and Dark). A floating element takes the text
+     colour and never a page background. A theme's surface sheet and the `browser` base are
+     unlayered, so both still win. Editor-only: a published page has no frame, and its sheet
+     carries no rule of the app's. */
+  [data-fc-theme="frame"] {
+    @apply bg-background text-foreground;
+  }
+  [data-fc-theme="floating"] {
+    @apply text-foreground;
   }
 }

@@ -203,6 +203,16 @@ describe('on the mounted surfaces', () => {
     expect(frame.querySelector('style[data-fc-fonts]')?.textContent).toMatch(/Fraunces/);
   });
 
+  it('the preview frame puts a white backing over the site background only on the browser base', () => {
+    const page = project.findPageBySlug('')!;
+    for (const base of ['reset', 'browser'] as const) {
+      const { container, unmount } = render(<PreviewFrame page={page} width={1280} height={800} pageBase={base} />);
+      // A background utility outranks the base layer's `bg-background` on the frame.
+      expect(container.querySelector('[data-preview-frame]')!.classList.contains('bg-white'), base).toBe(base === 'browser');
+      unmount();
+    }
+  });
+
   it('SurfaceThemeStyles writes nothing for no theme', () => {
     expect(render(<SurfaceThemeStyles theme={undefined} base="reset" />).container.innerHTML).toBe('');
   });

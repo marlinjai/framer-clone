@@ -30,3 +30,25 @@ describe('the light blocks', () => {
     }
   });
 });
+
+// The canvas around the site frames follows the interface mode (Marlin, 2026-11-25): its ground,
+// grid and the frame labels use the interface tokens. A frame's own `bg-white` is the page's backing
+// under the site's own background and stays. The full raw-colour check of the editor is slice S3.
+describe('the canvas ground', () => {
+  const RAW = /\b(?:bg|text|ring|border)-(?:gray|neutral|zinc|slate|stone)-\d{2,3}\b|#e5e7eb|#f3f4f6/g;
+  it.each([
+    'components/Canvas.tsx',
+    'components/ResponsivePageRenderer.tsx',
+    'components/live/SkeletonLayer.tsx',
+    'components/ai/PageGenDraftLayer.tsx',
+  ])('%s draws the ground and the frame labels with no fixed light gray', (file) => {
+    const source = fs.readFileSync(path.join(__dirname, '../..', file), 'utf8');
+    expect(source.match(RAW) ?? []).toEqual([]);
+  });
+
+  it('defines the ground and the grid from the interface mode', () => {
+    const theme = read('editor-theme.css');
+    expect(theme).toContain('--canvas-ground: var(--ui-sunken);');
+    expect(theme).toMatch(/--canvas-grid: color-mix\(in oklab, var\(--ui-text\)/);
+  });
+});

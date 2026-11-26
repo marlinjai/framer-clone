@@ -59,7 +59,14 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-:root {
+/* `:root` is the published page. `[data-fc-theme]` is each page box and floating element on the
+   editor's canvas and in its preview (src/lib/site/surfaceTheme.ts): the editor pins its own
+   interface colours on `:root` (editor-theme.css), and a site on the canvas must show these
+   values, the same a visitor gets, in every interface mode. A frame showing dark carries `.dark`
+   on the same element, which comes later and wins. Stored content can never carry the attribute
+   (renderVocabulary), and a published page never does. */
+:root,
+[data-fc-theme] {
   --radius: 0.625rem;
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.141 0.005 285.823);
@@ -106,6 +113,13 @@
   /* Iris focus ring app-wide. */
   --ring: oklch(0.543 0.179 276.7);
   --sidebar-ring: oklch(0.543 0.179 276.7);
+}
+
+/* The editor's root sets its interface colour scheme (Light or Dark), which a frame would inherit
+   into its form controls and scrollbars; a published page has none unless its theme sets one
+   (the site's own surface sheet, written after this, wins). */
+[data-fc-theme] {
+  color-scheme: normal;
 }
 
 .dark {

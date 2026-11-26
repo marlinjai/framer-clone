@@ -161,6 +161,23 @@ describe('one control per kind of setting', () => {
     expect(history.canUndo).toBe(false);
   });
 
+  it("the particle ring's glow moves in hundredths: the slider steps 0.01 and a typed 0.02 is stored and shown as 0.02", () => {
+    const { box } = setup();
+    render(<FxSceneSection component={box} />);
+    const ring = add(box, 'particleRing');
+    const slider = within(settings(ring.name)).getByLabelText('Glow') as HTMLInputElement;
+    expect(slider.type).toBe('range');
+    expect(slider.step).toBe('0.01');
+    fireEvent.change(slider, { target: { value: '0.37' } });
+    expect(valueOf(box, ring.id, 'glow')).toBe(0.37);
+    const typed = within(settings(ring.name)).getByLabelText('Glow, as a number') as HTMLInputElement;
+    fireEvent.change(typed, { target: { value: '0.02' } });
+    fireEvent.keyDown(typed, { key: 'Enter' });
+    expect(valueOf(box, ring.id, 'glow')).toBe(0.02);
+    expect(typed.value).toBe('0.02');
+    expect(slider.value).toBe('0.02');
+  });
+
   it('a slider left mid-drag (the selection moved) still ends its undo step', () => {
     const { box, history } = setup();
     const view = render(<FxSceneSection component={box} />);

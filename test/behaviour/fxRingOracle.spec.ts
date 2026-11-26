@@ -17,7 +17,7 @@
 // app's side and one changed colour stop on the reference's side are both far over the tolerance.
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, type Page } from 'playwright';
+import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, type Locator, type Page } from 'playwright';
 import { PNG } from 'pngjs';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -79,9 +79,10 @@ const SIZES: readonly Size[] = [
 ];
 
 /** The brand preset as it is stored, with changes on its one layer. */
-const ringScene = (change: { seed?: number; withPost?: boolean } = {}): Scene => {
+const ringScene = (change: { seed?: number; withPost?: boolean; glow?: number } = {}): Scene => {
   const scene = serializeScene(PRESETS.find((p) => p.id === 'lumitra-light')!.load()) as unknown as Scene;
   if (change.seed !== undefined) scene.layers[0].params.seed = change.seed;
+  if (change.glow !== undefined) scene.layers[0].params.glow = change.glow;
   // A vignette that changes nothing: the ring is drawn into a post pass's linear buffer and must come out the same.
   if (change.withPost) scene.layers.push({ id: 'neutral-vignette', type: 'vignette', name: 'Vignette', visible: true, blend: 'normal', params: { offset: 0, darkness: 0 } });
   return scene;
@@ -98,13 +99,50 @@ const fxPage = (scene: Scene, size: Size): StoredNode =>
 
 const slug = (size: Size, variant: string): string => `ring-${size.name.replace(/[^a-z0-9]+/g, '-')}-${variant}`;
 
-const PAGES: Readonly<Record<string, () => StoredNode>> = Object.fromEntries(
-  SIZES.flatMap((size) => [
+/** Whole numbers of glow other than the brand's 1, compared with the component as it is (its `glow` attribute). */
+const WHOLE_GLOWS = [0, 2] as const;
+/** Glow between whole numbers (the component has no such picture): the light must rise with the value. */
+const GLOW_STEPS = [0, 0.01, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+/** The light a quarter of glow may add, as a share of the light of a whole step: no dead zone, no jump. */
+const QUARTER_SHARE = { min: 0.08, max: 0.5 } as const;
+const glowVariant = (glow: number): string => `glow-${String(glow).replace('.', '-')}`;
+
+const PAGES: Readonly<Record<string, () => StoredNode>> = Object.fromEntries([
+  ...SIZES.flatMap((size) => [
     [slug(size, 'brand'), () => fxPage(ringScene(), size)],
     [slug(size, 'seed-2'), () => fxPage(ringScene({ seed: 2 }), size)],
     [slug(size, 'post'), () => fxPage(ringScene({ withPost: true }), size)],
   ]),
-);
+  ...GLOW_STEPS.map((glow) => [slug(SIZES[0], glowVariant(glow)), () => fxPage(ringScene({ glow }), SIZES[0])]),
+]);
+
+/** A canvas's size in pixels (its backing store, not its box). */
+const backingSize = (canvas: Locator): Promise<number[]> => canvas.evaluate((element) => [(element as HTMLCanvasElement).width, (element as HTMLCanvasElement).height]);
+
+/**
+ * What a failed comparison says besides the count, since the pictures themselves are not kept: the box around the
+ * differing pixels (the whole ring, or a part of it) and each side's summed light (one side dimmer, or only moved).
+ */
+function whereTheyDiffer(ours: PNG, theirs: PNG): string {
+  let left = ours.width, top = ours.height, right = -1, bottom = -1, ourLight = 0, theirLight = 0;
+  for (let i = 0; i < ours.data.length; i += 4) {
+    let delta = 0;
+    for (let c = 0; c < 3; c++) {
+      ourLight += ours.data[i + c];
+      theirLight += theirs.data[i + c];
+      delta = Math.max(delta, Math.abs(ours.data[i + c] - theirs.data[i + c]));
+    }
+    if (delta <= CHANNEL_TOLERANCE) continue;
+    const x = (i / 4) % ours.width;
+    const y = Math.floor(i / 4 / ours.width);
+    left = Math.min(left, x);
+    right = Math.max(right, x);
+    top = Math.min(top, y);
+    bottom = Math.max(bottom, y);
+  }
+  const box = right < 0 ? 'none' : `x ${left} to ${right}, y ${top} to ${bottom} of ${ours.width}x${ours.height}`;
+  return `differing pixels: ${box}; summed light: this app ${ourLight}, the component ${theirLight}`;
+}
 
 /** The canvas at `selector`, once it has the box's size in device pixels and two screenshots apart are the same. */
 async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
@@ -114,7 +152,7 @@ async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
   const want = [Math.floor(size.width * size.dpr), Math.floor(size.height * size.dpr)];
   const deadline = Date.now() + 15_000;
   for (;;) {
-    const got = await canvas.evaluate((element) => [(element as HTMLCanvasElement).width, (element as HTMLCanvasElement).height]);
+    const got = await backingSize(canvas);
     if (got[0] === want[0] && got[1] === want[1]) break;
     if (Date.now() > deadline) throw new Error(`the canvas at ${selector} is ${got[0]}x${got[1]}, not ${want[0]}x${want[1]}`);
     await page.waitForTimeout(100);
@@ -123,7 +161,13 @@ async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
   for (let attempt = 0; attempt < 40; attempt++) {
     await page.waitForTimeout(350);
     const next = PNG.sync.read(await canvas.screenshot({ scale: 'device' }));
-    if (difference(previous, next).differing === 0) return next;
+    if (difference(previous, next).differing === 0) {
+      // A screenshot has the box's size whatever the canvas holds, so a canvas that was resized since the wait
+      // above would be compared scaled: say so here, not as a count of differing pixels.
+      const now = await backingSize(canvas);
+      if (now[0] !== want[0] || now[1] !== want[1]) throw new Error(`the canvas at ${selector} became ${now[0]}x${now[1]} while it was captured, from ${want[0]}x${want[1]}`);
+      return next;
+    }
     previous = next;
   }
   throw new Error(`the canvas at ${selector} never settled`);
@@ -159,7 +203,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
   };
 
   /** The ring as the component draws it, seeded and with the clock stopped, on a blank page. */
-  const reference = async (size: Size, script = source): Promise<PNG> => {
+  const reference = async (size: Size, script = source, glow?: number): Promise<PNG> => {
     const page = await newPage(size);
     const problems: string[] = [];
     page.on('pageerror', (error) => problems.push(error.message));
@@ -168,7 +212,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       '<style>html,body{margin:0;background:#000}</style>' +
       // The element has the box's background, as the Sites box has: at a fractional size (682.5 pixels) the last
       // column of the screenshot is half canvas and half what is behind it, on both sides alike.
-      `<lumitra-light style="display:block;width:${size.width}px;height:${size.height}px;background:#04090b"></lumitra-light>` +
+      `<lumitra-light${glow === undefined ? '' : ` glow="${glow}"`} style="display:block;width:${size.width}px;height:${size.height}px;background:#04090b"></lumitra-light>` +
       // Seeded just before the component loads, so nothing else draws from the generator first.
       `<script>Math.random = (${mulberry32.toString()})(${SEED});</script>` +
       '<script type="module" src="/lumitra-light.js"></script>';
@@ -207,7 +251,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       expect(colours(ours)).toBeGreaterThan(50);
       expect(colours(theirs)).toBeGreaterThan(50);
       // Measured: no pixel differs by more than the channel tolerance, so none may (stricter than F4's share).
-      expect(result.differing).toBe(0);
+      expect(result.differing, whereTheyDiffer(ours, theirs)).toBe(0);
     }, 120_000);
 
     it('a post pass after the ring leaves it as it is', async () => {
@@ -216,6 +260,46 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       expect(result.differing).toBe(0);
     }, 120_000);
   });
+
+  describe.each(WHOLE_GLOWS.map((glow) => [glow] as const))('glow %s, a whole number', (glow) => {
+    it('this app draws the same picture as the component with that glow', async () => {
+      const size = SIZES[0];
+      const app = await sites(size, glowVariant(glow));
+      const component = await reference(size, source, glow);
+      const result = difference(app, component);
+      console.info(`ring oracle (${name}, glow ${glow}): ${result.differing} pixels differ by more than ${CHANNEL_TOLERANCE}, largest difference in a channel ${result.largest}`);
+      expect(colours(app)).toBeGreaterThan(50);
+      expect(result.differing).toBe(0);
+    }, 120_000);
+  });
+
+  it('between whole numbers the light rises with the glow, a hundredth at a time, and meets the whole numbers', async () => {
+    const size = SIZES[0];
+    const light: number[] = [];
+    for (const glow of GLOW_STEPS) {
+      const shot = await sites(size, glowVariant(glow));
+      // FX_GLOW_SHOTS=<folder>: keep each picture, for a person to compare the steps.
+      if (process.env.FX_GLOW_SHOTS) fs.writeFileSync(path.join(process.env.FX_GLOW_SHOTS, `${name}-glow-${glow}.png`), PNG.sync.write(shot));
+      let sum = 0;
+      for (let i = 0; i < shot.data.length; i += 4) sum += shot.data[i] + shot.data[i + 1] + shot.data[i + 2];
+      light.push(sum);
+    }
+    const line = Object.fromEntries(GLOW_STEPS.map((glow, i) => [glow, light[i]]));
+    if (process.env.FX_GLOW_OUT) fs.appendFileSync(process.env.FX_GLOW_OUT, `${JSON.stringify({ engine: name, light: line })}\n`);
+    // More glow is always more light, already at the first hundredth.
+    for (let i = 1; i < light.length; i++) expect(light[i], `glow ${GLOW_STEPS[i]} against ${GLOW_STEPS[i - 1]}: ${JSON.stringify(line)}`).toBeGreaterThan(light[i - 1]);
+    // And with no dead zone and no jump: every quarter between two whole numbers adds a fair part of the light of
+    // the whole step (measured 2026-11-25 in both engines: 16 to 35 percent from 0 to 1, 18 to 33 percent from 1 to 2; the share
+    // falls as more glow points overlap and the 8-bit sum clips, as on the component's canvas).
+    const at = (glow: number) => light[GLOW_STEPS.indexOf(glow as (typeof GLOW_STEPS)[number])];
+    for (const low of [0, 1]) {
+      for (const quarter of [0, 0.25, 0.5, 0.75]) {
+        const gained = (at(low + quarter + 0.25) - at(low + quarter)) / (at(low + 1) - at(low));
+        expect(gained, `glow ${low + quarter} to ${low + quarter + 0.25}: ${(gained * 100).toFixed(1)} percent of the step`).toBeGreaterThan(QUARTER_SHARE.min);
+        expect(gained, `glow ${low + quarter} to ${low + quarter + 0.25}: ${(gained * 100).toFixed(1)} percent of the step`).toBeLessThan(QUARTER_SHARE.max);
+      }
+    }
+  }, 300_000);
 
   it('each side reproduces itself exactly from a fresh page', async () => {
     const size = SIZES[0];

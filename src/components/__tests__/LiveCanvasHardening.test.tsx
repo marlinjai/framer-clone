@@ -10,8 +10,8 @@ import { createRootStore, type RootStoreType } from '@/stores/RootStore';
 import ProjectModel, { type ProjectModelType, type ProjectSnapshotOut } from '@/models/ProjectModel';
 import { openProject } from '@/stores/openProject';
 import { autosaveFor, resetAutosaveForTests } from '@/lib/projects/autosave';
-import { LIVE_RECONNECT_MS, setLiveSyncDepsForTests, startLiveSync, type LiveEventSource, type LiveSyncDeps } from '@/lib/projects/liveSync';
-import LiveConnectionStatus, { LIVE_BACK_MS, LIVE_PAUSED_GRACE_MS, LIVE_PAUSED_TEXT, LIVE_BACK_TEXT, LIVE_WAITING_TEXT } from '../live/LiveConnectionStatus';
+import { LIVE_FETCH_RETRY_MS, LIVE_RECONNECT_MS, setLiveSyncDepsForTests, startLiveSync, type LiveEventSource, type LiveSyncDeps } from '@/lib/projects/liveSync';
+import LiveConnectionStatus, { LIVE_BACK_MS, LIVE_PAUSED_GRACE_MS, LIVE_PAUSED_TEXT, LIVE_BACK_TEXT, LIVE_UNREADABLE_TEXT, LIVE_WAITING_TEXT } from '../live/LiveConnectionStatus';
 import EditorNotice from '../EditorNotice';
 import SiteChangedDialog from '../SiteChangedDialog';
 
@@ -139,6 +139,36 @@ describe('LiveConnectionStatus (H1)', () => {
   });
 });
 
+describe('LiveConnectionStatus: the server answers the newest version with something that is not one', () => {
+  it('says so until an answer is a document again', async () => {
+    let odd = true;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setLiveSyncDepsForTests({
+      ...deps,
+      fetchDocument: async (url, known) => (odd ? { status: 200, body: '<html>Bad gateway</html>' as never } : deps.fetchDocument(url, known)),
+    });
+    render(<LiveConnectionStatus projectId={site} />);
+    act(() => {
+      startLiveSync(site, store);
+      stream().open();
+    });
+    const region = screen.getByTestId('live-connection-status');
+    server = { ...server, version: 2 };
+    await act(async () => {
+      stream().emit('site:version', { origin: 'mcp', version: 2, versionBefore: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(region.textContent).toContain(LIVE_UNREADABLE_TEXT);
+    expect(region.querySelector('[aria-hidden="true"].md\\:hidden')?.textContent).toBe('Paused');
+    odd = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LIVE_FETCH_RETRY_MS[0]);
+    });
+    expect(region.textContent).toBe('');
+    errors.mockRestore();
+  });
+});
+
 describe('EditorNotice: an agent\'s new page (H2)', () => {
   it('Open it shows the page and puts the notice away', () => {
     const about = project().pagesArray.find((p) => p.metadata.title === 'About')!;
@@ -187,6 +217,45 @@ describe('LiveConnectionStatus: a newer version waiting for the person\'s edit',
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(region.textContent).toBe('');
+  });
+
+  it('comes before "could not be read" when both hold: it says what to do', async () => {
+    let dirty = true;
+    let odd = false;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setLiveSyncDepsForTests({ ...deps, fetchDocument: async (url, known) => (odd ? { status: 200, body: {} as never } : deps.fetchDocument(url, known)) });
+    const { registerOpenDraft } = await import('@/lib/projects/openDrafts');
+    const unregister = registerOpenDraft({ isDirty: () => dirty, commit: () => {} });
+    render(<LiveConnectionStatus projectId={site} />);
+    act(() => {
+      startLiveSync(site, store);
+      stream().open();
+      stream().emit('state', { version: 1, plans: [], agents: [], feed: [] });
+    });
+    const model = ProjectModel.create(server.snapshot) as ProjectModelType;
+    model.updateMetadata({ description: 'agent' });
+    server = { version: 2, snapshot: getSnapshot(model) as ProjectSnapshotOut };
+    await act(async () => {
+      stream().emit('site:version', { origin: 'mcp', version: 2, versionBefore: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // Held for the open edit; then the next announced version comes back unreadable.
+    odd = true;
+    await act(async () => {
+      stream().emit('site:version', { origin: 'mcp', version: 3, versionBefore: 2 });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const region = screen.getByTestId('live-connection-status');
+    expect(region.textContent).toContain(LIVE_WAITING_TEXT);
+    expect(region.textContent).not.toContain(LIVE_UNREADABLE_TEXT);
+    // Once the edit settled and the copy is adopted, the failure that still holds shows.
+    await act(async () => {
+      dirty = false;
+      unregister();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(region.textContent).toContain(LIVE_UNREADABLE_TEXT);
+    errors.mockRestore();
   });
 });
 
