@@ -18,7 +18,7 @@
 // these versions are where an old value lives on, so that is where it is erased.
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { RefreshCw, Undo } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -30,6 +30,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { useStore } from '@/hooks/useStore';
 import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 import { hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
@@ -126,9 +127,10 @@ function ConfirmMakeLive({ confirm, online, onConfirm, onCancel }: {
 }
 
 /**
- * "Unpublish site", with its question. It stays reachable on an offline site:
- * when clearing the caches failed, the site reads as offline while visitors may
- * still see it, and asking again is what clears them.
+ * "Unpublish site", with its question. It stays reachable on an offline site that
+ * has been published: when clearing the caches failed, the site reads as offline
+ * while visitors may still see it, and asking again is what clears them. The
+ * question takes the focus on Cancel, the safe choice, and Cancel gives it back.
  */
 function Unpublish({ online, state, disabled, onAsk, onConfirm, onCancel }: {
   online: boolean;
@@ -138,6 +140,16 @@ function Unpublish({ online, state, disabled, onAsk, onConfirm, onCancel }: {
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const askRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const wasAsking = useRef(false);
+  const asking = state.kind === 'asking';
+  useEffect(() => {
+    if (asking) cancelRef.current?.focus();
+    else if (wasAsking.current) askRef.current?.focus();
+    wasAsking.current = asking;
+  }, [asking]);
+
   if (state.kind === 'asking') {
     return (
       <div role="group" aria-label="Confirm unpublish" className="space-y-2 rounded border border-border p-3">
@@ -148,7 +160,7 @@ function Unpublish({ online, state, disabled, onAsk, onConfirm, onCancel }: {
         </p>
         <div className="flex gap-2">
           <Button type="button" size="sm" variant="destructive" onClick={onConfirm}>Take offline</Button>
-          <Button type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button ref={cancelRef} type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
         </div>
       </div>
     );
@@ -158,6 +170,7 @@ function Unpublish({ online, state, disabled, onAsk, onConfirm, onCancel }: {
     <div className="space-y-2">
       {failed && <p role="alert" className="text-sm text-destructive">{state.message}</p>}
       <Button
+        ref={askRef}
         type="button"
         size="sm"
         variant={online || failed ? 'outline' : 'ghost'}
@@ -188,6 +201,7 @@ function VersionsPanel({ projectId }: { projectId: string }) {
   const [failure, setFailure] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [unpublish, setUnpublish] = useState<UnpublishState>({ kind: 'idle' });
+  const { everPublished } = useSiteAddress().address;
 
   const refresh = useCallback(async () => {
     setLoad({ kind: 'loading' });
@@ -283,10 +297,13 @@ function VersionsPanel({ projectId }: { projectId: string }) {
         <p className="text-sm text-muted-foreground">
           {online
             ? 'This site went live before versions were kept. Its first version is recorded with the next save (the editor saves by itself) or Publish.'
-            : 'This site is not online and no published versions are kept. Each Publish is kept here.'}
+            : everPublished
+              ? 'This site is not online and no published versions are kept. Each Publish is kept here.'
+              : 'Nothing published yet. Each Publish is kept here.'}
         </p>
-        {/* A site that went live before versions were kept has none, online or not. */}
-        {unpublishControl}
+        {/* A site that went live before versions were kept has none, online or not.
+            One that was never published has nothing to take offline. */}
+        {(online || everPublished || unpublish.kind !== 'idle') && unpublishControl}
       </div>
     );
   }

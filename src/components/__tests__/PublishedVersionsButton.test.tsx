@@ -5,6 +5,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import PublishedVersionsButton from '../PublishedVersionsButton';
+import { SiteAddressProvider } from '@/contexts/SiteAddressContext';
 
 let currentStore: { editorUI: { currentProject: unknown; isUnsavedDemo?: boolean } };
 vi.mock('@/hooks/useStore', () => ({ useStore: () => currentStore }));
@@ -228,7 +229,8 @@ describe('PublishedVersionsButton', () => {
 
     fetchMock.mockResolvedValueOnce(json({ status: 'draft', live: null, revisions: [] }));
     openDialog();
-    await screen.findByText(/not online and no published versions/);
+    await screen.findByText(/Nothing published yet/);
+    expect(screen.queryByRole('button', { name: /npublish/ })).toBeNull();
   });
 
   it('marks nothing live on an unpublished site, and says what Make live does', async () => {
@@ -293,7 +295,32 @@ describe('PublishedVersionsButton: Unpublish site', () => {
     expect(posts()).toHaveLength(2);
   });
 
-  it('can be asked again on an offline site, and on one that keeps no versions', async () => {
+  it('moves the focus into the question, on Cancel, and back to the button', async () => {
+    fetchMock.mockResolvedValue(json(LIST));
+    openDialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpublish site' }));
+    const cancel = within(screen.getByRole('group', { name: 'Confirm unpublish' })).getByRole('button', { name: 'Cancel' });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    fireEvent.click(cancel);
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Unpublish site' })));
+  });
+
+  it('offers it again on an offline site that was published and keeps no versions', async () => {
+    fetchMock.mockResolvedValueOnce(json({ status: 'draft', live: null, revisions: [] }));
+    render(
+      <SiteAddressProvider initial={{ host: 'abc.sites.lumitra.co', everPublished: true }}>
+        <PublishedVersionsButton />
+      </SiteAddressProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Published versions' }));
+
+    await screen.findByText(/not online and no published versions/);
+    expect(screen.getByRole('button', { name: 'Still visible to visitors? Unpublish again' })).toBeTruthy();
+  });
+
+  it('can be asked again on an offline site, and on a live one that keeps no versions', async () => {
     fetchMock.mockResolvedValueOnce(json(OFFLINE));
     openDialog();
     await screen.findByRole('button', { name: 'Still visible to visitors? Unpublish again' });
