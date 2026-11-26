@@ -114,6 +114,7 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 | 2026-11-23 | Approved as drawn: the editor chrome, the proposed dark and light, the phone layout | Marlin |
 | 2026-11-23 | Selection is a complete ring that blooms outward (`--ui-selection-ring`), never a one-sided edge such as the left bar on the selected Layers row or the selected page. Applied to every selection treatment in the editor and the home, consistently | Marlin |
 
+| 2026-11-26 | The lighter dark replaces the proposed dark (amends D3): background `#1e282b`, surface `#263236`, raised `#2f3c41`, as shown in the visual direction, with its full set (sunken `#182124`, line `#3a4c52`, field edge `#758f97`, text `#edf5f2`, muted `#b2c6c1`, accent text `#86b6ff`). Built as suite-theme #3 (release 0.3.0); Sites lifts its destructive red so it keeps 4.5 : 1 on the lighter grounds and gives destructive fills dark ink (`--destructive-foreground`) | Marlin, relayed by the coordinator |
 | 2026-11-23 | Publishing `@marlinjai/suite-theme-core` 0.2.0 to npm. Tagged `v0.2.0` on suite-theme `e477bb7`, published by the Trusted Publisher workflow; `tokens.css` byte-identical to 0.1.2 | Marlin, relayed by the coordinator |
 
 ### Decided while building S2 (say so if you disagree)
@@ -152,7 +153,7 @@ approved with the page.
   `ColorModeSwitch` and the product picker lose their `tone` prop (one look everywhere).
 - **The allow-list** of the raw-colour check (`src/app/__tests__/rawColours.test.ts`) names each remaining file
   with its exact matches and a reason: a page's white backing or paper, marks drawn on a site's content, values a
-  person edits (colour-input defaults, swatches, examples), and white ink on the destructive fill. A stale entry
+  person edits (colour-input defaults, swatches, examples). A stale entry
   fails the check as well as a new raw colour.
 
 ### Whether a public Sites landing page exists (checked 2026-11-23)
@@ -167,31 +168,31 @@ a separate item for the lumitra.co rebuild, recorded on the roadmap.
 
 ## 3. Tokens (decided; numbers computed 2026-11-23, enforced by the suite-theme build)
 
-| Token | Dark (lifted) | Light |
+| Token | Dark (lighter, 2026-11-26) | Light |
 | --- | --- | --- |
-| background | `#0c1316` | `#f3f7f5` |
-| surface (panels, cards) | `#131e23` | `#ffffff` |
-| raised (menus, popovers) | `#1a272d` | `#ffffff` with shadow |
-| sunken (canvas ground, wells) | `#0a1012` | `#e9efec` |
-| line (dividers, decorative) | `#2a3b42` | `#d6e0dc` |
-| line-strong (field and control edges) | `#5c7780` | `#768b85` |
-| text | `#e8f2ef` | `#0a1714` |
-| muted text | `#9cb3ae` | `#4b5f5a` |
+| background | `#1e282b` | `#f3f7f5` |
+| surface (panels, cards) | `#263236` | `#ffffff` |
+| raised (menus, popovers) | `#2f3c41` | `#ffffff` with shadow |
+| sunken (canvas ground, wells) | `#182124` | `#e9efec` |
+| line (dividers, decorative) | `#3a4c52` | `#d6e0dc` |
+| line-strong (field and control edges) | `#758f97` | `#768b85` |
+| text | `#edf5f2` | `#0a1714` |
+| muted text | `#b2c6c1` | `#4b5f5a` |
 | primary fill / ink | `#52ffa5` / `#03140c` | `#52ffa5` / `#03140c` |
 | primary as text, links, focus ring, the star | `#52ffa5` | `#06764a` (mint is 1.3 : 1 on white) |
-| accent as text | `#6aa5ff` | `#1d5fd6` |
+| accent as text | `#86b6ff` | `#1d5fd6` |
 
 Every figure is the lowest ratio of the pair against all four grounds (background, surface, raised, sunken),
 recomputed against the values of the table above:
 
 | Check | Dark | Light | Floor |
 | --- | --- | --- | --- |
-| Text | 13.4 | 15.7 | 4.5 |
-| Muted text | 6.9 | 5.8 | 4.5 |
-| Field edge (line-strong) | 3.2 | 3.1 | 3.0 |
+| Text | 10.0 | 15.7 | 4.5 |
+| Muted text | 6.4 | 5.8 | 4.5 |
+| Field edge (line-strong) | 3.3 | 3.1 | 3.0 |
 | Ink on primary fill | 14.6 | 14.6 | 4.5 |
-| Primary as text or focus ring | 11.8 | 4.9 | 4.5 text, 3.0 ring |
-| Accent as text | 6.2 | 4.9 | 4.5 |
+| Primary as text or focus ring | 8.8 | 4.9 | 4.5 text, 3.0 ring |
+| Accent as text | 5.5 | 4.9 | 4.5 |
 
 Surface steps stay small by design (1.1 : 1, like Linear or Figma); the separation comes from the step plus a
 visible line and, in light, a shadow. The suite's `tokens.css` sets `color-scheme: dark` on `:root`, so the light set

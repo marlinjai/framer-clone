@@ -60,7 +60,7 @@ const CanvasDebugPanel = observer(() => {
       <div className="space-y-2">
         <button
           onClick={handleClearAndReset}
-          className="w-full px-3 py-1 bg-destructive text-white rounded text-xs hover:bg-destructive/90"
+          className="w-full px-3 py-1 bg-destructive text-destructive-foreground rounded text-xs hover:bg-destructive/90"
         >
           Clear & Reset Elements
         </button>

@@ -35,7 +35,10 @@
   --muted-foreground: var(--ui-text-muted);
   --accent: color-mix(in oklab, var(--ui-surface), var(--ui-text) 8%);
   --accent-foreground: var(--ui-text);
-  --destructive: oklch(0.704 0.191 22.216);
+  /* Destructive as text holds 4.5 : 1 on every ground of the lighter dark (Marlin, 2026-11-26);
+     a destructive fill takes dark ink, since white on this red is under 3 : 1. */
+  --destructive: oklch(0.76 0.16 22);
+  --destructive-foreground: oklch(0.2 0.04 22);
   --border: var(--ui-line);
   /* Field and control edges: line-strong holds 3 : 1 against every ground. */
   --input: var(--ui-line-strong);
@@ -90,6 +93,7 @@
    green edge, so a mint button still has a visible outline on white. */
 [data-ui-theme="light"] {
   --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: #ffffff;
   --status-published: oklch(0.5 0.14 140);
   --status-draft: oklch(0.52 0.13 70);
   --status-scheduled: oklch(0.5 0.1 220);
@@ -101,6 +105,7 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-ui-theme]) {
     --destructive: oklch(0.55 0.2 25);
+    --destructive-foreground: #ffffff;
     --status-published: oklch(0.5 0.14 140);
     --status-draft: oklch(0.52 0.13 70);
     --status-scheduled: oklch(0.5 0.1 220);

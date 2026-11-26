@@ -29,6 +29,7 @@
 @theme inline {
   --color-brand-fill: var(--brand-fill);
   --color-warning-surface: var(--warning-surface);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-warning-edge: var(--warning-edge);
   --color-brand-mark: var(--brand-mark);
   --color-brand-edge: var(--brand-edge);
