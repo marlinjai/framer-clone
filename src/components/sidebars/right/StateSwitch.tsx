@@ -209,7 +209,7 @@ const StateSwitch = observer(({ variant = 'docked' }: { variant?: 'docked' | 'sh
           'relative flex min-w-0 items-center rounded-[4px] text-[11px] font-medium transition-colors duration-100',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
           row ? cn('w-full justify-start px-2 font-mono', variant === 'sheet' ? 'h-11' : 'h-7') : 'flex-1 justify-center',
-          checked ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+          checked ? 'bg-background text-foreground shadow-selection z-[1]' : 'text-muted-foreground hover:text-foreground',
         )}
       >
         <span className="truncate">{option.label}</span>

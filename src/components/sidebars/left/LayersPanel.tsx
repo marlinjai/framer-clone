@@ -419,7 +419,7 @@ const BreakpointRow = observer(({ viewport, pageBody, isCollapsed, onToggleColla
             }
           : {})}
         className={`@container group relative flex items-center gap-1.5 h-[30px] px-1.5 rounded-[6px] cursor-pointer hover:bg-accent ${
-          isSelected ? 'bg-brand/10' : ''
+          isSelected ? 'bg-brand/10 shadow-selection z-[1]' : ''
         }`}
         style={{ ['--layer-actions-w' as string]: `${layerActionsWidth(3)}px` }}
         onClick={(e) => {
@@ -607,7 +607,7 @@ const LayerNode = observer(({ component, depth, breakpointId, breakpoints, hidde
         // @container: the row's own width (after its depth indent) decides
         // whether the full action strip fits beside a readable name.
         className={`@container group flex items-center gap-1.5 h-[28px] px-1.5 rounded-[6px] cursor-pointer hover:bg-accent relative ${
-          isSelected ? 'bg-brand/10' : ''
+          isSelected ? 'bg-brand/10 shadow-selection z-[1]' : ''
         }`}
         style={{ paddingLeft: `${6 + depth * 14}px`, ['--layer-actions-w' as string]: `${actionsWidth}px` }}
         onClick={(e) => {

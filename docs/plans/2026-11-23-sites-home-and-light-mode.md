@@ -136,6 +136,25 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 The welcome copy is the visual direction's ("Build and run your website in one place." and its two sentences), which he
 approved with the page.
 
+### Decided while building S3 (2026-11-26, say so if you disagree)
+
+- **What counts as a selection.** Selected rows and items (Layers, pages, FX layers, collections, the composer
+  outline, the collection icon picker, the current history entry) and tabs (the left pane's tabs, the CMS rail, the
+  interaction-state switcher) get `shadow-selection`, the complete ring of `--ui-selection-ring`, and keep the mint
+  wash. **Value toggles** (Block/Flex/Grid, the colour-mode switch, toggle groups) keep the raised chip: they show a
+  chosen value rather than a selection, and a glow on every toggle of the properties panel would drown the real
+  selection. Selections drawn **on content** (the canvas selection, the composer's PDF page) are not chrome and stay
+  as they are, on the allow-list.
+- **Floating notices** (the editor's notice stack, the legal notice before publishing, the preview's notice bar) take
+  two new editor tokens, `--warning-surface` (the warning colour mixed into the popover, so opaque over the canvas)
+  and `--warning-edge`, in place of fixed amber; both follow Light and Dark.
+- **The preview** follows the interface: its toolbar is the card colour, its stage the canvas ground, and
+  `ColorModeSwitch` and the product picker lose their `tone` prop (one look everywhere).
+- **The allow-list** of the raw-colour check (`src/app/__tests__/rawColours.test.ts`) names each remaining file
+  with its exact matches and a reason: a page's white backing or paper, marks drawn on a site's content, values a
+  person edits (colour-input defaults, swatches, examples), and white ink on the destructive fill. A stale entry
+  fails the check as well as a new raw colour.
+
 ### Whether a public Sites landing page exists (checked 2026-11-23)
 
 No. lumitra.co (still served by lumitra-web) lists Lumitra QR, Ultra Power, email-mcp, Studio and Analytics, not Sites;

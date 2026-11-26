@@ -82,7 +82,7 @@ export function PaneTabs<T extends string>({ tabs, active, onChange, label, idPr
               'flex-auto whitespace-nowrap rounded-[5px] px-2 text-[11.5px] font-medium transition-colors',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
               isActive
-                ? 'bg-background text-foreground shadow-sm'
+                ? 'bg-background text-foreground shadow-selection'
                 : 'text-muted-foreground hover:text-foreground',
             )}
           >

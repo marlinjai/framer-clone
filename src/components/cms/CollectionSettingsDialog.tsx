@@ -107,7 +107,7 @@ const CollectionSettingsDialog: React.FC<CollectionSettingsDialogProps> = ({
                       className={[
                         'flex h-9 items-center justify-center rounded-md border transition-colors',
                         selected
-                          ? 'border-brand bg-brand/10 text-brand'
+                          ? 'border-transparent bg-brand/10 text-brand shadow-selection'
                           : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
                       ].join(' ')}
                     >

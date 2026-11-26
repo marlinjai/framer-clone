@@ -67,7 +67,7 @@ const EditorNotice = observer(() => {
       aria-live="polite"
       data-editor-ui="true"
       // Placed by EditorApp's notice stack under the top bar.
-      className={notice ? 'pointer-events-auto flex max-w-[640px] items-start gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow' : 'sr-only'}
+      className={notice ? 'pointer-events-auto flex max-w-[640px] items-start gap-3 rounded-md border border-warning-edge bg-warning-surface text-foreground px-3 py-2 text-xs shadow' : 'sr-only'}
     >
       {notice ? (
         <>
@@ -77,7 +77,7 @@ const EditorNotice = observer(() => {
               type="button"
               // On purpose: this tab's unsaved work goes, so the reload must not warn.
               onClick={() => reloadDiscarding(editorUI.currentProject?.id)}
-              className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
+              className="shrink-0 rounded border border-warning-edge px-2 py-0.5 font-medium hover:bg-warning/15"
             >
               Load the newer version
             </button>
@@ -98,7 +98,7 @@ const EditorNotice = observer(() => {
                 // The button goes with the notice: the focus moves to the page's row in the Pages panel, or else to the canvas.
                 focusOpenPage();
               }}
-              className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
+              className="shrink-0 rounded border border-warning-edge px-2 py-0.5 font-medium hover:bg-warning/15"
             >
               Open it
             </button>
@@ -114,7 +114,7 @@ const EditorNotice = observer(() => {
                 getHistoryStore()?.undo();
                 focusOpenPage();
               }}
-              className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
+              className="shrink-0 rounded border border-warning-edge px-2 py-0.5 font-medium hover:bg-warning/15"
             >
               Undo
             </button>
@@ -124,7 +124,7 @@ const EditorNotice = observer(() => {
             <button
               type="button"
               onClick={() => editorUI.clearPreviewState()}
-              className="shrink-0 rounded border border-amber-400 px-2 py-0.5 font-medium hover:bg-amber-100"
+              className="shrink-0 rounded border border-warning-edge px-2 py-0.5 font-medium hover:bg-warning/15"
             >
               Show first values
             </button>
@@ -137,7 +137,7 @@ const EditorNotice = observer(() => {
               if (notice.kind !== 'previewState') editorUI.setEditorNotice(undefined);
             }}
             aria-label="Dismiss notice"
-            className="shrink-0 rounded px-1 hover:bg-amber-100"
+            className="shrink-0 rounded px-1 hover:bg-warning/15"
           >
             ×
           </button>

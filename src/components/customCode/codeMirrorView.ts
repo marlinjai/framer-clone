@@ -40,11 +40,11 @@ export interface CodeMirrorHandle {
 }
 
 const theme = EditorView.theme({
-  '&': { fontSize: '12px', border: '1px solid var(--border, #d1d5db)', borderRadius: '6px', backgroundColor: 'var(--background, #fff)' },
-  '&.cm-focused': { outline: '2px solid var(--brand, #2563eb)', outlineOffset: '1px' },
+  '&': { fontSize: '12px', border: '1px solid var(--border)', borderRadius: '6px', backgroundColor: 'var(--background)' },
+  '&.cm-focused': { outline: '2px solid var(--ring)', outlineOffset: '1px' },
   '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minHeight: '200px', maxHeight: '420px', overflow: 'auto' },
   '.cm-content': { padding: '6px 0' },
-  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--border, #e5e7eb)' },
+  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--border)' },
 });
 
 export function mountCodeMirror(parent: HTMLElement, options: CodeMirrorOptions): CodeMirrorHandle {

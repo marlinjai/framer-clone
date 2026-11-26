@@ -27,17 +27,17 @@ const MODES: { mode: ColorScheme; label: string; Icon: typeof Sun }[] = [
 ];
 
 export interface ColorModeSwitchProps {
-  tone?: 'light' | 'dark';
   className?: string;
 }
 
-const ColorModeSwitch = observer(({ tone = 'light', className = '' }: ColorModeSwitchProps) => {
+/** Follows the interface's Light and Dark, in the editor's notice stack and the preview toolbar alike. */
+const ColorModeSwitch = observer(({ className = '' }: ColorModeSwitchProps) => {
   const { editorUI } = useStore();
   if (editorUI.currentProject?.site?.theme?.mode !== 'system') return null;
   const current = editorUI.previewColorMode;
-  const frame = tone === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-muted border-border';
-  const idle = tone === 'dark' ? 'text-gray-300 hover:bg-gray-700' : 'text-muted-foreground hover:bg-accent hover:text-foreground';
-  const pressed = tone === 'dark' ? 'bg-gray-600 text-white' : 'bg-background text-foreground shadow-sm';
+  const frame = 'bg-muted border-border';
+  const idle = 'text-muted-foreground hover:bg-accent hover:text-foreground';
+  const pressed = 'bg-background text-foreground shadow-sm';
   return (
     <div
       role="group"

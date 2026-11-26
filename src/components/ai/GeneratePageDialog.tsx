@@ -686,7 +686,7 @@ function StockImageNote({ images }: { images?: StockImageSummary }) {
   return (
     <div className="grid gap-1 text-xs" data-testid="pagegen-image-note">
       {fallbacks && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-foreground">
+        <div className="rounded-md border border-warning-edge bg-warning-surface text-foreground p-2">
           {fallbacks.map((line) => (
             <p key={line}>{line}</p>
           ))}

@@ -59,24 +59,24 @@ const PreviewToolbar = observer(({
   const isDevice = frame === 'device';
 
   return (
-    <div className="flex items-center gap-1 md:gap-2 h-12 px-2 md:px-3 bg-gray-900 text-gray-100 border-b border-gray-800">
+    <div className="flex items-center gap-1 md:gap-2 h-12 px-2 md:px-3 bg-card text-foreground border-b border-border">
       {/* Back to editor */}
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
+        className="flex items-center gap-1 px-2 py-1 rounded hover:bg-accent"
         title="Back to the editor, on this page"
       >
         <ArrowLeft size={14} />
         <span className="text-xs max-md:sr-only">Editor</span>
       </button>
 
-      <div className="w-px h-6 bg-gray-700 mx-1 max-md:hidden" />
+      <div className="w-px h-6 bg-border mx-1 max-md:hidden" />
 
       <button
         type="button"
         onClick={onReload}
-        className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
+        className="flex items-center gap-1 px-2 py-1 rounded hover:bg-accent"
         title="Reload preview"
       >
         <RefreshCw size={14} />
@@ -88,7 +88,7 @@ const PreviewToolbar = observer(({
       <button
         type="button"
         onClick={() => onFrameChange(isDevice ? 'fill' : 'device')}
-        className={`flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800 ${isDevice ? 'bg-gray-800' : ''}`}
+        className={`flex items-center gap-1 px-2 py-1 rounded hover:bg-accent ${isDevice ? 'bg-accent' : ''}`}
         title={isDevice ? 'Fill the window again' : 'Show the page in a device frame'}
         aria-pressed={isDevice}
       >
@@ -99,21 +99,21 @@ const PreviewToolbar = observer(({
       <button
         type="button"
         onClick={onEnterFullscreen}
-        className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
+        className="flex items-center gap-1 px-2 py-1 rounded hover:bg-accent"
         title="Fullscreen (F)"
       >
         <Maximize2 size={14} />
         <span className="text-xs max-md:sr-only">Fullscreen</span>
       </button>
 
-      <div className="w-px h-6 bg-gray-700 mx-1 max-md:hidden" />
+      <div className="w-px h-6 bg-border mx-1 max-md:hidden" />
 
       {/* Which page to preview (also in fullscreen). */}
       <select
         aria-label="Page"
         value={currentPageId}
         onChange={(e) => onPageChange(e.target.value)}
-        className="min-w-0 max-w-[220px] max-md:max-w-[120px] bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100"
+        className="min-w-0 max-w-[220px] max-md:max-w-[120px] bg-background border border-input rounded px-2 py-1 text-xs text-foreground"
         title="Page to preview"
       >
         {pages.map((p) => (
@@ -138,7 +138,7 @@ const PreviewToolbar = observer(({
               if (v) onPresetChange(v);
             }}
             aria-label="Breakpoint"
-            className="min-w-0 max-md:max-w-[110px] bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100"
+            className="min-w-0 max-md:max-w-[110px] bg-background border border-input rounded px-2 py-1 text-xs text-foreground"
             title="Breakpoint preset"
           >
             {viewportNodes.map(v => (
@@ -194,7 +194,7 @@ function NumberInput({ ariaLabel, value, onCommit, suffix }: NumberInputProps) {
   };
 
   return (
-    <div className="flex items-center bg-gray-800 border border-gray-700 rounded">
+    <div className="flex items-center bg-background border border-input rounded">
       <input
         aria-label={ariaLabel}
         value={draft}
@@ -210,7 +210,7 @@ function NumberInput({ ariaLabel, value, onCommit, suffix }: NumberInputProps) {
         className="w-16 bg-transparent px-2 py-1 text-xs text-right outline-none"
         inputMode="numeric"
       />
-      <span className="px-2 text-[10px] text-gray-500 border-l border-gray-700">{suffix}</span>
+      <span className="px-2 text-[10px] text-muted-foreground border-l border-input">{suffix}</span>
     </div>
   );
 }

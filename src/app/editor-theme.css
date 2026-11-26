@@ -65,6 +65,10 @@
   --status-scheduled: oklch(0.78 0.12 215);
   --warning: oklch(0.80 0.15 80);
   --warning-foreground: var(--ui-primary-ink);
+  /* A notice that floats over the canvas: opaque, the warning colour mixed into the popover. Follows
+     both modes, since --warning and --popover do. */
+  --warning-surface: color-mix(in oklab, var(--warning) 14%, var(--popover));
+  --warning-edge: color-mix(in oklab, var(--warning) 55%, transparent);
   /* The home and the welcome page. */
   --brand-mark: var(--ui-mark);
   --brand-edge: transparent;

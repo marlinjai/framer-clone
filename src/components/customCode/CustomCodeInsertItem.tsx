@@ -47,7 +47,7 @@ export const CustomCodeInsertItem = observer(({ onInserted }: { onInserted?: () 
         aria-describedby="insert-custom-code-hint"
         className="flex w-full select-none items-center space-x-3 rounded p-2 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
       >
-        <div className="rounded bg-slate-100 p-1.5 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+        <div className="rounded bg-muted p-1.5 text-muted-foreground">
           <Code2 size={14} />
         </div>
         <span className="text-sm text-foreground">Custom code</span>

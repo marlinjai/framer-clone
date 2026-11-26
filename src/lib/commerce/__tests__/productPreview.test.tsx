@@ -42,7 +42,7 @@ function setup({
     <CommerceDataSourceContext.Provider value={ds}>
       <ProductPreviewProvider enabled={enabled} chosenHandle={chosenHandle} onChoose={onChoose}>
         <Params slug={slug} />
-        <ProductPreviewPicker slug={slug} tone="light" />
+        <ProductPreviewPicker slug={slug} />
       </ProductPreviewProvider>
     </CommerceDataSourceContext.Provider>,
   );

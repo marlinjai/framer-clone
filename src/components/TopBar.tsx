@@ -135,7 +135,7 @@ const HistoryList = observer(() => {
               onClick={() => history.jumpTo(originalIdx + 1)}
               className={`w-full flex items-start gap-2 text-left px-2 py-1.5 rounded text-xs transition-colors ${
                 isCurrent
-                  ? 'bg-brand/10 forced-colors:outline forced-colors:outline-2 forced-colors:-outline-offset-2'
+                  ? 'bg-brand/10 shadow-selection relative z-[1] forced-colors:outline forced-colors:outline-2 forced-colors:-outline-offset-2'
                   : isApplied
                     ? 'text-foreground hover:bg-accent'
                     : 'text-muted-foreground hover:bg-accent'

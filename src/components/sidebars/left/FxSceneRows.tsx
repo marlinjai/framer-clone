@@ -49,7 +49,7 @@ interface FxSceneRowsProps {
 const GroupRow = observer(
   ({ icon: Icon, label, depth, folded, onToggle, onSelect, selected }: { icon: React.ComponentType<{ size?: number; className?: string }>; label: string; depth: number; folded: boolean; onToggle: () => void; onSelect: () => void; selected?: boolean }) => (
     <div
-      className={`@container group flex ${ROW_HEIGHT} cursor-pointer items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${selected ? 'bg-brand/10' : ''}`}
+      className={`@container group flex ${ROW_HEIGHT} cursor-pointer items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${selected ? 'relative bg-brand/10 shadow-selection z-[1]' : ''}`}
       style={{ paddingLeft: `${6 + depth * 14}px` }}
       onClick={onSelect}
     >
@@ -168,7 +168,7 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
           const toIndex = fxDropIndex(order, from, row.layerId, place);
           if (toIndex !== null) runFxLayerAction(box, editorUI, from, { type: 'moveTo', toIndex, relativeTo: `${place === 'above' ? 'in front of' : 'behind'} ${row.name}` });
         }}
-        className={`@container group relative flex ${ROW_HEIGHT} items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${picked ? 'bg-brand/10' : ''} ${dropPlace === 'above' ? 'shadow-[inset_0_2px_0_0_var(--brand,currentColor)]' : ''} ${dropPlace === 'below' ? 'shadow-[inset_0_-2px_0_0_var(--brand,currentColor)]' : ''} ${dropPlace === 'refused' ? 'shadow-[inset_0_0_0_1px_var(--destructive,red)]' : ''}`}
+        className={`@container group relative flex ${ROW_HEIGHT} items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${picked ? 'bg-brand/10 shadow-selection z-[1]' : ''} ${dropPlace === 'above' ? 'shadow-[inset_0_2px_0_0_var(--brand,currentColor)]' : ''} ${dropPlace === 'below' ? 'shadow-[inset_0_-2px_0_0_var(--brand,currentColor)]' : ''} ${dropPlace === 'refused' ? 'shadow-[inset_0_0_0_1px_var(--destructive,red)]' : ''}`}
         style={{ paddingLeft: `${6 + depth * 14}px`, ['--layer-actions-w' as string]: `${layerActionsWidth(3)}px` }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -201,7 +201,7 @@ const FxLayerRow = observer(({ box, row, depth, breakpointId, dimmed, order, gro
               {row.reads ? `reads ${row.reads}` : row.typeLabel}
             </span>
             {row.off ? (
-              <span className="min-w-0 truncate text-amber-500" style={{ fontSize: '10.5px' }}>
+              <span className="min-w-0 truncate text-warning" style={{ fontSize: '10.5px' }}>
                 {row.off}
               </span>
             ) : null}
@@ -310,7 +310,7 @@ const FxBackgroundRow = observer(({ box, color, depth, breakpointId, dimmed }: {
     <div
       data-fx-background-row={box.id}
       data-fx-layer-breakpoint={breakpointId}
-      className={`@container group flex ${ROW_HEIGHT} items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${picked ? 'bg-brand/10' : ''}`}
+      className={`@container group flex ${ROW_HEIGHT} items-center gap-1.5 rounded-[6px] px-1.5 hover:bg-accent ${picked ? 'bg-brand/10 shadow-selection z-[1]' : ''}`}
       style={{ paddingLeft: `${6 + depth * 14}px` }}
     >
       <span className="flex flex-none justify-center text-border" style={{ width: '14px', fontSize: '12px' }} aria-hidden="true">

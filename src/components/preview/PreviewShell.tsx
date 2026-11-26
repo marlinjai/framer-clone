@@ -236,7 +236,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
   // link back rather than crashing.
   if (!project || !page) {
     return (
-      <div className="w-screen h-screen flex flex-col items-center justify-center bg-gray-900 text-gray-300 gap-3">
+      <div className="w-screen h-screen flex flex-col items-center justify-center bg-background text-muted-foreground gap-3">
         <div className="text-sm">No project is loaded.</div>
         {/* A full load: this may be the project preview, whose frame policy must not follow
             into the projects list (leavePreview). */}
@@ -268,7 +268,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
   return (
     <DataSourceProviderContext.Provider value={getSharedPrismaDataSourceProvider()}>
     <EditorCommerceProvider>
-    <div ref={rootRef} className="w-screen h-screen flex flex-col bg-gray-950">
+    <div ref={rootRef} className="w-screen h-screen flex flex-col bg-[var(--canvas-ground)]">
       {immersive ? (
         <FullscreenExitControl onExit={onExitFullscreen} />
       ) : (
@@ -289,14 +289,14 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
         pages={pages}
         currentPageId={page.id}
         onPageChange={onPageChange}
-        productPicker={<ProductPreviewPicker slug={page.slug} tone="dark" />}
-        colorModeSwitch={<ColorModeSwitch tone="dark" />}
+        productPicker={<ProductPreviewPicker slug={page.slug} />}
+        colorModeSwitch={<ColorModeSwitch />}
       />
       {/* Always present, so the notice is announced when its text appears. */}
       <div
         role="status"
         aria-live="polite"
-        className={(showMissingNotice || linkNotice) && noticeReady ? 'flex items-center gap-3 bg-amber-950 px-3 py-1.5 text-xs text-amber-100' : 'sr-only'}
+        className={(showMissingNotice || linkNotice) && noticeReady ? 'flex items-center gap-3 border-b border-warning-edge bg-warning-surface px-3 py-1.5 text-xs text-foreground' : 'sr-only'}
       >
         {(showMissingNotice || linkNotice) && noticeReady ? (
           <>
@@ -312,7 +312,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
                 setShowMissingNotice(false);
                 setLinkNotice(null);
               }}
-              className="ml-auto rounded px-1.5 hover:bg-amber-900"
+              className="ml-auto rounded px-1.5 hover:bg-warning/15"
               aria-label="Dismiss notice"
             >
               ×
@@ -324,7 +324,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
       )}
 
       {isFill ? (
-        <div className="flex-1 min-h-0 overflow-hidden" style={{ background: '#0b0d12' }}>
+        <div className="flex-1 min-h-0 overflow-hidden" style={{ background: 'var(--canvas-ground)' }}>
           <PreviewFrame
             key={reloadKey}
             page={page}
@@ -338,7 +338,7 @@ const PreviewShell = observer(({ missingPageId, onClose }: PreviewShellProps = {
           />
         </div>
       ) : (
-        <div className="flex-1 overflow-auto" style={{ background: '#0b0d12' }}>
+        <div className="flex-1 overflow-auto" style={{ background: 'var(--canvas-ground)' }}>
           {/* Centered column. Top padding leaves room for the gutter "feel" and
               mirrors Framer's preview canvas spacing. */}
           <div className="min-h-full flex items-start justify-center py-12">

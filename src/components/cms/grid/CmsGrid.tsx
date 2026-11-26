@@ -249,7 +249,7 @@ function CmsGridContent({
 
   if (!table) {
     return (
-      <div className="p-8 text-center text-sm text-gray-500" data-testid="cms-grid-loading">
+      <div className="p-8 text-center text-sm text-muted-foreground" data-testid="cms-grid-loading">
         Loading collection...
       </div>
     );
