@@ -14,8 +14,13 @@ export interface FxStartSettings {
   calm: 'background' | 'frame';
 }
 
-/** After the page's `load` event: what lumitra.co waits before its hero starts. */
-export const FX_SETTLE_DELAY_MS = 1500;
+/**
+ * `settled`: after the page's `load` event, the scene starts in the browser's first idle moment, so the
+ * page's own work (hydration, images decoding, the first interactions) goes first; at most this long after
+ * `load`, so a busy page still gets its scene. (It was a fixed 1.5 seconds, lumitra.co's own hero wait;
+ * measured, that wait was most of the time a visitor looked at an empty box, decided 2026-11-23.)
+ */
+export const FX_SETTLE_IDLE_MS = 500;
 
 export const FX_WARNING = 'An FX scene could not be drawn here; the page shows its background instead.';
 
@@ -69,15 +74,23 @@ export function whenStarted(box: Element, start: FxStartSettings['start'], go: (
     observer.observe(box);
     return () => observer.disconnect();
   }
-  let timer: number | undefined;
+  let cancelIdle: (() => void) | undefined;
   const arm = () => {
-    timer = window.setTimeout(go, FX_SETTLE_DELAY_MS);
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(() => go(), { timeout: FX_SETTLE_IDLE_MS });
+      cancelIdle = () => window.cancelIdleCallback(id);
+    } else {
+      // No idle callbacks (Safari before 18): one short breath after load.
+      const id = window.setTimeout(go, 50);
+      cancelIdle = () => window.clearTimeout(id);
+    }
   };
   // `load` may have fired before this ran (a late hydration, or the editor's preview).
   if (document.readyState === 'complete') arm();
   else window.addEventListener('load', arm, { once: true });
   return () => {
     window.removeEventListener('load', arm);
-    if (timer !== undefined) window.clearTimeout(timer);
+    cancelIdle?.();
   };
 }
+

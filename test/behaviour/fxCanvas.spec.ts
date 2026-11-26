@@ -2,14 +2,17 @@
 // on the real EditorApp (docs/plans/2026-11-08-lumitra-fx-in-sites.md, slice F5).
 //
 // The canvas shows every breakpoint side by side and a browser allows only a handful
-// of WebGL contexts, so the promise this file keeps is ONE: at no moment does the
-// editor hold more than one live context, whatever is switched, edited or opened.
-// The contexts are counted in the page itself, at the one place a context is made
-// (`HTMLCanvasElement.getContext`), so a context no element shows any more is still
-// counted until it is released.
+// of WebGL contexts, so the promise this file keeps is: at no moment does the editor
+// hold more than ONE live scene's context, plus ONE short-lived context while a still
+// frame is made (every frame a box is not drawn live in shows a still frame of its
+// scene, src/components/fx/FxLayer.tsx FxStillLayer), whatever is switched, edited or
+// opened. The contexts are counted in the page itself, at the one place a context is
+// made (`HTMLCanvasElement.getContext`), so a context no element shows any more is
+// still counted until it is released, and the most ever held at once is kept.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
+import { PNG } from 'pngjs';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { fxFromPreset, setFxParam, setFxStart, type FxEdit } from '@/lib/fxScene/edit';
 import { bundleEditor, openEditor, placeTree } from '../score/lib/canvasBundle';
@@ -48,17 +51,22 @@ interface FxEditorWindow {
     setPreviewOpen: (open: boolean) => void;
     undoLevels: () => number;
   };
-  __fxContexts: { made: number; live: () => number };
+  __fxContexts: { made: number; live: () => number; most: () => number };
 }
 
 /** Counts every WebGL context the page makes, and how many of them are still held. */
 const countContexts = (page: Page) =>
   page.addInitScript(() => {
     const made: WebGLRenderingContext[] = [];
+    let most = 0;
     const original = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
       const context = (original as (...args: unknown[]) => unknown).call(this, kind, ...rest);
-      if (context && /^webgl/.test(kind) && !made.includes(context as WebGLRenderingContext)) made.push(context as WebGLRenderingContext);
+      // A canvas in the page: a scene's. The engine's own probe (a detached canvas, released at once) is not one.
+      if (context && /^webgl/.test(kind) && this.isConnected && !made.includes(context as WebGLRenderingContext)) {
+        made.push(context as WebGLRenderingContext);
+        most = Math.max(most, made.filter((c) => !c.isContextLost()).length);
+      }
       return context;
     } as typeof HTMLCanvasElement.prototype.getContext;
     (window as unknown as { __fxContexts: unknown }).__fxContexts = {
@@ -66,6 +74,7 @@ const countContexts = (page: Page) =>
         return made.length;
       },
       live: () => made.filter((context) => !context.isContextLost()).length,
+      most: () => most,
     };
   });
 
@@ -92,9 +101,11 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     await page?.context().close();
   });
 
-  const open = async () => {
+  /** Wide enough that every breakpoint frame is on screen, as on a canvas zoomed out to show them all. */
+  const WIDE = { viewport: { width: 4200, height: 1000 } };
+  const open = async (options: Parameters<typeof openEditor>[2] = {}) => {
     warnings = [];
-    const opened = await openEditor(browser, bundle, {}, async (fresh) => {
+    const opened = await openEditor(browser, bundle, options, async (fresh) => {
       await countContexts(fresh);
       fresh.on('console', (message) => {
         if (message.type() === 'warning' && message.text().includes('FX scene')) warnings.push(message.text());
@@ -112,7 +123,54 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
   const status = () => editor((api) => api.fxLiveStatus());
   const liveContexts = () => page.evaluate(() => (window as unknown as FxEditorWindow).__fxContexts.live());
   const madeContexts = () => page.evaluate(() => (window as unknown as FxEditorWindow).__fxContexts.made);
-  const canvases = () => page.locator('canvas').count();
+  const mostContexts = () => page.evaluate(() => (window as unknown as FxEditorWindow).__fxContexts.most());
+  /** The live scene's canvases (the still frames' pictures are plain 2D canvases of their own layers). */
+  const canvases = () => page.locator('[data-fc-fx-layer] canvas').count();
+  /**
+   * The still frames: frame, box, state, the picture's size against the layer's layout size, and whether
+   * it shows the scene (pixels that are not the box's own blue background).
+   */
+  const stills = () =>
+    page.evaluate(() => {
+      const frames = [...document.querySelectorAll('[data-viewport-content-id]')];
+      // A still frame under the live scene of its frame is hidden once that one is drawn: not counted.
+      return [...document.querySelectorAll<HTMLElement>('[data-fc-fx-still]')].filter((layer) => layer.style.opacity !== '0').map((layer) => {
+        const picture = layer.querySelector<HTMLCanvasElement>(':scope > canvas')!;
+        let scene = false;
+        if (picture.width > 0 && picture.height > 0) {
+          const data = picture.getContext('2d')!.getImageData(0, 0, picture.width, picture.height).data;
+          for (let i = 0; i < data.length && !scene; i += 4 * 97) scene = data[i + 3] > 0 && !(data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 255);
+        }
+        return {
+          frame: frames.findIndex((frame) => frame.contains(layer)),
+          box: layer.parentElement?.getAttribute('data-inner-component-id'),
+          state: layer.getAttribute('data-fc-fx-still'),
+          width: picture.width,
+          height: picture.height,
+          layoutWidth: layer.offsetWidth,
+          layoutHeight: layer.offsetHeight,
+          scene,
+        };
+      });
+    });
+  /** Every still frame there is drawn (or settled as off), and no still context is left. */
+  const stillsSettled = async (count: number, state = 'live') => {
+    await expect
+      .poll(async () => (await stills()).filter((still) => still.state === state).length, { timeout: 60_000 })
+      .toBe(count);
+  };
+  /** A fingerprint of a picture's pixels, to see that a still frame was drawn again. */
+  const fingerprint = (frame: number, box: string) =>
+    page.evaluate(([frameIndex, id]) => {
+      const frames = [...document.querySelectorAll('[data-viewport-content-id]')];
+      const layer = frames[frameIndex as number].querySelector(`[data-inner-component-id="${id}"] > [data-fc-fx-still]`);
+      const picture = layer?.querySelector<HTMLCanvasElement>(':scope > canvas');
+      if (!picture || picture.width === 0) return 'none';
+      const data = picture.getContext('2d')!.getImageData(0, 0, picture.width, picture.height).data;
+      let hash = 0;
+      for (let i = 0; i < data.length; i += 4 * 31) hash = (hash * 31 + data[i] + data[i + 1] * 3 + data[i + 2] * 7) | 0;
+      return String(hash);
+    }, [frame, box] as const);
   /** Where the scene is drawn: the frame (its place in the row) and the box of each layer that holds a canvas. */
   const drawn = () =>
     page.evaluate(() => {
@@ -127,19 +185,161 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
         }));
     });
   const waitLive = () => expect.poll(status, { timeout: 30_000 }).toBe('live');
-  /** One context, and it is the one on screen. */
+  /** One context, and it is the live one on screen (every still frame's context is released). */
   const expectOne = async () => {
-    await expect.poll(liveContexts, { timeout: 10_000 }).toBe(1);
+    await expect.poll(liveContexts, { timeout: 60_000 }).toBe(1);
     expect(await canvases()).toBe(1);
+    expect(await mostContexts()).toBeLessThanOrEqual(2);
   };
 
-  it('draws nothing by default: every frame shows the box with its own background', async () => {
-    await open();
-    expect(await page.locator('[data-viewport-content-id]').count()).toBeGreaterThan(1);
+  it('by default every frame shows a still frame of each box at its own size, made one context at a time, none left running', async () => {
+    await open(WIDE);
+    const frames = await page.locator('[data-viewport-content-id]').count();
+    expect(frames).toBeGreaterThan(1);
+    await stillsSettled(frames * 2);
+    const all = await stills();
+    expect(all).toHaveLength(frames * 2);
+    const ratio = await page.evaluate(() => Math.min(window.devicePixelRatio || 1, 2));
+    for (const still of all) {
+      expect(still.scene).toBe(true);
+      // The frame's own responsive size, at the pixel ratio the live scene would use (the preset allows up to 2).
+      expect(Math.abs(still.width - Math.floor(still.layoutWidth * ratio))).toBeLessThanOrEqual(1);
+      expect(Math.abs(still.height - Math.floor(still.layoutHeight * ratio))).toBeLessThanOrEqual(1);
+    }
+    // The frames differ in width, so do their pictures.
+    expect(new Set(all.map((still) => still.width)).size).toBeGreaterThan(1);
     expect(await page.locator('[data-fc-fx-layer]').count()).toBe(0);
-    expect(await canvases()).toBe(0);
-    expect(await madeContexts()).toBe(0);
+    // Every still frame of the page from ONE context (a scene is set up once, not once per frame), released a
+    // moment after the last.
+    expect(await madeContexts()).toBe(1);
+    expect(await mostContexts()).toBe(1);
+    await expect.poll(liveContexts, { timeout: 60_000 }).toBe(0);
     expect(await status()).toBe('idle');
+    expect(warnings).toEqual([]);
+    expect(crashes).toEqual([]);
+  });
+
+  it('a frame that is not on screen asks for no still frame: no context, no engine work for it', async () => {
+    // At this window size only the first frame is on screen; the others are beside it, out of sight.
+    await open();
+    const frames = await page.locator('[data-viewport-content-id]').count();
+    await stillsSettled(2);
+    await page.waitForTimeout(2000);
+    const all = await stills();
+    expect(all.filter((still) => still.state === 'live').map((still) => still.frame)).toEqual([0, 0]);
+    expect(all.filter((still) => still.state === 'waiting')).toHaveLength((frames - 1) * 2);
+    expect(await madeContexts()).toBe(1);
+    // Nor is the box changed there: no stacking context, no position given to it.
+    const offScreen = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-viewport-content-id]')].slice(1).map((frame) => (frame.querySelector('[data-inner-component-id="fxa"]') as HTMLElement).style.isolation),
+    );
+    expect(offScreen.every((isolation) => isolation === '')).toBe(true);
+    expect(crashes).toEqual([]);
+  });
+
+  it('with Live on, the picked frame is live and every other frame keeps its still frame', async () => {
+    await open(WIDE);
+    const frames = await page.locator('[data-viewport-content-id]').count();
+    await editor((api) => api.startFxLive('fxa', 0));
+    await waitLive();
+    await stillsSettled(frames * 2 - 1);
+    await expectOne();
+    expect(await drawn()).toEqual([{ frame: 0, box: 'fxa', preview: false, state: 'live' }]);
+    const places = (await stills()).map((still) => `${still.box}@${still.frame}`).sort();
+    expect(places).not.toContain('fxa@0');
+    expect(places).toContain('fxa@1');
+    expect(places).toContain('fxb@0');
+    expect(crashes).toEqual([]);
+  });
+
+  it('a changed scene draws every still frame again once the edits settle, and the old picture stays until then', async () => {
+    await open(WIDE);
+    const frames = await page.locator('[data-viewport-content-id]').count();
+    await stillsSettled(frames * 2);
+    const before = await fingerprint(1, 'fxa');
+    const befores = await Promise.all([0, 1, 2].map((frame) => fingerprint(frame, 'fxa')));
+    const made = await madeContexts();
+    // A burst of edits 60 ms apart, as a slider sends them: drawn again once, after the last.
+    let scene: unknown = SCENE;
+    const burst: unknown[] = [];
+    // Ending on another preset (the particle ring on black), so the new picture certainly differs from the old.
+    for (const intensity of [1.6, 2.4]) burst.push((scene = stored(setFxParam(scene, 'bloom', 'intensity', intensity))));
+    const ring = fxFromPreset('lumitra-light');
+    if (!ring.ok) throw new Error(ring.message);
+    burst.push(stored(setFxStart(ring.stored, 'immediate')));
+    await editor(async (api, arg) => {
+      for (const next of arg as unknown[]) {
+        api.setFx('fxa', next);
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
+    }, burst);
+    // Never a blank frame in between: the old picture is shown until the new one is there.
+    expect(await fingerprint(1, 'fxa')).toBe(before);
+    // Every frame of the changed box gets its new picture, the burst drawn once, all of them in ONE still context
+    // (setting a scene up in a context is a long task on the main thread: paid once per edit, not once per frame).
+    for (const frame of [0, 1, 2].slice(0, frames)) await expect.poll(async () => { const now = await fingerprint(frame, 'fxa'); return now !== 'none' && now !== befores[frame]; }, { timeout: 60_000 }).toBe(true);
+    await page.waitForTimeout(1500);
+    expect((await madeContexts()) - made).toBeLessThanOrEqual(1);
+    expect(await mostContexts()).toBe(1);
+    await expect.poll(liveContexts, { timeout: 60_000 }).toBe(0);
+    expect(crashes).toEqual([]);
+  });
+
+  it('boxes removed while their still frames are being made leave no context and no layer behind', async () => {
+    await open(WIDE);
+    // The first still frame is being made (its context is open): the page loses both boxes.
+    await expect.poll(madeContexts, { timeout: 60_000 }).toBeGreaterThan(0);
+    await placeTree(page, crashes, { id: 'page', type: 'div', props: {}, children: [{ id: 'plain', type: 'h2', props: { children: 'No scene' } }] } as unknown as ComponentNode, { allFrames: true });
+    await expect.poll(liveContexts, { timeout: 30_000 }).toBe(0);
+    await page.waitForTimeout(2000);
+    expect(await liveContexts()).toBe(0);
+    expect(await page.locator('[data-fc-fx-still]').count()).toBe(0);
+    expect(await page.locator('[data-fc-fx-layer]').count()).toBe(0);
+    expect(crashes).toEqual([]);
+  });
+
+  it('a still frame is the frame the live scene draws under reduced motion, at the same size', async () => {
+    await open({ ...WIDE, reducedMotion: 'reduce' });
+    const frames = await page.locator('[data-viewport-content-id]').count();
+    await stillsSettled(frames * 2);
+    const boxIn = (frame: number) => page.locator('[data-viewport-content-id]').nth(frame).locator('[data-inner-component-id="fxa"]').first();
+    // The box's heading hidden, so only the scene is compared.
+    await page.addStyleTag({ content: '[data-inner-component-id="fxa-title"]{visibility:hidden}' });
+    const still = PNG.sync.read(await boxIn(1).screenshot());
+    await editor((api) => api.startFxLive('fxa', 1));
+    await waitLive();
+    // The still under it is hidden once the live one has faded in.
+    await expect.poll(async () => (await stills()).filter((s) => s.frame === 1 && s.box === 'fxa').length, { timeout: 10_000 }).toBe(0);
+    await page.waitForTimeout(500);
+    const live = PNG.sync.read(await boxIn(1).screenshot());
+    expect(live.width).toBe(still.width);
+    expect(live.height).toBe(still.height);
+    let total = 0;
+    let far = 0;
+    for (let i = 0; i < still.data.length; i += 4) {
+      const d = Math.max(Math.abs(still.data[i] - live.data[i]), Math.abs(still.data[i + 1] - live.data[i + 1]), Math.abs(still.data[i + 2] - live.data[i + 2]));
+      total += d;
+      if (d > 24) far += 1;
+    }
+    const pixels = still.data.length / 4;
+    const stats = `mean difference ${(total / pixels).toFixed(2)}, share far apart ${(far / pixels).toFixed(5)}`;
+    // The same picture: the preset's grain is fresh noise in every frame drawn (measured: a mean difference of
+    // about 3.4 levels of 255 and 0.01 percent of pixels more than 24 apart), anything else would be far apart.
+    expect(far / pixels, stats).toBeLessThan(0.001);
+    expect(total / pixels, stats).toBeLessThan(6);
+    expect(crashes).toEqual([]);
+  });
+
+  it('a refused scene shows the box background in every frame, holds no context, and draws again once replaced', async () => {
+    await open(WIDE);
+    const frames = await page.locator('[data-viewport-content-id]').count();
+    await stillsSettled(frames * 2);
+    await editor((api, arg) => api.setFx('fxa', arg), { version: 99 });
+    await stillsSettled(frames, 'off');
+    for (const still of (await stills()).filter((s) => s.box === 'fxa')) expect(still.width).toBe(0);
+    await expect.poll(liveContexts, { timeout: 60_000 }).toBe(0);
+    await editor((api, arg) => api.setFx('fxa', arg), SCENE);
+    await stillsSettled(frames * 2);
     expect(crashes).toEqual([]);
   });
 
@@ -168,16 +368,19 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     await waitLive();
     await expectOne();
     const made = await madeContexts();
-    await page.evaluate(() => ((document.querySelector('canvas') as unknown as { __same: boolean }).__same = true));
+    await page.evaluate(() => ((document.querySelector('[data-fc-fx-layer] canvas') as unknown as { __same: boolean }).__same = true));
     let scene: unknown = SCENE;
     for (const intensity of [0.2, 1.4, 0.6, 1.1, 0.9]) {
       scene = stored(setFxParam(scene, 'bloom', 'intensity', intensity));
       await editor((api, arg) => api.setFx('fxa', arg), scene);
       await page.waitForTimeout(150);
-      expect(await liveContexts()).toBe(1);
+      // The live context, and at most one still frame's beside it.
+      expect(await liveContexts()).toBeLessThanOrEqual(2);
     }
-    expect(await madeContexts()).toBe(made);
-    expect(await page.evaluate(() => (document.querySelector('canvas') as unknown as { __same?: boolean }).__same)).toBe(true);
+    // The live scene kept its one canvas, and so its context, through every change.
+    expect(await page.evaluate(() => (document.querySelector('[data-fc-fx-layer] canvas') as unknown as { __same?: boolean }).__same)).toBe(true);
+    await expectOne();
+    expect(made).toBeGreaterThan(0);
     expect(await status()).toBe('live');
     expect(crashes).toEqual([]);
   });
@@ -233,7 +436,7 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     await waitLive();
     await editor((api) => api.stopFxLive());
     await expect.poll(canvases).toBe(0);
-    await expect.poll(liveContexts, { timeout: 10_000 }).toBe(0);
+    await expect.poll(liveContexts, { timeout: 60_000 }).toBe(0);
     expect(await page.locator('[data-fc-fx-layer]').count()).toBe(0);
     expect(await status()).toBe('idle');
     expect(await page.evaluate(() => (document.querySelector('[data-viewport-content-id] [data-inner-component-id="fxa"]') as HTMLElement).getAttribute('style'))).toBe(before);
@@ -245,7 +448,7 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     await editor((api) => api.startFxLive('fxa', 0));
     await waitLive();
     await page.evaluate(() => {
-      const canvas = document.querySelector('canvas')!;
+      const canvas = document.querySelector<HTMLCanvasElement>('[data-fc-fx-layer] canvas')!;
       const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as WebGLRenderingContext;
       gl.getExtension('WEBGL_lose_context')!.loseContext();
     });
@@ -266,7 +469,7 @@ describe.each(ENGINES)('in %s', (_name, engine) => {
     await waitLive();
     await editor((api, arg) => api.setFx('fxa', arg), { version: 99 });
     await expect.poll(canvases).toBe(0);
-    await expect.poll(liveContexts, { timeout: 10_000 }).toBe(0);
+    await expect.poll(liveContexts, { timeout: 60_000 }).toBe(0);
     await editor((api, arg) => api.setFx('fxa', arg), SCENE);
     await waitLive();
     await expectOne();
