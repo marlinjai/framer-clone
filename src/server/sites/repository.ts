@@ -661,8 +661,8 @@ export class SiteRepository {
     const write = await withSerializationRetry(() => this.prisma.$transaction(
       async (tx) => {
         if (options.signal?.aborted) throw new SaveAbortedError();
-        await this.lockSiteForSave(tx, scope, persisted);
-        const written = await this.aroundCustomCode(tx, scope, persisted.siteId, 'save', () => this.writeWorkingCopy(tx, scope, persisted, options));
+        const mainId = await this.lockSiteForSave(tx, scope, persisted);
+        const written = await this.aroundCustomCode(tx, persisted.siteId, mainId, 'save', () => this.writeWorkingCopy(tx, scope, persisted, options));
         // Thrown inside the transaction, so an abort that came while it waited rolls the write back.
         if (options.signal?.aborted) throw new SaveAbortedError();
         return written;
@@ -698,20 +698,18 @@ export class SiteRepository {
    *  - When the names changed on the main site, its unnamed blobs older than a week are pruned (D4). A branch's save
    *    prunes nothing: the blobs are its main site's, whose next save, publish or code write prunes them.
    *
-   * `kind` is for the reasons only; the publish prunes once more after freezing its revision.
+   * `mainId` is the site's main site as the caller's lock read it (the site itself for a main site), or null for a
+   * site being created, which stores no blob yet (blobs are keyed by an existing site's id). `kind` is for the
+   * reasons only; the publish prunes once more after freezing its revision.
    */
   private async aroundCustomCode(
     tx: Prisma.TransactionClient,
-    scope: TenantScope,
     siteId: string,
+    mainId: string | null,
     kind: 'save' | 'publish',
     write: () => Promise<WorkingCopyWrite>,
   ): Promise<WorkingCopyWrite> {
-    const own = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`
-      SELECT s.branch_of_site_id FROM public.sites s WHERE s.id = ${siteId} AND s.workspace_id = ${scope.workspaceId}`;
-    // A site being created stores no blob yet (blobs are keyed by an existing site's id).
-    if (own.length === 0) return write();
-    const mainId = own[0].branch_of_site_id ?? siteId;
+    if (mainId === null) return write();
     if (!(await siteHoldsBlobs(tx, mainId))) return write();
     const before = await workingCopyHashes(tx, siteId);
     const written = await write();
@@ -756,9 +754,10 @@ export class SiteRepository {
    *     no code can only remove names, is never refused and never prunes, so it keeps the shared lock.
    *  3. The site's own row FOR UPDATE, as publish takes it: every other writer of this site's row waits.
    *
-   * A site in another workspace matches no row here; writeWorkingCopy refuses it as before.
+   * A site in another workspace matches no row here; writeWorkingCopy refuses it as before. Returns the site's main
+   * site as that last lock read it (the site itself for a main site), or null when there is no such row yet.
    */
-  private async lockSiteForSave(tx: Prisma.TransactionClient, scope: TenantScope, persisted: PersistedSite): Promise<void> {
+  private async lockSiteForSave(tx: Prisma.TransactionClient, scope: TenantScope, persisted: PersistedSite): Promise<string | null> {
     const siteId = persisted.siteId;
     await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`site_save:${siteId}`}))`;
     const namesCode = carriesCustomCodeHash(persisted);
@@ -771,7 +770,9 @@ export class SiteRepository {
         await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${mainId} AND workspace_id = ${scope.workspaceId} FOR SHARE`;
       }
     }
-    await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
+    const locked = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`SELECT branch_of_site_id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
+    // Read under the lock, so it is the site's main site for the whole transaction (a branch is never re-parented).
+    return locked.length === 0 ? null : (locked[0].branch_of_site_id ?? siteId);
   }
 
   /**
@@ -1243,7 +1244,8 @@ export class SiteRepository {
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
       // Only main is ever published (the database's CHECK would refuse it too, after the write).
       await this.refuseBranch(tx, scope, siteId);
-      const write = await this.aroundCustomCode(tx, scope, siteId, 'publish', () => this.writeWorkingCopy(tx, scope, persisted, {
+      // Main only (refused above), and it exists (the write below must find it), so it is its own main site.
+      const write = await this.aroundCustomCode(tx, siteId, siteId, 'publish', () => this.writeWorkingCopy(tx, scope, persisted, {
         mustExist: true,
         companyId: options.companyId,
         expectedVersion: options.expectedVersion,
