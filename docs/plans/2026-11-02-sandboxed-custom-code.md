@@ -1438,12 +1438,18 @@ working copy, base copy and the copy for "Undo this merge") is pointed at the ne
 All old rows of rewritten blocks are deleted first and the new rows written after, so blocks whose rewritten code
 meets other code share one row, and a block whose new code is another rewritten block's old code still finds a row.
 The new row keeps the old one's age, so pruning (D113) treats it alike. **Taken-down code stays taken down:** the
-new row is blocked when the old one was, and a hash on the takedown list puts the new hash on it too, so an erase can
-never bring blocked code back to life. The audit writes `blob-erase` with both hashes and nothing else. A proposal is
+new row is blocked when the old row was blocked or its hash listed, and when the new hash is itself listed or blocked
+on any site's row (the check the guarded write makes), so an erase can never bring taken-down code back to life.
+**The erase never writes the takedown list** (security review of this part, B1): the new hash follows the owner's
+replacement, so listing it could take down another site's identical code that no operator judged. One residual is
+accepted: a blocked row under the new hash makes the guarded write refuse that exact code for new writes on any site
+(D3 reads blocked rows everywhere), while a block already serving it elsewhere keeps serving. A title-only change
+keeps the hash and is not reported as rewritten code. The audit writes `blob-erase` with both hashes and nothing else. A proposal is
 rewritten in place (it is never served, so there is no hash to follow). A block's `sha256` is a structural key now,
 so a search inside words for something like "cafe" can never cut into a hash and orphan a block. The erase refuses,
 with 422 and a sentence that holds no value, code it cannot take: a block left with no code ("erase with a
-replacement instead"), code past 256 KB, or a stored declaration that no longer parses. After the erase the panel
+replacement instead"), code past 256 KB, or a stored declaration that no longer parses; the refusal comes after the
+staleness checks, so a stale preview is told it is stale. After the erase the panel
 names each rewritten block, because code can stop working where a text in it changed. The box may still answer the
 old hash for up to six minutes (its 60 second lookup cache plus the 300 second HTTP cache, the same bound as for a
 disabled block), and no page names that hash any more; what a visitor's browser already loaded is outside the site's

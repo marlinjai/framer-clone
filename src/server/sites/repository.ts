@@ -1515,14 +1515,30 @@ export class SiteRepository {
       // D9: the code of every stored block and proposal first, without writing, so every copy below can follow a
       // block whose code changed to its new hash. Its matches join `found` after the branches', the order of the
       // search, and its rows are written once the copies are.
-      const codeRewrites: Array<{ source: CustomCodeEraseSource; found: EraseMatch[]; rewrite: ReturnType<typeof rewriteDocument>; left: number }> = [];
+      // Only what changes is kept (the matches of the rest are counted for the token, their code released), so
+      // the erase holds the code of the rewritten blocks only, not of every stored blob.
+      const codeFound: EraseMatch[] = [];
+      let codeLeft = 0;
+      const codeRewrites: Array<{ source: CustomCodeEraseSource; rewrite: ReturnType<typeof rewriteDocument>; codeChanged: boolean }> = [];
       const renamed = new Map<string, string>();
+      // A block the erase cannot rewrite is said after the staleness checks, so a stale preview is told it is stale.
+      let codeRefusal: EraseCodeRefusedError | null = null;
       for await (const source of this.customCodeEraseSources(tx, scope, siteId)) {
         const rewrite = rewriteDocument(source.document, source.location, matcher, replacement, chosen);
-        codeRewrites.push({ source, found: findMatches(source.document, source.location, matcher), rewrite, left: findMatches(rewrite.document, source.location, matcher).length });
-        if (rewrite.erased.length === 0 || !source.hashAfter || source.location.kind !== 'custom-code') continue;
-        const after = await source.hashAfter(rewrite.document as { code: string; title: string });
-        if (after !== source.location.sha256) renamed.set(source.location.sha256, after);
+        codeFound.push(...findMatches(source.document, source.location, matcher));
+        codeLeft += findMatches(rewrite.document, source.location, matcher).length;
+        if (rewrite.erased.length === 0) continue;
+        const rewritten = rewrite.document as { code: string; title: string };
+        const codeChanged = rewritten.code !== source.document.code;
+        codeRewrites.push({ source, rewrite, codeChanged });
+        if (!codeChanged || !source.hashAfter || source.location.kind !== 'custom-code' || codeRefusal) continue;
+        try {
+          const after = await source.hashAfter(rewritten);
+          if (after !== source.location.sha256) renamed.set(source.location.sha256, after);
+        } catch (err) {
+          if (!(err instanceof EraseCodeRefusedError)) throw err;
+          codeRefusal = err;
+        }
       }
 
       // The working copy: the `sites` columns and each changed `site_pages` row.
@@ -1601,14 +1617,16 @@ export class SiteRepository {
       // The code itself (D9): each block whose code changed is written under its new hash and its old row goes;
       // a proposal is rewritten in place. After the copies, which already name the new hashes.
       const rewrittenCode: string[] = [];
-      for (const { source, rewrite } of codeRewrites) if (rewrite.erased.length > 0) await source.removeOld?.(tx);
-      for (const { source, found: inCode, rewrite, left } of codeRewrites) {
-        found.push(...inCode);
-        remaining += left;
-        if (rewrite.erased.length === 0) continue;
-        await source.write(tx, rewrite.document as { code: string; title: string }, renamed, erasedBy, scope);
-        erased.push(...rewrite.erased);
-        if (source.location.kind === 'custom-code') rewrittenCode.push((rewrite.document as { title: string }).title);
+      found.push(...codeFound);
+      remaining += codeLeft;
+      if (!codeRefusal) {
+        for (const { source } of codeRewrites) await source.removeOld?.(tx);
+        for (const { source, rewrite, codeChanged } of codeRewrites) {
+          await source.write(tx, rewrite.document as { code: string; title: string }, renamed, erasedBy, scope);
+          erased.push(...rewrite.erased);
+          // Named so the owner checks it: code can stop working where a text in it changed. A changed title is not.
+          if (source.location.kind === 'custom-code' && codeChanged) rewrittenCode.push((rewrite.document as { title: string }).title);
+        }
       }
 
       // Checked last: throwing here rolls every write above back.
@@ -1617,6 +1635,7 @@ export class SiteRepository {
       // (an id beyond the list, a blocked match, an unknown id) is not the owner's choice.
       const offered = new Set(found.slice(0, ERASE_LIMITS.listed).filter((m) => m.blocked === null).map((m) => m.id));
       if ([...chosen].some((id) => !offered.has(id))) throw new ErasePreviewStaleError();
+      if (codeRefusal) throw codeRefusal;
       if (erased.length === 0) throw new NothingToEraseError();
 
       // Every erase moves the epoch, also one that found the value only in old
@@ -1807,10 +1826,11 @@ export class SiteRepository {
    *
    * Writing a block whose code changed: the rewritten code is stored under the hash it gives with the old
    * declaration, the old row is deleted, and `blob-erase` goes to the audit with both hashes (never the code or the
-   * value). A blob that was taken down stays taken down under its new hash: its row is blocked, and a hash on the
-   * takedown list puts the new one on it too, so an erase can never bring blocked code back to life. When the new
-   * hash is one the site already stores, that row is kept and blocked if the old one was. Only the title changed:
-   * the row is written again under the same hash, since a blob row is never updated (D27).
+   * value). A blob that was taken down stays taken down under its new hash: its new row is blocked when the old row
+   * was blocked or listed, or when the new hash is listed or blocked anywhere; the takedown list itself is never
+   * written from here. When the new hash is one the site already stores, that row is kept and blocked if this one
+   * is taken down. Only the title changed: the row is written again under the same hash, since a blob row is never
+   * updated (D27).
    */
   private async *customCodeEraseSources(tx: Prisma.TransactionClient, scope: TenantScope, siteId: string): AsyncGenerator<CustomCodeEraseSource> {
     const blobs = await tx.customCodeBlob.findMany({ where: { siteId }, select: { sha256: true }, orderBy: { sha256: 'asc' } });
@@ -1823,6 +1843,8 @@ export class SiteRepository {
         location: { kind: 'custom-code', sha256, title: row.title },
         document: { code: row.document, title: row.title },
         hashAfter: async (rewritten) => {
+          // Only the title changed: the hash names code and declaration, so it stays (no parse needed).
+          if (rewritten.code === row.document) return sha256;
           if (!parsed.ok) throw new EraseCodeRefusedError('custom_code_unreadable', 'A custom code block that holds this text has a stored declaration that can no longer be read, so its code cannot be rewritten. Untick the matches in custom code, or contact support. Nothing was changed.');
           if (rewritten.code.trim() === '') throw new EraseCodeRefusedError('custom_code_empty', 'Erasing would leave a custom code block with no code at all. Erase with a replacement text instead. Nothing was changed.');
           if (utf8ByteLength(rewritten.code) + utf8ByteLength(canonicalDeclarationJson(parsed.declaration)) > BOX_LIMITS.documentBytes) {
@@ -1836,7 +1858,20 @@ export class SiteRepository {
         },
         write: async (client, rewritten, renamed, erasedBy, writeScope) => {
           const to = renamed.get(sha256) ?? sha256;
-          const takenDown = row.blockedAt !== null || listed;
+          // Code taken down anywhere stays down here (D3, D32): the old row was blocked or its hash listed, or the
+          // new hash is listed or blocked on any site's row, the check the guarded write makes. Nothing is ever put
+          // on the takedown list from here: the new hash follows the owner's replacement, so listing it could take
+          // down another site's identical code that no operator judged (security review of C5 part 2, B1).
+          const elsewhere =
+            to !== sha256 &&
+            (
+              await client.$queryRaw<{ found: number }[]>`
+                SELECT 1 AS found FROM public.custom_code_blocked_hashes h WHERE h.sha256 = ${to}
+                UNION ALL
+                SELECT 1 FROM public.custom_code_blobs b WHERE b.sha256 = ${to} AND b.blocked_at IS NOT NULL
+                LIMIT 1`
+            ).length > 0;
+          const takenDown = row.blockedAt !== null || listed || elsewhere;
           // A row under the new hash that is still there after every rewritten block's old row went: code no block
           // of this erase held before, or a block of this erase that met the same code first. It is kept, and
           // blocked when this one was taken down, so an erase never brings taken-down code back to life.
@@ -1858,13 +1893,6 @@ export class SiteRepository {
                 createdAt: row.createdAt,
                 blockedAt: takenDown ? (row.blockedAt ?? new Date()) : null,
               },
-            });
-          }
-          if (listed && to !== sha256) {
-            await client.customCodeBlockedHash.upsert({
-              where: { sha256: to },
-              create: { sha256: to, blockedBy: 'operator', reason: 'An erase of personal data rewrote code that was taken down.' },
-              update: {},
             });
           }
           await client.customCodeAudit.create({
