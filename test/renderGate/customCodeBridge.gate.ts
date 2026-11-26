@@ -416,6 +416,43 @@ async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?:
       }
     }).observe(document, { subtree: true, childList: true });
   });
+  // Each block's frame: when its load event fired, and its first window message, with whether the frame was already gone
+  // one task after that message. Registered before the page's own scripts, so this listener runs before the broker's
+  // in the same dispatch, and reads only `source`, never the data (which the frame makes costly to read). A frame gone
+  // in the task right after its first message was removed at that message: the broker's other "no hello" removal is a
+  // timer started by the frame's load event, 5 seconds later.
+  await context.addInitScript(() => {
+    const w = window as unknown as {
+      __frameLoad: Record<string, number>;
+      __firstMessage: Record<string, { at: number; goneNextTask?: boolean }>;
+    };
+    w.__frameLoad = {};
+    w.__firstMessage = {};
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of Array.from(record.addedNodes)) {
+          if ((node as Element).tagName !== 'IFRAME') continue;
+          const id = (record.target as Element).id;
+          node.addEventListener('load', () => {
+            if (w.__frameLoad[id] === undefined) w.__frameLoad[id] = performance.now();
+          });
+        }
+      }
+    }).observe(document, { subtree: true, childList: true });
+    addEventListener('message', (event) => {
+      for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+        if (event.source === null || frame.contentWindow !== event.source) continue;
+        const id = (frame.parentElement as Element).id;
+        if (w.__firstMessage[id]) return;
+        const first: { at: number; goneNextTask?: boolean } = { at: performance.now() };
+        w.__firstMessage[id] = first;
+        setTimeout(() => {
+          first.goneNextTask = !frame.isConnected;
+        }, 0);
+        return;
+      }
+    });
+  });
   page.on('console', (message) => consoleLines.push(message.text()));
   page.on('pageerror', (error) => errors.push(error.message));
   await context.route('**/*', (route) => {
@@ -1245,16 +1282,29 @@ describe('the custom code bridge in chromium with site isolation', () => {
   it('removes a frame whose first window message is not a hello, at that message, and answers a click', async () => {
     const { page, context, console: lines } = await open(browser, [{ id: 'pre', doc: 'preHeavy' }], { quiet: true });
     try {
-      // At its first message, sent while the frame's document is still parsing, so before its load starts the 5
-      // second clock for a missing hello: removed within 5 seconds of the frame's appearing.
+      // Removed at its first message, sent while the frame's document is still parsing. Proven by order, not by a
+      // duration (a loaded runner took 3.1 s, 4.6 s and 6.3 s to deliver that costly message): the frame is gone in the
+      // task right after its first message reached the page, and that message came before the broker's other "no hello"
+      // removal could run, the timer the frame's load event starts for 5 seconds. A broker that let the message pass
+      // would keep the frame past it, until that timer.
       const appeared = Date.now();
       await until(page, "document.querySelector('#pre iframe')", 10_000);
-      // The bound is 4.5 s, under the 5 s hello clock it must beat: a loaded CI runner measured 3.09 s here.
-      await until(page, removed('pre'), 4_500);
+      await until(page, removed('pre'), 30_000);
+      await until(page, "window.__firstMessage.pre && window.__firstMessage.pre.goneNextTask !== undefined", 5_000);
       const gone = Date.now() - appeared;
-      record(`costly first message without hello, site isolation: removed ${gone} ms after the frame was made`);
+      const order = await page.evaluate(() => {
+        const w = window as unknown as { __frameLoad: Record<string, number>; __firstMessage: Record<string, { at: number; goneNextTask?: boolean }> };
+        const load = w.__frameLoad.pre;
+        const first = w.__firstMessage.pre;
+        // null: the message came before the frame's load event (or the frame never loaded), so no hello timer was running.
+        return { first, sinceLoad: load === undefined || load > first.at ? null : first.at - load };
+      });
+      record(`costly first message without hello, site isolation: removed ${gone} ms after the frame was made; first message ${order.sinceLoad === null ? 'before the frame loaded' : `${Math.round(order.sinceLoad)} ms after its load`}`);
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
-      expect(gone).toBeLessThan(4_500);
+      expect(order.first?.goneNextTask).toBe(true);
+      // The hello timer could not have fired yet when the message came: the frame had not loaded, or loaded less than
+      // the timer's 5 seconds before.
+      expect(order.sinceLoad === null || order.sinceLoad < 5_000).toBe(true);
       const click = await clickToState(page);
       // No bound on the page's freeze here: the broker reads a frame's first window message once, by design, and this
       // frame makes that message its costly one (1.5 s in CI run 45119357537). The variant below bounds the freeze.
