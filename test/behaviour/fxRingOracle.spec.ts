@@ -144,8 +144,26 @@ function whereTheyDiffer(ours: PNG, theirs: PNG): string {
   return `differing pixels: ${box}; summed light: this app ${ourLight}, the component ${theirLight}`;
 }
 
+/**
+ * One line per captured picture, in passing runs too: a short hash of its pixels, and the renderer and samples of
+ * its canvas. A picture that differs from the other side's can then be held against the same case in a green run,
+ * which says which side drew something else. It never fails a case: what cannot be read is said in the line.
+ */
+async function describeCapture(canvas: Locator, label: string, shot: PNG): Promise<void> {
+  const hash = createHash('sha256').update(shot.data).digest('hex').slice(0, 12);
+  const drawnBy = await canvas
+    .evaluate((element) => {
+      const gl = (element as HTMLCanvasElement).getContext('webgl2');
+      if (!gl) return 'no webgl2 context to read';
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      return `renderer ${gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER)}, samples ${gl.getParameter(gl.SAMPLES)}, antialias ${gl.getContextAttributes()?.antialias}`;
+    })
+    .catch((error: unknown) => `not read: ${String(error)}`);
+  console.info(`ring oracle picture (${label}): ${hash}, ${drawnBy}`);
+}
+
 /** The canvas at `selector`, once it has the box's size in device pixels and two screenshots apart are the same. */
-async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
+async function settled(page: Page, selector: string, size: Size, label: string): Promise<PNG> {
   const canvas = page.locator(selector);
   await canvas.waitFor({ state: 'attached', timeout: 30_000 });
   // A canvas's size in pixels is the box times the ratio rounded down (the browser truncates it; three.js floors it).
@@ -166,6 +184,7 @@ async function settled(page: Page, selector: string, size: Size): Promise<PNG> {
       // above would be compared scaled: say so here, not as a count of differing pixels.
       const now = await backingSize(canvas);
       if (now[0] !== want[0] || now[1] !== want[1]) throw new Error(`the canvas at ${selector} became ${now[0]}x${now[1]} while it was captured, from ${want[0]}x${want[1]}`);
+      await describeCapture(canvas, label, next);
       return next;
     }
     previous = next;
@@ -200,7 +219,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
     await page.waitForFunction(() => document.querySelector('[data-t="hero"]')?.getAttribute('data-fc-fx-state') === 'live', undefined, { timeout: 30_000 });
     await expect.poll(() => page.locator('[data-fc-fx-layer]').evaluate((layer) => getComputedStyle(layer).opacity), { timeout: 5000 }).toBe('1');
     // The live layer's canvas (the ring's first still sits beside it until the layer's fade is over).
-    return settled(page, '[data-t="hero"] [data-fc-fx-layer] canvas', size);
+    return settled(page, '[data-t="hero"] [data-fc-fx-layer] canvas', size, `${name}, this app, ${slug(size, variant)}`);
   };
 
   /** The ring as the component draws it, seeded and with the clock stopped, on a blank page. */
@@ -215,7 +234,8 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       // column of the screenshot is half canvas and half what is behind it, on both sides alike.
       `<lumitra-light${glow === undefined ? '' : ` glow="${glow}"`} style="display:block;width:${size.width}px;height:${size.height}px;background:#04090b"></lumitra-light>` +
       // Seeded just before the component loads, so nothing else draws from the generator first.
-      `<script>Math.random = (${mulberry32.toString()})(${SEED});</script>` +
+      // Counted, so a picture that differs can be told from one whose generator something else drew from too.
+      `<script>{ const next = (${mulberry32.toString()})(${SEED}); window.ringDraws = 0; Math.random = () => { window.ringDraws += 1; return next(); }; }</script>` +
       '<script type="module" src="/lumitra-light.js"></script>';
     await page.route(`${REFERENCE_ORIGIN}/**`, (route) =>
       new URL(route.request().url()).pathname === '/lumitra-light.js'
@@ -223,7 +243,9 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
         : route.fulfill({ contentType: 'text/html', body: html }),
     );
     await page.goto(`${REFERENCE_ORIGIN}/`);
-    const shot = await settled(page, 'lumitra-light canvas', size);
+    const variant = `${size.name}${glow === undefined ? '' : `, glow ${glow}`}${script === source ? '' : ', a changed stop'}`;
+    const shot = await settled(page, 'lumitra-light canvas', size, `${name}, the component, ${variant}`);
+    console.info(`ring oracle draws (${name}, the component, ${variant}): ${await page.evaluate(() => (window as unknown as { ringDraws: number }).ringDraws)} from the seeded generator`);
     if (problems.length > 0) throw new Error(`the reference page threw: ${problems.join('; ')}`);
     return shot;
   };
@@ -256,9 +278,11 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
     }, 120_000);
 
     it('a post pass after the ring leaves it as it is', async () => {
-      const result = difference(await sites(size, 'post'), await reference(size));
+      const ours = await sites(size, 'post');
+      const theirs = await reference(size);
+      const result = difference(ours, theirs);
       console.info(`ring oracle (${name}, ${sizeName}, with a post pass): ${(result.share * 100).toFixed(4)} percent differ, largest ${result.largest}`);
-      expect(result.differing).toBe(0);
+      expect(result.differing, whereTheyDiffer(ours, theirs)).toBe(0);
     }, 120_000);
   });
 
@@ -270,7 +294,7 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
       const result = difference(app, component);
       console.info(`ring oracle (${name}, glow ${glow}): ${result.differing} pixels differ by more than ${CHANNEL_TOLERANCE}, largest difference in a channel ${result.largest}`);
       expect(colours(app)).toBeGreaterThan(50);
-      expect(result.differing).toBe(0);
+      expect(result.differing, whereTheyDiffer(app, component)).toBe(0);
     }, 120_000);
   });
 
