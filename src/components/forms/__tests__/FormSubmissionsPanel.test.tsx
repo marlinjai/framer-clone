@@ -210,6 +210,26 @@ describe('FormSubmissionsPanel', () => {
       }
     });
 
+    it('a tick reads only as far as the pending rows reach, not every page of loaded rows', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const pending = { status: 'pending' as const, reason: null, recipient: 'owner@bakery.example' };
+        rows = [item('s3', { notification: pending }), item('s2'), item('s1', { createdAt: '2026-10-23T10:00:00.000Z' })];
+        render(<FormSubmissionsPanel projectId="proj-1" />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Load older submissions' }));
+        await screen.findByRole('button', { name: /Visitor s1/ });
+        const before = calls.length;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5500);
+        });
+        const ticks = calls.slice(before).filter((c) => c.method === 'GET');
+        expect(ticks.length).toBeGreaterThan(0);
+        expect(ticks.filter((c) => c.url.includes('cursor='))).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('polling stops after its round, and a reload starts a new one', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {

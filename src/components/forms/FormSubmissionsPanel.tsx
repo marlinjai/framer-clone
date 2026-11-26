@@ -194,10 +194,14 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
   // was sent or failed meanwhile. Stops by itself after about five minutes; a reload or another "send again" starts it again.
   // Counts the accepted "send again" clicks: an answer that was asked for before the latest one is out of date and dropped.
   const resends = useRef(0);
-  const syncNotifications = useCallback(async () => {
+  // Only the rows whose email is pending are asked for (and `also`, the row a refused "send again" was about), so the cursor is
+  // followed no further than the oldest of those, never through every page of loaded rows on every tick.
+  const syncNotifications = useCallback(async (also?: ShownRow) => {
+    const rows: ShownRow[] = items.filter((s) => s.notification?.status === 'pending' || s.id === also?.id);
+    if (rows.length === 0) return;
     const askedAfter = resends.current;
     try {
-      const fresh = await readNotifications(items, query);
+      const fresh = await readNotifications(rows, query);
       if (!fresh || askedAfter !== resends.current) return;
       setItems((prev) => prev.map((s) => (fresh.has(s.id) ? { ...s, notification: fresh.get(s.id) ?? null } : s)));
     } catch {
@@ -299,7 +303,7 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
       if (!res.ok) {
         setRowError({ id: item.id, message: await readError(res, 'Could not send the email again') });
         // The line on screen may be out of date (it was sent, or another round started): show what is true now.
-        void syncNotifications();
+        void syncNotifications(item);
         return;
       }
       resends.current += 1;

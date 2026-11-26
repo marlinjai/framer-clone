@@ -226,6 +226,12 @@ describe('032_form_notification', () => {
     expect(fk[0].confdeltype).toBe('c');
   });
 
+  it('indexes the hourly cap query by tenant group, company and the latest admission', async () => {
+    const index = await fx.owner<{ def: string }[]>`
+      SELECT indexdef AS def FROM pg_indexes WHERE schemaname = ${schema} AND indexname = 'form_notification_cap_idx'`;
+    expect(index[0]?.def).toMatch(/\(tenant_id, company_id, round_started_at\)$/);
+  });
+
   it('refuses a status outside its set and a tenant group id that is not one', async () => {
     const s = submission({ notification: undefined });
     await insertFormSubmission(appDb, s);

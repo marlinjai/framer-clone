@@ -32,6 +32,8 @@ const { handler } = vi.hoisted(() => ({ handler: { run: (async () => undefined) 
 
 // The stuck-purge count, with a rendezvous for the groups that have stuck purges: none of those counts is answered until `meet` of
 // them have arrived, so two groups' reads overlap on purpose, which is what the watchdog's totals must survive (see the lost-update test).
+const RENDEZVOUS_MS = 5_000;
+
 const { purgeCount } = vi.hoisted(() => ({ purgeCount: { meet: 0, waiting: [] as (() => void)[] } }));
 vi.mock('@/server/forms/purge', async (original) => {
   const real = await original<typeof import('@/server/forms/purge')>();
@@ -40,7 +42,13 @@ vi.mock('@/server/forms/purge', async (original) => {
     countStuckPurges: async (db: Parameters<typeof real.countStuckPurges>[0]) => {
       const count = await real.countStuckPurges(db);
       if (count > 0 && purgeCount.meet > 0) {
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((arrive, reject) => {
+          // A read that never gets company (groups read one at a time) fails here by name instead of hanging to the test's timeout.
+          const alone = setTimeout(() => reject(new Error(`rendezvous: the other groups' purge counts did not arrive within ${RENDEZVOUS_MS} ms`)), RENDEZVOUS_MS);
+          const resolve = () => {
+            clearTimeout(alone);
+            arrive();
+          };
           purgeCount.waiting.push(resolve);
           if (purgeCount.waiting.length === purgeCount.meet) {
             purgeCount.meet = 0;

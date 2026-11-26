@@ -68,5 +68,9 @@ export const formNotification: Migration = {
     await tx`
       CREATE INDEX IF NOT EXISTS "form_notification_company_idx" ON "form_notification" ("tenant_id", "company_id", "status")
     `;
+    // The hourly cap's count, run for every new notice and every "send again": only the rows whose latest admission is in the hour.
+    await tx`
+      CREATE INDEX IF NOT EXISTS "form_notification_cap_idx" ON "form_notification" ("tenant_id", "company_id", "round_started_at")
+    `;
   },
 };
