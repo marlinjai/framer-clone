@@ -19,6 +19,11 @@ describe('readStylesheet', () => {
     expect(sheet.hasBorderBase).toBe(true);
   });
 
+  it('reads the root tokens from a selector list that names the root, and from no other list', () => {
+    const sheet = read(':root, .theme-light { --a: 1px; } :host, [data-x] { --b: 2px; } .card, .panel { --c: 3px; }');
+    expect([...sheet.root.entries()]).toEqual([['--a', '1px'], ['--b', '2px']]);
+  });
+
   it('refuses token names that would reset the theme', () => {
     const sheet = read('@theme { --*: initial; --color-*: initial; --Color-x: red; --ok: 1px; }');
     expect([...sheet.theme.keys()]).toEqual(['--ok']);

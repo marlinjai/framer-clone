@@ -12,7 +12,9 @@
 // may not show again (a generation that ended meanwhile leaves no draft to
 // restore). Once the stream is back, "Live updates back" for LIVE_BACK_MS. While
 // an agent's newer version waits for the person's open edit (a text edit can stay
-// open idle for long), it says so quietly. One polite live region that is always
+// open idle for long), it says so quietly. When the server answers the newest version with something that is not
+// one (a proxy's or an outage page's 200), live sync keeps asking with a back-off and this says so until a good answer
+// comes, so following the site never stops without a word. One polite live region that is always
 // present, so a screen reader hears each change once.
 'use client';
 
@@ -28,6 +30,8 @@ export const LIVE_PAUSED_TEXT = 'Live updates paused, reconnecting…';
 export const LIVE_BACK_TEXT = 'Live updates back';
 export const LIVE_DRAFT_LOST_TEXT = "The agent's draft may not show again if its generation has ended meanwhile.";
 /** A newer version of the site waits while the person edits (src/lib/live/editingInProgress.ts): said quietly, so a long idle edit does not hide it. */
+/** The document route answered with something that is not the site (src/lib/projects/liveSync.ts, documentBodyOf). */
+export const LIVE_UNREADABLE_TEXT = "Live updates paused: the site's newest version could not be read. Trying again…";
 export const LIVE_WAITING_TEXT = 'A newer version of the site is waiting until you finish editing.';
 
 /** Down after having been live: the connection was lost (a browser without streams only ever polls). */
@@ -63,9 +67,11 @@ export function useLiveConnectionMessage(projectId: string | undefined): { text:
     return undefined;
   }, [down, state.phase]);
 
+  // A newer version waiting for the person's edit says what to do; it comes first.
+  if (state.held?.whileEditing) return { text: LIVE_WAITING_TEXT, tone: 'waiting' };
+  if (state.unreadable) return { text: LIVE_UNREADABLE_TEXT, tone: 'paused' };
   if (paused && down) return { text: state.draftLost ? `${LIVE_PAUSED_TEXT} ${LIVE_DRAFT_LOST_TEXT}` : LIVE_PAUSED_TEXT, tone: 'paused' };
   if (back) return { text: LIVE_BACK_TEXT, tone: 'back' };
-  if (state.held?.whileEditing) return { text: LIVE_WAITING_TEXT, tone: 'waiting' };
   return { text: '', tone: 'none' };
 }
 

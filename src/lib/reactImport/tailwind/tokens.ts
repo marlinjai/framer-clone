@@ -18,7 +18,11 @@ const TOKEN_NAME = /^--[a-z0-9-]+$/;
 const DARK_VARIANT = 'dark (&:is(.dark *))';
 /** Stylesheets the preamble holds already. Any other import is never followed. */
 const KNOWN_IMPORTS: ReadonlySet<string> = new Set(['"tailwindcss"', "'tailwindcss'", '"tw-animate-css"', "'tw-animate-css'"]);
-const ROOT_SELECTORS: ReadonlySet<string> = new Set([':root', ':host', ':root, :host', ':root,:host']);
+/**
+ * A rule whose selector list names the root (`:root`, `:host`): its tokens are the page's, also when the list names
+ * more (`:root, .theme-light`, or this repo's own `:root, [data-fc-theme]`), since they apply to the root either way.
+ */
+const isRootRule = (rule: { selectors: string[] }): boolean => rule.selectors.some((selector) => selector === ':root' || selector === ':host');
 /** What the page's own base reads, so a source that defines them has them written whether a class reaches them or not. */
 const PAGE_BASE_TOKENS = ['--border', '--ring'];
 
@@ -150,7 +154,7 @@ export function readStylesheet(text: string, rootKey: string, budget: ImportBudg
     budget.chargeSteps(1);
     if (node.type === 'comment') return;
     if (node.type === 'atrule') readAtRule(node);
-    else if (node.type === 'rule' && ROOT_SELECTORS.has(node.selector)) readTokens(node, sheet.root);
+    else if (node.type === 'rule' && isRootRule(node)) readTokens(node, sheet.root);
     else if (node.type === 'rule' && node.selector === '.dark') readTokens(node, sheet.dark);
     else left(node, 'css-rule', 'sheetRule');
   });
