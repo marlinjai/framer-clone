@@ -125,9 +125,10 @@ function run(program: readonly FxProgramEntry[]): () => void {
     placeholder?.remove({ now });
     placeholder = undefined;
   };
-  const dropStill = (afterLive = false) => {
-    still?.remove({ afterLive });
-    if (!afterLive) still = null;
+  /** Gone at once, or (`under`, the live layer fading in) once that layer is fully opaque over it. */
+  const dropStill = (under?: HTMLElement) => {
+    still?.remove({ under });
+    if (!under) still = null;
   };
   setState(box, 'waiting');
   // A scene that is certain to start fetches its engine while it waits, and shows its still (or the
@@ -146,10 +147,10 @@ function run(program: readonly FxProgramEntry[]): () => void {
       .then(({ mountFxScene }) => {
         if (left) return;
         unmount = mountFxScene(box, scene, {
-          onLive: () => {
+          onLive: (layer) => {
             dropPlaceholder();
-            // Under the live layer until its fade is over, then gone: no dip in brightness.
-            dropStill(true);
+            // Under the live layer until that layer is fully opaque, then gone: no dip in brightness.
+            dropStill(layer);
             setState(box, 'live');
           },
           onOff: (reason) => {

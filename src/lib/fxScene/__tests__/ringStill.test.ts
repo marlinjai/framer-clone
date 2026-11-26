@@ -177,25 +177,75 @@ describe('drawing the still', () => {
     }
   });
 
-  it('after the live scene it stays until the live layer is fully opaque, then gives the box back', () => {
+  /** The live layer, in the box like the engine's, at `opacity`. */
+  const layerIn = (box: HTMLElement, opacity: string) => {
+    const layer = document.createElement('div');
+    layer.style.opacity = opacity;
+    box.appendChild(layer);
+    return layer;
+  };
+  const stillIn = (box: HTMLElement) => box.querySelector('[data-fc-fx-ring-still]');
+  /** One animation frame (the fake clock runs requestAnimationFrame at 16 ms). */
+  const frames = (count: number) => vi.advanceTimersByTime(16 * count);
+
+  it('after the live scene it stays until the live layer reads fully opaque on two frames, then gives the box back', () => {
     const box = boxOf(1440, 800);
     const still = showFxRingStill(box, SPEC)!;
-    still.remove({ afterLive: true });
-    vi.advanceTimersByTime(FX_FADE_MS - 1);
-    expect(box.querySelector('[data-fc-fx-ring-still]')).not.toBeNull();
-    vi.advanceTimersByTime(1);
-    expect(box.querySelector('[data-fc-fx-ring-still]')).toBeNull();
+    const layer = layerIn(box, '0');
+    still.remove({ under: layer });
+    frames(3);
+    layer.style.opacity = '0.6';
+    frames(3);
+    expect(stillIn(box)).not.toBeNull();
+    layer.style.opacity = '1';
+    frames(1);
+    expect(stillIn(box)).not.toBeNull();
+    frames(1);
+    expect(stillIn(box)).toBeNull();
+    expect(box.style.isolation).toBe('');
+  });
+
+  it('a set-up that holds the main thread longer than the fade does not take it away before the fade has run', () => {
+    // The engine's first frame came, and its set-up then held the page for longer than the fade: on the first
+    // frame after that, the layer's fade has only just begun. A clock started at the first frame had run out.
+    const box = boxOf(1440, 800);
+    const still = showFxRingStill(box, SPEC)!;
+    const layer = layerIn(box, '0');
+    still.remove({ under: layer });
+    vi.advanceTimersByTime(FX_FADE_MS * 3);
+    layer.style.opacity = '0.09';
+    frames(1);
+    expect(stillIn(box)).not.toBeNull();
+    layer.style.opacity = '1';
+    frames(2);
+    expect(stillIn(box)).toBeNull();
+  });
+
+  it('stays as the picture when the live layer leaves before it is opaque (the engine stopped), until removed', () => {
+    const box = boxOf(1440, 800);
+    const still = showFxRingStill(box, SPEC)!;
+    const layer = layerIn(box, '0.3');
+    still.remove({ under: layer });
+    frames(1);
+    layer.remove();
+    frames(10);
+    expect(stillIn(box)).not.toBeNull();
+    expect(box.style.isolation).toBe('isolate');
+    still.remove();
+    expect(stillIn(box)).toBeNull();
     expect(box.style.isolation).toBe('');
   });
 
   it('a page put away during that fade removes it at once', () => {
     const box = boxOf(1440, 800);
     const still = showFxRingStill(box, SPEC)!;
-    still.remove({ afterLive: true });
+    const layer = layerIn(box, '0.5');
+    still.remove({ under: layer });
     still.remove();
-    expect(box.querySelector('[data-fc-fx-ring-still]')).toBeNull();
+    expect(stillIn(box)).toBeNull();
     expect(box.style.isolation).toBe('');
-    vi.advanceTimersByTime(FX_FADE_MS * 2);
+    layer.style.opacity = '1';
+    frames(5);
     expect(box.style.isolation).toBe('');
   });
 
@@ -227,7 +277,7 @@ describe('drawing the still', () => {
       const before = contexts();
       vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(() => ({ width: 1200, height: 800, top: 0, left: 0, right: 1200, bottom: 800, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect);
       observed!();
-      still.remove({ afterLive: true });
+      still.remove({ under: layerIn(box, '0') });
       vi.advanceTimersByTime(100);
       expect(contexts()).toBe(before);
       // Without the live scene the same resize draws again.

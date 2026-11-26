@@ -34,8 +34,9 @@
 //    starts (one WebGL context per page);
 //  - redrawn, in a fresh short-lived context, when the box changes size before the
 //    live scene is there;
-//  - removed once the live layer is fully opaque over it (no two-sided cross-fade,
-//    which would dip in brightness), at once when the page is put away.
+//  - removed once the live layer is fully opaque over it, as read from that layer on
+//    each frame (no two-sided cross-fade, which would dip in brightness, and no clock,
+//    which the engine's set-up can outlast), at once when the page is put away.
 //
 // No engine code: imports only the render-free ring core and the pixel ratio rule.
 
@@ -52,7 +53,7 @@ import {
   ringGlowWeights,
   ringRadius,
 } from '@/lib/fx/ring';
-import { FX_FADE_MS, holdFxBox } from './box';
+import { holdFxBox } from './box';
 import { FX_RING_STILL_ATTR } from './marker';
 
 /** The still's own fade in: short, so the ring reads as there, and no pop. */
@@ -91,10 +92,14 @@ export function ringStillSpecOf(fx: Pick<StoredFx, 'scene'>): RingStillSpec | nu
 
 export interface FxRingStill {
   /**
-   * The live scene is fading in over the still (`afterLive`): the still goes once the layer's fade is over.
-   * Otherwise (`now`, or by default): gone at once, the box given back.
+   * The live scene is fading in over the still (`under`, its layer): the still goes once that layer is fully
+   * opaque, read from the layer itself on each frame, never from a clock (the engine's set-up can hold the main
+   * thread for longer than the fade, and a timer started at the first frame then ran out before the fade had
+   * begun: the still left at the start of the fade and the ring dipped, seen in Chromium on a graphics card,
+   * 2026-11-26). Should that layer leave before it is opaque (the engine stopped), the still stays as the picture.
+   * Otherwise (by default): gone at once, the box given back.
    */
-  remove: (options?: { afterLive?: boolean }) => void;
+  remove: (options?: { under?: HTMLElement }) => void;
 }
 
 /** The colour as the display-space bytes the canvas shows (0 to 1), opaque; black when the browser cannot read it. */
@@ -272,31 +277,47 @@ export function showFxRingStill(box: HTMLElement, spec: RingStillSpec): FxRingSt
     : null;
   resized?.observe(canvas);
 
-  let removed = false;
-  let timer = 0;
+  /** The live scene is up: no redraw from here on. */
+  let settled = false;
+  let gone = false;
+  let watch = 0;
   const finish = () => {
+    if (gone) return;
+    gone = true;
     resized?.disconnect();
     if (frame) window.cancelAnimationFrame(frame);
-    window.clearTimeout(timer);
-    timer = 0;
+    if (watch) window.cancelAnimationFrame(watch);
+    frame = 0;
+    watch = 0;
     canvas.remove();
     release();
   };
   return {
-    remove: ({ afterLive = false } = {}) => {
-      if (removed) {
-        // A pending removal made immediate (the page is put away during the live layer's fade).
-        if (!afterLive && timer) finish();
+    remove: ({ under } = {}) => {
+      if (gone) return;
+      // At once: the page is put away, the scene refused, or a removal pending under the live layer made immediate.
+      if (!under) {
+        finish();
         return;
       }
-      removed = true;
+      if (settled) return;
+      settled = true;
       // No redraw from here on, not even one already asked for: the live scene's context is up, and a redraw
       // during its fade would open a second one.
       resized?.disconnect();
       if (frame) window.cancelAnimationFrame(frame);
       frame = 0;
-      if (afterLive) timer = window.setTimeout(finish, FX_FADE_MS);
-      else finish();
+      // Gone on the second frame in a row that reads the layer fully opaque: the first may still be on its way
+      // to the screen when the fade runs on the compositor.
+      let opaque = 0;
+      const check = () => {
+        watch = 0;
+        if (!under.isConnected) return;
+        opaque = Number.parseFloat(getComputedStyle(under).opacity) >= 1 ? opaque + 1 : 0;
+        if (opaque >= 2) finish();
+        else watch = window.requestAnimationFrame(check);
+      };
+      watch = window.requestAnimationFrame(check);
     },
   };
 }
