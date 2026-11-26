@@ -575,11 +575,12 @@ const SPACE_AT_START = /^[\s ]+/u;
  * one, the text around the cut is tidied so no residue is left: a doubled space
  * becomes one, and a list separator left with nothing to separate goes
  * (`Geschäftsführer: Max Mustermann, Erika Muster` -> `Geschäftsführer: Erika Muster`).
+ * `exactly` cuts only the match, with no tidy: inside code a comma or a space is syntax, not prose.
  */
-function cut(text: string, start: number, end: number, replacement: string): string {
+function cut(text: string, start: number, end: number, replacement: string, exactly = false): string {
   const left = text.slice(0, start);
   const right = text.slice(end);
-  if (replacement !== '') return left + replacement + right;
+  if (replacement !== '' || exactly) return left + replacement + right;
   const leftTrim = left.replace(SPACE_AT_END, '');
   const rightTrim = right.replace(SPACE_AT_START, '');
   const leftSpace = leftTrim.length !== left.length;
@@ -620,8 +621,11 @@ export function rewriteDocument(
       );
       if (picked.length === 0) return value;
       let out = value;
+      // The code of a custom code block or proposal (D115) is cut exactly: tidying its separators would change more
+      // of the program than the match. Its title is prose and is tidied like any text.
+      const exactly = (location.kind === 'custom-code' || location.kind === 'custom-code-proposal') && path.length === 1 && path[0] === 'code';
       // From the end, so earlier offsets stay valid (a tidy only touches text after an earlier match).
-      for (const o of [...picked].reverse()) out = cut(out, o.start, o.end, replacement);
+      for (const o of [...picked].reverse()) out = cut(out, o.start, o.end, replacement, exactly);
       erased.push(...picked.map((o) => o.match));
       return out;
     }

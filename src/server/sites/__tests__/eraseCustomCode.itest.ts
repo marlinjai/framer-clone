@@ -437,6 +437,27 @@ describe('review of part 2: every copy, the takedown boundary, and refusals', ()
     expect(await rows()).toEqual([expect.objectContaining({ sha256: odd, title: 'Of [entfernt]', document: `say("${VALUE}")` })]);
   });
 
+  it('names a block that met another under the title its kept row holds, since a blob row is never updated', async () => {
+    const first = await blob(`say("${VALUE}")`, { title: 'Opening hours' });
+    const second = await blob(`say("${VALUE.toLowerCase()}")`, { title: 'Team' });
+    await repo.saveProject(scope, project([first, second]), { mustExist: true });
+    const result = await erase();
+    const kept = await rows();
+    expect(kept).toHaveLength(1);
+    // Both blocks are served by one row, under whichever title it was written with; the panel names that title twice.
+    expect(result.rewrittenCode).toEqual([kept[0].title, kept[0].title]);
+    expect(['Opening hours', 'Team']).toContain(kept[0].title);
+  });
+
+  it('reaches the code of a site whose custom code is switched off: erasing is not running it (D115)', async () => {
+    const old = await blob(`say("${VALUE}")`);
+    await repo.saveProject(scope, project([old]), { mustExist: true });
+    await prisma.site.updateMany({ where: { id: siteId }, data: { customCodeEnabled: false } });
+    const result = await erase();
+    expect(result.rewrittenCode).toEqual(['Team']);
+    expect((await rows()).map((row) => row.document)).toEqual(['say("[entfernt]")']);
+  });
+
   it('says a stale preview is stale, not that the code cannot be erased', async () => {
     const old = await blob(VALUE);
     await repo.saveProject(scope, project([old]), { mustExist: true });

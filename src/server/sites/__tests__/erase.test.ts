@@ -542,6 +542,25 @@ describe('custom code (sandboxed custom code plan, D9 and D115)', () => {
     expect(before.pages[0].snapshot.appComponentTree.props.customCode.sha256).toBe(HASH);
   });
 
+  it('cuts exactly the match inside code with an empty replacement, and tidies the title like prose', () => {
+    const location: EraseLocation = { kind: 'custom-code', sha256: HASH, title: 'Team' };
+    const document = { code: 'f(["Max Mustermann", "Erika"]);', title: 'Team: Max Mustermann, Erika' };
+    const rewritten = rewriteDocument(document, location, match('Max Mustermann'), '', new Set(findMatches(document, location, match('Max Mustermann')).map((m) => m.id)));
+    // The comma and the quotes are the program's: only the match goes.
+    expect(rewritten.document).toEqual({ code: 'f(["", "Erika"]);', title: 'Team: Erika' });
+  });
+
+  it('finds and replaces a value inside a code token when searching inside words, leaving the token\'s rest', () => {
+    const location: EraseLocation = { kind: 'custom-code', sha256: HASH, title: 'Team' };
+    const document = { code: 'const mustermannId = 1;', title: 't' };
+    const query = match('mustermann', { insideWords: true });
+    const rewritten = rewriteDocument(document, location, query, 'x', new Set(findMatches(document, location, query).map((m) => m.id)));
+    expect((rewritten.document as { code: string }).code).toBe('const xId = 1;');
+    // Case-sensitive: a different case is not the value.
+    const strict = match('mustermann', { insideWords: true, caseSensitive: true });
+    expect(findMatches({ code: 'MUSTERMANN', title: '' }, location, strict)).toEqual([]);
+  });
+
   it('returns the very same document when nothing is renamed, so a caller writes nothing', () => {
     const before = doc(HASH);
     expect(renameCustomCodeHashes(before, new Map())).toBe(before);

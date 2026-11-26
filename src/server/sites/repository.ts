@@ -321,7 +321,8 @@ interface CustomCodeEraseSource {
    */
   removeOld?: (tx: Prisma.TransactionClient) => Promise<void>;
   /** Writes the rewritten document; for a block, under the hash `renamed` maps its old one to. */
-  write: (tx: Prisma.TransactionClient, rewritten: { code: string; title: string }, renamed: ReadonlyMap<string, string>, erasedBy: string, scope: TenantScope) => Promise<void>;
+  /** Writes the rewritten code; resolves to the title the row serving it holds (a converged row keeps its own). */
+  write: (tx: Prisma.TransactionClient, rewritten: { code: string; title: string }, renamed: ReadonlyMap<string, string>, erasedBy: string, scope: TenantScope) => Promise<string>;
   /** For a block: the hash its rewritten code and declaration give, or why the code cannot be rewritten. */
   hashAfter?: (rewritten: { code: string; title: string }) => Promise<string>;
 }
@@ -1622,10 +1623,10 @@ export class SiteRepository {
       if (!codeRefusal) {
         for (const { source } of codeRewrites) await source.removeOld?.(tx);
         for (const { source, rewrite, codeChanged } of codeRewrites) {
-          await source.write(tx, rewrite.document as { code: string; title: string }, renamed, erasedBy, scope);
+          const heldTitle = await source.write(tx, rewrite.document as { code: string; title: string }, renamed, erasedBy, scope);
           erased.push(...rewrite.erased);
           // Named so the owner checks it: code can stop working where a text in it changed. A changed title is not.
-          if (source.location.kind === 'custom-code' && codeChanged) rewrittenCode.push((rewrite.document as { title: string }).title);
+          if (source.location.kind === 'custom-code' && codeChanged) rewrittenCode.push(heldTitle);
         }
       }
 
@@ -1875,7 +1876,10 @@ export class SiteRepository {
           // A row under the new hash that is still there after every rewritten block's old row went: code no block
           // of this erase held before, or a block of this erase that met the same code first. It is kept, and
           // blocked when this one was taken down, so an erase never brings taken-down code back to life.
-          const existing = await client.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId, sha256: to } }, select: { blockedAt: true } });
+          // A blob row is never updated but for its block (D27), so a kept row keeps its own title; the old row and
+          // its title are gone either way, and the owner is shown the title the code is served under.
+          const existing = await client.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId, sha256: to } }, select: { blockedAt: true, title: true } });
+          const heldTitle = existing ? existing.title : rewritten.title;
           if (existing) {
             if (takenDown && existing.blockedAt === null) {
               await client.customCodeBlob.update({ where: { siteId_sha256: { siteId, sha256: to } }, data: { blockedAt: row.blockedAt ?? new Date() } });
@@ -1907,6 +1911,7 @@ export class SiteRepository {
               detail: { replaces: sha256 },
             },
           });
+          return heldTitle;
         },
       };
     }
@@ -1919,6 +1924,7 @@ export class SiteRepository {
         document: { code: row.document, title: row.title },
         write: async (client, rewritten) => {
           await client.customCodeProposal.update({ where: { id }, data: { document: rewritten.code, title: rewritten.title } });
+          return rewritten.title;
         },
       };
     }
