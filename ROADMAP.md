@@ -227,13 +227,14 @@ connections to the suite. The four lines below are in that order.
   Plan [shop receipt email](docs/plans/2026-10-27-shop-receipt-email.md) : completed. Proven on production
   2026-10-27: the test company connected its workspace (sending domain testshop.lumitra.co), order ORD-000005
   paid through Stripe, the confirmation arrived in the buyer's inbox and its link served receipt RE-4. (2026-10-27)
-- [ ] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
+- [x] 3d. Deletable invoice drafts: a draft (no number, not a bookkeeping record) can be deleted with its
   lines and events (hard delete, no tombstone, migration relaxing the 007 guards for drafts only);
   issued documents stay undeletable. Reverses decision 8 of the Books integration plan for drafts
   only. Built on the owner's order of 2026-10-26 (migration `019_books_draft_delete`, the DELETE
   route, "Delete draft" in the editor's More menu); a draft that was issued once (an offer taken
-  back) keeps its spent number and is not deletable. Open: roll `019` out with the next deploy.
-  See [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-10-26)
+  back) keeps its spent number and is not deletable. Rolled out: 019 is in production since the
+  2026-11-23 deploy (7f84e644); all five company schemas applied (C4 preflight 2026-11-24).
+  See [plan](docs/plans/2026-10-25-business-platform-architecture.md). (2026-11-26)
 - [ ] 4. Existing invoices and the suite. The historical import is DONE: invoices 1 to 61 (the
   full series) were imported live on 2026-10-20 at 15:08 with `pnpm books:import` for Whiz-Art
   Media, 61 imported and 0 errors, the printed yearly totals matching the filed returns 2019 to
