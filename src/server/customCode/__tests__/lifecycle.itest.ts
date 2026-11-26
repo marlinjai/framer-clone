@@ -209,16 +209,29 @@ describe('backtrack: the site budget at save and publish (D114)', () => {
     await expect(repo.saveProject(SCOPE, project(SITE_ID, all.slice(0, 3)))).resolves.toBeDefined();
   });
 
-  it('does not count code a kept revision already names as new', async () => {
+  /** Puts a working copy's blocks straight into its page row, past the save check: a site over the budget. */
+  async function nameRaw(siteId: string, labels: string[]) {
+    await prisma.$executeRaw`UPDATE public.site_pages SET snapshot = jsonb_set(snapshot, '{appComponentTree,children}', ${JSON.stringify(
+      labels.map((label, index) => block(`block-${index}`, big(label))),
+    )}::jsonb) WHERE site_id = ${siteId}`;
+  }
+
+  it('does not count code a kept revision already names as new, also on a site over the budget', async () => {
     await repo.publishProject(SCOPE, project(SITE_ID, [big('a'), big('b'), big('c')]));
-    await repo.saveProject(SCOPE, project(SITE_ID, [big('a')]));
+    // The working copy names a and d: with the revision's b and c, the site holds all four, past the budget.
+    await nameRaw(SITE_ID, ['a', 'd']);
     // Bringing b and c back adds nothing the revision did not already keep alive.
-    await expect(repo.saveProject(SCOPE, project(SITE_ID, [big('a'), big('b'), big('c')]))).resolves.toBeDefined();
+    await expect(repo.saveProject(SCOPE, project(SITE_ID, [big('a'), big('b'), big('c'), big('d')]))).resolves.toBeDefined();
   });
 
   it('refuses a branch save that brings code to life past the budget, and not one naming code main already names', async () => {
-    await repo.saveProject(SCOPE, project(SITE_ID, [big('a'), big('b'), big('c')]));
-    await expect(repo.saveProject(SCOPE, project(BRANCH_ID, [big('a'), big('b'), big('c')]))).resolves.toBeDefined();
+    await repo.saveProject(SCOPE, project(BRANCH_ID, []));
+    // Main names all four, past the budget: a branch copying them brings nothing to life.
+    await nameRaw(SITE_ID, ['a', 'b', 'c', 'd']);
+    await expect(repo.saveProject(SCOPE, project(BRANCH_ID, [big('a'), big('b'), big('c'), big('d')]))).resolves.toBeDefined();
+    // Under the budget, a branch bringing code to life past it is refused.
+    await nameRaw(SITE_ID, ['a', 'b', 'c']);
+    await repo.saveProject(SCOPE, project(BRANCH_ID, [big('a'), big('b'), big('c')]));
     await expect(repo.saveProject(SCOPE, project(BRANCH_ID, [big('a'), big('b'), big('c'), big('d')]))).rejects.toBeInstanceOf(CustomCodeBudgetError);
   });
 });
