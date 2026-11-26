@@ -325,32 +325,48 @@ describe('review of part 1: the edges of pruning and the budget', () => {
     await expect(repo.saveProject(SCOPE, project(SITE_ID, [big('a'), big('b'), big('c'), big('d')]))).resolves.toBeDefined();
   });
 
-  it('serialises a branch save that names code with the writers of its main site, and not one that names none', async () => {
+  /** Holds the main site's row in another transaction until released. */
+  async function holdMain(mode: 'no key update' | 'share') {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     let locked!: () => void;
     const ready = new Promise<void>((resolve) => (locked = resolve));
-    // What the guarded write holds while it counts the site's code.
-    const hold = prisma.$transaction(
+    const done = prisma.$transaction(
       async (tx) => {
-        await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${SITE_ID} FOR NO KEY UPDATE`;
+        if (mode === 'share') await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${SITE_ID} FOR SHARE`;
+        else await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${SITE_ID} FOR NO KEY UPDATE`;
         locked();
         await gate;
       },
       { timeout: 60_000 },
     );
     await ready;
-    // Naming no code: it can only remove names, so it does not wait.
-    await repo.saveProject(SCOPE, project(BRANCH_ID, [], 'no code'));
+    return { release, done };
+  }
+
+  async function waitsBehind(mode: 'no key update' | 'share', label: string) {
+    const hold = await holdMain(mode);
     let settled = false;
-    const withCode = repo.saveProject(SCOPE, project(BRANCH_ID, [hashOf('branch-code')])).then(() => {
+    const withCode = repo.saveProject(SCOPE, project(BRANCH_ID, [hashOf(label)])).then(() => {
       settled = true;
     });
     await new Promise((resolve) => setTimeout(resolve, 800));
-    expect(settled).toBe(false);
-    release();
-    await Promise.all([hold, withCode]);
-    expect(settled).toBe(true);
+    const waited = !settled;
+    hold.release();
+    await Promise.all([hold.done, withCode]);
+    return waited;
+  }
+
+  it('serialises a branch save that names code with the writers of its main site, and not one that names none', async () => {
+    // Naming no code: it can only remove names, so it does not wait even for the guarded write's lock.
+    const hold = await holdMain('no key update');
+    await repo.saveProject(SCOPE, project(BRANCH_ID, [], 'no code'));
+    hold.release();
+    await hold.done;
+    // Naming code: it waits for the guarded write's lock, and for a shared holder too, so two branch saves naming
+    // code can never count the site's code at the same time.
+    expect(await waitsBehind('no key update', 'branch-code-1')).toBe(true);
+    expect(await waitsBehind('share', 'branch-code-2')).toBe(true);
   }, 60_000);
 
   it('merges a branch into main without a budget check: what the branch names is already alive', async () => {
