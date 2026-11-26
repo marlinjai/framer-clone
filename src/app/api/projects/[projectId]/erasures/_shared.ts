@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { jsonError } from '@/lib/api/respond';
 import { authorizeDomainProject, type DomainProjectResult } from '@/server/domains/guard';
 import { siteRepositoryErrorResponse, SiteRepositoryError } from '@/server/sites';
-import { EraseQueryError, EraseShapeError, ERASE_LIMITS } from '@/server/sites/erase';
+import { EraseCodeRefusedError, EraseQueryError, EraseShapeError, ERASE_LIMITS } from '@/server/sites/erase';
 import {
   customHostCacheTag,
   revalidateCustomHostsForSiteId,
@@ -62,6 +62,8 @@ export function authorizeEraser(req: Request, projectId: string): Promise<Domain
 /** The answer for a failure, without the searched value in it. */
 export function eraseErrorResponse(err: unknown, code: string, message: string): Response {
   if (err instanceof EraseQueryError) return jsonError(err.code, err.message, 400);
+  // A custom code block the erase cannot rewrite (D115): the sentence says what to change, and holds no value.
+  if (err instanceof EraseCodeRefusedError) return jsonError(err.code, err.message, 422);
   if (err instanceof SiteRepositoryError) return siteRepositoryErrorResponse(err);
   if (err instanceof EraseShapeError) {
     console.error('[erase] a rewrite would have changed a document; nothing was written');

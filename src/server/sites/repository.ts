@@ -65,6 +65,7 @@ import {
   type NamedHashes,
 } from '@/server/customCode/named';
 import { sizeInWords } from '@/lib/customCode/authoring';
+import { BOX_LIMITS, canonicalDeclarationJson, customCodeHash, parseDeclaration, utf8ByteLength } from '@/lib/customCode/contract';
 import { isDatabaseConflict } from './dbConflict';
 import { validateBranchName } from '@/lib/sites/branches';
 import { clearExpiredKeptCopies, forgetBranchContent, freeOpenName } from './branches/repository';
@@ -99,6 +100,8 @@ import {
   type EraseLocation,
   type EraseMatch,
   type EraseQuery,
+  renameCustomCodeHashes,
+  EraseCodeRefusedError,
 } from './erase';
 
 /**
@@ -276,6 +279,11 @@ export interface PersonalDataErasure {
   places: ErasurePlace[];
   /** Matches left in the rewritten documents, counted in the same transaction. */
   remaining: number;
+  /**
+   * The custom code blocks whose code the erase rewrote, by their title after the erase (D9): the code may break
+   * where a string literal changed, so the owner checks each of them.
+   */
+  rewrittenCode: string[];
 }
 
 /** One audit row, for the owner's list. */
@@ -302,6 +310,17 @@ const ERASE_TRANSACTION = { maxWait: 5_000, timeout: 240_000 } as const;
  * rewritten document; `branchSiteId` names an open branch's content row, whose
  * erasure epoch and version move with main's.
  */
+/** The code of one stored custom code block or proposal, for an erase (D9). */
+interface CustomCodeEraseSource {
+  location: EraseLocation;
+  /** `{ code, title }`, the text the erase searches. */
+  document: { code: string; title: string };
+  /** Writes the rewritten document; for a block, under the hash `renamed` maps its old one to. */
+  write: (tx: Prisma.TransactionClient, rewritten: { code: string; title: string }, renamed: ReadonlyMap<string, string>, erasedBy: string, scope: TenantScope) => Promise<void>;
+  /** For a block: the hash its rewritten code and declaration give, or why the code cannot be rewritten. */
+  hashAfter?: (rewritten: { code: string; title: string }) => Promise<string>;
+}
+
 interface BranchEraseSource {
   location: EraseLocation;
   document: unknown;
@@ -1408,6 +1427,15 @@ export class SiteRepository {
           live: false,
         });
       }
+      // The code of the site's custom code blocks and proposals (D9), last, as the erase reads them.
+      for await (const source of this.customCodeEraseSources(tx, scope, siteId)) {
+        record(findMatches(source.document, source.location, matcher), {
+          location: source.location,
+          createdAt: null,
+          kind: null,
+          live: false,
+        });
+      }
 
       const erasable = all.filter((m) => m.blocked === null).length;
       return {
@@ -1479,15 +1507,29 @@ export class SiteRepository {
       const erased: EraseMatch[] = [];
       let remaining = 0;
 
+      // D9: the code of every stored block and proposal first, without writing, so every copy below can follow a
+      // block whose code changed to its new hash. Its matches join `found` after the branches', the order of the
+      // search, and its rows are written once the copies are.
+      const codeRewrites: Array<{ source: CustomCodeEraseSource; found: EraseMatch[]; rewrite: ReturnType<typeof rewriteDocument>; left: number }> = [];
+      const renamed = new Map<string, string>();
+      for await (const source of this.customCodeEraseSources(tx, scope, siteId)) {
+        const rewrite = rewriteDocument(source.document, source.location, matcher, replacement, chosen);
+        codeRewrites.push({ source, found: findMatches(source.document, source.location, matcher), rewrite, left: findMatches(rewrite.document, source.location, matcher).length });
+        if (rewrite.erased.length === 0 || !source.hashAfter || source.location.kind !== 'custom-code') continue;
+        const after = await source.hashAfter(rewrite.document as { code: string; title: string });
+        if (after !== source.location.sha256) renamed.set(source.location.sha256, after);
+      }
+
       // The working copy: the `sites` columns and each changed `site_pages` row.
       const working: EraseLocation = { kind: 'working' };
       const before = workingDocument(site);
       found.push(...findMatches(before, working, matcher));
       const workingRewrite = rewriteDocument(before, working, matcher, replacement, chosen);
       erased.push(...workingRewrite.erased);
-      const after = workingRewrite.document as Record<string, unknown>;
+      // A block whose code was rewritten names its new hash (D9).
+      const after = renameCustomCodeHashes(workingRewrite.document, renamed) as Record<string, unknown>;
       remaining += findMatches(after, working, matcher).length;
-      if (workingRewrite.erased.length > 0) {
+      if (workingRewrite.erased.length > 0 || after !== workingRewrite.document) {
         // The next Publish freezes exactly this copy, so it passes the same checks a revision does.
         assertShapeKept(before, after, { revision: false });
         const beforePages = before.pages as Array<{ pageId: string; slug: string; snapshot: unknown }>;
@@ -1518,12 +1560,13 @@ export class SiteRepository {
         const location: EraseLocation = { kind: 'revision', number: revision.number };
         found.push(...findMatches(row.document, location, matcher));
         const rewrite = rewriteDocument(row.document, location, matcher, replacement, chosen);
-        remaining += findMatches(rewrite.document, location, matcher).length;
-        if (rewrite.erased.length === 0) continue;
-        assertShapeKept(row.document, rewrite.document, { revision: true });
+        const document = renameCustomCodeHashes(rewrite.document, renamed);
+        remaining += findMatches(document, location, matcher).length;
+        if (rewrite.erased.length === 0 && document === rewrite.document) continue;
+        assertShapeKept(row.document, document, { revision: true });
         await tx.siteRevision.update({
           where: { id: revision.id },
-          data: { document: rewrite.document as Prisma.InputJsonValue, rewrittenAt: now },
+          data: { document: document as Prisma.InputJsonValue, rewrittenAt: now },
         });
         erased.push(...rewrite.erased);
       }
@@ -1535,7 +1578,8 @@ export class SiteRepository {
       for await (const source of this.branchEraseSources(tx, scope, siteId)) {
         found.push(...findMatches(source.document, source.location, matcher));
         const rewrite = rewriteDocument(source.document, source.location, matcher, replacement, chosen);
-        const left = findMatches(rewrite.document, source.location, matcher).length;
+        const document = renameCustomCodeHashes(rewrite.document, renamed);
+        const left = findMatches(document, source.location, matcher).length;
         if (left > 0 && source.drop) {
           // Gone with everything it held: what was ticked in it counts as erased, nothing of it remains.
           await source.drop(tx);
@@ -1543,10 +1587,22 @@ export class SiteRepository {
           continue;
         }
         remaining += left;
-        if (rewrite.erased.length === 0) continue;
-        assertShapeKept(source.document, rewrite.document, { revision: source.revision });
-        await source.write(tx, rewrite.document);
+        if (rewrite.erased.length === 0 && document === rewrite.document) continue;
+        assertShapeKept(source.document, document, { revision: source.revision });
+        await source.write(tx, document);
         erased.push(...rewrite.erased);
+      }
+
+      // The code itself (D9): each block whose code changed is written under its new hash and its old row goes;
+      // a proposal is rewritten in place. After the copies, which already name the new hashes.
+      const rewrittenCode: string[] = [];
+      for (const { source, found: inCode, rewrite, left } of codeRewrites) {
+        found.push(...inCode);
+        remaining += left;
+        if (rewrite.erased.length === 0) continue;
+        await source.write(tx, rewrite.document as { code: string; title: string }, renamed, erasedBy, scope);
+        erased.push(...rewrite.erased);
+        if (source.location.kind === 'custom-code') rewrittenCode.push((rewrite.document as { title: string }).title);
       }
 
       // Checked last: throwing here rolls every write above back.
@@ -1604,7 +1660,7 @@ export class SiteRepository {
         branchId: b.id,
         write: { version: b.version + 1, versionBefore: b.version, wrote: true } satisfies WorkingCopyWrite,
       }));
-      return { result: { erasureId: audit.id, erased: erased.length, places, remaining }, write, branchWrites };
+      return { result: { erasureId: audit.id, erased: erased.length, places, remaining, rewrittenCode }, write, branchWrites };
     }, ERASE_TRANSACTION));
     // Open editors must load again: their copy may hold the erased value. An erasure
     // blanks values and removes no node or page, so skeleton anchors are left alone.
@@ -1734,6 +1790,97 @@ export class SiteRepository {
           },
         };
       }
+    }
+  }
+
+  /**
+   * The code of the site's custom code blocks and proposals, for an erase (plan
+   * docs/plans/2026-11-02-sandboxed-custom-code.md, D9 and D115): every stored blob of the site, named or not,
+   * blocked or not, and every proposal, ordered by hash and by id so a search and the erase after it list them
+   * alike. Only the hashes and ids are read up front; each text is loaded when its turn comes.
+   *
+   * Writing a block whose code changed: the rewritten code is stored under the hash it gives with the old
+   * declaration, the old row is deleted, and `blob-erase` goes to the audit with both hashes (never the code or the
+   * value). A blob that was taken down stays taken down under its new hash: its row is blocked, and a hash on the
+   * takedown list puts the new one on it too, so an erase can never bring blocked code back to life. When the new
+   * hash is one the site already stores, that row is kept and blocked if the old one was. Only the title changed:
+   * the row is written again under the same hash, since a blob row is never updated (D27).
+   */
+  private async *customCodeEraseSources(tx: Prisma.TransactionClient, scope: TenantScope, siteId: string): AsyncGenerator<CustomCodeEraseSource> {
+    const blobs = await tx.customCodeBlob.findMany({ where: { siteId }, select: { sha256: true }, orderBy: { sha256: 'asc' } });
+    for (const { sha256 } of blobs) {
+      const row = await tx.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId, sha256 } } });
+      if (!row) continue; // pruned by a write that committed after the list was read: not part of this snapshot
+      const parsed = parseDeclaration(row.declaration);
+      yield {
+        location: { kind: 'custom-code', sha256, title: row.title },
+        document: { code: row.document, title: row.title },
+        hashAfter: async (rewritten) => {
+          if (!parsed.ok) throw new EraseCodeRefusedError('custom_code_unreadable', 'A custom code block that holds this text has a stored declaration that can no longer be read, so its code cannot be rewritten. Untick the matches in custom code, or contact support. Nothing was changed.');
+          if (rewritten.code.trim() === '') throw new EraseCodeRefusedError('custom_code_empty', 'Erasing would leave a custom code block with no code at all. Erase with a replacement text instead. Nothing was changed.');
+          if (utf8ByteLength(rewritten.code) + utf8ByteLength(canonicalDeclarationJson(parsed.declaration)) > BOX_LIMITS.documentBytes) {
+            throw new EraseCodeRefusedError('custom_code_too_large', 'With this replacement a custom code block would grow past the 256 KB a block may hold. Use a shorter replacement. Nothing was changed.');
+          }
+          return customCodeHash(rewritten.code, parsed.declaration);
+        },
+        write: async (client, rewritten, renamed, erasedBy, writeScope) => {
+          const to = renamed.get(sha256) ?? sha256;
+          const listed = (await client.customCodeBlockedHash.findUnique({ where: { sha256 }, select: { sha256: true } })) !== null;
+          const takenDown = row.blockedAt !== null || listed;
+          await client.customCodeBlob.delete({ where: { siteId_sha256: { siteId, sha256 } } });
+          const existing = to === sha256 ? null : await client.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId, sha256: to } }, select: { blockedAt: true } });
+          if (existing) {
+            if (takenDown && existing.blockedAt === null) {
+              await client.customCodeBlob.update({ where: { siteId_sha256: { siteId, sha256: to } }, data: { blockedAt: new Date() } });
+            }
+          } else {
+            await client.customCodeBlob.create({
+              data: {
+                siteId,
+                sha256: to,
+                document: rewritten.code,
+                declaration: row.declaration as Prisma.InputJsonValue,
+                title: rewritten.title,
+                createdBy: row.createdBy,
+                // The blob keeps its age, so pruning treats it exactly as it would have treated the old one.
+                createdAt: row.createdAt,
+                blockedAt: takenDown ? (row.blockedAt ?? new Date()) : null,
+              },
+            });
+          }
+          if (listed && to !== sha256) {
+            await client.customCodeBlockedHash.upsert({
+              where: { sha256: to },
+              create: { sha256: to, blockedBy: 'operator', reason: 'An erase of personal data rewrote code that was taken down.' },
+              update: {},
+            });
+          }
+          await client.customCodeAudit.create({
+            data: {
+              siteId,
+              workspaceId: writeScope.workspaceId,
+              tenantGroupId: writeScope.tenantGroupId,
+              actor: erasedBy,
+              action: 'blob-erase',
+              sha256: to,
+              // Both hashes and nothing else (D3, D9).
+              detail: { replaces: sha256 },
+            },
+          });
+        },
+      };
+    }
+    const proposals = await tx.customCodeProposal.findMany({ where: { siteId, workspaceId: scope.workspaceId }, select: { id: true }, orderBy: { id: 'asc' } });
+    for (const { id } of proposals) {
+      const row = await tx.customCodeProposal.findFirst({ where: { id, siteId, workspaceId: scope.workspaceId }, select: { document: true, title: true } });
+      if (!row) continue;
+      yield {
+        location: { kind: 'custom-code-proposal', proposalId: id, title: row.title },
+        document: { code: row.document, title: row.title },
+        write: async (client, rewritten) => {
+          await client.customCodeProposal.update({ where: { id }, data: { document: rewritten.code, title: rewritten.title } });
+        },
+      };
     }
   }
 
