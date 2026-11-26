@@ -15,7 +15,7 @@
 //     selected (review 1 of #459, L3), for this editor session only;
 //   - each block's running save and how it ended (review 2 of #459, M1): the section is rebuilt
 //     when another element is selected, and a save outlives it, so a section that comes back
-//     mid-save stays locked and then says how the save ended;
+//     mid-save stays locked and then says how the save ended, with the code the save wrote;
 //   - the polite live region the section speaks through, which exists before any section does,
 //     so a sentence set when a section opens is a change a screen reader announces (R2-L1).
 //
@@ -23,6 +23,7 @@
 // says unavailable, and nothing reads the route.
 
 import React from 'react';
+import type { CustomCodeDeclaration } from '@/lib/customCode/contract';
 import { fetchCustomCodeStatus, type CustomCodeStatus } from './customCodeClient';
 
 export type CustomCodeStatusState =
@@ -36,6 +37,12 @@ export interface CustomCodeSaveRecord {
   running: boolean;
   /** The stored value the save itself wrote, so the section does not report it as someone else's change. */
   ownWrite: string | null;
+  /**
+   * The code the save wrote, under the stored value that names it, until a section holds it: the
+   * copy on screen when the value arrives may not be the one that saved, and it shows this at once
+   * instead of reading it back behind an empty field.
+   */
+  written: { key: string; value: { phase: 'ready'; document: string; declaration: CustomCodeDeclaration; blocked?: boolean } } | null;
   /** How the save ended, shown once by the section, then cleared. */
   outcome: { kind: 'done' | 'refused'; message: string } | null;
 }
@@ -78,7 +85,7 @@ export const CustomCodeAuthoringContext = React.createContext<CustomCodeAuthorin
   announce: () => {},
 });
 
-const NO_SAVE: CustomCodeSaveRecord = { running: false, ownWrite: null, outcome: null };
+const NO_SAVE: CustomCodeSaveRecord = { running: false, ownWrite: null, written: null, outcome: null };
 
 export function useCustomCodeAuthoring(): CustomCodeAuthoringValue {
   return React.useContext(CustomCodeAuthoringContext);
