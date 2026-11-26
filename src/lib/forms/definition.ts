@@ -192,8 +192,9 @@ const NOTIFY_EMAIL = /^[^\s@<>",;]{1,64}@[^\s@<>",;]{1,190}\.[^\s@<>",;]{2,}$/;
 
 /** A usable notification address, or '' (so an unusable one falls back to the site's contact email). */
 export function cleanNotifyEmail(value: unknown): string {
-  const email = text(value, 254);
-  return NOTIFY_EMAIL.test(email) ? email : '';
+  // Never cut to length: the first 254 characters of a longer value can be another, valid address.
+  const email = text(value, Number.MAX_SAFE_INTEGER);
+  return email.length <= 254 && NOTIFY_EMAIL.test(email) ? email : '';
 }
 
 export interface FieldSpec {

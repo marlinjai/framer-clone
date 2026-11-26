@@ -66,20 +66,23 @@ export interface NewFormNotification {
   failed?: boolean;
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+
 /**
- * A company's notices queued or sent in the hour before `at`, counted by when each one's CURRENT round started, so a letter
- * sent again counts like a new one. Skipped rows sent nothing. The cap this feeds is approximate: two sites of one company
- * can pass it at the same moment (submissions are serialised per site), and a deleted submission takes its count with it.
+ * The rounds of a company admitted in the hour before `at` (`admitted_at` holds one time per admitted round), so every
+ * round keeps its slot for its hour, one replaced by "send again" included. A skipped row admitted none. The cap this
+ * feeds is approximate: two sites of one company can pass it at the same moment (submissions are serialised per site),
+ * and a deleted submission takes its count with it.
  */
-async function recentNotices(trx: Transaction<CommerceDB>, tenantGroupId: string, companyId: string, at: Date, submissionId: string): Promise<number> {
+async function recentNotices(trx: Transaction<CommerceDB>, tenantGroupId: string, companyId: string, at: Date): Promise<number> {
+  const since = new Date(at.getTime() - HOUR_MS);
   const row = await trx
     .selectFrom('form_notification')
-    .select(sql<number>`count(*)::int`.as('n'))
+    .select(sql<number>`coalesce(sum((SELECT count(*) FROM unnest("admitted_at") AS a(t) WHERE a.t > ${since})), 0)::int`.as('n'))
     .where('tenant_id', '=', tenantGroupId)
     .where('company_id', '=', companyId)
-    .where('submission_id', '!=', submissionId)
-    .where('round_started_at', '>', new Date(at.getTime() - 60 * 60 * 1000))
-    .where('status', '!=', 'skipped')
+    // `round_started_at` is the row's latest admission: an older row holds none inside the hour.
+    .where('round_started_at', '>', since)
     .executeTakeFirst();
   return row?.n ?? 0;
 }
@@ -104,7 +107,7 @@ export async function writeFormNotification(
   // A cap per company and hour over every form: the recipient of a form is the editor's own choice (it is not proven to be
   // theirs), so what a form pointed at a stranger can send is bounded here, durably (the visitor limiter is in memory).
   const capped =
-    !!recipient && !!connected && !notification.failed && (await recentNotices(trx, tenantGroupId, companyId, at, submissionId)) >= perHourLimit;
+    !!recipient && !!connected && !notification.failed && (await recentNotices(trx, tenantGroupId, companyId, at)) >= perHourLimit;
   const status = recipient && connected && !notification.failed && !capped ? 'pending' : 'skipped';
   const skippedWhy = notification.failed
     ? SKIPPED_INTERNAL
@@ -125,6 +128,7 @@ export async function writeFormNotification(
       status,
       last_error: status === 'skipped' ? skippedWhy : null,
       round_started_at: at,
+      admitted_at: status === 'pending' ? sql<Date[]>`ARRAY[${at}]::timestamp(3)[]` : sql<Date[]>`'{}'::timestamp(3)[]`,
       created_at: at,
       updated_at: at,
     })
@@ -150,6 +154,13 @@ function scheduleFormMail(trx: Transaction<CommerceDB>, companyId: string, submi
 const VALUE_CHARS = 300;
 const SUMMARY_CHARS = 1800;
 
+/** At most `max` UTF-16 code units, the ellipsis included. Never ends in half a surrogate pair: `jsonb` refuses one. */
+function shorten(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const end = /[\uD800-\uDBFF]/.test(value.charAt(max - 2)) ? max - 2 : max - 1;
+  return `${value.slice(0, end)}…`;
+}
+
 /** "label: value" per field, one line of text (a merge value is one scalar), shortened. Yes and no for a checkbox. */
 export function summaryText(fields: readonly StoredField[], locale: ShopMailLocale): string {
   const yes = locale === 'de' ? 'ja' : 'yes';
@@ -157,11 +168,9 @@ export function summaryText(fields: readonly StoredField[], locale: ShopMailLoca
   const parts = fields.map((field) => {
     const raw = typeof field.value === 'boolean' ? (field.value ? yes : no) : field.value;
     const value = raw.replace(/\s+/g, ' ').trim();
-    const shown = value.length > VALUE_CHARS ? `${value.slice(0, VALUE_CHARS - 1)}…` : value;
-    return `${field.label.replace(/\s+/g, ' ').trim()}: ${shown}`;
+    return `${field.label.replace(/\s+/g, ' ').trim()}: ${shorten(value, VALUE_CHARS)}`;
   });
-  const whole = parts.join(' | ');
-  return whole.length > SUMMARY_CHARS ? `${whole.slice(0, SUMMARY_CHARS - 1)}…` : whole;
+  return shorten(parts.join(' | '), SUMMARY_CHARS);
 }
 
 interface FrozenFormLetter {
@@ -236,8 +245,35 @@ export async function deliverFormNotification(
     if (outcome.type === 'prepared') outcome = await run('send');
   }
   if (outcome.type === 'throw') throw outcome.error;
-  if (outcome.type === 'prepared') throw new JobRetryLater('the mail connection changed while sending');
+  if (outcome.type === 'prepared') {
+    // No attempt reached the send, so nothing else would end a round that is past its three days.
+    if (await giveUpAgedRound(deps, companyId, submissionId, 'the mail connection kept changing while sending')) throw new JobRefused('gave_up');
+    throw new JobRetryLater('the mail connection changed while sending');
+  }
   return outcome.result;
+}
+
+/** Writes `failed` on a pending round past its three days. False when it is not, or another attempt holds the row. */
+async function giveUpAgedRound(deps: OutboxDeps, companyId: string, submissionId: string, why: string): Promise<boolean> {
+  const now = (deps.now ?? (() => new Date()))();
+  try {
+    return await deps.db.transaction().execute(async (trx) => {
+      await sql`SET LOCAL lock_timeout = '10s'`.execute(trx);
+      const result = await trx
+        .updateTable('form_notification')
+        .set({ status: 'failed', letter: null, last_error: why, updated_at: now })
+        .where('submission_id', '=', submissionId)
+        .where('tenant_id', '=', deps.tenantGroupId)
+        .where('company_id', '=', companyId)
+        .where('status', '=', 'pending')
+        .where('round_started_at', '<=', new Date(now.getTime() - GIVE_UP_AFTER_MS))
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows) > 0;
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) return false;
+    throw err;
+  }
 }
 
 type AttemptOutcome =
@@ -405,10 +441,11 @@ export const RESEND_LOCK_WAIT_MS = 5_000;
 /**
  * The owner's "send again": a notification that failed, was blocked, or was never sent (the company was not connected, or
  * no address was known) becomes pending in the next round with a new job and a new letter. The recipient is read AGAIN
- * from the live published form and site (`currentRecipient`, null when it names none), so an owner who fixed the address
- * in the form settings is not sent to the old one, and one who removed it is not sent to at all; only when the live site
- * cannot be read (null vs undefined, see below) does the frozen one stay. One site's rows only (the
- * caller's session decided the site), and only while the company is connected.
+ * from the live published form and site (`currentRecipient`), under the row's lock and right before the round is written,
+ * so an owner who fixed the address in the form settings is not sent to the old one, even when they published while this
+ * call waited for an attempt in flight. Null (the live site names none) sends to nobody, so a removed address is never
+ * used again; undefined (the live site cannot be read) keeps the stored one. One site's rows only (the caller's session
+ * decided the site), and only while the company is connected.
  */
 export async function resendFormNotification(
   db: Kysely<CommerceDB>,
@@ -417,21 +454,6 @@ export async function resendFormNotification(
   currentRecipient: (formId: string) => Promise<string | null | undefined> = async () => undefined,
   options: { lockWaitMs?: number; perHourLimit?: number } = {},
 ): Promise<ResendResult> {
-  const found = await db
-    .selectFrom('form_notification')
-    .innerJoin('form_submission', 'form_submission.id', 'form_notification.submission_id')
-    .select(['form_submission.form_id as formId'])
-    .where('form_notification.submission_id', '=', ref.submissionId)
-    .where('form_notification.tenant_id', '=', ref.tenantGroupId)
-    .where('form_submission.tenant_id', '=', ref.tenantGroupId)
-    .where('form_submission.site_id', '=', ref.siteId)
-    .executeTakeFirst();
-  if (!found) return 'not_found';
-  // Outside the transaction: it reads the published site, which can take a moment.
-  // null: the live site names none (so none is sent, never the old address the owner removed); undefined: the live site
-  // cannot be read (not published), so the address stored at submit time stays.
-  const live = await currentRecipient(found.formId);
-
   return db.transaction().execute(async (trx): Promise<ResendResult> => {
     // The row's lock is held by an attempt while it sends: wait for it (it ends sent, or failed and then a new round is
     // safe), but only briefly; the owner is told to try again.
@@ -441,10 +463,20 @@ export async function resendFormNotification(
     try {
       row = await trx
         .selectFrom('form_notification')
-        .select(['company_id as companyId', 'status', 'last_error as lastError', 'round', 'recipient'])
-        .where('submission_id', '=', ref.submissionId)
-        .where('tenant_id', '=', ref.tenantGroupId)
-        .forUpdate()
+        .innerJoin('form_submission', 'form_submission.id', 'form_notification.submission_id')
+        .select([
+          'form_notification.company_id as companyId',
+          'form_notification.status as status',
+          'form_notification.last_error as lastError',
+          'form_notification.round as round',
+          'form_notification.recipient as recipient',
+          'form_submission.form_id as formId',
+        ])
+        .where('form_notification.submission_id', '=', ref.submissionId)
+        .where('form_notification.tenant_id', '=', ref.tenantGroupId)
+        .where('form_submission.tenant_id', '=', ref.tenantGroupId)
+        .where('form_submission.site_id', '=', ref.siteId)
+        .forUpdate('form_notification')
         .executeTakeFirst();
     } catch (err) {
       if (isLockTimeout(err)) return 'busy';
@@ -456,10 +488,6 @@ export async function resendFormNotification(
       row.status === 'blocked' ||
       (row.status === 'skipped' && (row.lastError === SKIPPED_NOT_CONNECTED || row.lastError === SKIPPED_NO_RECIPIENT || row.lastError === SKIPPED_RATE_LIMITED));
     if (!resendable) return 'not_resendable';
-    const recipient = live === undefined ? row.recipient : live;
-    if (!recipient) return 'no_recipient';
-    const connected = await trx.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', row.companyId).executeTakeFirst();
-    if (!connected) return 'not_connected';
     // The same cap as a new submission's notice, or "send again" would be the way around it. One company's resends count one
     // after the other (this lock is only theirs), so a burst of them cannot all read the same count.
     try {
@@ -468,12 +496,30 @@ export async function resendFormNotification(
       if (isLockTimeout(err)) return 'busy';
       throw err;
     }
-    const recent = await recentNotices(trx, ref.tenantGroupId, row.companyId, now, ref.submissionId);
+    // After every wait above. It reads the published site over another connection pool, and the only writers waiting on
+    // these locks meanwhile are a delete and another "send again".
+    const live = await currentRecipient(row.formId);
+    const recipient = live === undefined ? row.recipient : live;
+    if (!recipient) return 'no_recipient';
+    const connected = await trx.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', row.companyId).executeTakeFirst();
+    if (!connected) return 'not_connected';
+    const recent = await recentNotices(trx, ref.tenantGroupId, row.companyId, now);
     if (recent >= (options.perHourLimit ?? NOTICES_PER_COMPANY_HOUR)) return 'rate_limited';
     const round = row.round + 1;
     await trx
       .updateTable('form_notification')
-      .set({ status: 'pending', round, recipient, round_started_at: now, last_error: null, mailing_id: null, letter: null, updated_at: now })
+      .set({
+        status: 'pending',
+        round,
+        recipient,
+        round_started_at: now,
+        // The new round's slot beside the earlier ones still inside the hour; older ones no longer count and are dropped.
+        admitted_at: sql<Date[]>`array_append(ARRAY(SELECT a.t FROM unnest("admitted_at") AS a(t) WHERE a.t > ${new Date(now.getTime() - HOUR_MS)}), ${now}::timestamp(3))`,
+        last_error: null,
+        mailing_id: null,
+        letter: null,
+        updated_at: now,
+      })
       .where('submission_id', '=', ref.submissionId)
       .where('tenant_id', '=', ref.tenantGroupId)
       .execute();

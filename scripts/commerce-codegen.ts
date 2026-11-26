@@ -305,6 +305,8 @@ const SCALARS: Record<string, string> = {
   bytea: 'Buffer',
   // postgres.js reads TEXT[] as a string array (020_catalogue_company: product.tags).
   _text: 'string[]',
+  // TIMESTAMP(3)[] (032_form_notification: form_notification.admitted_at), read and written in SQL.
+  _timestamp: 'Date[]',
 };
 
 function pascal(name: string): string {

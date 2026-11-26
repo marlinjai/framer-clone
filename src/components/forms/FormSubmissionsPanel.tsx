@@ -112,6 +112,34 @@ function preview(fields: StoredField[]): string {
     .slice(0, 140);
 }
 
+type ShownRow = Pick<SubmissionItem, 'id' | 'createdAt'>;
+
+/**
+ * The email status of the rows on screen. One page of the list holds at most 200 rows, and new submissions push the
+ * shown ones further down, so the cursor is followed (newest first) until every shown row is covered, or the list has
+ * passed the oldest of them (a row deleted elsewhere is not looked for to the end). Null when a page cannot be read.
+ */
+async function readNotifications(
+  rows: readonly ShownRow[],
+  url: (extra: Record<string, string>) => string,
+): Promise<Map<string, SubmissionItem['notification']> | null> {
+  const found = new Map<string, SubmissionItem['notification']>();
+  const wanted = new Set(rows.map((r) => r.id));
+  const oldest = rows.reduce((min, r) => (r.createdAt < min ? r.createdAt : min), rows[0]?.createdAt ?? '');
+  let cursor: string | null = null;
+  do {
+    const res: Response = await fetch(url({ limit: '200', ...(cursor ? { cursor } : {}) }), { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = (await res.json()) as ListResponse;
+    for (const s of data.submissions) {
+      if (wanted.delete(s.id)) found.set(s.id, s.notification);
+    }
+    const last = data.submissions[data.submissions.length - 1];
+    cursor = last && last.createdAt >= oldest ? data.nextCursor : null;
+  } while (cursor && wanted.size > 0);
+  return found;
+}
+
 export default function FormSubmissionsPanel({ projectId }: { projectId: string }) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/forms/submissions`;
   const [formFilter, setFormFilter] = useState('');
@@ -134,8 +162,13 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
     [base, formFilter],
   );
 
+  // How many times the email status was polled in the current round of polling (see below).
+  const [syncTick, setSyncTick] = useState(0);
+
   const refresh = useCallback(async () => {
     setLoad({ kind: 'loading' });
+    // A load starts a new round of polling.
+    setSyncTick(0);
     try {
       const res = await fetch(query(), { cache: 'no-store' });
       if (!res.ok) {
@@ -159,24 +192,18 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
   // The email status of the rows on screen, read again without touching the list (no loading state, same rows, same cursor):
   // after "send again", and while any email is still being sent, so the line never keeps saying "being sent" for a letter that
   // was sent or failed meanwhile. Stops by itself after about five minutes; a reload or another "send again" starts it again.
-  const [syncTick, setSyncTick] = useState(0);
   // Counts the accepted "send again" clicks: an answer that was asked for before the latest one is out of date and dropped.
   const resends = useRef(0);
-  // As many rows as are on screen (the server's page limit is 200), so a row loaded with "older" follows its status too.
-  const shown = Math.min(200, Math.max(50, items.length));
   const syncNotifications = useCallback(async () => {
     const askedAfter = resends.current;
     try {
-      const res = await fetch(query({ limit: String(shown) }), { cache: 'no-store' });
-      if (!res.ok) return;
-      const data = (await res.json()) as ListResponse;
-      if (askedAfter !== resends.current) return;
-      const fresh = new Map(data.submissions.map((s) => [s.id, s.notification]));
+      const fresh = await readNotifications(items, query);
+      if (!fresh || askedAfter !== resends.current) return;
       setItems((prev) => prev.map((s) => (fresh.has(s.id) ? { ...s, notification: fresh.get(s.id) ?? null } : s)));
     } catch {
       // The next tick tries again.
     }
-  }, [query, shown]);
+  }, [query, items]);
   const anyPending = items.some((s) => s.notification?.status === 'pending');
   useEffect(() => {
     if (!anyPending || syncTick >= 60) return undefined;

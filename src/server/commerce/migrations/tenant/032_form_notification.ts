@@ -20,6 +20,9 @@ import type { Migration } from '@marlinjai/tenant-db';
  *   round     1 for the first letter; the owner's "send again" increments it, which starts a new job and a new
  *             idempotency key (Lumitra Mail refuses a key repeated with another body); `round_started_at` is
  *             when the current round began, the start of its three days of retries
+ *   admitted_at  when each round that was queued to send was admitted, what the hourly cap per company counts: a
+ *             round keeps its slot for its hour even after "send again" starts the next one. Times older than an
+ *             hour are dropped at the next "send again"; a skipped row has none
  *   letter    the letter as built at its first attempt (recipient, language, values, template, sending
  *             account, workspace), sent unchanged on every retry; emptied once the letter is settled, because it
  *             carries the visitor's words and nothing needs them after that
@@ -42,6 +45,7 @@ export const formNotification: Migration = {
           "status"         TEXT         NOT NULL DEFAULT 'pending',
           "round"          INTEGER      NOT NULL DEFAULT 1,
           "round_started_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "admitted_at"    TIMESTAMP(3)[] NOT NULL DEFAULT '{}',
           "last_error"     TEXT,
           "mailing_id"     TEXT,
           "letter"         JSONB,

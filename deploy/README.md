@@ -443,7 +443,7 @@ are removed by a purge job that never gives up (src/server/forms/purge.ts), so a
 `purgesStuck` above 0 after five failures; without this monitor nobody is told. Each monitor call runs one pass, which is cheap and safe beside the timer. **Rotation:** the monitors read a copy of `CUSTOM_DOMAIN_SYNC_TOKEN`, stored in
 the infra Infisical project at prod `/monitoring` as `FRAMER_CLONE_COMMERCE_WATCHDOG_TOKEN`. After rotating
 `CUSTOM_DOMAIN_SYNC_TOKEN`, copy it again with `copy_secret` (overwrite), update the header file on the host and
-edit monitors 39, 40 and 41, or all three turn red with 401.
+edit monitors 39, 40 and 41, and the submission purges monitor once it exists, or each one left out turns red with 401.
 
 ## Rolling back past the published copy
 

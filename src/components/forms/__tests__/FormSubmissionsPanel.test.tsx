@@ -189,6 +189,55 @@ describe('FormSubmissionsPanel', () => {
       }
     });
 
+    it('a pending row beyond the first page of the list is still followed, and the loaded rows stay as they are', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const old = (status: 'pending' | 'sent') =>
+          item('s1', { createdAt: '2026-10-23T10:00:00.000Z', notification: { status, reason: null, recipient: 'owner@bakery.example' } });
+        rows = [item('s3'), item('s2'), old('pending')];
+        render(<FormSubmissionsPanel projectId="proj-1" />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Load older submissions' }));
+        fireEvent.click(await screen.findByRole('button', { name: /Visitor s1/ }));
+        expect(screen.getByTestId('submission-email-status').textContent).toContain('is being sent');
+        rows = [item('s3'), item('s2'), { ...old('sent'), readAt: 'now' }];
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5500);
+        });
+        await waitFor(() => expect(screen.getByTestId('submission-email-status').textContent).toContain('Email sent'));
+        expect(screen.getAllByRole('listitem')).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('polling stops after its round, and a reload starts a new one', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        rows = [item('s3', { notification: { status: 'pending', reason: null, recipient: 'owner@bakery.example' } })];
+        render(<FormSubmissionsPanel projectId="proj-1" />);
+        await screen.findByRole('list');
+        const reads = () => calls.filter((c) => c.method === 'GET').length;
+        const wait = async (ticks: number) => {
+          for (let i = 0; i < ticks; i += 1) {
+            await act(async () => {
+              await vi.advanceTimersByTimeAsync(5100);
+            });
+          }
+        };
+        await wait(65);
+        const stopped = reads();
+        await wait(3);
+        expect(reads()).toBe(stopped);
+        fireEvent.click(screen.getByRole('button', { name: /Reload|Refresh/ }));
+        await screen.findByRole('list');
+        const reloaded = reads();
+        await wait(2);
+        expect(reads()).toBeGreaterThan(reloaded);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('a resend refused because the email was sent meanwhile shows the true state, not the old line', async () => {
       resendAnswer = { status: 409, code: 'not_resendable', message: 'this email was already sent or is waiting to be sent' };
       rows = [item('s3', { notification: failed })];

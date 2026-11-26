@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
+import { GIVE_UP_AFTER_MS } from '@/server/commerce/mail/outbox';
 import { formMailKey, summaryText } from '../notify';
+import { formMailKind } from '../notifyJob';
 import { notificationNote } from '@/components/forms/FormSubmissionsPanel';
 
 describe('summaryText', () => {
@@ -21,6 +23,20 @@ describe('summaryText', () => {
     const fields = [{ key: 'c', label: 'Consent', type: 'consent' as const, value: true }];
     expect(summaryText(fields, 'de')).toBe('Consent: ja');
     expect(summaryText([{ ...fields[0], value: false }], 'en')).toBe('Consent: no');
+  });
+  it('never cuts a character in half, at the limit of a value or of the whole', () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    const field = (label: string, value: string) => ({ key: label, label, type: 'textarea' as const, value });
+    const one = summaryText([field('M', `${'a'.repeat(298)}😀!`)], 'en');
+    expect(one).toBe(`M: ${'a'.repeat(298)}…`);
+    // Every alignment of the emoji against the limit of the whole.
+    for (let pad = 0; pad < 4; pad += 1) {
+      const whole = summaryText(Array.from({ length: 10 }, (_, i) => field(`F${i}${'x'.repeat(i === 0 ? pad : 0)}`, '😀'.repeat(140))), 'en');
+      expect(whole.length).toBeLessThanOrEqual(1800);
+      expect(whole).not.toMatch(lone);
+    }
+    // A value that fits is left as it is.
+    expect(summaryText([field('M', `${'a'.repeat(298)}😀`)], 'en')).toBe(`M: ${'a'.repeat(298)}😀`);
   });
   it('shortens each value and the whole, inside the 2000 characters a merge value may have', () => {
     const long = 'x'.repeat(5000);
@@ -53,6 +69,13 @@ describe('what the owner is told in the inbox', () => {
     const none = notificationNote({ status: 'skipped', reason: 'no_recipient', recipient: null });
     expect(none).toMatchObject({ tone: 'warn', canResend: true });
     expect(none?.text).toMatch(/notification address/);
+  });
+});
+
+describe('the form_mail job policy', () => {
+  it('leaves the delivery room to end a round: the runner gives up only after many more retries past the three days', () => {
+    const { giveUpAfterMs, laterMinutes } = formMailKind.policy;
+    expect(giveUpAfterMs! - GIVE_UP_AFTER_MS).toBeGreaterThanOrEqual(20 * laterMinutes * 60 * 1000);
   });
 });
 

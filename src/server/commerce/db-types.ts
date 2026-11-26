@@ -917,6 +917,7 @@ export interface FormNotificationTable {
   status: Generated<string>;
   round: Generated<number>;
   round_started_at: Generated<Timestamp>;
+  admitted_at: Generated<Date[]>;
   last_error: string | null;
   mailing_id: string | null;
   letter: ColumnType<Record<string, unknown> | null, JsonbWrite | null, JsonbWrite | null>;

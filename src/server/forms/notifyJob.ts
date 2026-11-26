@@ -15,7 +15,7 @@ import { FORM_MAIL_JOB_KIND } from './notify';
 
 export { FORM_MAIL_JOB_KIND };
 
-const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const formMailKind = defineJobKind({
   policy: {
@@ -23,8 +23,11 @@ export const formMailKind = defineJobKind({
     deadlineMs: 90 * 1000,
     backoffMinutes: [1, 5, 15, 60],
     laterMinutes: 6 * 60,
-    // The attempt itself writes `failed` after three days; this only has to come after it.
-    giveUpAfterMs: GIVE_UP_AFTER_MS + HOUR_MS,
+    // The delivery itself ends a round after three days, writing `failed`, so the owner can send it again. A retry that
+    // could not settle the row (another attempt held it, the first attempt ran late) must come back and do that: were the
+    // runner to give up near the three days, the job would die with the row still `pending`, which offers no resend. This
+    // far later backstop is for a job that can never write at all, which then shows among the dead jobs.
+    giveUpAfterMs: GIVE_UP_AFTER_MS + 7 * DAY_MS,
   },
   payload: z.object({ submissionId: z.string().min(1).max(200) }).strict(),
   async run({ mail, payload: { submissionId } }) {

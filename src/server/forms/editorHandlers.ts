@@ -37,8 +37,10 @@ export const EXPORT_MAX = 10_000;
 export interface EditorFormsDeps {
   resolve(req: Request, projectId: string): Promise<EditorFormsContext>;
   /**
-   * Where the owner's email about a form goes NOW, read from the live published form and site (null when it names none or
-   * the site is not published). Only "send again" asks; a route that does not supply it keeps the address stored.
+   * Where the owner's email about a form goes NOW, read from the live published form and site. Only "send again" asks.
+   * Null: the site is published and names no address, so nothing is sent (never to an address the owner removed).
+   * Undefined: the published site cannot be read (not published, or gone), so the stored address stays, as it does for a
+   * route that does not supply this.
    */
   currentRecipient?(siteId: string, formId: string): Promise<string | null | undefined>;
 }

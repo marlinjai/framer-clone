@@ -4,6 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { FORM_CONFIG_PROPS, NOTIFY_EMAIL_PROP, cleanNotifyEmail, readFormSettings, stripFormConfigProps, withoutPrivateFormProps } from '../definition';
 
 describe('cleanNotifyEmail', () => {
+  it('refuses a longer value instead of cutting it to another address, and keeps one of exactly 254 characters', () => {
+    const at254 = `${'a'.repeat(64)}@${'b'.repeat(184)}.help`;
+    expect(at254).toHaveLength(254);
+    expect(cleanNotifyEmail(at254)).toBe(at254);
+    // Its first 254 characters are a valid address of their own.
+    expect(cleanNotifyEmail(`${at254}.example`)).toBe('');
+  });
   it('keeps a plain address and trims it', () => {
     expect(cleanNotifyEmail('  owner@bakery.example ')).toBe('owner@bakery.example');
   });

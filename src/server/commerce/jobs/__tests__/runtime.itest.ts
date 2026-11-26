@@ -30,19 +30,23 @@ import { JOB_LEASE_MS, JobRefused, type JobContext } from '../types';
 
 const { handler } = vi.hoisted(() => ({ handler: { run: (async () => undefined) as (ctx: unknown) => Promise<void> } }));
 
-// The stuck-purge count, held back after it has counted once for a group that has stuck purges: it makes two groups' reads overlap
-// on purpose, which is what the watchdog's totals must survive (see the lost-update test).
-const { purgeCount } = vi.hoisted(() => ({ purgeCount: { holdFirstPositiveMs: 0 } }));
+// The stuck-purge count, with a rendezvous for the groups that have stuck purges: none of those counts is answered until `meet` of
+// them have arrived, so two groups' reads overlap on purpose, which is what the watchdog's totals must survive (see the lost-update test).
+const { purgeCount } = vi.hoisted(() => ({ purgeCount: { meet: 0, waiting: [] as (() => void)[] } }));
 vi.mock('@/server/forms/purge', async (original) => {
   const real = await original<typeof import('@/server/forms/purge')>();
   return {
     ...real,
     countStuckPurges: async (db: Parameters<typeof real.countStuckPurges>[0]) => {
       const count = await real.countStuckPurges(db);
-      if (count > 0 && purgeCount.holdFirstPositiveMs > 0) {
-        const wait = purgeCount.holdFirstPositiveMs;
-        purgeCount.holdFirstPositiveMs = 0;
-        await new Promise((resolve) => setTimeout(resolve, wait));
+      if (count > 0 && purgeCount.meet > 0) {
+        await new Promise<void>((resolve) => {
+          purgeCount.waiting.push(resolve);
+          if (purgeCount.waiting.length === purgeCount.meet) {
+            purgeCount.meet = 0;
+            purgeCount.waiting.splice(0).forEach((release) => release());
+          }
+        });
       }
       return count;
     },
@@ -130,8 +134,9 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // A test that failed before the hold was used must not hand it to the next one.
-  purgeCount.holdFirstPositiveMs = 0;
+  // A test that failed before the rendezvous was met must not hand it to the next one.
+  purgeCount.meet = 0;
+  purgeCount.waiting.splice(0).forEach((release) => release());
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const group of [groupA, groupB]) await su`DELETE FROM ${su(tenantSchema(group))}."commerce_job"`;
@@ -397,12 +402,11 @@ describe('E: re-entry after completion or failure', () => {
     const other = await schedule(groupB, { kind: 'form_purge', runAt: new Date(Date.now() + 60 * MINUTE) });
     await su`UPDATE ${su(tenantSchema(groupB))}."commerce_job" SET attempts = 9 WHERE id = ${other}`;
     expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
-    // The totals survive overlapping reads: the first group's count is held back while the second group's is added. With a total
-    // read before the wait (`total += await count()`) the held group's addition overwrote the other's and this was 1.
-    // Long enough that the other group's whole read (connection, two queries, its count) is over before this one resumes.
-    purgeCount.holdFirstPositiveMs = 1500;
+    // The totals survive overlapping reads: both groups' counts are answered together. With a total read before the wait
+    // (`total += await count()`) both additions start from the same total, one overwrites the other and this is 1.
+    purgeCount.meet = 2;
     expect((await runCommerceWatchdogPass()).purgesStuck).toBe(2);
-    expect(purgeCount.holdFirstPositiveMs).toBe(0);
+    expect(purgeCount.meet).toBe(0);
     // Once a purge is gone (it finished and was cleaned up) it no longer counts.
     await su`DELETE FROM ${su(tenantSchema(groupA))}."commerce_job" WHERE id = ${purge}`;
     expect((await runCommerceWatchdogPass()).purgesStuck).toBe(1);

@@ -100,6 +100,8 @@ const later = (ms = PURGE_DELAY_MS + 60_000) => new Date(clock.now.getTime() + m
 const deleteSiteRow = (site: Site) => fx.prisma.site.delete({ where: { id: site.siteId } });
 
 beforeEach(async () => {
+  // Tests move the clock on: each one starts at the same moment.
+  clock.now = new Date('2026-11-12T09:00:00Z');
   await fx.owner`DELETE FROM ${fx.owner(schema)}.form_submission`;
   await fx.owner`DELETE FROM ${fx.owner(schema)}.commerce_job WHERE kind = 'form_purge'`;
   await fx.owner`DELETE FROM ${fx.owner(otherSchema)}.form_submission`;
@@ -153,6 +155,19 @@ describe('the intent, written before the delete', () => {
     expect((await list(siteA)).length).toBe(0);
   });
 
+  it('a delete that commits after the job first looked is purged by the follow-up look the job itself scheduled', async () => {
+    await submit(appDb, tgId, siteA);
+    await intent(siteA);
+    // The first look finds the row still there: the runner's clock is inside the patience, so a follow-up is written.
+    expect(await runJobs(later())).toEqual(['done']);
+    expect(await rowsOf(schema, siteA.siteId)).toHaveLength(1);
+    expect((await purgeJobs()).filter((job) => job.status === 'pending')).toHaveLength(1);
+    // The delete commits at last; nothing but the follow-up is left to remove the submissions.
+    await deleteSiteRow(siteA);
+    expect(await runJobs(later(2 * PURGE_DELAY_MS + 120_000))).toEqual(['done']);
+    expect(await rowsOf(schema, siteA.siteId)).toHaveLength(0);
+  });
+
   it('a finished follow-up look never swallows a delete asked for later in the same ten minutes', async () => {
     await submit(appDb, tgId, siteA);
     const group = { id: tgId, db: appDb };
@@ -199,7 +214,8 @@ describe('never purging while the project exists', () => {
     // The owner deletes the project properly this time.
     await intent(siteA, later());
     await deleteSiteRow(siteA);
-    expect(await runJobs(later(2 * PURGE_DELAY_MS + 120_000))).toEqual(['done']);
+    // The first job's follow-up look and the new delete's own job.
+    expect(await runJobs(later(2 * PURGE_DELAY_MS + 120_000))).toEqual(['done', 'done']);
     expect(await rowsOf(schema, siteA.siteId)).toHaveLength(0);
     expect(mine).toBeTruthy();
   });
@@ -207,9 +223,12 @@ describe('never purging while the project exists', () => {
   it('a delete that fails after the intent leaves the project and its submissions untouched', async () => {
     await submit(appDb, tgId, siteA);
     await intent(siteA);
-    // deleteSite refused: no row deleted. Any number of job runs later, nothing has happened to the data.
+    // deleteSite refused: no row deleted. Any number of job runs later, nothing has happened to the data, and the
+    // follow-up looks stop when the patience ends.
     expect(await runJobs(later())).toEqual(['done']);
-    expect(await runJobs(later(5 * PURGE_DELAY_MS))).toEqual([]);
+    expect(await runJobs(later(5 * PURGE_DELAY_MS))).toEqual(['done']);
+    expect(await runJobs(later(PURGE_PATIENCE_MS + 10 * PURGE_DELAY_MS))).toEqual(['done']);
+    expect(await runJobs(later(PURGE_PATIENCE_MS + 30 * PURGE_DELAY_MS))).toEqual([]);
     expect(await rowsOf(schema, siteA.siteId)).toHaveLength(1);
   });
 });

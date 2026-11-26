@@ -226,15 +226,26 @@ describe('032_form_notification', () => {
     expect(fk[0].confdeltype).toBe('c');
   });
 
-  it('refuses a status outside its set and a foreign tenant group id', async () => {
+  it('refuses a status outside its set and a tenant group id that is not one', async () => {
+    const s = submission({ notification: undefined });
+    await insertFormSubmission(appDb, s);
+    const insert = (tenantId: string, status = 'pending') =>
+      fx.owner`INSERT INTO ${fx.owner(schema)}.form_notification (submission_id, tenant_id, company_id, status, updated_at) VALUES (${s.id}, ${tenantId}, 'c', ${status}, now())`;
+    // Everything else about the row is valid, so each refusal is the named check's own.
+    await expect(insert(tgId, 'weird')).rejects.toMatchObject({ constraint_name: 'form_notification_status_check' });
+    await expect(insert('not-a-uuid')).rejects.toMatchObject({ constraint_name: 'form_notification_tenant_id_check' });
+    await insert(tgId);
+  });
+
+  it('a caller of another tenant group neither delivers nor resends a notification of this one', async () => {
+    await connect(company);
     const s = submission();
     await insertFormSubmission(appDb, s);
-    await expect(
-      fx.owner`UPDATE ${fx.owner(schema)}.form_notification SET status = 'weird' WHERE submission_id = ${s.id}`,
-    ).rejects.toThrow();
-    await expect(
-      fx.owner`INSERT INTO ${fx.owner(schema)}.form_notification (submission_id, tenant_id, company_id, updated_at) VALUES (${randomUUID()}, 'not-a-uuid', 'c', now())`,
-    ).rejects.toThrow();
+    const foreign = randomUUID();
+    expect(await deliverFormNotification({ ...company.outbox, tenantGroupId: foreign }, company.id, s.id)).toBe('none');
+    expect(await resendFormNotification(appDb, { tenantGroupId: foreign, siteId: site.siteId, submissionId: s.id }, company.clock.now)).toBe('not_found');
+    expect(company.mail.sent).toHaveLength(0);
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'pending', round: 1 });
   });
 });
 
@@ -612,6 +623,59 @@ describe('3. resume', () => {
     expect(company.mail.sent.map((l) => l.key)).toEqual([expect.stringMatching(new RegExp(`^form:${company.id}:${s.id}:3:${company.workspaceId}:[0-9a-f]{16}$`))]);
   }, 30_000);
 
+  it('an address published while "send again" waits for an attempt in flight is the one the new round goes to', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    const gate = holdSends(company);
+    company.mail.failNext('send', new MailRefused('other', 'refused'));
+    const attempt = deliverFormNotification(company.outbox, company.id, s.id).catch((e) => e);
+    await gate.entered;
+    let published = 'before@bakery.example';
+    const again = resendFormNotification(
+      appDb,
+      { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id },
+      company.clock.now,
+      async () => published,
+      { lockWaitMs: 5_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    published = 'after@bakery.example';
+    gate.release();
+    expect(((await attempt) as Error).name).toBe('JobRefused');
+    expect(await again).toBe('queued');
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'pending', round: 2, recipient: 'after@bakery.example' });
+  }, 30_000);
+
+  it('a connection that changes before every send leaves the row pending at first, and failed (so resendable) once the three days are over', async () => {
+    await connect(company);
+    const s = submission();
+    await insertFormSubmission(appDb, s);
+    let transactions = 0;
+    const moving = new Proxy(appDb, {
+      get(target, prop, receiver) {
+        if (prop !== 'transaction') return Reflect.get(target, prop, receiver);
+        return () => ({
+          execute: async (work: Parameters<ReturnType<typeof appDb.transaction>['execute']>[0]) => {
+            transactions += 1;
+            // Every second transaction is a send: the owner reconnects just before each.
+            if (transactions % 2 === 0) await connect(company, { workspaceId: randomUUID() });
+            return target.transaction().execute(work);
+          },
+        });
+      },
+    }) as Kysely<CommerceDB>;
+    await expect(deliverFormNotification({ ...company.outbox, db: moving }, company.id, s.id)).rejects.toMatchObject({ name: 'JobRetryLater' });
+    expect(await notificationOf(s.id)).toMatchObject({ status: 'pending' });
+    company.clock.now = new Date(company.clock.now.getTime() + 3 * 24 * 60 * 60 * 1000 + 60_000);
+    transactions = 0;
+    await expect(deliverFormNotification({ ...company.outbox, db: moving }, company.id, s.id)).rejects.toMatchObject({ name: 'JobRefused', reason: 'gave_up' });
+    const failed = await notificationOf(s.id);
+    expect(failed).toMatchObject({ status: 'failed', last_error: 'the mail connection kept changing while sending' });
+    expect(failed.letter).toBeNull();
+    expect(company.mail.sent).toHaveLength(0);
+  }, 30_000);
+
   it('a send transaction that fails after Lumitra Mail took the letter leaves the frozen letter in place: the retry sends the same body under the same key', async () => {
     await connect(company);
     const s = submission();
@@ -723,12 +787,19 @@ describe('3. resume', () => {
     // Lumitra Mail (the fake keeps it by key) and nothing was recorded.
     company.mail.failNext('send', new MailRetryLater('Lumitra Mail could not be reached while creating the form_notification letter.'));
     expect(await drain(company)).toEqual(['retry']);
-    const frozen = (await appDb.selectFrom('form_notification').select('letter').where('submission_id', '=', s.id).executeTakeFirstOrThrow()).letter as { workspaceId: string };
+    const frozen = (await appDb.selectFrom('form_notification').select('letter').where('submission_id', '=', s.id).executeTakeFirstOrThrow()).letter as unknown as
+      Omit<Parameters<FakeMail['send']>[1], 'key' | 'kind'> & { workspaceId: string };
     const key = formMailKey(company.id, s.id, 1, frozen);
     company.clock.now = new Date(company.clock.now.getTime() + 2 * 60 * 1000);
-    await company.mail.send(`fake-send-key-${company.id}`, { key, kind: 'form_notification', locale: 'de', templateId: 'tpl-form', providerId: company.providerId, to: 'owner@bakery.example', merge: { site_name: 'Bakery' } });
+    const { locale, templateId, providerId, to, merge } = frozen;
+    await company.mail.send(`fake-send-key-${company.id}`, { key, kind: 'form_notification', locale, templateId, providerId, to, merge });
     expect(await notificationOf(s.id)).toMatchObject({ status: 'pending' });
     expect(await drain(company)).toEqual(['done']);
+    // The worker asked for the very same request, which is what makes the service's replay by key a true one. (The first
+    // call is the attempt that failed.)
+    const requests = company.mail.calls.filter((c) => c.op === 'send').map((c) => c.args[1]);
+    expect(requests).toHaveLength(3);
+    expect(requests[2]).toEqual(requests[1]);
     expect(company.mail.sent).toHaveLength(1);
     expect(await notificationOf(s.id)).toMatchObject({ status: 'sent' });
   }, 30_000);
@@ -812,6 +883,34 @@ describe('4. re-entry', () => {
     }
     expect((await notificationOf(more[0].id))?.status).toBe('pending');
     expect(await notificationOf(more[1].id)).toMatchObject({ status: 'skipped', last_error: 'rate_limited' });
+  });
+
+  it('every round keeps its slot for its hour: one submission cannot be resent past the cap, and a later round does not free an earlier one', async () => {
+    await connect(company);
+    const s = submission({ notification: undefined });
+    await insertFormSubmission(appDb, s);
+    await appDb.transaction().execute((trx) => writeFormNotification(trx, tgId, s.id, { companyId: company.id, recipient: 'owner@bakery.example', at: company.clock.now }, 3));
+    const ref = { tenantGroupId: tgId, siteId: site.siteId, submissionId: s.id };
+    const minutes = (n: number) => new Date(company.clock.now.getTime() + n * 60 * 1000);
+    const fail = () => fx.owner`UPDATE ${fx.owner(schema)}.form_notification SET status = 'failed' WHERE submission_id = ${s.id}`;
+    const again = async (at: Date) => {
+      await fail();
+      return resendFormNotification(appDb, ref, at, undefined, { perHourLimit: 3 });
+    };
+    expect(await again(minutes(10))).toBe('queued');
+    expect(await again(minutes(20))).toBe('queued');
+    // Three rounds of this one submission were admitted inside the hour.
+    expect(await again(minutes(30))).toBe('rate_limited');
+    expect(await notificationOf(s.id)).toMatchObject({ round: 3 });
+    // And another submission of the company finds no slot either.
+    const other = submission({ notification: undefined });
+    await insertFormSubmission(appDb, other);
+    expect(await appDb.transaction().execute((trx) => writeFormNotification(trx, tgId, other.id, { companyId: company.id, recipient: 'owner@bakery.example', at: minutes(31) }, 3))).toBe('skipped');
+    // The first round's hour ends: one slot is free, and only one.
+    expect(await again(minutes(61))).toBe('queued');
+    expect(await again(minutes(62))).toBe('rate_limited');
+    // Times past their hour were dropped from the row.
+    expect((await notificationOf(s.id)).admitted_at).toHaveLength(3);
   });
 
   it('writeFormNotification alone is idempotent per submission', async () => {

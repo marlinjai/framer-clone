@@ -100,10 +100,10 @@ function jobMail(group: JobTenantGroup, tenantId: string, now: () => Date, wirin
 }
 
 /** A deleted project's form submissions, in the job's tenant group (src/server/forms/purge.ts). */
-function jobForms(group: JobTenantGroup, jobTenantId: string): JobForms {
+function jobForms(group: JobTenantGroup, jobTenantId: string, now: () => Date): JobForms {
   return {
     async purgeSite(siteId, workspaceId, notAfter) {
-      await purgeSiteSubmissions(group, jobTenantId, siteId, workspaceId, undefined, { notAfter });
+      await purgeSiteSubmissions(group, jobTenantId, siteId, workspaceId, undefined, { notAfter, now: now() });
     },
   };
 }
@@ -155,7 +155,7 @@ async function invoke(
       signal,
       payments: jobPayments(group, job.tenant_id, kind, now, wiring),
       mail: jobMail(group, job.tenant_id, now, mailWiring),
-      forms: jobForms(group, job.tenant_id),
+      forms: jobForms(group, job.tenant_id, now),
     });
     if (!answer) return { type: 'done' };
     if (answer.payload === undefined) return { type: 'rerun', rerunAt: answer.rerunAt };
