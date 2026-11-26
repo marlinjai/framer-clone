@@ -335,8 +335,9 @@ export function showFxRingStill(box: HTMLElement, spec: RingStillSpec): FxRingSt
       }
       if (settled) return;
       settled = true;
-      // No redraw from here on, not even one already asked for: the live scene's context is up, and a redraw
-      // during its fade would open a second one.
+      // No redraw from here on, not even one already asked for: the live layer has drawn, and a redraw during its
+      // fade would open a second context. Between the engine's mount and its first frame a ratio change can still
+      // draw once; that second context lives only for the synchronous draw.
       unwatch();
       if (frame) window.cancelAnimationFrame(frame);
       frame = 0;

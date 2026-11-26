@@ -8,7 +8,7 @@
 // the generator the layer uses (its own source, from particleRingCore), and the clock is stopped:
 // performance.now and the time every animation frame is given are both 0, so each frame it draws, whichever
 // observer asks for it, is the frame at its starting time (7 seconds). Reduced motion is asked for on both
-// sides, as in F4's oracle. The component leans toward the pointer even then (this app's still does not), so
+// sides, as in F4's oracle. The component leans toward the pointer even then (this app's live layer does not), so
 // pointer events are stopped before they reach it, and counted.
 //
 // THIS APP'S SIDE is the real thing: a stored page published through the real repository, served by the real

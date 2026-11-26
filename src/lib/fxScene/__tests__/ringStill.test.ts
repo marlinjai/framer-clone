@@ -353,7 +353,7 @@ describe('drawing the still', () => {
     });
   });
 
-  it('a resize after a ratio change draws at the new ratio; once the live scene is up, no ratio is watched', () => {
+  it('a ratio change redraws at the new ratio and the current size; once the live scene is up, no ratio is watched', () => {
     withResolutionQueries((queries) => {
       ratio = 1;
       const box = boxOf(1440, 800);
