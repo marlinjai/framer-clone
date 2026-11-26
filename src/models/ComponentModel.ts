@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { replaceTokenReferences } from '@/lib/site/theme';
 import { isPlacementType } from '@/lib/components/placement';
-import { types, Instance, SnapshotIn, SnapshotOut, applySnapshot, getParent, getSnapshot, hasParent as hasMstParent } from 'mobx-state-tree';
+import { types, Instance, SnapshotIn, SnapshotOut, applySnapshot, getParent, getSnapshot, hasParent as hasMstParent, isStateTreeNode } from 'mobx-state-tree';
 import { v4 as uuidv4 } from 'uuid';
 import { CSS_PROP_SET } from '@/lib/styles/cssPropSet';
 import { contentOf, tagRefusal } from '@/lib/styles/customEditor';
@@ -308,6 +308,29 @@ const ComponentBase = types.model('ComponentBase', {
   // Parent relation tracking (for app tree navigation)
   parentId: types.maybe(types.string),
 });
+
+// A child's `parentId` repeats what the tree already says, and the editor reads it
+// to decide whether a node can be moved, deleted or duplicated (`hasParent`). The
+// save route takes page trees as they are, so a tree written by a script can leave
+// it out: on the canvas every press then went to the breakpoint frame, and a click
+// anywhere selected the whole frame. So the link comes from the tree. Every node
+// runs this on its own children, which covers a whole tree. The node on top keeps
+// what it was given: one created to be added to a parent names it itself. A child
+// given as a live node is left alone, `addChild` and its kin link those.
+function withParentLinks<S>(snapshot: S): S {
+  const node = snapshot as { id?: unknown; children?: unknown } | null | undefined;
+  const id = node?.id;
+  const children = node?.children;
+  if (typeof id !== 'string' || !Array.isArray(children)) return snapshot;
+  let changed = false;
+  const linked = children.map((child: unknown) => {
+    if (typeof child !== 'object' || child === null || isStateTreeNode(child)) return child;
+    if ((child as { parentId?: unknown }).parentId === id) return child;
+    changed = true;
+    return { ...child, parentId: id };
+  });
+  return changed ? ({ ...(node as object), children: linked } as S) : snapshot;
+}
 
 // ---------- FINAL MODEL (add recursive children + logic) ----------
 const ComponentModel: any = ComponentBase
@@ -1191,7 +1214,8 @@ const ComponentModel: any = ComponentBase
 
       return { attributes, style };
     },
-  }));
+  }))
+  .preProcessSnapshot(withParentLinks);
 
 export type ComponentInstance = Instance<typeof ComponentModel>;
 export type ComponentSnapshotIn = SnapshotIn<typeof ComponentModel>;
