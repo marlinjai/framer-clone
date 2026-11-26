@@ -366,7 +366,7 @@ interface Opened {
   errors: string[];
 }
 
-async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?: boolean; quiet?: boolean } = {}): Promise<Opened> {
+async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?: boolean; quiet?: boolean; firstMessageProbe?: boolean } = {}): Promise<Opened> {
   const context = await browser.newContext({ hasTouch: options.hasTouch === true, viewport: { width: 900, height: 700 } });
   const page = await context.newPage();
   const consoleLines: string[] = [];
@@ -416,43 +416,46 @@ async function open(browser: Browser, blocks: BlockSpec[], options: { hasTouch?:
       }
     }).observe(document, { subtree: true, childList: true });
   });
-  // Each block's frame: when its load event fired, and its first window message, with whether the frame was already gone
-  // one task after that message. Registered before the page's own scripts, so this listener runs before the broker's
-  // in the same dispatch, and reads only `source`, never the data (which the frame makes costly to read). A frame gone
-  // in the task right after its first message was removed at that message: the broker's other "no hello" removal is a
-  // timer started by the frame's load event, 5 seconds later.
-  await context.addInitScript(() => {
-    const w = window as unknown as {
-      __frameLoad: Record<string, number>;
-      __firstMessage: Record<string, { at: number; goneNextTask?: boolean }>;
-    };
-    w.__frameLoad = {};
-    w.__firstMessage = {};
-    new MutationObserver((records) => {
-      for (const record of records) {
-        for (const node of Array.from(record.addedNodes)) {
-          if ((node as Element).tagName !== 'IFRAME') continue;
-          const id = (record.target as Element).id;
-          node.addEventListener('load', () => {
-            if (w.__frameLoad[id] === undefined) w.__frameLoad[id] = performance.now();
-          });
+  // Only for the cases that read it (`firstMessageProbe`), so the timing bounds of every other case run unchanged. Each
+  // block's frame: when its load event fired, and its first window message, with whether the frame was already gone one
+  // task after that message. Registered before the page's own scripts, so this listener runs before the broker's in the
+  // same dispatch, and it reads only `source`, never the data (which the frame makes costly to read). A frame gone in the
+  // task right after its first message was removed at that message: the broker's other "no hello" removal is a timer
+  // the frame's load event starts for 5 seconds. The load is caught on the document in its capture phase, so even a load
+  // that fires at once is never missed.
+  if (options.firstMessageProbe) {
+    await context.addInitScript(() => {
+      const w = window as unknown as {
+        __frameLoad: Record<string, number>;
+        __firstMessage: Record<string, { at: number; goneNextTask?: boolean }>;
+      };
+      w.__frameLoad = {};
+      w.__firstMessage = {};
+      document.addEventListener(
+        'load',
+        (event) => {
+          const frame = event.target as Element;
+          if (frame.tagName !== 'IFRAME') return;
+          const id = (frame.parentElement as Element).id;
+          if (w.__frameLoad[id] === undefined) w.__frameLoad[id] = performance.now();
+        },
+        true,
+      );
+      addEventListener('message', (event) => {
+        for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+          if (event.source === null || frame.contentWindow !== event.source) continue;
+          const id = (frame.parentElement as Element).id;
+          if (w.__firstMessage[id]) return;
+          const first: { at: number; goneNextTask?: boolean } = { at: performance.now() };
+          w.__firstMessage[id] = first;
+          setTimeout(() => {
+            first.goneNextTask = !frame.isConnected;
+          }, 0);
+          return;
         }
-      }
-    }).observe(document, { subtree: true, childList: true });
-    addEventListener('message', (event) => {
-      for (const frame of Array.from(document.querySelectorAll('iframe'))) {
-        if (event.source === null || frame.contentWindow !== event.source) continue;
-        const id = (frame.parentElement as Element).id;
-        if (w.__firstMessage[id]) return;
-        const first: { at: number; goneNextTask?: boolean } = { at: performance.now() };
-        w.__firstMessage[id] = first;
-        setTimeout(() => {
-          first.goneNextTask = !frame.isConnected;
-        }, 0);
-        return;
-      }
+      });
     });
-  });
+  }
   page.on('console', (message) => consoleLines.push(message.text()));
   page.on('pageerror', (error) => errors.push(error.message));
   await context.route('**/*', (route) => {
@@ -520,6 +523,19 @@ const fallbackShown = (page: Page, id: string) => page.evaluate((box) => !(docum
 const until = (page: Page, condition: string, ms: number) => page.waitForFunction(condition, undefined, { timeout: ms }).catch(() => {});
 const shownOnce = (id: string) => `window.__settled.some(function (s) { return s.id === ${JSON.stringify(id)} && s.shown; })`;
 const removed = (id: string) => `window.__settled.some(function (s) { return s.id === ${JSON.stringify(id)} && !s.shown; })`;
+/**
+ * For a page opened with `firstMessageProbe`: the block's first window message, whether its frame was gone one task
+ * later, and how long after the frame's load event it came (null: before the load, when no hello timer was running yet).
+ */
+const firstMessageOf = async (page: Page, id: string) => {
+  await until(page, `window.__firstMessage[${JSON.stringify(id)}] && window.__firstMessage[${JSON.stringify(id)}].goneNextTask !== undefined`, 5_000);
+  return page.evaluate((box) => {
+    const w = window as unknown as { __frameLoad: Record<string, number>; __firstMessage: Record<string, { at: number; goneNextTask?: boolean }> };
+    const first = w.__firstMessage[box];
+    const load = w.__frameLoad[box];
+    return { goneNextTask: first?.goneNextTask, sinceLoad: !first || load === undefined || load > first.at ? null : first.at - load, seen: !!first };
+  }, id);
+};
 
 // ---------------------------------------------------------------------------
 // Engines
@@ -1280,31 +1296,25 @@ describe('the custom code bridge in chromium with site isolation', () => {
   }, 90_000);
 
   it('removes a frame whose first window message is not a hello, at that message, and answers a click', async () => {
-    const { page, context, console: lines } = await open(browser, [{ id: 'pre', doc: 'preHeavy' }], { quiet: true });
+    const { page, context, console: lines } = await open(browser, [{ id: 'pre', doc: 'preHeavy' }], { quiet: true, firstMessageProbe: true });
     try {
       // Removed at its first message, sent while the frame's document is still parsing. Proven by order, not by a
       // duration (a loaded runner took 3.1 s, 4.6 s and 6.3 s to deliver that costly message): the frame is gone in the
       // task right after its first message reached the page, and that message came before the broker's other "no hello"
       // removal could run, the timer the frame's load event starts for 5 seconds. A broker that let the message pass
-      // would keep the frame past it, until that timer.
+      // would keep the frame past it, until that timer. The console line below names only the reason, which both
+      // removals share; the order says which one it was. `gone` is recorded for information, never bounded.
       const appeared = Date.now();
       await until(page, "document.querySelector('#pre iframe')", 10_000);
       await until(page, removed('pre'), 30_000);
-      await until(page, "window.__firstMessage.pre && window.__firstMessage.pre.goneNextTask !== undefined", 5_000);
       const gone = Date.now() - appeared;
-      const order = await page.evaluate(() => {
-        const w = window as unknown as { __frameLoad: Record<string, number>; __firstMessage: Record<string, { at: number; goneNextTask?: boolean }> };
-        const load = w.__frameLoad.pre;
-        const first = w.__firstMessage.pre;
-        // null: the message came before the frame's load event (or the frame never loaded), so no hello timer was running.
-        return { first, sinceLoad: load === undefined || load > first.at ? null : first.at - load };
-      });
-      record(`costly first message without hello, site isolation: removed ${gone} ms after the frame was made; first message ${order.sinceLoad === null ? 'before the frame loaded' : `${Math.round(order.sinceLoad)} ms after its load`}`);
+      const first = await firstMessageOf(page, 'pre');
+      record(`costly first message without hello, site isolation: removed ${gone} ms after the frame was made; first message ${first.sinceLoad === null ? 'before the frame loaded' : `${Math.round(first.sinceLoad)} ms after its load`}`);
       expect(await settled(page)).toEqual([{ id: 'pre', shown: false }]);
-      expect(order.first?.goneNextTask).toBe(true);
+      expect(first.goneNextTask).toBe(true);
       // The hello timer could not have fired yet when the message came: the frame had not loaded, or loaded less than
       // the timer's 5 seconds before.
-      expect(order.sinceLoad === null || order.sinceLoad < 5_000).toBe(true);
+      expect(first.sinceLoad === null || first.sinceLoad < 5_000).toBe(true);
       const click = await clickToState(page);
       // No bound on the page's freeze here: the broker reads a frame's first window message once, by design, and this
       // frame makes that message its costly one (1.5 s in CI run 45119357537). The variant below bounds the freeze.
@@ -1318,9 +1328,13 @@ describe('the custom code bridge in chromium with site isolation', () => {
   }, 90_000);
 
   it('removes a frame whose small first window message is not a hello, and the page never pays for its costly flood', async () => {
-    const { page, context, console: lines } = await open(browser, [{ id: 'small', doc: 'preSmall' }], { quiet: true });
+    const { page, context, console: lines } = await open(browser, [{ id: 'small', doc: 'preSmall' }], { quiet: true, firstMessageProbe: true });
     try {
       await until(page, removed('small'), 3_000);
+      // Removed at that small first message, by the same order as above, not by the hello timer.
+      const first = await firstMessageOf(page, 'small');
+      expect(first.goneNextTask).toBe(true);
+      expect(first.sinceLoad === null || first.sinceLoad < 5_000).toBe(true);
       // A broker that read one more message would pay for a costly one before the removal; the settle catches any read
       // deferred past it.
       await page.waitForTimeout(500);
