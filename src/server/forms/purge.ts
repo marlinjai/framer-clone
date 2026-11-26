@@ -119,7 +119,9 @@ export async function purgeSiteSubmissions(
         await scheduleJob(trx, {
           tenantId: group.id,
           kind: FORM_PURGE_JOB_KIND,
-          dedupeKey: purgeJobKey(siteId, workspaceId, runAt),
+          // Keys of their own: `scheduleJob` ignores a key that has ANY job, a finished one too, so a follow-up sharing the delete
+          // request's keys could swallow a later delete of the same window, which would then be told removal is pending with no job.
+          dedupeKey: `formpurge:look:${siteId}:${workspaceId}:${notAfter.getTime()}:${Math.floor(runAt.getTime() / PURGE_DELAY_MS)}`,
           payload: { siteId, workspaceId, notAfter: notAfter.toISOString() },
           runAt,
           at: now,

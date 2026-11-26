@@ -153,6 +153,21 @@ describe('the intent, written before the delete', () => {
     expect((await list(siteA)).length).toBe(0);
   });
 
+  it('a finished follow-up look never swallows a delete asked for later in the same ten minutes', async () => {
+    await submit(appDb, tgId, siteA);
+    const group = { id: tgId, db: appDb };
+    const present = { site: { findUnique: async () => ({ id: siteA.siteId }) } } as never;
+    const bucketStart = new Date(Math.ceil(clock.now.getTime() / PURGE_DELAY_MS) * PURGE_DELAY_MS);
+    // An older delete's job looks, finds the row, and hands over to a follow-up due in the next window.
+    await purgeSiteSubmissions(group, tgId, siteA.siteId, siteA.workspaceId, present, { notAfter: new Date(bucketStart.getTime() + 1).toISOString(), now: bucketStart });
+    // That follow-up ran past its patience and ended.
+    await fx.owner`UPDATE ${fx.owner(schema)}.commerce_job SET status = 'done', finished_at = now() WHERE kind = 'form_purge'`;
+    // A new delete, asked in the window the follow-up was due in, needs a job of its own: nothing else would remove the data.
+    clock.now = new Date(bucketStart.getTime() + PURGE_DELAY_MS + 1_000);
+    expect(await intent(siteA)).toBe(true);
+    expect((await purgeJobs()).filter((job) => job.status === 'pending')).toHaveLength(1);
+  });
+
   it('is skipped for a tenant group with no schema (a legacy site) and is not a tenant id at all', async () => {
     // No confirmation either: nothing durable exists, so nothing may be promised.
     expect(await scheduleProjectSubmissionsPurge('not-a-tenant-group', siteA.workspaceId, siteA.siteId, clock.now, async () => appDb)).toBe(false);
