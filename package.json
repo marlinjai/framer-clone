@@ -17,6 +17,7 @@
     "lint": "eslint .",
     "lint:guards": "node scripts/check-guards.mjs",
     "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
