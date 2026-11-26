@@ -38,6 +38,7 @@ export {
   ErasePreviewStaleError,
   NothingToEraseError,
   SiteImageMissingError,
+  CustomCodeBudgetError,
   BranchNotFoundError,
   BranchClosedError,
   BranchCannotPublishError,

@@ -48,10 +48,23 @@ import {
   ErasePreviewStaleError,
   NothingToEraseError,
   SiteImageMissingError,
+  CustomCodeBudgetError,
   BranchCannotPublishError,
   SiteIsBranchError,
 } from './errors';
 import { closedBranchError } from './branches/closed';
+import {
+  SITE_CODE_BUDGET_BYTES,
+  allNamed,
+  bytesOfBlobs,
+  namedHashes,
+  namedOutside,
+  pruneUnnamedBlobs,
+  siteHoldsBlobs,
+  workingCopyHashes,
+  type NamedHashes,
+} from '@/server/customCode/named';
+import { sizeInWords } from '@/lib/customCode/authoring';
 import { isDatabaseConflict } from './dbConflict';
 import { validateBranchName } from '@/lib/sites/branches';
 import { clearExpiredKeptCopies, forgetBranchContent, freeOpenName } from './branches/repository';
@@ -638,7 +651,7 @@ export class SiteRepository {
       async (tx) => {
         if (options.signal?.aborted) throw new SaveAbortedError();
         await this.lockSiteForSave(tx, scope, persisted);
-        const written = await this.writeWorkingCopy(tx, scope, persisted, options);
+        const written = await this.aroundCustomCode(tx, scope, persisted.siteId, 'save', () => this.writeWorkingCopy(tx, scope, persisted, options));
         // Thrown inside the transaction, so an abort that came while it waited rolls the write back.
         if (options.signal?.aborted) throw new SaveAbortedError();
         return written;
@@ -654,6 +667,59 @@ export class SiteRepository {
     }
     announceWrite(persisted.siteId, write, options.event, persisted);
     return { version: write.version };
+  }
+
+  /**
+   * Custom code around a working-copy write of `siteId` (a save, or a publish's write), in its transaction and under
+   * the site's lock (plan docs/plans/2026-11-02-sandboxed-custom-code.md, D113 and D114):
+   *
+   *  - A site whose main site stores no blob pays one indexed read and nothing else: it names no live code, so it
+   *    can never be over budget, and there is nothing to prune.
+   *  - Otherwise the hashes the site's own working copy names are read before and after the write. When they did
+   *    not change (every save that edits text, styles or layout), nothing more happens.
+   *  - When the write names a hash that nothing else named, the code that brings to life is counted with all the
+   *    site's live code, and a total over the budget refuses the write (CustomCodeBudgetError, the transaction rolls
+   *    back). A write that only removes blocks, or names code something else already keeps, is never refused.
+   *  - When the names changed on the main site, its unnamed blobs older than a week are pruned (D4). A branch's save
+   *    prunes nothing: the blobs are its main site's, whose next save, publish or code write prunes them.
+   *
+   * `kind` is for the reasons only; the publish prunes once more after freezing its revision.
+   */
+  private async aroundCustomCode(
+    tx: Prisma.TransactionClient,
+    scope: TenantScope,
+    siteId: string,
+    kind: 'save' | 'publish',
+    write: () => Promise<WorkingCopyWrite>,
+  ): Promise<WorkingCopyWrite> {
+    const own = await tx.$queryRaw<{ branch_of_site_id: string | null }[]>`
+      SELECT s.branch_of_site_id FROM public.sites s WHERE s.id = ${siteId} AND s.workspace_id = ${scope.workspaceId}`;
+    // A site being created stores no blob yet (blobs are keyed by an existing site's id).
+    if (own.length === 0) return write();
+    const mainId = own[0].branch_of_site_id ?? siteId;
+    if (!(await siteHoldsBlobs(tx, mainId))) return write();
+    const before = await workingCopyHashes(tx, siteId);
+    const written = await write();
+    if (!written.wrote) return written;
+    const after = await workingCopyHashes(tx, siteId);
+    const added = [...after.keys()].filter((sha256) => !before.has(sha256));
+    const removed = [...before.keys()].some((sha256) => !after.has(sha256));
+    if (added.length === 0 && !removed) return written;
+    let named: NamedHashes | undefined;
+    if (added.length > 0) {
+      named = await namedHashes(tx, mainId);
+      const outside = namedOutside(named, siteId, mainId);
+      const broughtToLife = new Set(added.filter((sha256) => !outside.has(sha256)));
+      if ((await bytesOfBlobs(tx, mainId, broughtToLife)) > 0) {
+        const total = await bytesOfBlobs(tx, mainId, allNamed(named));
+        if (total > SITE_CODE_BUDGET_BYTES) {
+          console.info(`[custom code] site ${siteId}: a ${kind} was refused, it would name ${total} bytes of code`);
+          throw new CustomCodeBudgetError(total, SITE_CODE_BUDGET_BYTES, sizeInWords);
+        }
+      }
+    }
+    if (siteId === mainId) await pruneUnnamedBlobs(tx, mainId, new Date(), named);
+    return written;
   }
 
   /**
@@ -1152,13 +1218,13 @@ export class SiteRepository {
       await tx.$queryRaw`SELECT id FROM public.sites WHERE id = ${siteId} AND workspace_id = ${scope.workspaceId} FOR UPDATE`;
       // Only main is ever published (the database's CHECK would refuse it too, after the write).
       await this.refuseBranch(tx, scope, siteId);
-      const write = await this.writeWorkingCopy(tx, scope, persisted, {
+      const write = await this.aroundCustomCode(tx, scope, siteId, 'publish', () => this.writeWorkingCopy(tx, scope, persisted, {
         mustExist: true,
         companyId: options.companyId,
         expectedVersion: options.expectedVersion,
         // A save of this tab whose answer was lost may be the latest write: publish on top of it.
         ...(options.previousRequestKeys ? { previousRequestKeys: options.previousRequestKeys } : {}),
-      });
+      }));
       const revision = await this.freezeRevision(tx, scope, siteId, {
         kind: 'publish',
         publishedBy: options.publishedBy ?? null,
@@ -1171,6 +1237,8 @@ export class SiteRepository {
       await tx.siteRevision.deleteMany({
         where: { siteId, number: { lte: revision.number - REVISIONS_KEPT } },
       });
+      // D4 and D113: in the transaction that prunes revisions, the blobs nothing names any more, once a week old.
+      if (await siteHoldsBlobs(tx, siteId)) await pruneUnnamedBlobs(tx, siteId, new Date());
       return { revision: revision.number, write };
     }, PROJECT_WRITE_TRANSACTION));
     announceWrite(siteId, published.write, { ...options.event, origin: 'publish' }, persisted);

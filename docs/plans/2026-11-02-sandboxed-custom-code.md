@@ -1390,6 +1390,44 @@ description saying how to leave and indent. Until the chunk loads, and if it fai
 read-only state with `aria-readonly`, never `editable: false`, which took the content out of the tab order: a reader reaches the code
 with Tab and moves through and scrolls it with the keyboard (review 1, M2).
 
+## Decided in slice C5, say so if you disagree
+
+Numbering continues after D112. C5 is built in four pull requests, each under about 1,500 changed lines: (1) pruning
+and the budget at save and publish, (2) erase reaching code, (3) the operator's block route and proposals, (4) the
+publish dialog's listing, the publish warnings and frames in the standalone preview. No part needs a migration: the
+C1b tables allow deleting a blob (its trigger guards updates only), a site's disable reason fits the audit line's
+`detail`, and deleting a site deletes its blobs and proposals.
+
+**D113. One reading of "named", and what keeps a blob.** `src/server/customCode/named.ts` is the only place that says
+which code a site still names; the guarded write's budget (D107), the budget at save and publish (D114) and pruning
+all read it, because two copies would disagree and pruning is the one that deletes. A blob of site S is named while
+any of these holds its hash under a `customCode.sha256` key: S's working copy (pages and component definitions), the
+working copy of every branch of S (a branch names S's blobs, D100), every branch record's base copy, merge draft and
+the copy kept for "Undo this merge", and S's kept revisions. C4's budget therefore now also counts what branches and
+those copies name, which can only make it stricter. **Pruning** deletes S's blobs that nothing names, are not blocked
+and are older than 7 days (D4). It runs under the site's row lock at three moments: every publish, after the revisions
+are pruned; every guarded write, which reads the same names for its budget anyway, so a site that writes code and
+never saves cannot pile blobs up past the week; and a save of the main site whose working copy names a different set
+of hashes than before. A save that changes no block (text, styles, layout: nearly all of them) does not prune, and a
+branch's save never does (the blobs are main's; its next save, publish or write prunes them). **A blocked blob is
+never pruned:** its row is the record that the code was taken down, which the guarded write reads to refuse the same
+code again (D3), so pruning it would let the same code back in. **Cost:** a site whose main site stores no blob pays
+one indexed read per save and nothing else; a site with code pays two reads of its own working copy per save, and
+reads branches and revisions only when the names changed.
+
+**D114. The site budget at save and publish refuses only a write that brings code to life.** D107 left a residual:
+several blobs written before a save names them can together take a site past 1 megabyte. Every save and the publish's
+working-copy write now compare the hashes the written copy names with those it named before. A hash that is new to
+the copy and named by nothing else (another branch, a branch record, a kept revision, or main's copy for a branch)
+brings code to life; when it does, all the site's live code is counted, and a total over 1 megabyte refuses the write
+with 400 `custom_code_budget` and a sentence naming the size, the limit and the next step ("Remove a custom code
+block, or make one smaller in its panel; the page then saves again"). Nothing is written and the transaction rolls
+back. A save that removes a block, edits anything else, or names code something else already keeps alive is never
+refused, so a site that is over the budget for any reason keeps saving and can always get back under. The status is
+400 on purpose: the editor's autosave tries once more after each change that follows a 400, and the change the
+sentence asks for is exactly such a change. A branch's merge into main is not checked: it names code main's branch
+already kept alive, so it brings nothing new.
+
 ## For Marlin
 
 **M2 done on 2026-11-02:** `lumitrausercontent.com` is registered at Cloudflare Registrar (through Lumitra Mail's buy-a-domain flow, in the Lumitra Mail workspace "Lumitra Infrastructure"), held by Marlin for Lumitra, expiring 2027-11-02 with auto-renew, privacy and transfer lock on. Its DNS zone is in Lumitra's Cloudflare account (zone id `2d1f61f852327bc23ef420fda0651121`, nameservers blair and lochlan at Cloudflare) with no records yet and no mail setup. Slice O1 can now bring the zone under Terraform and add the box's records. The Lumitra Mail order is deliberately left in "needs attention": never retry it, because a retry would try to make it a sending domain.
