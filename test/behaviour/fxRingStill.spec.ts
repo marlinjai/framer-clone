@@ -45,6 +45,8 @@ interface Size {
   dpr: number;
   /** The scene's background, when not the preset's hex colour. */
   background?: string;
+  /** The ring's glow, when not the preset's 1. */
+  glow?: number;
 }
 
 // A wide box (the height decides the radius), the same at the highest ratio a scene draws at, and a tall phone
@@ -55,13 +57,23 @@ const SIZES: readonly Size[] = [
   { name: 'tall at 1.75', width: 390, height: 700, dpr: 1.75 },
   // A background the format accepts in another notation: the still reads it as the browser does, the engine as three.js does.
   { name: 'wide on hsl', width: 960, height: 540, dpr: 1, background: 'hsl(200, 45%, 9%)' },
+  // A glow between whole numbers: a pass at full strength and one drawing 30 percent of its points (`gain`, #468).
+  { name: 'wide at glow 1.3', width: 960, height: 540, dpr: 1, glow: 1.3 },
 ];
+/** The preset ring with this size's background and glow, or the preset as it is. */
+const sceneFor = (size: Size) => ({
+  ...ring,
+  ...(size.background ? { background: size.background } : {}),
+  ...(size.glow === undefined
+    ? {}
+    : { layers: ring.layers.map((layer) => (layer.type === 'particleRing' ? { ...layer, params: { ...layer.params, glow: size.glow } } : layer)) }),
+});
 const slug = (size: Size) => `still-${size.name.replace(/[^a-z0-9]+/g, '-')}`;
 const sized = (size: Size) => ({ position: 'relative', width: `${size.width}px`, height: `${size.height}px`, background: '#04090b' });
 const HERO = { position: 'relative', minHeight: '460px', background: '#04090b' };
 
 const PAGES: Readonly<Record<string, () => StoredNode>> = {
-  ...Object.fromEntries(SIZES.map((size) => [slug(size), () => node('page-root', 'div', { style: { margin: '0px' } }, box('hero', size.background ? { scene: { ...ring, background: size.background } } : {}, sized(size)))])),
+  ...Object.fromEntries(SIZES.map((size) => [slug(size), () => node('page-root', 'div', { style: { margin: '0px' } }, box('hero', size.background || size.glow !== undefined ? { scene: sceneFor(size) } : {}, sized(size)))])),
   'still-hero': () => box('hero', { start: 'settled' }, HERO),
   'still-calm-background': () => box('hero', { calm: 'background' }, HERO),
   'still-visible': () => node('page-root', 'div', {}, node('spacer', 'div', { style: { height: '3000px' } }), box('hero', { start: 'visible' }, HERO)),

@@ -49,7 +49,7 @@ import {
   isTouchLikely,
   liveDprRange,
   mulberry32,
-  ringGlowPasses,
+  ringGlowWeights,
   ringRadius,
 } from '@/lib/fx/ring';
 import { FX_FADE_MS, holdFxBox } from './box';
@@ -191,9 +191,15 @@ export function drawRingStill(into: HTMLCanvasElement, spec: RingStillSpec, widt
     gl.blendFunc(gl.ONE, gl.ONE);
     const count = particles.length / 3;
     const glow = uniform('glow');
+    const gain = uniform('gain');
     gl.uniform1f(glow, 1);
-    for (let pass = 0; pass < ringGlowPasses(spec.glow); pass++) gl.drawArrays(gl.POINTS, 0, count);
+    // One pass per weight, each drawing that share of its points (`gain`), as the live layer's `applyGlowPasses`.
+    for (const weight of ringGlowWeights(spec.glow)) {
+      gl.uniform1f(gain, weight);
+      gl.drawArrays(gl.POINTS, 0, count);
+    }
     gl.uniform1f(glow, 0);
+    gl.uniform1f(gain, 1);
     gl.drawArrays(gl.POINTS, 0, count);
     // Copied in the same task, before the browser may clear the drawing buffer.
     const target = into.getContext('2d');

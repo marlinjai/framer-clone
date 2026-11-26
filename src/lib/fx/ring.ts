@@ -17,7 +17,7 @@ export {
   RING_VERTEX,
   buildRingParticles,
   mulberry32,
-  ringGlowPasses,
+  ringGlowWeights,
   ringRadius,
 } from "./particleRingCore";
 export { FX_TOUCH_QUERY, canvasPixelRatio, isTouchLikely, liveDprRange } from "./pixelRatio";
