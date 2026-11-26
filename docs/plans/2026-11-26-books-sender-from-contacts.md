@@ -60,6 +60,11 @@ is a company setting that an operator fills with `pnpm books:init-company`).
    Custom field definitions are per company and hand made, so these keys become a reserved contract.
    The operator command that sets the pointer creates missing definitions and refuses, naming the
    key, when one exists archived or with another type. The resolver checks the same on every read.
+   **Archiving is a dead end today:** contacts-core has `createField`, `listFields` and
+   `archiveField` and no way to restore, and an archived key cannot be created again or take new
+   values. One click on `iban` in the receipts field screen would then block the company's invoices
+   for good. So contacts-core gains `restoreField(key)` (clears `archived_at`, no migration) with a
+   way to call it from the receipts field screen, and `SENDER_INVALID` names that action.
    Fixed contact columns were rejected: they need a shared database migration, a package release and
    changes to both save paths of the receipts app.
    Books keeps `tax_status`, the exemption note, payment terms, number counters and templates.
@@ -73,10 +78,8 @@ is a company setting that an operator fills with `pnpm books:init-company`).
    Logs and events carry ids and field names, never values.
 7. **Issue, cancel, correct.** The sender is read before the Books transaction, like the recipient,
    and passed into `cancelInvoiceIn`. The early return for an already issued or cancelled document
-   stays ahead of the read, so a retry never needs contacts. Issue also refuses with
-   `CONCURRENT_EDIT` when the sender contact's version differs from the one the confirmed draft
-   showed, so nobody issues bank details they did not see. The `issued` event records the contact id
-   and version. The two databases share no transaction: the snapshot is what was read.
+   stays ahead of the read, so a retry never needs contacts. The `issued` event records the contact
+   id and version. The two databases share no transaction: the snapshot is what was read.
 8. **History.** The snapshot keeps its version 1 shape. No backfill, no change to any issued
    document; an older build still reads new snapshots. Proof at each gate: one fingerprint over
    number, status and `sender_snapshot` of all issued documents, equal before and after.
@@ -103,53 +106,65 @@ conflicting field definition; an invalid IBAN.
 
 Today only an operator with server access can change the sender. After the switch, these can change
 the IBAN that invoices and their payment code carry, or remove the sender contact: anyone holding
-`receipts.row.write` in a workspace of the company (contact edit, archive, merge, erase, field
-definitions), and any server code that holds the contacts connection string. The threat is a wrong
-or hostile bank account on a real invoice. Who currently holds that right for Whiz-Art Media was not
-checked.
+`receipts.row.write` (granted to every workspace member) in a workspace of the company (contact
+edit, archive, merge, erase, field definitions), and any server code that holds the contacts
+connection string. The threat is a wrong or hostile bank account on a real invoice.
 
-- **A (recommended): Books confirms bank changes.** Books stores a fingerprint of the payment fields
-  (name, IBAN, BIC, bank name) approved for the pointer. When the contact differs, issuing and
-  shop payments are refused until a user with a new owner-or-admin Books right sees old and new in
-  Books and confirms. It covers every writer, needs nothing in the receipts app and stores no second
-  copy. It protects each company against its own other members and against another app's mistake.
-  Cost: one screen, one right, one more column.
+**Checked 2026-11-26 (counts only, auth-brain):** Whiz-Art Media has one user in total: one company
+owner, who is also the one workspace admin and the one tenant group owner. Service keys and server
+code were not counted.
+
+- **C (recommended now): no extra guard.** The only person who can edit the contact is the person
+  who may change where customers pay, so a guard would protect against nobody today. The checksum
+  still catches typing errors. **Condition:** A is built before a second user gets access to a
+  company with a linked sender, or before a client company links one.
+- **A: Books confirms bank changes.** Books stores a fingerprint of the payment fields (name, IBAN,
+  BIC, bank name) approved for the pointer. When the contact differs, issuing and shop payments are
+  refused until a user with a new owner-or-admin Books right sees old and new in Books and
+  confirms. With it, issue also refuses when the sender changed after the draft was shown. Covers
+  every writer. Cost: one screen, one right, one or two columns, its own build branch.
 - **B: the receipts app restricts the sender contact** to owners and admins. It needs the receipts
   app to learn which contact is the sender and does not cover other writers.
-- **C: no extra protection.** Reasonable only while everyone with that right may also change where
-  customers pay. The checksum still catches typing errors.
 
-Until decided, nothing is built. With A, the approval is part of the first build part.
+Until decided, nothing is built.
 
 ## Build parts, each its own branch
 
-0. **Prerequisite (contacts and receipts).** `merge` in contacts-core 0.5.0 drops the deleted
+Each branch stays at about 1,500 changed lines at most.
+
+0. **Merge fix release (contacts and receipts).** `merge` in contacts-core 0.5.0 drops the deleted
    contact's custom fields. The fix is merged (contacts pull request 21) and not released. Publish a
-   patch and upgrade the receipts app, which has the merge button, before invoices depend on those
-   fields. Merging the receipts upgrade deploys it.
-1. **Books reads through the resolver**, pointer null everywhere: migration, port, mapping,
-   validation, errors, all readers, the settings screen (shows "from contact" with where to edit it),
-   the operator command (`--sender-contact <id>`, `--dry-run` parity report that prints field names
-   only, `--unlink`), tests, the single-reader check. The tenant migration takes the next free
-   number at build time: held pull request 418 (form notification mail) already carries one past
+   patch (no new migration, so the receipts start-up `migrate` has nothing to apply) and upgrade the
+   receipts app, which has the merge button. Merging that upgrade deploys receipts. Does not wait
+   for this plan.
+1. **`restoreField` (contacts and receipts):** the package method, its release, and the restore
+   action on the receipts field screen.
+2. **Books resolver, not wired:** tenant migration for the pointer, `SenderDirectory` port,
+   mapping, validation, errors and their tests. The migration takes the next free number at build
+   time: held pull request 418 (form notification mail) already carries one past
    `030_books_contact_person` and the checkout session migration, so agree the order with its owner.
-2. **Cleanup, a later release**, after at least one invoice issued from the contact: stop writing
+3. **Books readers switched,** pointer null everywhere: issue, cancel, correct, draft rendering,
+   upload fallback, payment readiness, the settings screen (shows "from contact" with where to edit
+   it), the operator command (`--sender-contact <id>`, `--dry-run` parity report that prints field
+   names only, `--unlink`), the single-reader check and the flow tests. Gate 1 follows this part.
+4. **Only if A is chosen** (now or later): approval column, right, screen and tests.
+5. **Cleanup, a later release,** after at least one invoice issued from the contact: stop writing
    and requiring `sender_block` for linked companies, require a sender contact when a new company is
    initialised, then drop the column.
 
-framer-clone has no single check command found in this investigation; part 1 first confirms what
-`ci.yml` runs and uses exactly that. Review: a Claude reviewer for the access, approval and snapshot
-parts, Mercury for the rest.
+framer-clone has no single check command found in this investigation; part 2 first confirms what
+`ci.yml` runs and uses exactly that. Review: a Claude reviewer for the access and snapshot parts,
+Mercury for the rest.
 
 ## Production gates (each needs Marlin's yes)
 
-1. **Deploy part 1** (manual `deploy` workflow). It applies the additive migration. Before it: same
+1. **Deploy parts 2 and 3** (manual `deploy` workflow). It applies the additive migration. Before it: same
    day backup of the Books database, dry run on a restored copy, snapshot fingerprint.
    Rollback: redeploy the previous image; it ignores the new column.
 2. **Link Whiz-Art Media** (one production write). Before it, the same day: parity report with zero
    differences, fingerprint. After it: a draft's render shows the sender, readiness is ready, the
    fingerprint is unchanged. Rollback: `--unlink`, which returns to the stored block.
-3. **Part 2's column drop**, much later, with its own backup.
+3. **Part 5's column drop**, much later, with its own backup.
 
 `sender_block` is frozen from the moment of linking. If the contact changed since, unlinking or
 redeploying an older image prints the old values: run the parity report first and update the stored
@@ -158,4 +173,5 @@ block with the operator command when it differs.
 ## Not in this plan
 
 The recipient side, customer tax fields, templates, tax status, number counters, backfilling or
-re-rendering issued documents, and any change to contacts-core beyond the already merged fix.
+re-rendering issued documents, and any change to contacts-core beyond the merged fix and
+`restoreField`.
