@@ -372,7 +372,9 @@ each reversible (say so if you disagree):
    the fourth keyword monitor is the consistent fix.
 9. **Decided in review (2026-11-24), all reversible:** (a) the form's own address is not proven to be the owner's, so what a form pointed
    at a stranger can send is bounded by a durable cap of 100 notices per company and hour (the visitor limiter is in memory and per
-   process); over it the submission is stored and the row says `rate_limited` (resendable later). Confirming an address by a link is a
+   process); over it the submission is stored and the row says `rate_limited`, and "send again" is held to the same cap (counted by
+   when each letter's current round started). The cap is approximate: two sites of a company can pass it at the same moment, and a
+   deleted submission takes its count with it. Confirming an address by a link is a
    product decision and not built. (b) A notice that could not be prepared (the company lookup or the row write failed) leaves a
    `skipped` row `internal_error`, never a blank. (c) The purge job whose site row is still there looks again ten minutes later as a fresh
    job (not a retry, so a refused delete never counts toward `purgesStuck`) until two hours past its first look; a delete asked twice in ten

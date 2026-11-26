@@ -10,7 +10,7 @@
 // Talks only to /api/projects/<id>/forms/submissions* (editSite), so the
 // server decides what this user may see. Every failure is shown with a retry.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Mail, MailOpen, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { StoredField } from '@/lib/forms/validation';
@@ -91,7 +91,7 @@ export function notificationNote(n: NotificationItem | null | undefined): { text
         return { text: 'No email was sent: this site is not linked to a company yet, so there is no Lumitra Mail connection to send from.', tone: 'warn', canResend: false };
       }
       if (n.reason === 'internal_error') {
-        return { text: 'No email was sent: it could not be prepared when this message arrived (the message itself is stored). New messages are not affected.', tone: 'warn', canResend: false };
+        return { text: 'No email was sent: it could not be prepared when this message arrived (the message itself is stored).', tone: 'warn', canResend: false };
       }
       if (n.reason === 'rate_limited') {
         return { text: 'No email was sent: this company reached the limit of 100 notification emails in an hour. The message is stored here; send the email again later.', tone: 'warn', canResend: true };
@@ -160,17 +160,23 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
   // after "send again", and while any email is still being sent, so the line never keeps saying "being sent" for a letter that
   // was sent or failed meanwhile. Stops by itself after about five minutes; a reload or another "send again" starts it again.
   const [syncTick, setSyncTick] = useState(0);
+  // Counts the accepted "send again" clicks: an answer that was asked for before the latest one is out of date and dropped.
+  const resends = useRef(0);
+  // As many rows as are on screen (the server's page limit is 200), so a row loaded with "older" follows its status too.
+  const shown = Math.min(200, Math.max(50, items.length));
   const syncNotifications = useCallback(async () => {
+    const askedAfter = resends.current;
     try {
-      const res = await fetch(query(), { cache: 'no-store' });
+      const res = await fetch(query({ limit: String(shown) }), { cache: 'no-store' });
       if (!res.ok) return;
       const data = (await res.json()) as ListResponse;
+      if (askedAfter !== resends.current) return;
       const fresh = new Map(data.submissions.map((s) => [s.id, s.notification]));
       setItems((prev) => prev.map((s) => (fresh.has(s.id) ? { ...s, notification: fresh.get(s.id) ?? null } : s)));
     } catch {
       // The next tick tries again.
     }
-  }, [query]);
+  }, [query, shown]);
   const anyPending = items.some((s) => s.notification?.status === 'pending');
   useEffect(() => {
     if (!anyPending || syncTick >= 60) return undefined;
@@ -269,6 +275,7 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
         void syncNotifications();
         return;
       }
+      resends.current += 1;
       setSyncTick(0);
       setItems((prev) =>
         prev.map((s) => (s.id === item.id && s.notification ? { ...s, notification: { ...s.notification, status: 'pending', reason: null } } : s)),
@@ -301,6 +308,7 @@ export default function FormSubmissionsPanel({ projectId }: { projectId: string 
             value={formFilter}
             onChange={(e) => {
               setFormFilter(e.target.value);
+              setSyncTick(0);
               setOpenId(null);
             }}
             className="h-9 rounded-md border border-border bg-background px-2 text-sm"

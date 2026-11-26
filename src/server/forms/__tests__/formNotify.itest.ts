@@ -783,7 +783,7 @@ describe('4. re-entry', () => {
     expect(await notificationOf(s.id)).toBeUndefined();
   });
 
-  it('a company over its hourly cap gets the submissions stored and a skipped row that says so, and "send again" works later', async () => {
+  it('a company over its hourly cap gets the submissions stored and a skipped row that says so, and "send again" is held to the same cap until the hour has passed', async () => {
     await connect(company);
     const rows = [submission(), submission(), submission()];
     for (const s of rows) {
@@ -796,7 +796,22 @@ describe('4. re-entry', () => {
     expect((await notificationOf(rows[1].id))?.status).toBe('pending');
     expect(await notificationOf(rows[2].id)).toMatchObject({ status: 'skipped', last_error: 'rate_limited' });
     expect(await jobsOf(rows[2].id)).toHaveLength(0);
-    expect(await resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: rows[2].id }, company.clock.now)).toBe('queued');
+    const again = (at: Date) =>
+      resendFormNotification(appDb, { tenantGroupId: tgId, siteId: site.siteId, submissionId: rows[2].id }, at, undefined, { perHourLimit: 2 });
+    // At the cap, "send again" is not a way around it: nothing is queued.
+    expect(await again(company.clock.now)).toBe('rate_limited');
+    expect(await notificationOf(rows[2].id)).toMatchObject({ status: 'skipped', last_error: 'rate_limited' });
+    expect(await jobsOf(rows[2].id)).toHaveLength(0);
+    const later = new Date(company.clock.now.getTime() + 61 * 60 * 1000);
+    expect(await again(later)).toBe('queued');
+    // The letter sent again counts in its new hour like a new one: with one more, the cap is reached again.
+    const more = [submission(), submission()];
+    for (const s of more) {
+      await insertFormSubmission(appDb, { ...s, notification: undefined });
+      await appDb.transaction().execute((trx) => writeFormNotification(trx, tgId, s.id, { companyId: company.id, recipient: 'owner@bakery.example', at: later }, 2));
+    }
+    expect((await notificationOf(more[0].id))?.status).toBe('pending');
+    expect(await notificationOf(more[1].id)).toMatchObject({ status: 'skipped', last_error: 'rate_limited' });
   });
 
   it('writeFormNotification alone is idempotent per submission', async () => {

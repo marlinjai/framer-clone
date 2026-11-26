@@ -186,6 +186,9 @@ export async function handleResendNotification(
     if (result === 'no_recipient') {
       return jsonError('no_recipient', 'set a notification address in the form settings or a contact email in Site settings, publish, then send this again', 409);
     }
+    if (result === 'rate_limited') {
+      return jsonError('rate_limited', 'this company reached the limit of 100 notification emails in an hour, send this again later', 429);
+    }
     if (result === 'not_connected') {
       return jsonError('mail_not_connected', 'connect Lumitra Mail on the payments page first, then send this again', 409);
     }

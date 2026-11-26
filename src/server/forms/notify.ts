@@ -67,6 +67,24 @@ export interface NewFormNotification {
 }
 
 /**
+ * A company's notices queued or sent in the hour before `at`, counted by when each one's CURRENT round started, so a letter
+ * sent again counts like a new one. Skipped rows sent nothing. The cap this feeds is approximate: two sites of one company
+ * can pass it at the same moment (submissions are serialised per site), and a deleted submission takes its count with it.
+ */
+async function recentNotices(trx: Transaction<CommerceDB>, tenantGroupId: string, companyId: string, at: Date, submissionId: string): Promise<number> {
+  const row = await trx
+    .selectFrom('form_notification')
+    .select(sql<number>`count(*)::int`.as('n'))
+    .where('tenant_id', '=', tenantGroupId)
+    .where('company_id', '=', companyId)
+    .where('submission_id', '!=', submissionId)
+    .where('round_started_at', '>', new Date(at.getTime() - 60 * 60 * 1000))
+    .where('status', '!=', 'skipped')
+    .executeTakeFirst();
+  return row?.n ?? 0;
+}
+
+/**
  * Write the notification row, and its job when it can be sent, in the submission's transaction. Call only after the
  * submission row was actually inserted (a repeated post of the same submission id must not write a second one).
  */
@@ -85,18 +103,8 @@ export async function writeFormNotification(
     : undefined;
   // A cap per company and hour over every form: the recipient of a form is the editor's own choice (it is not proven to be
   // theirs), so what a form pointed at a stranger can send is bounded here, durably (the visitor limiter is in memory).
-  const recent =
-    recipient && connected && !notification.failed
-      ? await trx
-          .selectFrom('form_notification')
-          .select(sql<number>`count(*)::int`.as('n'))
-          .where('tenant_id', '=', tenantGroupId)
-          .where('company_id', '=', companyId)
-          .where('created_at', '>', new Date(at.getTime() - 60 * 60 * 1000))
-          .where('status', '!=', 'skipped')
-          .executeTakeFirst()
-      : undefined;
-  const capped = (recent?.n ?? 0) >= perHourLimit;
+  const capped =
+    !!recipient && !!connected && !notification.failed && (await recentNotices(trx, tenantGroupId, companyId, at, submissionId)) >= perHourLimit;
   const status = recipient && connected && !notification.failed && !capped ? 'pending' : 'skipped';
   const skippedWhy = notification.failed
     ? SKIPPED_INTERNAL
@@ -389,7 +397,7 @@ async function attemptUnderLock(
   }
 }
 
-export type ResendResult = 'queued' | 'not_found' | 'not_resendable' | 'not_connected' | 'no_recipient' | 'busy';
+export type ResendResult = 'queued' | 'not_found' | 'not_resendable' | 'not_connected' | 'no_recipient' | 'busy' | 'rate_limited';
 
 /** How long "send again" waits for an attempt that is sending right now (see `deliverFormNotification`). */
 export const RESEND_LOCK_WAIT_MS = 5_000;
@@ -407,7 +415,7 @@ export async function resendFormNotification(
   ref: { tenantGroupId: string; siteId: string; submissionId: string },
   now: Date,
   currentRecipient: (formId: string) => Promise<string | null | undefined> = async () => undefined,
-  options: { lockWaitMs?: number } = {},
+  options: { lockWaitMs?: number; perHourLimit?: number } = {},
 ): Promise<ResendResult> {
   const found = await db
     .selectFrom('form_notification')
@@ -452,6 +460,16 @@ export async function resendFormNotification(
     if (!recipient) return 'no_recipient';
     const connected = await trx.selectFrom('shop_mail_connection').select('tenant_id').where('tenant_id', '=', row.companyId).executeTakeFirst();
     if (!connected) return 'not_connected';
+    // The same cap as a new submission's notice, or "send again" would be the way around it. One company's resends count one
+    // after the other (this lock is only theirs), so a burst of them cannot all read the same count.
+    try {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`form-resend:${row.companyId}`}, 0))`.execute(trx);
+    } catch (err) {
+      if (isLockTimeout(err)) return 'busy';
+      throw err;
+    }
+    const recent = await recentNotices(trx, ref.tenantGroupId, row.companyId, now, ref.submissionId);
+    if (recent >= (options.perHourLimit ?? NOTICES_PER_COMPANY_HOUR)) return 'rate_limited';
     const round = row.round + 1;
     await trx
       .updateTable('form_notification')
