@@ -53,7 +53,14 @@ export type EraseLocation =
   | { kind: 'working' }
   | { kind: 'branch'; branchId: string; name: string; branchStatus: EraseBranchStatus }
   | { kind: 'branch-base'; branchId: string; name: string; branchStatus: EraseBranchStatus }
-  | { kind: 'merge-undo'; branchId: string; name: string; branchStatus: EraseBranchStatus };
+  | { kind: 'merge-undo'; branchId: string; name: string; branchStatus: EraseBranchStatus }
+  /**
+   * The code of one stored custom code block (plan docs/plans/2026-11-02-sandboxed-custom-code.md, D9): its text and
+   * its stored title, searched as the document `{ code, title }`. An erase writes the result under a new hash.
+   */
+  | { kind: 'custom-code'; sha256: string; title: string }
+  /** The code of a proposal an agent or the importer wrote (D7), never served: rewritten in place. */
+  | { kind: 'custom-code-proposal'; proposalId: string; title: string };
 
 /** A branch's state, so the preview tells an open branch from a closed one of the same name. */
 export type EraseBranchStatus = 'open' | 'ready' | 'merged' | 'discarded';
@@ -74,6 +81,7 @@ export type EraseArea =
   | 'domain'
   | 'experiment'
   | 'branch'
+  | 'custom-code'
   | 'other';
 
 /** Why a match is reported but never rewritten. */
@@ -122,6 +130,20 @@ export class EraseQueryError extends Error {
   ) {
     super(message);
     this.name = 'EraseQueryError';
+  }
+}
+
+/**
+ * A custom code block the erase cannot rewrite (D9, D115): the erase rolls back and the owner reads why. The message
+ * never carries the searched value or the block's title, which may hold it.
+ */
+export class EraseCodeRefusedError extends Error {
+  constructor(
+    readonly code: 'custom_code_empty' | 'custom_code_too_large' | 'custom_code_unreadable',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'EraseCodeRefusedError';
   }
 }
 
@@ -253,6 +275,8 @@ const STRUCTURAL_KEYS = new Set([
   'className', 'class', 'selector', 'selectors', 'target', 'targets', 'owner', 'of', 'htmlFor', 'usemap', 'useMap',
   'apiKeyRef', 'ingestionEndpoint', 'twitterCard', 'pageBase', 'language', 'legalTemplate', 'successBehavior',
   'ariaControls', 'ariaLabelledby', 'ariaDescribedby',
+  // a custom code block's hash names exact stored code (D4): a cut inside it would orphan the block
+  'sha256',
 ]);
 
 /** Keys whose value is an address of an image or a file, cut never, whatever its shape. */
@@ -334,6 +358,8 @@ function areaOf(path: readonly Segment[]): EraseArea {
   if (head === 'experiments') return 'experiment';
   // A branch record's own text, beside a branch's working copy.
   if (head === 'branchName' || head === 'reviewNote') return 'branch';
+  // A custom code block's or proposal's own document, `{ code, title }`.
+  if ((head === 'code' || head === 'title') && path.length === 1) return 'custom-code';
   if (isAddressPath(path)) return 'address';
   if (head === 'name') return 'name';
   if (head === 'description') return 'description';
@@ -404,6 +430,8 @@ export function redactedId(id: string | null, holdsValue: (segment: string) => b
 function locationKey(location: EraseLocation): string {
   if (location.kind === 'revision') return `revision:${location.number}`;
   if (location.kind === 'working') return 'working';
+  if (location.kind === 'custom-code') return `custom-code:${location.sha256}`;
+  if (location.kind === 'custom-code-proposal') return `custom-code-proposal:${location.proposalId}`;
   return `${location.kind}:${location.branchId}`;
 }
 
@@ -547,11 +575,12 @@ const SPACE_AT_START = /^[\s ]+/u;
  * one, the text around the cut is tidied so no residue is left: a doubled space
  * becomes one, and a list separator left with nothing to separate goes
  * (`Geschäftsführer: Max Mustermann, Erika Muster` -> `Geschäftsführer: Erika Muster`).
+ * `exactly` cuts only the match, with no tidy: inside code a comma or a space is syntax, not prose.
  */
-function cut(text: string, start: number, end: number, replacement: string): string {
+function cut(text: string, start: number, end: number, replacement: string, exactly = false): string {
   const left = text.slice(0, start);
   const right = text.slice(end);
-  if (replacement !== '') return left + replacement + right;
+  if (replacement !== '' || exactly) return left + replacement + right;
   const leftTrim = left.replace(SPACE_AT_END, '');
   const rightTrim = right.replace(SPACE_AT_START, '');
   const leftSpace = leftTrim.length !== left.length;
@@ -592,8 +621,11 @@ export function rewriteDocument(
       );
       if (picked.length === 0) return value;
       let out = value;
+      // The code of a custom code block or proposal (D115) is cut exactly: tidying its separators would change more
+      // of the program than the match. Its title is prose and is tidied like any text.
+      const exactly = (location.kind === 'custom-code' || location.kind === 'custom-code-proposal') && path.length === 1 && path[0] === 'code';
       // From the end, so earlier offsets stay valid (a tidy only touches text after an earlier match).
-      for (const o of [...picked].reverse()) out = cut(out, o.start, o.end, replacement);
+      for (const o of [...picked].reverse()) out = cut(out, o.start, o.end, replacement, exactly);
       erased.push(...picked.map((o) => o.match));
       return out;
     }
@@ -620,6 +652,38 @@ export function rewriteDocument(
   };
 
   return { document: rewrite(document, []), erased };
+}
+
+/**
+ * The document with every custom code block naming a hash in `renamed` pointed at its new hash (D9: an erase inside
+ * code writes the code under a new hash, and every copy naming the old one follows in the same transaction). Only a
+ * `sha256` directly under a `customCode` object is touched. Objects and arrays on no changed path are the very same
+ * values, as in rewriteDocument, so a caller can tell whether anything changed by identity.
+ */
+export function renameCustomCodeHashes(document: unknown, renamed: ReadonlyMap<string, string>): unknown {
+  if (renamed.size === 0) return document;
+  const visit = (value: unknown, key: string | null): unknown => {
+    if (Array.isArray(value)) {
+      let changed = false;
+      const next = value.map((item) => {
+        const r = visit(item, null);
+        if (r !== item) changed = true;
+        return r;
+      });
+      return changed ? next : value;
+    }
+    if (!isRecord(value)) return value;
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [k, item] of Object.entries(value)) {
+      let r = visit(item, k);
+      if (key === 'customCode' && k === 'sha256' && typeof item === 'string' && renamed.has(item)) r = renamed.get(item);
+      if (r !== item) changed = true;
+      own(next, k, r);
+    }
+    return changed ? next : value;
+  };
+  return visit(document, null);
 }
 
 // ---------------------------------------------------------------------------

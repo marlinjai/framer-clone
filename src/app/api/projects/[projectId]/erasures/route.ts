@@ -103,6 +103,7 @@ async function handlePOST(req: Request, { params }: Ctx): Promise<Response> {
       erasureId: erasure.erasureId,
       erased: erasure.erased,
       places: erasure.places,
+      rewrittenCode: erasure.rewrittenCode,
       remaining,
       erasableRemaining,
     },

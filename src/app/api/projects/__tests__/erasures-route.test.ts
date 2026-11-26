@@ -48,7 +48,7 @@ import {
   NothingToEraseError,
   SiteErasedSinceLoadError,
 } from '@/server/sites';
-import { EraseQueryError } from '@/server/sites/erase';
+import { EraseCodeRefusedError, EraseQueryError } from '@/server/sites/erase';
 import {
   resolveSubdomainForSiteId,
   revalidateCustomHostsForSiteId,
@@ -225,6 +225,30 @@ describe('POST .../erasures', () => {
     // The copies this container keeps: the page trees in memory and the cache files on disk.
     expect(forgetSite).toHaveBeenCalledWith('site_1');
     expect(purgeCachedSiteFiles).toHaveBeenCalledWith(['site:bakery-abc123', 'site-host:www.bakery.example']);
+  });
+
+  it('passes on the custom code blocks whose code was rewritten, for the owner to check (D115)', async () => {
+    installRepo({
+      erasePersonalData: vi.fn().mockResolvedValue({ ...erasure, rewrittenCode: ['Opening hours'] }),
+      searchPersonalData: vi.fn().mockResolvedValue({ ...SEARCH_RESULT, total: 0, erasable: 0 }),
+    });
+    const res = await POST(req('erasures', { value: VALUE, replacement: '[entfernt]', token: TOKEN, chosen: [PICK] }), ctx);
+    expect(res.status).toBe(200);
+    expect((await res.json()).rewrittenCode).toEqual(['Opening hours']);
+  });
+
+  it('answers code the erase cannot take with 422, its code and its sentence, and never the value (D115)', async () => {
+    installRepo({
+      erasePersonalData: vi.fn().mockRejectedValue(
+        new EraseCodeRefusedError('custom_code_empty', 'Erasing would leave a custom code block with no code at all. Erase with a replacement text instead. Nothing was changed.'),
+      ),
+      searchPersonalData: vi.fn(),
+    });
+    const res = await POST(req('erasures', { value: VALUE, replacement: '', token: TOKEN, chosen: [PICK] }), ctx);
+    expect(res.status).toBe(422);
+    const body = (await res.clone().json()) as { error: { code: string; message: string } };
+    expect(body.error).toEqual({ code: 'custom_code_empty', message: expect.stringMatching(/Erase with a replacement text instead/) });
+    await expectNoValueIn(res);
   });
 
   it('allocates no subdomain for a site never published', async () => {
