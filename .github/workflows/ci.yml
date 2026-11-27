@@ -165,9 +165,15 @@ jobs:
       - name: Build
         run: pnpm build
 
+  # 98 files took 283 s on one runner (2026-11-27); in two shards each boots its own Postgres (the globalSetup), so
+  # they share nothing.
   integration:
-    name: integration
+    name: integration (${{ matrix.shard }} of 2)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
       # The integration globalSetup (vitest.integration.setup.ts) owns the real test database and overrides
       # DATABASE_URL at run time, exactly as it does locally. The same globalSetup also owns
@@ -193,12 +199,15 @@ jobs:
       # Boots a throwaway Postgres via testcontainers and runs prisma migrate
       # deploy before the suite. Docker is preinstalled on ubuntu-latest.
       - name: Integration tests
-        run: pnpm test:integration
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: pnpm exec vitest run --config vitest.integration.config.ts --shard="$SHARD/2"
 
       # db-types.ts is generated from the live tenant DDL (scripts/commerce-codegen.ts).
       # A hand edit, or a migration without a regenerated file, fails here: it drifted
       # once (010) before this check existed.
       - name: Database types match the migrations
+        if: matrix.shard == 1
         run: pnpm db:codegen-commerce && git diff --exit-code src/server/commerce/db-types.ts
 
   # The check name the four jobs above stand for (the one job they were until 2026-11-27). `if: always()` so a

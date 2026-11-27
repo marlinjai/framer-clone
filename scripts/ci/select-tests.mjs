@@ -162,9 +162,13 @@ export function selectBehaviour(changed, specs = behaviourSpecs()) {
   return { files: specs.filter((spec) => picked.has(spec)), reasons: [...reasons] };
 }
 
-/** Longest first into the emptiest shard: shards finish together, so the slowest one is as short as it can be. */
+/**
+ * Longest first into the emptiest shard: shards finish together, so the slowest one is as short as it can be.
+ * Each shard pays about 180 s before its first test (browsers, Postgres, a build; run 46067309775), so a target of
+ * 120 s of tests puts the proofs that always run (about 790 s) on 7 runners and keeps one shard near five minutes.
+ */
 /** @param {string[]} files @param {Record<string, number>} durations @param {{ targetMs?: number, maxShards?: number }} [options] */
-export function shard(files, durations, { targetMs = 150_000, maxShards = 8 } = {}) {
+export function shard(files, durations, { targetMs = 120_000, maxShards = 8 } = {}) {
   if (files.length === 0) return [];
   const weight = (file) => durations[file] ?? 60_000;
   const sorted = [...files].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b));
