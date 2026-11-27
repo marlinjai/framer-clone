@@ -28,7 +28,7 @@ const geistMono = Geist_Mono({
 // create next app" defaults were editor scaffolding that leaked into the
 // storefront `<head>`. The storefront supplies its own metadata via
 // `src/app/(site)/layout.tsx` + per-page `generateMetadata`; editor surfaces
-// can set their own titles. Nothing editor-specific ships to published sites:
+// set their own titles (a check in src/app/__tests__/pageTitles.test.ts holds every page to it). Nothing editor-specific ships to published sites:
 // the platform icon is linked only on hosts that name no published site (the
 // editor). A published site gets its own favicon from Site settings, and
 // `/favicon.ico` answers per host (src/app/favicon.ico/route.ts).
@@ -41,6 +41,8 @@ export async function generateMetadata(): Promise<Metadata> {
     return {};
   }
   return {
+    // Every editor page names its tab; this is the fallback for one that does not.
+    title: "Lumitra Sites",
     icons: {
       icon: [
         { url: "/platform-icon.svg", type: "image/svg+xml" },

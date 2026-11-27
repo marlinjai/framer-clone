@@ -9,6 +9,8 @@ import React from 'react';
 
 import PaymentsHome from './PaymentsHome';
 
+export const metadata = { title: 'Payments | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 export default async function PaymentsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {

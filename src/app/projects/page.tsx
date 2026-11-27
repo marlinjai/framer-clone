@@ -35,6 +35,8 @@ import AuthUnavailable from './AuthUnavailable';
 import { chooseCompany } from './company-actions';
 import ProjectsHome from './ProjectsHome';
 
+export const metadata = { title: 'Projects | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 /** `<label>.<PUBLIC_SITE_BASE_HOST>` for a site's subdomain, or null. */

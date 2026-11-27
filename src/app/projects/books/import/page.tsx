@@ -9,6 +9,8 @@ import React from 'react';
 
 import ImportPanel from '../ImportPanel';
 
+export const metadata = { title: 'Import past invoices | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 export default function BooksImportPage() {

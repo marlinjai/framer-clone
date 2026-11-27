@@ -14,6 +14,8 @@ import UnsavedWorkGuard from '@/components/UnsavedWorkGuard';
 // Cmd/Ctrl+S never opens the browser's dialog over the preview; nothing to save here.
 import BlockSaveShortcut from '@/components/preview/BlockSaveShortcut';
 
+export const metadata = { title: 'Preview | Lumitra Sites' };
+
 export default function PreviewLayout({
   children,
 }: Readonly<{
