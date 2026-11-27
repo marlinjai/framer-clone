@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Unpublish a site from the Published versions dialog or from its card on the projects page. The project, its versions, address and domains are kept.
 
+### Fixed
+
+- Site agents can place components. Every `placeComponent` was refused as `<#component> is not rendered here`, and so was any later change to a section holding a component. The check now judges the component's own content where it is placed. A missing or broken component, content that would not render there, and a target that cannot hold elements are still refused, and an agent can no longer move a node into an element that takes no children. Removing a node inside a component is checked against every place the component is used.
+- A component is no longer accepted inside a paragraph, in the editor or from an agent, when anything it draws would end the paragraph, also deeper than its outer element or in a component it places.
+
 ## [0.4.0] - 2026-03-01
 
 ### Changed

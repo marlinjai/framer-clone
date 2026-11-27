@@ -48,6 +48,7 @@ import { SiteRepository } from '@/server/sites';
 import type { SiteOpsCaller } from '@/lib/siteOps/types';
 import { applyBatch, createSite, getPage, getSite, listRevisions, publish, rollback } from '..';
 import { POST as SAVE } from '@/app/api/projects/save/route';
+import { renderThroughPublishedPage } from '../../../../test/score/lib/published';
 
 let prisma: PrismaClient;
 let repository: SiteRepository;
@@ -167,6 +168,84 @@ describe('site operations against a real database', () => {
     expect(rows.map((r) => r.operation)).toEqual(['create_site', 'batch', 'batch', 'publish', 'batch', 'publish', 'rollback']);
     expect(rows.every((r) => r.actorKind === 'key' && r.actorId === 'key_ops' && r.workspaceId === WORKSPACE)).toBe(true);
     expect(rows[1]).toMatchObject({ versionBefore: 1, versionAfter: 2 });
+  });
+
+  it('an agent places a component the editor made: stored, read back, published and rendered, and refusals write nothing', async () => {
+    const deps = { repository, publicBaseHost: 'sites.test' };
+    const { siteId, homePageId } = unwrap(await createSite(agent, { name: 'With a component' }, deps));
+    const inserted = unwrap(
+      await applyBatch(agent, {
+        siteId,
+        expectedVersion: 1,
+        ops: [{ op: 'insertNodes', pageId: homePageId, nodes: [
+          { ref: 'card', type: 'section', children: [{ ref: 'title', type: 'h2', props: { children: 'Stored title' } }] },
+          { ref: 'box', type: 'div', children: [{ type: 'p', props: { children: 'Beside it' } }] },
+        ] }],
+      }, deps),
+    );
+
+    // The editor makes the component, with one input, and saves through the real route.
+    const tab = await repository.loadProjectWithVersion(agent.scope, siteId);
+    const made = tab.project.createComponentFromSelection(homePageId, [inserted.created.card], 'Bell card');
+    if (!made.ok) throw new Error(made.message);
+    const definitionId = made.definitionId;
+    expect(tab.project.addInput(definitionId, { id: 'text-1', name: 'Title', type: 'text', default: 'The default title' }).ok).toBe(true);
+    tab.project.components.get(definitionId)!.page.findComponent(inserted.created.title)!.setBinding('children', { mode: 'read', expression: '{{input.text-1}}' });
+    const saved = await SAVE(
+      new Request('http://app.lumitra.co/api/projects/save', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: 'lumitra_session=sess_ops', host: 'app.lumitra.co' },
+        body: JSON.stringify({ project: getSnapshot(tab.project), expectedVersion: tab.version }),
+      }),
+    );
+    expect(saved.status).toBe(200);
+    const before = await repository.loadProjectWithVersion(agent.scope, siteId);
+    const definitionsBefore = JSON.stringify(before.project.definitions);
+
+    // Missing definition, and a valid placement beside a blocked insert: refused, nothing written.
+    for (const ops of [
+      [{ op: 'placeComponent', pageId: homePageId, definitionId: 'no-such-component' }],
+      [
+        { op: 'placeComponent', pageId: homePageId, definitionId },
+        { op: 'insertNodes', pageId: homePageId, nodes: [{ type: 'script' }] },
+      ],
+    ]) {
+      const refused = await applyBatch(agent, { siteId, expectedVersion: before.version, ops }, deps);
+      expect(refused.ok ? null : refused.error.code).toBe('rejected');
+      expect((await repository.loadProjectWithVersion(agent.scope, siteId)).version).toBe(before.version);
+    }
+
+    // The agent places it: at the page root, and inside a container.
+    const placed = unwrap(
+      await applyBatch(agent, {
+        siteId,
+        expectedVersion: before.version,
+        ops: [
+          { op: 'placeComponent', pageId: homePageId, definitionId, ref: 'root' },
+          { op: 'placeComponent', pageId: homePageId, definitionId, to: { parentId: inserted.created.box }, ref: 'inside' },
+        ],
+      }, deps),
+    );
+    expect(placed.version).toBe(before.version + 1);
+
+    // Read back from the database.
+    const outline = unwrap(await getPage(agent, { siteId, pageId: homePageId }, deps));
+    const homeRoot = outline.nodes.find((n) => n.parentId === null)!.id;
+    for (const [id, parentId] of [[placed.created.root, homeRoot], [placed.created.inside, inserted.created.box]]) {
+      expect(outline.nodes.find((n) => n.id === id)).toMatchObject({ tag: '#component', parentId, props: { component: definitionId } });
+    }
+    const stored = await repository.loadProjectWithVersion(agent.scope, siteId);
+    expect(JSON.stringify(stored.project.definitions)).toBe(definitionsBefore);
+
+    // The published page path draws all three uses with the definition's content.
+    const published = unwrap(await publish(agent, { siteId, expectedVersion: placed.version }, deps));
+    const revision = await prisma.siteRevision.findFirstOrThrow({ where: { siteId, number: published.revision } });
+    expect(JSON.stringify(revision.document)).toContain(placed.created.inside);
+    const rendered = await renderThroughPublishedPage({
+      tree: getSnapshot(stored.project.pages.get(homePageId)!.appComponentTree),
+      definitions: stored.project.definitions,
+    });
+    expect(rendered.html.match(/The default title/g)).toHaveLength(3);
   });
 
   it('an agent places an FX scene, retunes it, and a scene naming a picture this site does not store is refused when the batch commits', async () => {

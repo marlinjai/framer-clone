@@ -263,7 +263,9 @@ Operations:
 - {op:"addRule", nodeId, rule:{selector:"& > li", at?:["@media (...)"], style:{...}}}
 - {op:"setTheme", theme:{mode?, tokens:[...], document:{backgroundColor?, color?, fontFamily?}}}: the whole theme;
   a style refers to a token as var(--fc-t-<id>).
-- {op:"placeComponent", pageId, definitionId, to?, ref?}
+- {op:"placeComponent", pageId, definitionId, to?, ref?}: places one of the components getSite lists, at the end of
+  the page root unless "to" ({parentId, index?} or {siblingId, position}) says where. The placement shows the
+  component's defaults: no operation sets its values, and none makes or changes a component.
 
 Workflow: describeVocabulary once, getSite, getPage for the page you edit, then small batches; previewUrl to look at
 the result; publish when it is right.`;
