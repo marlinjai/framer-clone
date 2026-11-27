@@ -24,10 +24,10 @@
 //   - malformed body                  -> 400 bad_json / bad_body / bad_label
 //   - a site action on no such site   -> 404 site_not_found
 //   - a site action on a branch       -> 400 branch_site
-//   - success                         -> 200 with what changed (sites by id, never code); for a hash also the rows a
-//                                        personal-data erase rewrote it into that followed (`derived`), those an
-//                                        unblock left blocked for another reason (`keptBlocked`), and whether the
-//                                        whole chain was followed (`chainComplete`; the hash itself always changes)
+//   - success                         -> 200 with what changed (sites by id, never code); for a hash also, read
+//                                        afterwards and changing nothing, the rows a personal-data erase rewrote
+//                                        it into (`rewritten`, null when that read failed), which the operator
+//                                        takes down or restores with their own calls (D117)
 //   - a database failure              -> 500, the transaction rolled back
 //
 // Access: src/server/customCode/operatorAuth.ts (editor host, CUSTOM_CODE_OPERATOR_TOKEN).
@@ -43,6 +43,7 @@ import {
   blockCustomCodeHash,
   disableCustomCodeForSite,
   liftCustomCodeDisable,
+  readRewrittenRows,
   unblockCustomCodeHash,
 } from '@/server/customCode/takedown';
 
@@ -92,16 +93,18 @@ export async function POST(req: Request): Promise<Response> {
     const result = body.action === 'block'
       ? await blockCustomCodeHash(body.sha256, actor)
       : await unblockCustomCodeHash(body.sha256, actor);
-    console.error(`[custom code] takedown: ${body.action} ${result.sha256} by ${label}, list ${result.listChanged ? 'changed' : 'unchanged'}, ${result.sites.length} site row(s), ${result.derived.length} rewritten row(s)`);
+    console.error(`[custom code] takedown: ${body.action} ${result.sha256} by ${label}, list ${result.listChanged ? 'changed' : 'unchanged'}, ${result.sites.length} site row(s)`);
+    // After the commit, outside it, changing nothing: the rows an erase rewrote this code into, for the operator to
+    // judge one by one (D117). A failed read answers null; the takedown stands either way.
+    const rewritten = await readRewrittenRows(result.sha256);
     return Response.json(
       {
         action: body.action,
         sha256: result.sha256,
         listChanged: result.listChanged,
         sites: result.sites,
-        derived: result.derived,
-        keptBlocked: result.keptBlocked,
-        chainComplete: result.chainComplete,
+        rewritten: rewritten?.rows ?? null,
+        rewrittenTruncated: rewritten?.truncated ?? false,
       },
       { headers: NO_STORE },
     );

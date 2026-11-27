@@ -10,7 +10,8 @@
 //                the operator's reason;
 //   resume       a repeated block or disable keeps the first time and adds no second block line;
 //   re-entry     a hash no site holds is listed alone and refused when written later; a rollback to a published
-//                version whose code was taken down shows the fallback; a branch id and an unknown id are refused.
+//                version whose code was taken down shows the fallback; a branch id and an unknown id are refused;
+//                rows an erase rewrote the code into keep their own state and are reported for the operator.
 //
 // Runs only under `pnpm test:integration` (Docker).
 
@@ -23,7 +24,7 @@ import { SiteBranchRepository } from '@/server/sites/branches/repository';
 import { customCodeHash, parseDeclaration, type CustomCodeDeclaration } from '@/lib/customCode/contract';
 import { loadLiveCustomCode } from '@/server/customCode/liveBlocks';
 import { readCustomCodeStatus, writeCustomCodeBlob } from '@/server/customCode/authoring';
-import { blockCustomCodeHash, disableCustomCodeForSite, liftCustomCodeDisable, unblockCustomCodeHash } from '@/server/customCode/takedown';
+import { REWRITTEN_REPORT_MAX, blockCustomCodeHash, disableCustomCodeForSite, liftCustomCodeDisable, readRewrittenRows, unblockCustomCodeHash } from '@/server/customCode/takedown';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
 
 const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000c5e03';
@@ -118,7 +119,7 @@ describe('forward: blocking a hash takes it down on every site', () => {
     expect((await live(a, [onA])).has(onA)).toBe(true);
 
     const result = await blockCustomCodeHash(onA, OPERATOR);
-    expect(result).toEqual({ sha256: onA, listChanged: true, sites: [a.siteId, b.siteId].sort(), derived: [], keptBlocked: [], chainComplete: true });
+    expect(result).toEqual({ sha256: onA, listChanged: true, sites: [a.siteId, b.siteId].sort() });
 
     expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256: onA }, select: { blockedBy: true, reason: true } }))
       .toEqual({ blockedBy: OPERATOR.label, reason: OPERATOR.reason });
@@ -150,7 +151,7 @@ describe('resume: a repeated block keeps the first time', () => {
     const sha256 = await blob(a, `render("again ${randomUUID()}")`);
     await blockCustomCodeHash(sha256, OPERATOR, undefined, () => new Date('2026-11-27T10:00:00Z'));
     const again = await blockCustomCodeHash(sha256, { ...OPERATOR, reason: 'phishing form reported twice' }, undefined, () => new Date('2026-11-27T11:00:00Z'));
-    expect(again).toEqual({ sha256, listChanged: false, sites: [], derived: [], keptBlocked: [], chainComplete: true });
+    expect(again).toEqual({ sha256, listChanged: false, sites: [] });
     const listed = await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } });
     expect(listed?.blockedAt.toISOString()).toBe('2026-11-27T10:00:00.000Z');
     expect(listed?.reason).toBe(OPERATOR.reason);
@@ -167,14 +168,14 @@ describe('backtrack: unblocking reverses a block made in error', () => {
     await blockCustomCodeHash(sha256, OPERATOR);
 
     const result = await unblockCustomCodeHash(sha256, { label: 'operator', reason: 'phishing form reported in error' });
-    expect(result).toEqual({ sha256, listChanged: true, sites: [a.siteId, b.siteId].sort(), derived: [], keptBlocked: [], chainComplete: true });
+    expect(result).toEqual({ sha256, listChanged: true, sites: [a.siteId, b.siteId].sort() });
     expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } })).toBeNull();
     expect((await prisma.customCodeBlob.findMany({ where: { sha256 }, select: { blockedAt: true } })).every((row) => row.blockedAt === null)).toBe(true);
     expect((await audit(a)).map((row) => row.action)).toEqual(['blob-block', 'blob-unblock']);
     expect((await live(a, [sha256])).has(sha256)).toBe(true);
 
     // Unblocking again changes nothing.
-    expect(await unblockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: false, sites: [], derived: [], keptBlocked: [], chainComplete: true });
+    expect(await unblockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: false, sites: [] });
   });
 });
 
@@ -182,7 +183,7 @@ describe('re-entry: hashes no site holds, and published versions', () => {
   it('lists a hash no site holds, with no audit line, and refuses it when written later', async () => {
     const code = `render("never stored ${randomUUID()}")`;
     const sha256 = await customCodeHash(code, DECLARATION);
-    expect(await blockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: true, sites: [], derived: [], keptBlocked: [], chainComplete: true });
+    expect(await blockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: true, sites: [] });
     await repo.saveProject(a.scope, project(a.siteId, [sha256]), { mustExist: true });
     const written = await writeCustomCodeBlob({
       siteId: a.siteId, ...a.scope, actor: OWNER, pageId: 'home', nodeId: 'block-0',
@@ -208,38 +209,7 @@ describe('re-entry: hashes no site holds, and published versions', () => {
   });
 });
 
-describe('rows a personal-data erase rewrote the code into (D115)', () => {
-  /** Stores a rewritten row on the site and the `blob-erase` line the erase writes for it. */
-  async function rewritten(site: TestSite, from: string, blockedAt: Date | null = null): Promise<string> {
-    const code = `render("rewritten ${randomUUID()}")`;
-    const sha256 = await customCodeHash(code, DECLARATION);
-    await prisma.customCodeBlob.create({ data: { siteId: site.siteId, sha256, document: code, declaration: DECLARATION as never, title: 'Team', createdBy: OWNER, blockedAt } });
-    await prisma.customCodeAudit.create({ data: { siteId: site.siteId, ...site.scope, actor: OWNER, action: 'blob-erase', sha256, detail: { replaces: from } } });
-    return sha256;
-  }
-
-  it('blocks them on their own site with the block, without listing them, and unblocks them with the unblock', async () => {
-    const original = await customCodeHash(`render("original ${randomUUID()}")`, DECLARATION);
-    const first = await rewritten(a, original);
-    const second = await rewritten(a, first);
-
-    const blocked = await blockCustomCodeHash(original, OPERATOR);
-    expect(blocked.sites).toEqual([]);
-    expect(blocked.derived).toEqual([{ siteId: a.siteId, sha256: first }, { siteId: a.siteId, sha256: second }].sort((x, y) => x.sha256.localeCompare(y.sha256)));
-    for (const sha256 of [first, second]) {
-      expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: a.siteId, sha256 } } }))?.blockedAt).not.toBeNull();
-      expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } })).toBeNull();
-    }
-    expect((await audit(a)).filter((row) => row.action === 'blob-block').map((row) => row.detail)).toEqual([
-      { reason: OPERATOR.reason, follows: original },
-      { reason: OPERATOR.reason, follows: original },
-    ]);
-
-    const unblocked = await unblockCustomCodeHash(original, OPERATOR);
-    expect(unblocked.derived).toHaveLength(2);
-    expect((await live(a, [first, second])).size).toBe(2);
-  });
-
+describe('rows a personal-data erase rewrote the code into (D115, D117)', () => {
   const hex = () => createHash('sha256').update(randomUUID()).digest('hex');
   async function row(site: TestSite, sha256: string, blockedAt: Date | null = null) {
     await prisma.customCodeBlob.create({ data: { siteId: site.siteId, sha256, document: `render("${sha256}")`, declaration: DECLARATION as never, title: 'Team', createdBy: OWNER, blockedAt } });
@@ -247,97 +217,60 @@ describe('rows a personal-data erase rewrote the code into (D115)', () => {
   async function eraseLine(site: TestSite, to: string, from: string) {
     await prisma.customCodeAudit.create({ data: { siteId: site.siteId, ...site.scope, actor: OWNER, action: 'blob-erase', sha256: to, detail: { replaces: from } } });
   }
+  const blockedAt = async (site: TestSite, sha256: string) =>
+    (await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: site.siteId, sha256 } }, select: { blockedAt: true } }))?.blockedAt ?? null;
 
-  it('R2-1 (a): leaves a rewritten row blocked on unblock when a hash it came from in between is still taken down', async () => {
-    const [h, x, x2] = [hex(), hex(), hex()];
-    // H was erased into X (whose row a later erase deleted), and X into X2; X is on the list, so X2 carries its block.
-    await eraseLine(a, x, h);
-    await eraseLine(a, x2, x);
-    await row(a, x2, new Date());
-    await blockCustomCodeHash(x, OPERATOR);
-    await blockCustomCodeHash(h, OPERATOR);
-    expect((await unblockCustomCodeHash(h, OPERATOR)).derived).toEqual([]);
-    expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: a.siteId, sha256: x2 } } }))?.blockedAt).not.toBeNull();
-  });
-
-  it('R2-1 (b): leaves a row with two parents blocked when the other parent is taken down', async () => {
-    const [z, z2, q] = [hex(), hex(), hex()];
-    await eraseLine(a, z2, z);
-    await row(a, z2, new Date());
-    await blockCustomCodeHash(z, OPERATOR);
-    // A later erase rewrote other code Q into the very same code, and kept the row.
-    await eraseLine(a, z2, q);
-    await blockCustomCodeHash(q, OPERATOR);
-    expect((await unblockCustomCodeHash(q, OPERATOR)).derived).toEqual([]);
-    expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: a.siteId, sha256: z2 } } }))?.blockedAt).not.toBeNull();
-  });
-
-  it('R2-2: follows a chain only on the site where it started, never into another site\'s identical code', async () => {
-    const [h, x, other] = [hex(), hex(), hex()];
+  it('a block changes only the hash it names, and the report names the rewritten row, unblocked', async () => {
+    const h = await blob(a, `render("abusive ${randomUUID()}")`);
+    const x = hex();
     await eraseLine(a, x, h);
     await row(a, x);
-    // Site B holds the same code X and erased it into its own row: B never held H.
+    expect(await blockCustomCodeHash(h, OPERATOR)).toEqual({ sha256: h, listChanged: true, sites: [a.siteId] });
+    expect(await blockedAt(a, x)).toBeNull();
+    expect(await readRewrittenRows(h)).toEqual({ rows: [{ siteId: a.siteId, sha256: x, blocked: false }], truncated: false });
+    // The operator judges it and blocks it by its own hash.
+    await blockCustomCodeHash(x, OPERATOR);
+    expect(await readRewrittenRows(h)).toEqual({ rows: [{ siteId: a.siteId, sha256: x, blocked: true }], truncated: false });
+  });
+
+  it('an unblock leaves an erase-carried block in place and names it; unblocking that hash then clears it', async () => {
+    const h = await blob(b, `render("mistake ${randomUUID()}")`);
+    const x = hex();
+    await blockCustomCodeHash(h, OPERATOR);
+    // Site A held H blocked and erased it into X, which the erase blocked too.
+    await eraseLine(a, x, h);
+    await row(a, x, new Date());
+    await unblockCustomCodeHash(h, OPERATOR);
+    expect(await blockedAt(a, x)).not.toBeNull();
+    expect(await readRewrittenRows(h)).toEqual({ rows: [{ siteId: a.siteId, sha256: x, blocked: true }], truncated: false });
+    expect((await unblockCustomCodeHash(x, OPERATOR)).sites).toEqual([a.siteId]);
+    expect(await blockedAt(a, x)).toBeNull();
+  });
+
+  it('the block lands whatever erase lines exist, and the report skips title-only erases and says when it stops', async () => {
+    const h = await blob(a, `render("abusive ${randomUUID()}")`);
+    await prisma.customCodeAudit.createMany({
+      data: [
+        ...Array.from({ length: 300 }, () => ({ siteId: a.siteId, ...a.scope, actor: OWNER, action: 'blob-erase', sha256: h, detail: { replaces: h } })),
+        ...Array.from({ length: REWRITTEN_REPORT_MAX + 1 }, () => ({ siteId: a.siteId, ...a.scope, actor: OWNER, action: 'blob-erase', sha256: hex(), detail: { replaces: h } })),
+      ],
+    });
+    expect(await blockCustomCodeHash(h, OPERATOR)).toEqual({ sha256: h, listChanged: true, sites: [a.siteId] });
+    expect((await live(a, [h])).has(h)).toBe(false);
+    // The rewritten hashes hold no rows here, so the report names none, and says it did not read every line.
+    expect(await readRewrittenRows(h)).toEqual({ rows: [], truncated: true });
+  });
+
+  it('the report reaches only the site where the erase happened', async () => {
+    const h = await blob(a, `render("shared ${randomUUID()}")`);
+    const [x, other] = [hex(), hex()];
+    await eraseLine(a, x, h);
+    await row(a, x);
+    // Site B holds X too and erased it into its own row: B never held H, so nothing of B is named.
     await row(b, x);
     await eraseLine(b, other, x);
     await row(b, other);
-    const blocked = await blockCustomCodeHash(h, OPERATOR);
-    expect(blocked.derived).toEqual([{ siteId: a.siteId, sha256: x }]);
-    expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: b.siteId, sha256: other } } }))?.blockedAt).toBeNull();
-    expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: b.siteId, sha256: x } } }))?.blockedAt).toBeNull();
-    // The unblock reaches the same rows and no others.
-    await prisma.customCodeBlob.update({ where: { siteId_sha256: { siteId: b.siteId, sha256: other } }, data: { blockedAt: new Date() } });
-    const unblocked = await unblockCustomCodeHash(h, OPERATOR);
-    expect(unblocked.derived).toEqual([{ siteId: a.siteId, sha256: x }]);
-    expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: b.siteId, sha256: other } } }))?.blockedAt).not.toBeNull();
-  });
-
-  it('R3-1: title-only erases (a hash into itself) never count toward the cap, and the block lands', async () => {
-    const code = `render("abusive ${randomUUID()}")`;
-    const h = await blob(a, code);
-    await prisma.customCodeAudit.createMany({
-      data: Array.from({ length: 300 }, () => ({ siteId: a.siteId, ...a.scope, actor: OWNER, action: 'blob-erase', sha256: h, detail: { replaces: h } })),
-    });
-    const result = await blockCustomCodeHash(h, OPERATOR);
-    expect(result).toMatchObject({ listChanged: true, sites: [a.siteId], derived: [], chainComplete: true });
-    expect((await live(a, [h])).has(h)).toBe(false);
-  });
-
-  it('R3-1: past the cap still lists the hash and blocks its own rows, and says the chain was not followed', async () => {
-    const code = `render("abusive ${randomUUID()}")`;
-    const h = await blob(a, code);
-    await prisma.customCodeAudit.createMany({
-      data: Array.from({ length: 257 }, () => ({ siteId: a.siteId, ...a.scope, actor: OWNER, action: 'blob-erase', sha256: hex(), detail: { replaces: h } })),
-    });
-    const result = await blockCustomCodeHash(h, OPERATOR);
-    expect(result).toMatchObject({ listChanged: true, sites: [a.siteId], chainComplete: false });
-    expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256: h } })).not.toBeNull();
-    expect((await live(a, [h])).has(h)).toBe(false);
-  });
-
-  it('N3-3: leaves every copy of a rewritten hash blocked when one site\'s copy is taken down for another reason', async () => {
-    const [h, x, other] = [hex(), hex(), hex()];
-    // Sites A and B both rewrote H into X; B's X also came from another listed hash.
-    await eraseLine(a, x, h);
-    await row(a, x);
-    await eraseLine(b, x, h);
-    await eraseLine(b, x, other);
-    await row(b, x);
-    await blockCustomCodeHash(other, OPERATOR);
-    await blockCustomCodeHash(h, OPERATOR);
-    const unblocked = await unblockCustomCodeHash(h, OPERATOR);
-    expect(unblocked.derived).toEqual([]);
-    expect(unblocked.keptBlocked).toEqual([{ siteId: a.siteId, sha256: x }, { siteId: b.siteId, sha256: x }].sort((p, q) => p.siteId.localeCompare(q.siteId)));
-    for (const site of [a, b]) {
-      expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: site.siteId, sha256: x } } }))?.blockedAt).not.toBeNull();
-    }
-  });
-
-  it('leaves a rewritten row blocked on unblock when its own hash is taken down', async () => {
-    const original = await customCodeHash(`render("original ${randomUUID()}")`, DECLARATION);
-    const derived = await rewritten(a, original, new Date());
-    await blockCustomCodeHash(derived, OPERATOR);
-    expect((await unblockCustomCodeHash(original, OPERATOR)).derived).toEqual([]);
-    expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: a.siteId, sha256: derived } } }))?.blockedAt).not.toBeNull();
+    expect(await readRewrittenRows(h)).toEqual({ rows: [{ siteId: a.siteId, sha256: x, blocked: false }], truncated: false });
   });
 });
 

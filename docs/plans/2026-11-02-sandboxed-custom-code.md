@@ -1476,26 +1476,26 @@ and writes `blob-block` for each site whose row it newly blocked, with the reaso
 listed alone, with no audit line (the audit needs a site; the list row is the record). A repeated block keeps the first
 time, reason and label and writes nothing more. **Unblock is in:** without it a takedown made in error would mean
 hand-run SQL on production; it reverses all three (list, rows, `blob-unblock` per site) and is idempotent too.
-**Code an erase rewrote** (security review of part 3a, finding 3): an erase carries a block to the rewritten hash
-(D115), so a block or unblock also follows the `blob-erase` lines (`detail.replaces`) from the hash, through later
-erases, to the rewritten rows that still exist, and blocks or unblocks each on its own site with an audit line that
-says which hash it `follows`. The first step may be on any site (`replaces` is always a hash the erasing site held);
-every later step stays on that site, so another site's identical code and its own erases are never reached (second
-review, R2-2). It never lists their hashes (the erase never lists, B1). An unblock leaves a rewritten row blocked when
-its own hash, or any hash it was rewritten from on its site other than the one unblocked (a row may have several
-parents; the walk stops at the unblocked hash, N3-2), is listed or blocked on a row outside this chain (R2-1), and then
-leaves blocked every other rewritten row of the same hash, so one site's copy is never served while another's stays
-taken down (N3-3); the answer names what it unblocked (`derived`) and what it left blocked (`keptBlocked`, N3-1).
-**The cap never stops the hash itself** (third review, R3-1): the list change and the hash's own rows always land.
-At most 256 distinct rewritten rows are followed, and a title-only erase (a hash into itself) is skipped, so repeating
-erases cannot inflate the count; past the cap, or past 4,096 erase lines when an unblock reads what each row came
-from (read once for all sites, R3-2, and then every rewritten row is left blocked), the answer says
-`chainComplete: false` and a log line names the hash, and the operator takes down the rewritten hashes one by one. An erase that commits between
-the chain's read and the site locks is missed like the race below, and repeating the call picks it up (M2). **Accepted residual**
-(finding 4): a guarded write on another site that had not committed when the block's lock query began can still
-write the same code there; that row is not marked, gets no audit line, is not in the answer, can be pruned like any
-unnamed blob and counts in that site's budget. The list is what the box, the published page and every later write
-read, so it is never served and never written again, and repeating the block marks the row.
+**Code an erase rewrote: reported, not followed** (security review of part 3a, finding 3, and what three further
+review rounds found in following it). A personal-data erase writes a block's code under a new hash and carries a block
+to it (D115), so a block of hash H does not reach a copy rewritten before the block, and an unblock of H leaves a
+copy the erase blocked in place. Following the `blob-erase` chain inside the takedown was built and reviewed three
+times; each round found a new blocking flaw in it (an unblock serving code still taken down, the chain reaching
+another site's identical code, a site making its own code impossible to block by inflating the chain, then by
+making the chain slow enough to time out the whole transaction). **Decided, say so if you disagree:** a block or
+unblock changes only the hash it names, in one transaction, and after it commits a separate read that changes nothing
+(`readRewrittenRows`) lists one level of rows an erase rewrote that hash into, with their site and whether they are
+blocked (at most 200 erase lines, `rewrittenTruncated` past that; title-only erases skipped; a failed read answers
+`rewritten: null` and the takedown stands). The operator takes down or restores each listed hash with its own call,
+which also reaches the next level. **Who following would have protected against:** nobody the takedown can stop
+anyway. An owner who wants to dodge a block by hash changes one byte through a normal save and gets a new hash, so
+the answer to an owner who keeps doing that is the site disable (D118), not a deeper chain. **Accepted residuals:**
+in the block direction a rewritten copy stays served until the operator blocks its hash; in the unblock direction an
+erase-carried block stays until the operator unblocks that hash. Both are named in the answer. The other accepted
+residual (finding 4): a guarded write on another site that had not committed when the block's lock query began can
+still write the same code there; that row is not marked, gets no audit line, is not in the answer, can be pruned like
+any unnamed blob and counts in that site's budget. The list is what the box, the published page and every later
+write read, so it is never served and never written again, and repeating the block marks the row.
 
 **D118. Disabling a site, and who lifts it.** The same route's `disable-site` sets `custom_code_enabled = false` and
 writes a `disable` line by the operator with the reason, on every call (also when already off, since the reason is what

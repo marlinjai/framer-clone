@@ -6,11 +6,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { blockCustomCodeHash, unblockCustomCodeHash, disableCustomCodeForSite, liftCustomCodeDisable } = vi.hoisted(() => ({
+const { blockCustomCodeHash, unblockCustomCodeHash, disableCustomCodeForSite, liftCustomCodeDisable, readRewrittenRows } = vi.hoisted(() => ({
   blockCustomCodeHash: vi.fn(),
   unblockCustomCodeHash: vi.fn(),
   disableCustomCodeForSite: vi.fn(),
   liftCustomCodeDisable: vi.fn(),
+  readRewrittenRows: vi.fn(),
 }));
 vi.mock('@/server/customCode/takedown', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/server/customCode/takedown')>()),
@@ -18,6 +19,7 @@ vi.mock('@/server/customCode/takedown', async (importOriginal) => ({
   unblockCustomCodeHash,
   disableCustomCodeForSite,
   liftCustomCodeDisable,
+  readRewrittenRows,
 }));
 
 import { POST } from '../route';
@@ -109,19 +111,23 @@ describe('POST /api/internal/custom-code/block: the body', () => {
 
 describe('POST /api/internal/custom-code/block: the actions', () => {
   it('blocks a hash as `operator` by default, with the trimmed reason', async () => {
-    blockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], derived: [{ siteId: 'site-a', sha256: 'b'.repeat(64) }], keptBlocked: [], chainComplete: true });
+    blockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'] });
+    readRewrittenRows.mockResolvedValue({ rows: [{ siteId: 'site-a', sha256: 'b'.repeat(64), blocked: false }], truncated: false });
     const res = await POST(req({ ...block, reason: '  phishing form  ' }));
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(await res.json()).toEqual({ action: 'block', sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], derived: [{ siteId: 'site-a', sha256: 'b'.repeat(64) }], keptBlocked: [], chainComplete: true });
+    expect(await res.json()).toEqual({ action: 'block', sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], rewritten: [{ siteId: 'site-a', sha256: 'b'.repeat(64), blocked: false }], rewrittenTruncated: false });
+    expect(readRewrittenRows).toHaveBeenCalledWith(HASH);
     expect(blockCustomCodeHash).toHaveBeenCalledWith(HASH, { label: 'operator', reason: 'phishing form' });
   });
 
   it('unblocks a hash under a channel label', async () => {
-    unblockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: false, sites: [], derived: [], keptBlocked: [{ siteId: 'site-c', sha256: 'c'.repeat(64) }], chainComplete: false });
+    unblockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: false, sites: [] });
+    // The report read failed: the takedown still answers 200, with no report.
+    readRewrittenRows.mockResolvedValue(null);
     const res = await POST(req({ action: 'unblock', sha256: HASH, reason: 'reported in error', by: 'operator:abuse-report' }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ action: 'unblock', sha256: HASH, listChanged: false, sites: [], derived: [], keptBlocked: [{ siteId: 'site-c', sha256: 'c'.repeat(64) }], chainComplete: false });
+    expect(await res.json()).toEqual({ action: 'unblock', sha256: HASH, listChanged: false, sites: [], rewritten: null, rewrittenTruncated: false });
     expect(unblockCustomCodeHash).toHaveBeenCalledWith(HASH, { label: 'operator:abuse-report', reason: 'reported in error' });
   });
 
