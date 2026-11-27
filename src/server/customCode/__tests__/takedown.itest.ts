@@ -118,7 +118,7 @@ describe('forward: blocking a hash takes it down on every site', () => {
     expect((await live(a, [onA])).has(onA)).toBe(true);
 
     const result = await blockCustomCodeHash(onA, OPERATOR);
-    expect(result).toEqual({ sha256: onA, listChanged: true, sites: [a.siteId, b.siteId].sort() });
+    expect(result).toEqual({ sha256: onA, listChanged: true, sites: [a.siteId, b.siteId].sort(), derived: [] });
 
     expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256: onA }, select: { blockedBy: true, reason: true } }))
       .toEqual({ blockedBy: OPERATOR.label, reason: OPERATOR.reason });
@@ -150,7 +150,7 @@ describe('resume: a repeated block keeps the first time', () => {
     const sha256 = await blob(a, `render("again ${randomUUID()}")`);
     await blockCustomCodeHash(sha256, OPERATOR, undefined, () => new Date('2026-11-27T10:00:00Z'));
     const again = await blockCustomCodeHash(sha256, { ...OPERATOR, reason: 'phishing form reported twice' }, undefined, () => new Date('2026-11-27T11:00:00Z'));
-    expect(again).toEqual({ sha256, listChanged: false, sites: [] });
+    expect(again).toEqual({ sha256, listChanged: false, sites: [], derived: [] });
     const listed = await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } });
     expect(listed?.blockedAt.toISOString()).toBe('2026-11-27T10:00:00.000Z');
     expect(listed?.reason).toBe(OPERATOR.reason);
@@ -167,14 +167,14 @@ describe('backtrack: unblocking reverses a block made in error', () => {
     await blockCustomCodeHash(sha256, OPERATOR);
 
     const result = await unblockCustomCodeHash(sha256, { label: 'operator', reason: 'phishing form reported in error' });
-    expect(result).toEqual({ sha256, listChanged: true, sites: [a.siteId, b.siteId].sort() });
+    expect(result).toEqual({ sha256, listChanged: true, sites: [a.siteId, b.siteId].sort(), derived: [] });
     expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } })).toBeNull();
     expect((await prisma.customCodeBlob.findMany({ where: { sha256 }, select: { blockedAt: true } })).every((row) => row.blockedAt === null)).toBe(true);
     expect((await audit(a)).map((row) => row.action)).toEqual(['blob-block', 'blob-unblock']);
     expect((await live(a, [sha256])).has(sha256)).toBe(true);
 
     // Unblocking again changes nothing.
-    expect(await unblockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: false, sites: [] });
+    expect(await unblockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: false, sites: [], derived: [] });
   });
 });
 
@@ -182,7 +182,7 @@ describe('re-entry: hashes no site holds, and published versions', () => {
   it('lists a hash no site holds, with no audit line, and refuses it when written later', async () => {
     const code = `render("never stored ${randomUUID()}")`;
     const sha256 = await customCodeHash(code, DECLARATION);
-    expect(await blockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: true, sites: [] });
+    expect(await blockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: true, sites: [], derived: [] });
     await repo.saveProject(a.scope, project(a.siteId, [sha256]), { mustExist: true });
     const written = await writeCustomCodeBlob({
       siteId: a.siteId, ...a.scope, actor: OWNER, pageId: 'home', nodeId: 'block-0',
@@ -208,6 +208,47 @@ describe('re-entry: hashes no site holds, and published versions', () => {
   });
 });
 
+describe('rows a personal-data erase rewrote the code into (D115)', () => {
+  /** Stores a rewritten row on the site and the `blob-erase` line the erase writes for it. */
+  async function rewritten(site: TestSite, from: string, blockedAt: Date | null = null): Promise<string> {
+    const code = `render("rewritten ${randomUUID()}")`;
+    const sha256 = await customCodeHash(code, DECLARATION);
+    await prisma.customCodeBlob.create({ data: { siteId: site.siteId, sha256, document: code, declaration: DECLARATION as never, title: 'Team', createdBy: OWNER, blockedAt } });
+    await prisma.customCodeAudit.create({ data: { siteId: site.siteId, ...site.scope, actor: OWNER, action: 'blob-erase', sha256, detail: { replaces: from } } });
+    return sha256;
+  }
+
+  it('blocks them on their own site with the block, without listing them, and unblocks them with the unblock', async () => {
+    const original = await customCodeHash(`render("original ${randomUUID()}")`, DECLARATION);
+    const first = await rewritten(a, original);
+    const second = await rewritten(a, first);
+
+    const blocked = await blockCustomCodeHash(original, OPERATOR);
+    expect(blocked.sites).toEqual([]);
+    expect(blocked.derived).toEqual([{ siteId: a.siteId, sha256: first }, { siteId: a.siteId, sha256: second }].sort((x, y) => x.sha256.localeCompare(y.sha256)));
+    for (const sha256 of [first, second]) {
+      expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: a.siteId, sha256 } } }))?.blockedAt).not.toBeNull();
+      expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } })).toBeNull();
+    }
+    expect((await audit(a)).filter((row) => row.action === 'blob-block').map((row) => row.detail)).toEqual([
+      { reason: OPERATOR.reason, follows: original },
+      { reason: OPERATOR.reason, follows: original },
+    ]);
+
+    const unblocked = await unblockCustomCodeHash(original, OPERATOR);
+    expect(unblocked.derived).toHaveLength(2);
+    expect((await live(a, [first, second])).size).toBe(2);
+  });
+
+  it('leaves a rewritten row blocked on unblock when its own hash is taken down', async () => {
+    const original = await customCodeHash(`render("original ${randomUUID()}")`, DECLARATION);
+    const derived = await rewritten(a, original, new Date());
+    await blockCustomCodeHash(derived, OPERATOR);
+    expect((await unblockCustomCodeHash(original, OPERATOR)).derived).toEqual([]);
+    expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: a.siteId, sha256: derived } } }))?.blockedAt).not.toBeNull();
+  });
+});
+
 describe('a site disable', () => {
   it('turns the switch off, stops every block, and tells the site\'s editors why', async () => {
     const sha256 = await blob(a, `render("site ${randomUUID()}")`);
@@ -229,12 +270,19 @@ describe('a site disable', () => {
     expect(await status(a)).toMatchObject({ enabled: false, disabledByLumitra: { reason: 'phishing form reported again' } });
   });
 
-  it('stops naming the operator\'s reason once the site\'s own people change the switch', async () => {
+  it('keeps standing when the site\'s own people write a switch line afterwards (only a lift ends it)', async () => {
     await disableCustomCodeForSite(a.siteId, OPERATOR, undefined, () => new Date('2026-11-27T12:00:00Z'));
-    await prisma.customCodeAudit.create({
-      data: { siteId: a.siteId, ...a.scope, actor: OWNER, action: 'disable', createdAt: new Date('2026-11-27T14:00:00Z') },
-    });
-    expect(await status(a)).toMatchObject({ enabled: false, disabledByLumitra: null });
+    // A stale "switch off" press, then (once slice C7 exists) an owner's enable: neither ends the takedown.
+    await prisma.customCodeAudit.create({ data: { siteId: a.siteId, ...a.scope, actor: OWNER, action: 'disable', createdAt: new Date('2026-11-27T14:00:00Z') } });
+    expect(await status(a)).toMatchObject({ enabled: false, disabledByLumitra: { reason: OPERATOR.reason } });
+    await prisma.customCodeAudit.create({ data: { siteId: a.siteId, ...a.scope, actor: OWNER, action: 'enable', createdAt: new Date('2026-11-27T15:00:00Z') } });
+    expect(await status(a)).toMatchObject({ disabledByLumitra: { reason: OPERATOR.reason } });
+  });
+
+  it('orders a lift after its disable even when the clock steps back', async () => {
+    await disableCustomCodeForSite(a.siteId, OPERATOR, undefined, () => new Date('2026-11-27T12:00:00Z'));
+    await liftCustomCodeDisable(a.siteId, OPERATOR, undefined, () => new Date('2026-11-27T11:00:00Z'));
+    expect(await status(a)).toMatchObject({ disabledByLumitra: null });
   });
 
   it('is lifted only by the operator: the switch stays off and the reason is gone; a second lift writes nothing', async () => {

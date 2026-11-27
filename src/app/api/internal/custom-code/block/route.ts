@@ -89,8 +89,8 @@ export async function POST(req: Request): Promise<Response> {
     const result = body.action === 'block'
       ? await blockCustomCodeHash(body.sha256, actor)
       : await unblockCustomCodeHash(body.sha256, actor);
-    console.error(`[custom code] takedown: ${body.action} ${result.sha256} by ${label}, list ${result.listChanged ? 'changed' : 'unchanged'}, ${result.sites.length} site row(s)`);
-    return Response.json({ action: body.action, sha256: result.sha256, listChanged: result.listChanged, sites: result.sites }, { headers: NO_STORE });
+    console.error(`[custom code] takedown: ${body.action} ${result.sha256} by ${label}, list ${result.listChanged ? 'changed' : 'unchanged'}, ${result.sites.length} site row(s), ${result.derived.length} rewritten row(s)`);
+    return Response.json({ action: body.action, sha256: result.sha256, listChanged: result.listChanged, sites: result.sites, derived: result.derived }, { headers: NO_STORE });
   } catch (err) {
     console.error(`[custom code] takedown ${body.action} failed:`, err);
     return jsonError('takedown_failed', 'the takedown failed and nothing was changed; try again', 500);

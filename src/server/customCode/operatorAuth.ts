@@ -19,13 +19,19 @@ import { bearerMatches } from '@/server/domains/internalAuth';
 export const CUSTOM_CODE_OPERATOR_TOKEN_ENV = 'CUSTOM_CODE_OPERATOR_TOKEN';
 export const CUSTOM_CODE_OPERATOR_NOT_CONFIGURED = 'custom_code_operator_not_configured';
 const MIN_OPERATOR_TOKEN_LENGTH = 32;
+let warnedUnconfigured = false;
 
 /** Null when the request may proceed, else the ready error response. */
 export function checkCustomCodeOperatorRequest(req: Request): Response | null {
   if (!isEditorHost(req.headers.get('host'))) return jsonError('not_found', 'not found', 404);
   const expected = process.env[CUSTOM_CODE_OPERATOR_TOKEN_ENV]?.trim() ?? '';
   if (expected.length < MIN_OPERATOR_TOKEN_LENGTH) {
-    console.error(`[custom code] ${CUSTOM_CODE_OPERATOR_TOKEN_ENV} is not set (or too short); the takedown route is off`);
+    // Once per process: the token is unset on purpose until custom code is switched on, and every probe of the
+    // route would otherwise write the same line.
+    if (!warnedUnconfigured) {
+      warnedUnconfigured = true;
+      console.error(`[custom code] ${CUSTOM_CODE_OPERATOR_TOKEN_ENV} is not set (or too short); the takedown route is off`);
+    }
     return jsonError(CUSTOM_CODE_OPERATOR_NOT_CONFIGURED, 'the custom code takedown route is not configured', 503);
   }
   if (!bearerMatches(req, expected)) return jsonError('unauthorized', 'authentication required', 401);

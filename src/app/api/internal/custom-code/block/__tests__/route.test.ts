@@ -109,19 +109,19 @@ describe('POST /api/internal/custom-code/block: the body', () => {
 
 describe('POST /api/internal/custom-code/block: the actions', () => {
   it('blocks a hash as `operator` by default, with the trimmed reason', async () => {
-    blockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'] });
+    blockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], derived: [{ siteId: 'site-a', sha256: 'b'.repeat(64) }] });
     const res = await POST(req({ ...block, reason: '  phishing form  ' }));
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(await res.json()).toEqual({ action: 'block', sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'] });
+    expect(await res.json()).toEqual({ action: 'block', sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], derived: [{ siteId: 'site-a', sha256: 'b'.repeat(64) }] });
     expect(blockCustomCodeHash).toHaveBeenCalledWith(HASH, { label: 'operator', reason: 'phishing form' });
   });
 
   it('unblocks a hash under a channel label', async () => {
-    unblockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: false, sites: [] });
+    unblockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: false, sites: [], derived: [] });
     const res = await POST(req({ action: 'unblock', sha256: HASH, reason: 'reported in error', by: 'operator:abuse-report' }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ action: 'unblock', sha256: HASH, listChanged: false, sites: [] });
+    expect(await res.json()).toEqual({ action: 'unblock', sha256: HASH, listChanged: false, sites: [], derived: [] });
     expect(unblockCustomCodeHash).toHaveBeenCalledWith(HASH, { label: 'operator:abuse-report', reason: 'reported in error' });
   });
 

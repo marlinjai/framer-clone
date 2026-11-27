@@ -1465,7 +1465,8 @@ obtains the host timers' token (a leaked unit file, a copied server). The route 
 `custom_code_operator_not_configured`, never an open route), shares only the constant-time comparison
 (`bearerMatches` in `src/server/domains/internalAuth.ts`, whose four routes behave exactly as before), and answers
 404 off the editor host. Production needs no change for this part: with the token unset the route is off. Setting it
-is an operator step with the switch-on, not part of this slice.
+is an operator step with the switch-on, not part of this slice. The operator's curl in `deploy/README.md` hands the
+header to curl on standard input, so the token is never in an argument list `ps` shows (finding 2).
 
 **D117. Blocking a hash: the list decides, every site's row follows, one audit line per site.** A block writes the hash
 to `custom_code_blocked_hashes` first (D32; `blocked_by` the operator label of D34, checked in the route so a wrong
@@ -1475,16 +1476,25 @@ and writes `blob-block` for each site whose row it newly blocked, with the reaso
 listed alone, with no audit line (the audit needs a site; the list row is the record). A repeated block keeps the first
 time, reason and label and writes nothing more. **Unblock is in:** without it a takedown made in error would mean
 hand-run SQL on production; it reverses all three (list, rows, `blob-unblock` per site) and is idempotent too.
-**Accepted residual:** a guarded write on another site that read the list just before the block committed can still
-write the same code there, unblocked on its row; the list is what the box, the published page and every later write
-read, so it is never served and never written again.
+**Code an erase rewrote** (security review of part 3a, finding 3): an erase carries a block to the rewritten hash
+(D115), so a block or unblock also follows the `blob-erase` lines (`detail.replaces`) from the hash, through later
+erases, to the rewritten rows that still exist, and blocks or unblocks each on its own site with an audit line that
+says which hash it `follows`. It never lists their hashes (the erase never lists, B1), and an unblock leaves a
+rewritten row blocked when its own hash is listed or blocked on a site the chain never reached. **Accepted residual**
+(finding 4): a guarded write on another site that had not committed when the block's lock query began can still
+write the same code there; that row is not marked, gets no audit line, is not in the answer, can be pruned like any
+unnamed blob and counts in that site's budget. The list is what the box, the published page and every later write
+read, so it is never served and never written again, and repeating the block marks the row.
 
 **D118. Disabling a site, and who lifts it.** The same route's `disable-site` sets `custom_code_enabled = false` and
 writes a `disable` line by the operator with the reason, on every call (also when already off, since the reason is what
 the owner is told; the last one wins). A branch id is refused with 400 (its switch is never on, D30) and an unknown id
 with 404. The site's editors read the reason in the custom code panel ("Lumitra switched custom code off for this
 site ... Reason given: ..."), through the status read's `disabledByLumitra`, which is set while the latest switch
-change is an operator's `disable` that was not lifted. **Site settings** shows nothing yet because it has no custom
+line written by an operator is a `disable` that was not lifted. Lines written by the site's own people never clear
+it (security review of part 3a, finding 1: a stale "switch off" press, or C7's enable, must not end a takedown), and
+an operator line is written one millisecond after the site's latest operator line when the clock would put it
+earlier, so a lift never sorts before its disable. **Site settings** shows nothing yet because it has no custom
 code section before C7's enable dialog; C7 shows the same reason there. **Lifting:** `lift-site` writes a `disable`
 line with `lifted: true` (the audit's actions are fixed by a CHECK and nothing is switched on, so it is no `enable`),
 leaves the switch off, and writes nothing when no operator disable stands. **For C7:** the enable step must refuse

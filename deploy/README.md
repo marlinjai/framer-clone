@@ -759,21 +759,28 @@ After an abuse report (plan `docs/plans/2026-11-02-sandboxed-custom-code.md`, "A
 operator takes code down through `POST /api/internal/custom-code/block` on the editor host, with its own token
 `CUSTOM_CODE_OPERATOR_TOKEN` (at least 32 characters, generated, never the host timers' `CUSTOM_DOMAIN_SYNC_TOKEN`).
 Unset, the route answers 503 and changes nothing. Run it from a shell where the token is in the environment (through
-Infisical or the secrets proxy), never typed on the command line:
+Infisical or the secrets proxy), never typed on the command line. The header goes to curl on standard input
+(`-K -`), so the token never sits in curl's argument list, which every local user can read through `ps`:
 
 ```bash
+takedown() {
+  printf 'header = "authorization: Bearer %s"\n' "$CUSTOM_CODE_OPERATOR_TOKEN" |
+    curl --fail-with-body -sS -K - -X POST "https://app.lumitra.co/api/internal/custom-code/block" \
+      -H 'content-type: application/json' -d "$1"
+}
 # One block's code, on every site that holds it: the box answers 410 within six minutes and it cannot be saved again.
-curl --fail-with-body -sS -X POST "https://app.lumitra.co/api/internal/custom-code/block" \
-  -H "authorization: Bearer $CUSTOM_CODE_OPERATOR_TOKEN" -H 'content-type: application/json' \
-  -d '{"action":"block","sha256":"<64 hex>","reason":"<why, naming no person>","by":"operator:abuse-report"}'
+takedown '{"action":"block","sha256":"<64 hex>","reason":"<why, naming no person>","by":"operator:abuse-report"}'
 # The same with "action":"unblock" reverses a takedown made in error.
 # A whole site: every block shows its fallback at the next request, and its editors read the reason in the panel.
-  -d '{"action":"disable-site","siteId":"<site id>","reason":"<why>"}'
+takedown '{"action":"disable-site","siteId":"<site id>","reason":"<why>"}'
 ```
 
 `by` is `operator` (the default) or `operator:` with lower case words joined by hyphens; `reason` is at most 500
 characters and names no person, because the takedown list outlives a company erasure. The answer lists the sites
-changed by id and never carries code. Repeating a block, unblock or lift changes nothing more. A site disabled this
+changed by id (and, under `derived`, rows a personal-data erase rewrote this code into, which follow the block) and
+never carries code. Repeating a call is safe: it changes only what the first call left, which is normally nothing; a
+row of the same code that another site saved in the very moment of the block is marked by repeating the block (it is
+never served either way, because the takedown list decides). A site disabled this
 way stays off until an operator lifts it with `"action":"lift-site"` (same body as a disable); lifting leaves the
 switch off, and the site's own admin switches it on again through the enable step of slice C7, which must refuse while
 the operator's disable stands.

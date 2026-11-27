@@ -291,7 +291,8 @@ export async function readCustomCodeStatus(
       enabled: rows[0].custom_code_enabled,
       branch: rows[0].branch_of_site_id !== null,
       usedBytes: await liveCustomCodeBytes(tx, site.siteId),
-      disabledByLumitra: rows[0].custom_code_enabled ? null : await readOperatorDisable(tx, site.siteId),
+      // A branch's switch is never on and never the operator's (D30, D118): no reason to read for it.
+      disabledByLumitra: rows[0].custom_code_enabled || rows[0].branch_of_site_id !== null ? null : await readOperatorDisable(tx, site.siteId),
     };
   });
 }
