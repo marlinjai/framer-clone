@@ -1428,6 +1428,33 @@ refused, so a site that is over the budget for any reason keeps saving and can a
 sentence asks for is exactly such a change. A branch's merge into main is not checked: it names code main's branch
 already kept alive, so it brings nothing new.
 
+**D115. An erase of personal data reaches the code itself, under a new hash.** D9 asked that an erase inside code
+rewrite the hash in every kept copy in one transaction. The erase now searches, beside the working copy, the versions
+and the branches, the code and stored title of every blob of the site (named or not, blocked or not) and the code
+and title of every proposal; they appear in the erase panel as "Custom code" and "Proposed custom code (not active)".
+A blob row is never changed (D27), so a block whose ticked code changed is written under the hash its new code gives
+with its old declaration, and every copy that names the old hash (working copy, every kept revision, every branch's
+working copy, base copy and the copy for "Undo this merge") is pointed at the new one, in the erase's own transaction.
+All old rows of rewritten blocks are deleted first and the new rows written after, so blocks whose rewritten code
+meets other code share one row, and a block whose new code is another rewritten block's old code still finds a row.
+The new row keeps the old one's age, so pruning (D113) treats it alike. **Taken-down code stays taken down:** the
+new row is blocked when the old row was blocked or its hash listed, and when the new hash is itself listed or blocked
+on any site's row (the check the guarded write makes), so an erase can never bring taken-down code back to life.
+**The erase never writes the takedown list** (security review of this part, B1): the new hash follows the owner's
+replacement, so listing it could take down another site's identical code that no operator judged. One residual is
+accepted: a blocked row under the new hash makes the guarded write refuse that exact code for new writes on any site
+(D3 reads blocked rows everywhere), while a block already serving it elsewhere keeps serving. A title-only change
+keeps the hash and is not reported as rewritten code. The audit writes `blob-erase` with both hashes and nothing else. A proposal is
+rewritten in place (it is never served, so there is no hash to follow). A block's `sha256` is a structural key now,
+so a search inside words for something like "cafe" can never cut into a hash and orphan a block. The erase refuses,
+with 422 and a sentence that holds no value, code it cannot take: a block left with no code ("erase with a
+replacement instead"), code past 256 KB, or a stored declaration that no longer parses; the refusal comes after the
+staleness checks, so a stale preview is told it is stale. After the erase the panel
+names each rewritten block, because code can stop working where a text in it changed. The box may still answer the
+old hash for up to six minutes (its 60 second lookup cache plus the 300 second HTTP cache, the same bound as for a
+disabled block), and no page names that hash any more; what a visitor's browser already loaded is outside the site's
+reach, as for any erased value.
+
 ## For Marlin
 
 **M2 done on 2026-11-02:** `lumitrausercontent.com` is registered at Cloudflare Registrar (through Lumitra Mail's buy-a-domain flow, in the Lumitra Mail workspace "Lumitra Infrastructure"), held by Marlin for Lumitra, expiring 2027-11-02 with auto-renew, privacy and transfer lock on. Its DNS zone is in Lumitra's Cloudflare account (zone id `2d1f61f852327bc23ef420fda0651121`, nameservers blair and lochlan at Cloudflare) with no records yet and no mail setup. Slice O1 can now bring the zone under Terraform and add the box's records. The Lumitra Mail order is deliberately left in "needs attention": never retry it, because a retry would try to make it a sending domain.

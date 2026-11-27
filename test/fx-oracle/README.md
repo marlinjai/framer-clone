@@ -30,5 +30,7 @@ itself runs on Lumitra Sites and lumitra-web is retired (steps R3 and R5 of the 
 The component draws from `Math.random` and from the clock, so its frame is not repeatable as shipped. The test
 makes it repeatable from outside, without changing the file: `Math.random` is replaced, just before the component
 loads, by the same seeded generator the layer uses (`mulberry32`, seed 1), and the clock is stopped
-(`performance.now` and the time each animation frame is given are both 0). It can be deleted with the test if the
+(`performance.now` and the time each animation frame is given are both 0). The component also leans toward the
+pointer under reduced motion, so a listener on the window stops pointer events before they reach it, and the test
+prints how many it stopped. It can be deleted with the test if the
 ring's reference ever moves into this repository.

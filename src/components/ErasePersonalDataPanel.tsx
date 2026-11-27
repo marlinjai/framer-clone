@@ -28,7 +28,10 @@ import { reloadDiscarding } from '@/lib/projects/autosave';
 type Location =
   | { kind: 'revision'; number: number }
   | { kind: 'working' }
-  | { kind: 'branch' | 'branch-base' | 'merge-undo'; branchId: string; name: string; branchStatus: 'open' | 'ready' | 'merged' | 'discarded' };
+  | { kind: 'branch' | 'branch-base' | 'merge-undo'; branchId: string; name: string; branchStatus: 'open' | 'ready' | 'merged' | 'discarded' }
+  // The code of a custom code block, and of a proposal an agent or the importer wrote (sandboxed custom code plan, D9).
+  | { kind: 'custom-code'; sha256: string; title: string }
+  | { kind: 'custom-code-proposal'; proposalId: string; title: string };
 
 interface Match {
   id: string;
@@ -62,6 +65,8 @@ interface SearchResult {
 
 interface EraseResult {
   erased: number;
+  /** Titles of the custom code blocks whose code was rewritten: the owner checks each still works. */
+  rewrittenCode?: string[];
   remaining: number | null;
   erasableRemaining: number | null;
 }
@@ -94,6 +99,7 @@ const AREA_LABELS: Record<string, string> = {
   domain: 'domain',
   experiment: 'A/B test',
   branch: 'branch name or review note',
+  'custom-code': 'custom code',
   other: 'other',
 };
 
@@ -121,6 +127,10 @@ function locationLabel(location: Location): string {
       return `Branch "${location.name}" (where it started from main)`;
     case 'merge-undo':
       return `Site before merging "${location.name}" (kept to undo the merge)`;
+    case 'custom-code':
+      return `Custom code "${location.title}"`;
+    case 'custom-code-proposal':
+      return `Proposed custom code "${location.title}" (not active)`;
   }
 }
 
@@ -128,6 +138,8 @@ function locationLabel(location: Location): string {
 function locationKey(location: Location): string {
   if (location.kind === 'working') return 'working';
   if (location.kind === 'revision') return `revision:${location.number}`;
+  if (location.kind === 'custom-code') return `custom-code:${location.sha256}`;
+  if (location.kind === 'custom-code-proposal') return `custom-code-proposal:${location.proposalId}`;
   return `${location.kind}:${location.branchId}`;
 }
 
@@ -206,7 +218,7 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
     });
 
   if (state.kind === 'done') {
-    const { erased, remaining, erasableRemaining } = state.result;
+    const { erased, remaining, erasableRemaining, rewrittenCode = [] } = state.result;
     return (
       <div className="space-y-3" role="status">
         <p className="text-sm font-medium">
@@ -220,6 +232,19 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
               : `A new search for this exact text still finds ${remaining} ${remaining === 1 ? 'match' : 'matches'}` +
                 (erasableRemaining ? `, ${erasableRemaining} of them erasable (not ticked, or added since).` : ', none of them erasable here.')}
         </p>
+        {rewrittenCode.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-sm">
+              The code of {rewrittenCode.length === 1 ? 'this custom code block was' : 'these custom code blocks were'} rewritten. Code can
+              stop working where a text in it changed, so check {rewrittenCode.length === 1 ? 'it' : 'each of them'} on the page:
+            </p>
+            <ul className="list-disc pl-5 text-sm">
+              {rewrittenCode.map((title, index) => (
+                <li key={`${index}:${title}`}>{title}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         <p className="text-sm text-muted-foreground">
           This editor still holds the old copy. Reload it before you go on; every other open tab of this project needs a reload too, and cannot save until then.
         </p>
@@ -239,7 +264,10 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
     listedErasable.filter((m) => chosen.has(m.id) && m.location.kind === 'revision').map((m) => (m.location as { number: number }).number),
   ).size;
   const inEditor = listedErasable.some((m) => chosen.has(m.id) && m.location.kind === 'working');
-  const inBranches = listedErasable.some((m) => chosen.has(m.id) && m.location.kind !== 'working' && m.location.kind !== 'revision');
+  const inCode = listedErasable.some((m) => chosen.has(m.id) && (m.location.kind === 'custom-code' || m.location.kind === 'custom-code-proposal'));
+  const inBranches = listedErasable.some(
+    (m) => chosen.has(m.id) && m.location.kind !== 'working' && m.location.kind !== 'revision' && m.location.kind !== 'custom-code' && m.location.kind !== 'custom-code-proposal',
+  );
 
   return (
     <div className="space-y-3">
@@ -380,7 +408,8 @@ export function ErasePersonalDataPanel({ projectId }: { projectId: string }) {
                     Erase {count} ticked {count === 1 ? 'match' : 'matches'}
                     {versions > 0 ? ` in ${versions} published ${versions === 1 ? 'version' : 'versions'}` : ''}
                     {inEditor ? (versions > 0 ? ' and the editor' : ' in the editor') : ''}
-                    {inBranches ? (versions > 0 || inEditor ? ' and its branches' : ' in its branches') : ''}? This cannot be
+                    {inBranches ? (versions > 0 || inEditor ? ' and its branches' : ' in its branches') : ''}
+                    {inCode ? (versions > 0 || inEditor || inBranches ? ' and its custom code' : ' in its custom code') : ''}? This cannot be
                     undone, and the live site changes at once.
                   </p>
                   <p className="text-xs text-muted-foreground">

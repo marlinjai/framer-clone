@@ -8,7 +8,7 @@
 // the generator the layer uses (its own source, from particleRingCore), and the clock is stopped:
 // performance.now and the time every animation frame is given are both 0, so each frame it draws, whichever
 // observer asks for it, is the frame at its starting time (7 seconds). Reduced motion is asked for on both
-// sides, as in F4's oracle. The component leans toward the pointer even then (this app's still does not), so
+// sides, as in F4's oracle. The component leans toward the pointer even then (this app's live layer does not), so
 // pointer events are stopped before they reach it, and counted.
 //
 // THIS APP'S SIDE is the real thing: a stored page published through the real repository, served by the real
@@ -230,7 +230,8 @@ describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserTy
     await page.goto(`${origin}/${slug(size, variant)}`);
     await page.waitForFunction(() => document.querySelector('[data-t="hero"]')?.getAttribute('data-fc-fx-state') === 'live', undefined, { timeout: 30_000 });
     await expect.poll(() => page.locator('[data-fc-fx-layer]').evaluate((layer) => getComputedStyle(layer).opacity), { timeout: 5000 }).toBe('1');
-    return settled(page, '[data-t="hero"] canvas', size, `${name}, this app, ${slug(size, variant)}`);
+    // The live layer's canvas (the ring's first still sits beside it until the layer's fade is over).
+    return settled(page, '[data-t="hero"] [data-fc-fx-layer] canvas', size, `${name}, this app, ${slug(size, variant)}`);
   };
 
   /** The ring as the component draws it, seeded and with the clock stopped, on a blank page. */

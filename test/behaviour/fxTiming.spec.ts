@@ -21,6 +21,12 @@ import { publishPages } from './site';
 const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
 const RUNS = 5;
 
+/**
+ * FX_TIMING_GPU=1: Chromium draws on the Mac's graphics card (Metal through ANGLE) instead of on the processor
+ * (SwiftShader, its default here), so the numbers are those of a real visitor's browser. WebKit always uses the card.
+ */
+const LAUNCH = process.env.FX_TIMING_GPU === '1' ? { args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] } : {};
+
 /** Where the numbers go (the runner keeps a test's console to itself): FX_TIMING_OUT, or test/behaviour/.out. */
 const OUT = process.env.FX_TIMING_OUT ?? path.join(__dirname, '.out', 'fx-timing.jsonl');
 const record = (line: unknown) => {
@@ -47,6 +53,8 @@ interface Run {
   loading: number | null;
   live: number | null;
   placeholder: number | null;
+  /** When the ring's own first frame was shown (src/lib/fxScene/ringStill.ts): the ring is visible from here. */
+  still: number | null;
   engineStart: number | null;
   engineEnd: number | null;
   engineBytes: number;
@@ -78,6 +86,8 @@ const RECORDER = () => {
     const state = box?.getAttribute('data-fc-fx-state');
     if (state && marks[state] === undefined) marks[state] = performance.now();
     if (box?.querySelector('[data-fc-fx-placeholder]') && marks.placeholder === undefined) marks.placeholder = performance.now();
+    // The ring's own first frame (src/lib/fxScene/ringStill.ts): from here the visitor sees the ring.
+    if (box?.querySelector('[data-fc-fx-ring-still]') && marks.still === undefined) marks.still = performance.now();
   };
   new MutationObserver(look).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-fc-fx-state'] });
 };
@@ -95,7 +105,7 @@ const median = (values: (number | null)[]) => {
 describe.each(ENGINES)('in %s', (name, engine) => {
   let browser: Browser;
   beforeAll(async () => {
-    browser = await engine.launch();
+    browser = await engine.launch(name === 'chromium' ? LAUNCH : {});
   });
   afterAll(async () => {
     await browser?.close();
@@ -137,13 +147,14 @@ describe.each(ENGINES)('in %s', (name, engine) => {
       loading: raw.marks.loading ?? null,
       live: raw.marks.live ?? null,
       placeholder: raw.marks.placeholder ?? null,
+      still: raw.marks.still ?? null,
       engineStart: raw.engineStart,
       engineEnd: raw.engineEnd,
       engineBytes: raw.engineBytes,
       longTasks: raw.tasks.length,
       longestTask: Math.round(Math.max(0, ...raw.tasks)),
     };
-    for (const key of ['waiting', 'loading', 'live', 'placeholder', 'engineStart', 'engineEnd'] as const) if (run[key] !== null) run[key] = Math.round(run[key]!);
+    for (const key of ['waiting', 'loading', 'live', 'placeholder', 'still', 'engineStart', 'engineEnd'] as const) if (run[key] !== null) run[key] = Math.round(run[key]!);
     record(run);
     return run;
   };
@@ -169,6 +180,9 @@ describe.each(ENGINES)('in %s', (name, engine) => {
         engineBytes: median(of.map((r) => r.engineBytes)),
         live: median(of.map((r) => r.live)),
         liveAfterLoad: median(of.map((r) => (r.live === null ? null : r.live - r.load))),
+        // The ring is seen from its still on, or from the live scene where there is no still.
+        ringSeen: median(of.map((r) => r.still ?? r.live)),
+        ringSeenAfterLcp: median(of.map((r) => (r.lcp === null ? null : (r.still ?? r.live ?? 0) - r.lcp))),
         engineStart: median(of.map((r) => r.engineStart)),
         placeholderShown: of.filter((r) => r.placeholder !== null).length,
         longestTask: median(of.map((r) => r.longestTask)),

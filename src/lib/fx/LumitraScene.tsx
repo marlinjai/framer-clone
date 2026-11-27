@@ -45,6 +45,7 @@ import type { Camera, Object3D } from "three";
 import { planPipeline } from "./pipeline";
 import { MAIN_PRIORITY, MainRender, ScopedGroup, setChannel, useHeldComposer } from "./effects/ScopedGroup";
 import { getLayerDefinition } from "./registry";
+import { isTouchLikely, liveDprRange } from "./pixelRatio";
 import { FrameRateMonitor } from "./FrameRateMonitor";
 import type {
   Layer,
@@ -232,16 +233,6 @@ function readPrefersReducedMotion(): boolean {
 }
 
 /**
- * Coarse-pointer (touch) heuristic. We don't ship Fluid on phones, and we
- * pre-clamp the dpr cap there even before PerformanceMonitor fires. Same
- * predicate Tailwind / drei use; safe in SSR (returns false).
- */
-function isMobileLikely(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
-}
-
-/**
  * One-shot WebGL capability probe. Returns false when no context can be
  * created (GPU disabled/crashed, software rendering off, ancient browser). We
  * create a throwaway context and immediately release it so the probe itself
@@ -307,7 +298,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   // Performance downshift state (sticky). Initialized true on mobile-class
   // pointers so we don't pay the "decline -> downshift" cost on devices that
   // were never going to clear the 60fps bar anyway.
-  const [perfLow, setPerfLow] = useState<boolean>(() => isMobileLikely());
+  const [perfLow, setPerfLow] = useState<boolean>(() => isTouchLikely());
 
   // A content layer hands over its object through a ref callback written
   // inline, so React calls it with `null` and then with the same object again
@@ -375,7 +366,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   const wrapped = scoped || onProbe !== undefined;
 
   // A still frame is drawn at exactly the ratio it was asked for (its size is checked against it); only a live scene steps down.
-  const dprClamp = perfLow && !still ? ([1, 1] as [number, number]) : config.dpr;
+  const dprClamp = still ? config.dpr : liveDprRange(config.dpr, perfLow);
 
   return (
     <div
