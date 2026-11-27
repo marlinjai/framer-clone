@@ -1479,8 +1479,14 @@ hand-run SQL on production; it reverses all three (list, rows, `blob-unblock` pe
 **Code an erase rewrote** (security review of part 3a, finding 3): an erase carries a block to the rewritten hash
 (D115), so a block or unblock also follows the `blob-erase` lines (`detail.replaces`) from the hash, through later
 erases, to the rewritten rows that still exist, and blocks or unblocks each on its own site with an audit line that
-says which hash it `follows`. It never lists their hashes (the erase never lists, B1), and an unblock leaves a
-rewritten row blocked when its own hash is listed or blocked on a site the chain never reached. **Accepted residual**
+says which hash it `follows`. The first step may be on any site (`replaces` is always a hash the erasing site held);
+every later step stays on that site, so another site's identical code and its own erases are never reached (second
+review, R2-2). It never lists their hashes (the erase never lists, B1). An unblock leaves a rewritten row blocked when
+its own hash, or any hash it was rewritten from on its site other than the one unblocked (a row may have several
+parents), is listed or blocked on a row outside this chain (R2-1); erring that way leaves a row blocked, and the
+answer names what it unblocked. More than 256 erase lines from one hash refuse the whole takedown with 409
+`derived_chain_too_long` and change nothing, rather than follow part of a chain (M1). An erase that commits between
+the chain's read and the site locks is missed like the race below, and repeating the call picks it up (M2). **Accepted residual**
 (finding 4): a guarded write on another site that had not committed when the block's lock query began can still
 write the same code there; that row is not marked, gets no audit line, is not in the answer, can be pruned like any
 unnamed blob and counts in that site's budget. The list is what the box, the published page and every later write
@@ -1494,7 +1500,9 @@ site ... Reason given: ..."), through the status read's `disabledByLumitra`, whi
 line written by an operator is a `disable` that was not lifted. Lines written by the site's own people never clear
 it (security review of part 3a, finding 1: a stale "switch off" press, or C7's enable, must not end a takedown), and
 an operator line is written one millisecond after the site's latest operator line when the clock would put it
-earlier, so a lift never sorts before its disable. **Site settings** shows nothing yet because it has no custom
+earlier, so a lift never sorts before its disable. The read prefilters on actors starting with `operator` and then checks
+the label's exact form; a site's own people write their user id as actor (C4's writes, and C7's enable must too),
+which never starts with that word (second review, N1). **Site settings** shows nothing yet because it has no custom
 code section before C7's enable dialog; C7 shows the same reason there. **Lifting:** `lift-site` writes a `disable`
 line with `lifted: true` (the audit's actions are fixed by a CHECK and nothing is switched on, so it is no `enable`),
 leaves the switch off, and writes nothing when no operator disable stands. **For C7:** the enable step must refuse

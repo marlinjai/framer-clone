@@ -73,48 +73,99 @@ export type SiteLiftResult =
 
 const TX_OPTIONS = { maxWait: 5_000, timeout: 15_000 } as const;
 
-/** At most this many rewritten rows are followed from one hash; an erase chain longer than that is not real. */
-const MAX_DERIVED = 64;
+/**
+ * At most this many erase lines are walked from one hash (live or not: a chain passes through rows a later erase
+ * deleted). Past it the takedown refuses as a whole rather than block or unblock part of a chain silently.
+ */
+const MAX_CHAIN_LINES = 256;
+
+/** The erase chain from a hash is longer than a takedown follows; nothing was changed. */
+export class DerivedChainTooLongError extends Error {
+  constructor() {
+    super(`more than ${MAX_CHAIN_LINES} personal-data erase lines descend from this hash`);
+    this.name = 'DerivedChainTooLongError';
+  }
+}
 
 interface LockedSite { id: string; workspace_id: string; tenant_group_id: string }
 
+const pairKey = (siteId: string, sha256: string) => `${siteId}:${sha256}`;
+
 /**
- * The rows a personal-data erase rewrote this hash into, on the site where it happened, followed through later
- * erases (an erase writes `blob-erase` under the new hash with `detail.replaces` naming the old one, D115). Only
- * rows that still exist are returned.
+ * The rows a personal-data erase rewrote this hash into, followed through later erases ON THE SAME SITE (an erase
+ * writes `blob-erase` on its own site under the new hash, with `detail.replaces` naming the old one, D115). The first
+ * step may be on any site, because `replaces` is always a hash the erasing site itself held; every later step stays
+ * on that site, so another site's identical code, and its own erases, are never reached (second review, R2-2). Only
+ * rows that still exist are returned; rows a later erase deleted are walked through, not returned.
  */
 async function derivedRows(tx: Tx, sha256: string): Promise<{ siteId: string; sha256: string }[]> {
-  const found = new Map<string, { siteId: string; sha256: string }>();
-  const seen = new Set<string>([sha256]);
-  let frontier = [sha256];
-  while (frontier.length > 0 && found.size < MAX_DERIVED) {
+  const visited = new Set<string>();
+  let walked = 0;
+  let frontier: { siteId: string | null; sha256: string }[] = [{ siteId: null, sha256 }];
+  while (frontier.length > 0) {
     const lines = await tx.customCodeAudit.findMany({
-      where: { action: 'blob-erase', OR: frontier.map((from) => ({ detail: { path: ['replaces'], equals: from } })) },
+      where: {
+        action: 'blob-erase',
+        OR: frontier.map((from) => ({
+          ...(from.siteId === null ? {} : { siteId: from.siteId }),
+          detail: { path: ['replaces'], equals: from.sha256 },
+        })),
+      },
       select: { siteId: true, sha256: true },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      take: MAX_DERIVED,
+      take: MAX_CHAIN_LINES + 1,
     });
-    const next: string[] = [];
+    walked += lines.length;
+    if (walked > MAX_CHAIN_LINES) throw new DerivedChainTooLongError();
+    const next: { siteId: string; sha256: string }[] = [];
     for (const line of lines) {
-      if (!line.sha256) continue;
-      const key = `${line.siteId}:${line.sha256}`;
-      if (found.has(key) || line.sha256 === sha256) continue;
-      found.set(key, { siteId: line.siteId, sha256: line.sha256 });
-      if (!seen.has(line.sha256)) {
-        seen.add(line.sha256);
-        next.push(line.sha256);
-      }
+      if (!line.sha256 || line.sha256 === sha256) continue;
+      const key = pairKey(line.siteId, line.sha256);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      next.push({ siteId: line.siteId, sha256: line.sha256 });
     }
     frontier = next;
   }
-  const pairs = [...found.values()];
-  if (pairs.length === 0) return [];
+  if (visited.size === 0) return [];
+  const pairs = [...visited].map((key) => {
+    const at = key.indexOf(':');
+    return { siteId: key.slice(0, at), sha256: key.slice(at + 1) };
+  });
   const existing = await tx.customCodeBlob.findMany({
     where: { OR: pairs.map((pair) => ({ siteId: pair.siteId, sha256: pair.sha256 })) },
     select: { siteId: true, sha256: true },
   });
-  const live = new Set(existing.map((row) => `${row.siteId}:${row.sha256}`));
-  return pairs.filter((pair) => live.has(`${pair.siteId}:${pair.sha256}`));
+  const live = new Set(existing.map((row) => pairKey(row.siteId, row.sha256)));
+  return pairs.filter((pair) => live.has(pairKey(pair.siteId, pair.sha256)));
+}
+
+/**
+ * Every hash a row was rewritten FROM on its own site, through all its `blob-erase` lines (a row an erase met may
+ * have several parents, R2-1 (b)), excluding `root`. An unblock of `root` leaves the row blocked when any of these is
+ * still taken down, because the erase carried that block to it too (R2-1 (a)).
+ */
+async function ancestorsOnSite(tx: Tx, siteId: string, sha256: string, root: string): Promise<Set<string>> {
+  const ancestors = new Set<string>();
+  let frontier = [sha256];
+  let walked = 0;
+  while (frontier.length > 0) {
+    const lines = await tx.customCodeAudit.findMany({
+      where: { action: 'blob-erase', siteId, sha256: { in: frontier } },
+      select: { detail: true },
+      take: MAX_CHAIN_LINES + 1,
+    });
+    walked += lines.length;
+    if (walked > MAX_CHAIN_LINES) throw new DerivedChainTooLongError();
+    const next: string[] = [];
+    for (const line of lines) {
+      const from = line.detail && typeof line.detail === 'object' && !Array.isArray(line.detail) ? (line.detail as Record<string, unknown>).replaces : null;
+      if (typeof from !== 'string' || from === root || from === sha256 || ancestors.has(from)) continue;
+      ancestors.add(from);
+      next.push(from);
+    }
+    frontier = next;
+  }
+  return ancestors;
 }
 
 /** Locks, in id order, every site holding a row of this hash plus the given sites, and returns their tenancy. */
@@ -174,16 +225,19 @@ async function changeHash(tx: Tx, mode: 'block' | 'unblock', sha256: string, act
     const site = byId.get(row.siteId);
     if (!site) continue; // The site went between the read and the lock; its rows went with it.
     if (mode === 'unblock') {
-      // A rewritten row stays blocked when its own hash is taken down: listed, or blocked on a site this hash
-      // never reached (the erase carries that block too, D115).
-      const ownBlock = await tx.$queryRaw<{ found: number }[]>`
-        SELECT 1 AS found FROM public.custom_code_blocked_hashes h WHERE h.sha256 = ${row.sha256}
+      // A rewritten row stays blocked when it is taken down for another reason than this hash: its own hash or any
+      // hash it was rewritten from on its site (other than this one) is listed or blocked on some row (the erase
+      // carries those blocks too, D115). Erring this way leaves a row blocked; the answer names what it unblocked.
+      const others = [row.sha256, ...(await ancestorsOnSite(tx, row.siteId, row.sha256, sha256))];
+      const otherBlock = await tx.$queryRaw<{ found: number }[]>`
+        SELECT 1 AS found FROM public.custom_code_blocked_hashes h WHERE h.sha256 = ANY(${others}::text[])
         UNION ALL
         SELECT 1 FROM public.custom_code_blobs b
-         WHERE b.sha256 = ${row.sha256} AND b.blocked_at IS NOT NULL
-           AND NOT (b.site_id = ANY(${derived.filter((d) => d.sha256 === row.sha256).map((d) => d.siteId)}::text[]))
+         WHERE b.sha256 = ANY(${others}::text[]) AND b.blocked_at IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM unnest(${derived.map((d) => d.siteId)}::text[], ${derived.map((d) => d.sha256)}::text[]) AS d(site_id, sha256)
+                            WHERE d.site_id = b.site_id AND d.sha256 = b.sha256)
         LIMIT 1`;
-      if (ownBlock.length > 0) continue;
+      if (otherBlock.length > 0) continue;
     }
     const changed = await tx.customCodeBlob.updateMany({
       where: { siteId: row.siteId, sha256: row.sha256, blockedAt: mode === 'block' ? null : { not: null } },

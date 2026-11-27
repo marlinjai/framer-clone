@@ -12,7 +12,7 @@ vi.mock('@/server/domains/service', () => ({ getDomainService: () => ({ recheckD
 import { POST } from '../route';
 
 const TOKEN = 'y'.repeat(40);
-const KEYS = ['CUSTOM_DOMAIN_SYNC_TOKEN', 'EDITOR_HOST', 'CUSTOM_DOMAIN_TARGET_HOST', 'CUSTOM_DOMAIN_TARGET_IPV4'];
+const KEYS = ['CUSTOM_DOMAIN_SYNC_TOKEN', 'CUSTOM_CODE_OPERATOR_TOKEN', 'EDITOR_HOST', 'CUSTOM_DOMAIN_TARGET_HOST', 'CUSTOM_DOMAIN_TARGET_IPV4'];
 const saved: Record<string, string | undefined> = {};
 
 function req(opts: { host?: string; auth?: string | null } = {}): Request {
@@ -55,7 +55,6 @@ describe('POST /api/internal/custom-domains/recheck', () => {
     // The custom code operator's token opens only its own route (D116), never a host timer's.
     process.env.CUSTOM_CODE_OPERATOR_TOKEN = 'o'.repeat(40);
     expect((await POST(req({ auth: `Bearer ${'o'.repeat(40)}` }))).status).toBe(401);
-    delete process.env.CUSTOM_CODE_OPERATOR_TOKEN;
     expect((await POST(req({ host: 'www.example.com' }))).status).toBe(404);
     delete process.env.CUSTOM_DOMAIN_SYNC_TOKEN;
     expect((await POST(req())).status).toBe(503);

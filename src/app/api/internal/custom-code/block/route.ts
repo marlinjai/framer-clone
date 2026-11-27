@@ -24,6 +24,7 @@
 //   - malformed body                  -> 400 bad_json / bad_body / bad_label
 //   - a site action on no such site   -> 404 site_not_found
 //   - a site action on a branch       -> 400 branch_site
+//   - an erase chain too long to follow -> 409 derived_chain_too_long, nothing changed
 //   - success                         -> 200 with what changed (sites by id, never code)
 //   - a database failure              -> 500, the transaction rolled back
 //
@@ -38,6 +39,7 @@ import {
   OPERATOR_LABEL_PATTERN,
   TAKEDOWN_REASON_MAX,
   blockCustomCodeHash,
+  DerivedChainTooLongError,
   disableCustomCodeForSite,
   liftCustomCodeDisable,
   unblockCustomCodeHash,
@@ -92,6 +94,9 @@ export async function POST(req: Request): Promise<Response> {
     console.error(`[custom code] takedown: ${body.action} ${result.sha256} by ${label}, list ${result.listChanged ? 'changed' : 'unchanged'}, ${result.sites.length} site row(s), ${result.derived.length} rewritten row(s)`);
     return Response.json({ action: body.action, sha256: result.sha256, listChanged: result.listChanged, sites: result.sites, derived: result.derived }, { headers: NO_STORE });
   } catch (err) {
+    if (err instanceof DerivedChainTooLongError) {
+      return jsonError('derived_chain_too_long', 'more personal-data erase rewrites descend from this hash than a takedown follows; nothing was changed. Take down the rewritten hashes one by one (the custom code audit names them under blob-erase).', 409);
+    }
     console.error(`[custom code] takedown ${body.action} failed:`, err);
     return jsonError('takedown_failed', 'the takedown failed and nothing was changed; try again', 500);
   }

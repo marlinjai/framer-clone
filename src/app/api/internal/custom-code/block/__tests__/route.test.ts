@@ -154,6 +154,14 @@ describe('POST /api/internal/custom-code/block: the actions', () => {
     expect((await POST(req({ action: 'lift-site', siteId: 'branch-1', reason: 'x' }))).status).toBe(400);
   });
 
+  it('answers 409 when the erase chain is too long to follow, with nothing changed', async () => {
+    const { DerivedChainTooLongError } = await import('@/server/customCode/takedown');
+    blockCustomCodeHash.mockRejectedValue(new DerivedChainTooLongError());
+    const res = await POST(req(block));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: { code: 'derived_chain_too_long' } });
+  });
+
   it('answers 500 on a database failure, with nothing changed', async () => {
     blockCustomCodeHash.mockRejectedValue(new Error('connection reset'));
     const res = await POST(req(block));
