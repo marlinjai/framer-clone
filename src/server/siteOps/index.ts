@@ -313,10 +313,13 @@ export async function getPage(
   if (!allowed.ok) return allowed;
   const loaded = await load(deps, caller, input.siteId);
   if (!loaded.ok) return loaded;
-  const page = loaded.value.project.pages.get(input.pageId) as PageModelType | undefined;
+  const { project } = loaded.value;
+  // A site page, or the page of one of its components (getSite gives each component's pageId).
+  const page = (project.pages.get(input.pageId)
+    ?? Array.from(project.components.values(), (definition) => definition.page).find((candidate) => candidate.id === input.pageId)) as PageModelType | undefined;
   if (!page) return fail({ code: 'page_not_found', message: `no page "${input.pageId}" on this site` });
   try {
-    return ok({ ...pageOutline(page, { cursor: input.cursor, maxChars: input.maxChars }), version: loaded.value.version });
+    return ok({ ...pageOutline(page, { cursor: input.cursor, maxChars: input.maxChars, components: project.components }), version: loaded.value.version });
   } catch (err) {
     return fail({ code: 'invalid_request', message: err instanceof Error ? err.message : 'bad cursor' });
   }

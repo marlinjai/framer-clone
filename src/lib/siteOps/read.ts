@@ -23,6 +23,9 @@ import { buildSchemaDocs } from '@/lib/ai/pageGen/schemaDocs';
 import { tokenReference, type ThemeToken } from '@/lib/site/theme';
 import { storedRulesOf, isDefinitionRule } from '@/lib/rules/rules';
 import { keyedBreakpoints, rekeyResponsive } from './breakpoints';
+import { isPlacementType, type PlacementProps } from '@/lib/components/placement';
+import { parseInputValue, type InputDefinition } from '@/lib/components/inputs';
+import type { ComponentDefinitionInstance } from '@/models/ComponentDefinitionModel';
 import { MAX_BATCH_OPS } from './types';
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -47,8 +50,57 @@ export interface SiteOverview {
     tokens: Array<{ id: string; name: string; kind: string; reference: string; light?: string; dark?: string; family?: string }>;
     document: Record<string, string>;
   };
-  components: Array<{ id: string; name: string; inputs: string[]; states: string[] }>;
+  components: ComponentOverview[];
   notFoundPageId: string | null;
+}
+
+/** One reusable component as an agent reads it. */
+export interface ComponentOverview {
+  id: string;
+  name: string;
+  description?: string;
+  /** The definition's own page: getPage reads it, and node ids on it are the definition's. */
+  pageId: string;
+  /** What each placement may set, whole; a default per breakpoint is keyed by the definition page's keys. */
+  inputs: InputDefinition[];
+  states: Array<{ id: string; name: string; kind: string }>;
+  /** How many placements use it, on every page and inside other components. */
+  placements: number;
+}
+
+function breakpointKeysOf(page: PageModelType): Map<string, string> {
+  return new Map(keyedBreakpoints(page).map((b) => [b.id, b.key] as const));
+}
+
+function placementCounts(project: ProjectModelType): Map<string, number> {
+  const counts = new Map<string, number>();
+  const walk = (node: ComponentInstance) => {
+    if (isPlacementType(node.type)) {
+      const id = (node.props as Partial<PlacementProps>).component;
+      if (typeof id === 'string') counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    for (const child of node.children as ComponentInstance[]) walk(child);
+  };
+  const pages = [...(Array.from(project.pages.values()) as PageModelType[]), ...Array.from(project.components.values(), (d) => d.page as PageModelType)];
+  for (const page of pages) {
+    walk(page.appComponentTree as ComponentInstance);
+    for (const floating of page.canvasNodes.values() as Iterable<ComponentInstance>) if (!floating.isViewportNode) walk(floating);
+  }
+  return counts;
+}
+
+function componentOverview(definition: ComponentDefinitionInstance, placements: number): ComponentOverview {
+  const page = definition.page as PageModelType;
+  const keys = breakpointKeysOf(page);
+  return {
+    id: definition.id as string,
+    name: definition.name,
+    ...(definition.description ? { description: definition.description } : {}),
+    pageId: page.id,
+    inputs: (definition.inputs ?? []).map((input) => (input.default === undefined ? input : { ...input, default: rekeyResponsive(input.default, keys) })),
+    states: (definition.states ?? []).map(({ id, name, kind }) => ({ id, name, kind })),
+    placements,
+  };
 }
 
 function countNodes(node: ComponentInstance): number {
@@ -86,12 +138,10 @@ export function siteOverview(project: ProjectModelType, version: number, name?: 
       tokens: liveTokens(site.theme.tokens),
       document: { ...site.theme.document } as Record<string, string>,
     },
-    components: Array.from(project.components.values(), (definition) => ({
-      id: definition.id as string,
-      name: definition.name,
-      inputs: (definition.inputs ?? []).map((input) => input.name),
-      states: (definition.states ?? []).map((state) => state.name),
-    })),
+    components: (() => {
+      const counts = placementCounts(project);
+      return Array.from(project.components.values(), (definition) => componentOverview(definition, counts.get(definition.id as string) ?? 0));
+    })(),
     notFoundPageId: site.notFoundPageId || null,
   };
 }
@@ -119,7 +169,61 @@ export interface OutlineNode {
   rules?: string[];
   /** Attributes other than style, text, rules and the photo credit, as short values. */
   props?: Record<string, unknown>;
+  /** On a component placement: which component, and the value of each input here. */
+  component?: PlacementOutline;
   childCount: number;
+}
+
+/**
+ * Where an input's value on a placement comes from: its own value, the component's
+ * default, data (`bound`, the expression says which), or a stored value the input
+ * refuses (`refused`: the default shows instead).
+ */
+export type InputValueSource = 'own' | 'default' | 'bound' | 'refused';
+
+export interface PlacementInputValue {
+  id: string;
+  name: string;
+  type: string;
+  source: InputValueSource;
+  /** The value that shows (not for a bound one, whose value is only known from data). Per breakpoint keyed by key. Never cut. */
+  value?: unknown;
+  expression?: string;
+  reason?: string;
+}
+
+export interface PlacementOutline {
+  definitionId: string;
+  name?: string;
+  /** The definition is gone: the placement shows nothing. */
+  missing?: true;
+  inputs?: PlacementInputValue[];
+}
+
+function placementOutline(
+  node: ComponentInstance,
+  idToKey: ReadonlyMap<string, string>,
+  components: ProjectModelType['components'] | undefined,
+): PlacementOutline {
+  const stored = node.props as Partial<PlacementProps>;
+  const definitionId = typeof stored.component === 'string' ? stored.component : '';
+  const definition = components?.get(definitionId) as ComponentDefinitionInstance | undefined;
+  if (!definition) return { definitionId, missing: true };
+  const defaultKeys = breakpointKeysOf(definition.page as PageModelType);
+  const own = (isObj(stored.inputs) ? getPlain(stored.inputs) : {}) as Record<string, unknown>;
+  const bindings = (node.bindings ?? {}) as Record<string, { expression?: unknown } | undefined>;
+  const inputs = (definition.inputs ?? []).map((input): PlacementInputValue => {
+    const base = { id: input.id, name: input.name, type: input.type };
+    const fallback = input.default === undefined ? {} : { value: rekeyResponsive(input.default, defaultKeys) };
+    const binding = bindings[`input.${input.id}`];
+    if (binding) return { ...base, source: 'bound', ...(typeof binding.expression === 'string' ? { expression: binding.expression } : {}) };
+    const value = own[input.id];
+    if (value === undefined) return { ...base, source: 'default', ...fallback };
+    const parsed = parseInputValue(input, value);
+    if (!parsed.ok) return { ...base, source: 'refused', reason: parsed.reason, ...fallback };
+    return { ...base, source: 'own', value: rekeyResponsive(value, idToKey) };
+  });
+  return { definitionId, name: definition.name, inputs };
 }
 
 export interface PageOutline {
@@ -145,7 +249,14 @@ function excerpt(value: unknown, max: number): unknown {
   return value;
 }
 
-function outlineNode(node: ComponentInstance, parentId: string | null, depth: number, idToKey: Map<string, string>): OutlineNode {
+function outlineNode(
+  node: ComponentInstance,
+  parentId: string | null,
+  depth: number,
+  idToKey: Map<string, string>,
+  components?: ProjectModelType['components'],
+): OutlineNode {
+  const placement = isPlacementType(node.type);
   const props = (node.props ?? {}) as Record<string, unknown>;
   const out: OutlineNode = { id: node.id, parentId, depth, tag: node.type, childCount: node.children.length };
   if (node.label) out.label = node.label as string;
@@ -160,9 +271,12 @@ function outlineNode(node: ComponentInstance, parentId: string | null, depth: nu
   const rest: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(props)) {
     if (OWN_PROPS.has(k) || k.startsWith('data-credit')) continue;
+    // A placement's values are under `component`, whole and keyed by breakpoint key.
+    if (placement && (k === 'inputs' || k === 'component')) continue;
     rest[k] = excerpt(isObj(v) ? getPlain(v) : v, VALUE_EXCERPT);
   }
   if (Object.keys(rest).length > 0) out.props = rest;
+  if (placement) out.component = placementOutline(node, idToKey, components);
   return out;
 }
 
@@ -180,7 +294,10 @@ function getPlain(value: Record<string, unknown>): unknown {
  * nextCursor) on, as many nodes as fit `maxChars`. Throws on a cursor that names
  * no node of the page, so a caller is never silently sent back to the start.
  */
-export function pageOutline(page: PageModelType, options: { cursor?: string; maxChars?: number } = {}): PageOutline {
+export function pageOutline(
+  page: PageModelType,
+  options: { cursor?: string; maxChars?: number; components?: ProjectModelType['components'] } = {},
+): PageOutline {
   const breakpoints = keyedBreakpoints(page);
   const idToKey = new Map(breakpoints.map((b) => [b.id, b.key] as const));
   const flat: Array<{ node: ComponentInstance; parentId: string | null; depth: number }> = [];
@@ -201,7 +318,7 @@ export function pageOutline(page: PageModelType, options: { cursor?: string; max
   let index = start;
   for (; index < flat.length; index++) {
     const { node, parentId, depth } = flat[index];
-    const entry = outlineNode(node, parentId, depth, idToKey);
+    const entry = outlineNode(node, parentId, depth, idToKey, options.components);
     const size = JSON.stringify(entry).length + 1;
     // Always at least one node, so a single huge node still moves the cursor on.
     if (nodes.length > 0 && used + size > budget) break;
@@ -263,9 +380,26 @@ Operations:
 - {op:"addRule", nodeId, rule:{selector:"& > li", at?:["@media (...)"], style:{...}}}
 - {op:"setTheme", theme:{mode?, tokens:[...], document:{backgroundColor?, color?, fontFamily?}}}: the whole theme;
   a style refers to a token as var(--fc-t-<id>).
-- {op:"placeComponent", pageId, definitionId, to?, ref?}: places one of the components getSite lists, at the end of
-  the page root unless "to" ({parentId, index?} or {siblingId, position}) says where. The placement shows the
-  component's defaults: no operation sets its values, and none makes or changes a component.
+- {op:"placeComponent", pageId, definitionId, to?, inputs?, ref?}: places one of the components getSite lists, at the
+  end of the page root unless "to" ({parentId, index?} or {siblingId, position}) says where. inputs gives the
+  placement values of its own, by input id ({"title": "Opening hours"}); every input left out shows its default.
+- {op:"setComponentInputs", nodeId, values:{inputId: value or null}}: sets values of one placement; null goes back to
+  the component's default.
+
+Components: getSite lists each reusable component with its inputs (id, name, type, default, and options, limits or
+list fields where the type has them) and how many placements use it. A placement is a "#component" node: its content
+and style live in the component, so updateStyle, setProps and children do not apply to it; what differs per
+placement is its input values. getPage shows on each placement "component": {definitionId, name, inputs:[{id, name,
+type, source, value}]}, where source is "own" (its own value), "default", "bound" (the value comes from data, the
+expression says which; a value set here would never show, so it is refused) or "refused" (a stored value the input
+refuses; the default shows). A value is checked against its input's type, as in the editor: text a string, number a
+finite number within its limits (stored as given, the unit added when it renders), toggle true or false, color a CSS
+colour or a map of breakpoint key to colour, image an address or {src, alt} (https, http or a site path; not an
+Unsplash photo, whose credit a placement cannot keep), link and file a safe address, choice one of its option values,
+richtext a string or {runs:[{text, marks?, href?}]}, date an ISO 8601 date, border, shadow and transition a CSS value,
+cursor a cursor keyword, list an array of items keyed by field id, gallery an array of images. An event input holds no
+value. An unknown input id, or a value its input refuses, refuses the operation with the reason. No operation yet
+makes or changes a component itself. The component's own page (pageId in getSite) can be read with getPage.
 
 Workflow: describeVocabulary once, getSite, getPage for the page you edit, then small batches; previewUrl to look at
 the result; publish when it is right.`;

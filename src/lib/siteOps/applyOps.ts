@@ -43,7 +43,8 @@ import { isVoidTag } from '@/lib/drag/voidTags';
 import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { isProductPageSlug, productPagePath } from '@/lib/pages/slug';
 import { BASE_KEY, isAcceptedStyleKey, styleKeyFrom, type BreakpointKey } from '@/lib/ai/pageGen/schema';
-import { validateGeneration, type GeneratedNodeSnapshot, type ImageRequest } from '@/lib/ai/pageGen/validate';
+import { isUnsplashPhotoUrl, validateGeneration, type GeneratedNodeSnapshot, type ImageRequest } from '@/lib/ai/pageGen/validate';
+import type { InputDefinition } from '@/lib/components/inputs';
 import { breakpointKeyMap, toEditorSnapshot } from '@/lib/ai/pageGen/apply';
 import { STOCK_CREDIT_ATTRS, isSameUnsplashPhoto } from '@/lib/ai/pageGen/stockCredit';
 import { siteAddressOf, siteContextFromSettings } from '@/lib/ai/pageGen/promptSections/siteContext';
@@ -221,6 +222,65 @@ function creditOf(props: Record<string, unknown> | undefined): Record<string, un
   const out: Record<string, unknown> = {};
   for (const key of [...STOCK_CREDIT_ATTRS, 'title'] as const) {
     if (props && props[key] !== undefined) out[key] = props[key];
+  }
+  return out;
+}
+
+/**
+ * The values an agent gives a placement, as `ProjectModel.setPlacementInputs` takes
+ * them: null becomes undefined (back to the default), a colour's responsive map is
+ * keyed by the holder page's breakpoint ids instead of the agent's keys. Refuses
+ * what the model would accept but nothing would read or show rightly: an unknown
+ * input, an event, a value on an input bound to data, an Unsplash photo (a
+ * placement has nowhere to keep its credit). The model checks each value itself.
+ */
+function placementChanges(
+  definition: { name: string; inputs: readonly InputDefinition[] },
+  holder: PageModelType,
+  values: Readonly<Record<string, unknown>>,
+  bindings: Readonly<Record<string, unknown>> = {},
+  allowReset = true,
+): Record<string, unknown> {
+  const changes: Record<string, unknown> = {};
+  for (const [inputId, value] of Object.entries(values)) {
+    const input = definition.inputs.find((candidate) => candidate.id === inputId);
+    if (!input) {
+      const known = definition.inputs.map((candidate) => `${candidate.id} (${candidate.name})`).join(', ') || 'none';
+      throw new OpRefused(`${definition.name} has no input ${JSON.stringify(inputId)}; its inputs are ${known}`);
+    }
+    if (value === null) {
+      if (!allowReset) throw new OpRefused(`${input.id}: null resets a value, and a new placement has none to reset; leave it out for the default`);
+      changes[inputId] = undefined;
+      continue;
+    }
+    if (input.type === 'event') throw new OpRefused(`${input.id} is an event input: it holds no value`);
+    if (bindings[`input.${inputId}`] !== undefined) {
+      throw new OpRefused(`${input.id} is bound to data on this placement (the value from data wins), so a value set here would never show`);
+    }
+    const sources = input.type === 'image' ? [value] : input.type === 'gallery' && Array.isArray(value) ? value : [];
+    for (const entry of sources) {
+      const src = typeof entry === 'string' ? entry : isObj(entry) ? entry.src : undefined;
+      if (typeof src === 'string' && isUnsplashPhotoUrl(src)) {
+        throw new OpRefused(`${input.id}: an Unsplash photo needs its credit beside it, which a placement cannot hold; upload the picture, or use an img with setProps`);
+      }
+    }
+    changes[inputId] = input.type === 'color' && isObj(value) ? colourMapFor(holder, input.id, value) : value;
+  }
+  return changes;
+}
+
+/** A colour per breakpoint key, as the stored map per breakpoint id of the page the placement is on. */
+function colourMapFor(page: PageModelType, inputId: string, value: Record<string, unknown>): Record<string, unknown> {
+  const keyed = keyedBreakpoints(page);
+  const out: Record<string, unknown> = {};
+  for (const [name, entry] of Object.entries(value)) {
+    const wanted = name.trim().toLowerCase();
+    const breakpoint = keyed.find((b) => b.key.toLowerCase() === wanted || b.label.trim().toLowerCase() === wanted);
+    if (!breakpoint) {
+      const known = keyed.map((b) => b.key).join(', ') || 'none';
+      throw new OpRefused(`${inputId}: unknown breakpoint ${JSON.stringify(name)}; this page has ${known}`);
+    }
+    out[breakpoint.id] = entry;
   }
   return out;
 }
@@ -817,11 +877,32 @@ export async function applyOperations(
         if (!parent) throw new OpRefused('that node has no parent to place beside it in; name a parent, or a node inside the page');
         const closed = containerRefusal(parent);
         if (closed) throw new OpRefused(closed);
+        const definition = project.components.get(definitionId)!;
+        const changes = op.inputs ? placementChanges(definition, page, op.inputs, {}, false) : {};
         const result = project.placeComponent(page.id, definitionId, target);
         if (!result.ok) throw new OpRefused(result.message);
+        if (Object.keys(changes).length > 0) {
+          const set = project.setPlacementInputs(result.placement.id, changes);
+          if (!set.ok) throw new OpRefused(set.message);
+        }
         claimRef(op.ref, result.placement.id);
         touched.push({ page, nodeId: result.placement.id });
-        return `placed component ${op.definitionId} on page "${page.metadata.title}" (${result.placement.id})`;
+        const valued = Object.keys(changes).length;
+        return `placed component ${op.definitionId} on page "${page.metadata.title}" (${result.placement.id})${valued > 0 ? ` with ${valued} value(s) of its own` : ''}`;
+      }
+
+      case 'setComponentInputs': {
+        const { page, node } = nodeFor(op.nodeId);
+        if (!isPlacementType(node.type)) throw new OpRefused('this node is not a component placement; setComponentInputs sets the values of one');
+        const definitionId = (node.props as { component?: unknown }).component;
+        const definition = typeof definitionId === 'string' ? project.components.get(definitionId) : undefined;
+        if (!definition) throw new OpRefused('the component this placement shows no longer exists');
+        const changes = placementChanges(definition, page, op.values, (node.bindings ?? {}) as Record<string, unknown>);
+        const result = project.setPlacementInputs(node.id, changes);
+        if (!result.ok) throw new OpRefused(result.message);
+        touched.push({ page, nodeId: node.id });
+        const reset = Object.values(changes).filter((value) => value === undefined).length;
+        return `set ${Object.keys(changes).length - reset} and reset ${reset} value(s) of ${node.id}`;
       }
     }
   }

@@ -423,15 +423,17 @@ const InputRow = observer(({
   value: unknown;
   perBreakpoint: boolean;
 }) => {
+  const { editorUI } = useStore();
   const stored = (component.props as Partial<PlacementProps>).inputs ?? {};
   const own = Object.hasOwn(stored, input.id);
   const meta: BindableSlotMeta = { label: input.name, allowedModes: ['read'], scopeHint: 'any' };
-  const write = (next: unknown) => component.setProps({ inputs: { ...stored, [input.id]: next } });
-  const reset = () => {
-    const { [input.id]: _gone, ...rest } = stored;
-    void _gone;
-    component.setProps({ inputs: Object.keys(rest).length > 0 ? rest : undefined });
+  // One write path with the site operations: ProjectModel.setPlacementInputs checks the value.
+  const change = (next: unknown) => {
+    const result = editorUI.currentProject?.setPlacementInputs(component.id, { [input.id]: next });
+    if (result && !result.ok) editorUI.setEditorNotice({ kind: 'refused', message: result.message });
   };
+  const write = (next: unknown) => change(next);
+  const reset = () => change(undefined);
   return (
     <div className="flex min-w-0 flex-col gap-1.5" data-testid={`component-input-${input.id}`}>
       <div className="flex min-w-0 items-center gap-1">

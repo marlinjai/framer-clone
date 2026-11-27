@@ -126,8 +126,8 @@ describe('placeComponent refuses, writing nothing', () => {
     expect(await refusal([place(), place({ definitionId: 'gone' })])).toMatch(/gone/);
   });
 
-  it('values for the inputs, which no operation takes yet', async () => {
-    expect(await refusal([place({ inputs: { title: 'x' } })])).toMatch(/inputs/);
+  it('a value for an input the component does not have (values themselves: componentInputs.test.ts)', async () => {
+    expect(await refusal([place({ inputs: { subtitle: 'x' } })])).toMatch(/no input "subtitle"/);
   });
 
   it('a #component written by hand through insertNodes', async () => {

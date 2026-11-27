@@ -498,12 +498,24 @@ export const OPERATION_SCHEMAS: JsonSchema[] = [
       additionalProperties: false,
     },
   }, ['theme']),
-  op('placeComponent', 'Place an instance of a component definition (get_site lists the components).', {
+  op('placeComponent', 'Place an instance of a component definition (get_site lists the components, each with its inputs).', {
     pageId: idArg('The page'),
     definitionId: { type: 'string', description: 'The component definition id.' },
     to: placeSchema,
+    inputs: {
+      type: 'object',
+      description: "The placement's own values by input id, each checked against its input's type (describe_vocabulary). Inputs left out show the component's default.",
+    },
     ref: refArg,
   }, ['pageId', 'definitionId']),
+  op('setComponentInputs', "Set or reset values of one component placement (get_page shows each input's value and where it comes from).", {
+    nodeId: idArg('The placement'),
+    values: {
+      type: 'object',
+      minProperties: 1,
+      description: "Input id to value; null goes back to the component's default. An unknown input, an event input, an input bound to data or a value its type refuses refuses the operation.",
+    },
+  }, ['nodeId', 'values']),
 ];
 
 const generateTarget = z
@@ -548,7 +560,7 @@ export const TOOLS: ToolDef[] = [
     name: 'get_page',
     title: 'Read a page',
     description:
-      'An outline of one page in document order: each node with id, parent, depth, tag, text excerpt, own styles keyed by breakpoint, rules and attributes. Long pages come in parts: pass the answer\'s nextCursor as `cursor` for the next part (null means the last). Also answers the site `version`.',
+      'An outline of one page in document order: each node with id, parent, depth, tag, text excerpt, own styles keyed by breakpoint, rules and attributes; a component placement also with each input\'s value and where it comes from (own, default, bound to data, refused). A component\'s own page (pageId in get_site\'s components) reads the same way. Long pages come in parts: pass the answer\'s nextCursor as `cursor` for the next part (null means the last). Also answers the site `version`.',
     args: z.strictObject({
       siteId,
       pageId,
@@ -586,7 +598,7 @@ export const TOOLS: ToolDef[] = [
     title: 'Edit a site',
     description: [
       `Apply a batch of 1 to ${MAX_BATCH_OPS} edit operations to a site's working copy, in order, all or nothing, saved on expectedVersion.`,
-      'Operations: createPage, updatePageSettings, deletePage, insertNodes, updateStyle, updateText, setProps, setFxScene, moveNode, removeNode, addRule, setTheme, placeComponent (describe_vocabulary explains each).',
+      'Operations: createPage, updatePageSettings, deletePage, insertNodes, updateStyle, updateText, setProps, setFxScene, moveNode, removeNode, addRule, setTheme, placeComponent, setComponentInputs (describe_vocabulary explains each).',
       'A node or page an operation creates can carry "ref"; later operations of the batch name it as "ref:<name>", and the answer maps each ref to its new id.',
       'Answers the new `version` (name it in the next write), the created ids and one summary line per operation.',
       'Refusals write nothing: site_changed (with currentVersion: read again, then redo the batch on it) or rejected (each refused operation with its index and reason; fix those and resend the whole batch).',

@@ -274,6 +274,97 @@ describe('the MCP endpoint against a real database', () => {
     }
   });
 
+  it('component inputs through MCP (gaps A1, A2): read, placed with values, set and reset, stored and read back; refusals and a stale version write nothing', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const { siteId, homePageId } = (await ok(KEY_A, 'create_site', { name: 'MCP component inputs' })) as { siteId: string; homePageId: string };
+      const inserted = await ok(KEY_A, 'apply_batch', {
+        siteId,
+        expectedVersion: 1,
+        ops: [{ op: 'insertNodes', pageId: homePageId, nodes: [{ ref: 'card', type: 'section', children: [{ ref: 'title', type: 'h2', props: { children: 'Glocke' } }] }] }],
+      });
+      // The editor makes the definition and its inputs (the agent operations for that are the next slice).
+      const repository = new SiteRepository(prisma);
+      const scope = { workspaceId: 'mcp_ws_a', tenantGroupId: GROUP_A };
+      const tab = await repository.loadProjectWithVersion(scope, siteId);
+      const created = inserted.created as Record<string, string>;
+      const made = tab.project.createComponentFromSelection(homePageId, [created.card], 'Glockenkarte');
+      if (!made.ok) throw new Error(made.message);
+      const definitionId = made.definitionId;
+      for (const input of [
+        { id: 'text', name: 'Text', type: 'text' as const, default: 'Glocke' },
+        { id: 'text-2', name: 'Text 2', type: 'text' as const, default: 'Zweite Zeile' },
+        { id: 'text-3', name: 'Text 3', type: 'number' as const, unit: 'px', default: 4 },
+      ]) expect(tab.project.addInput(definitionId, input).ok).toBe(true);
+      tab.project.components.get(definitionId)!.page.findComponent(created.title)!.setBinding('children', { mode: 'read', expression: '{{input.text}}' });
+      const { version } = await repository.saveProject(scope, tab.project, { expectedVersion: tab.version });
+
+      const site = await ok(KEY_A, 'get_site', { siteId });
+      const listed = (site.components as Array<Record<string, unknown>>).find((c) => c.id === definitionId)!;
+      expect(listed).toMatchObject({ name: 'Glockenkarte', placements: 1, pageId: `page-${definitionId}` });
+      expect(listed.inputs).toEqual([
+        { id: 'text', name: 'Text', type: 'text', default: 'Glocke' },
+        { id: 'text-2', name: 'Text 2', type: 'text', default: 'Zweite Zeile' },
+        { id: 'text-3', name: 'Text 3', type: 'number', unit: 'px', default: 4 },
+      ]);
+      const vocabulary = await ok(KEY_A, 'describe_vocabulary', { siteId });
+      expect(JSON.stringify(vocabulary)).toMatch(/setComponentInputs/);
+
+      // Refused, nothing written: an unknown input, a wrong type, a value on a node that is no placement.
+      for (const ops of [
+        [{ op: 'placeComponent', pageId: homePageId, definitionId, inputs: { text4: 'x' } }],
+        [{ op: 'placeComponent', pageId: homePageId, definitionId, inputs: { 'text-3': 'breit' } }],
+        [{ op: 'setComponentInputs', nodeId: created.title, values: { text: 'x' } }],
+      ]) {
+        const refused = await tool(KEY_A, 'apply_batch', { siteId, expectedVersion: version, ops });
+        expect(refused.isError).toBe(true);
+        expect(JSON.stringify(refused.structuredContent)).toMatch(/rejected/);
+      }
+      expect((await ok(KEY_A, 'get_site', { siteId })).version).toBe(version);
+
+      const placed = await ok(KEY_A, 'apply_batch', {
+        siteId,
+        expectedVersion: version,
+        ops: [
+          { op: 'placeComponent', pageId: homePageId, definitionId, ref: 'second', inputs: { text: 'Zweite Glocke', 'text-3': 12 } },
+          { op: 'setComponentInputs', nodeId: made.placement.id, values: { 'text-2': 'Eigene Zeile' } },
+        ],
+      });
+      expect(placed.version).toBe(version + 1);
+      const second = (placed.created as Record<string, string>).second;
+
+      // A stale version writes nothing and names the current one.
+      const stale = await tool(KEY_A, 'apply_batch', { siteId, expectedVersion: version, ops: [{ op: 'setComponentInputs', nodeId: second, values: { text: null } }] });
+      expect(stale.isError).toBe(true);
+      expect(stale.structuredContent).toMatchObject({ code: 'site_changed', currentVersion: version + 1 });
+
+      const reset = await ok(KEY_A, 'apply_batch', { siteId, expectedVersion: version + 1, ops: [{ op: 'setComponentInputs', nodeId: second, values: { 'text-3': null } }] });
+      expect(reset.version).toBe(version + 2);
+
+      // Read back through MCP, from the stored row.
+      const outline = await ok(KEY_A, 'get_page', { siteId, pageId: homePageId });
+      const nodes = outline.nodes as Array<{ id: string; component?: { inputs: Array<Record<string, unknown>> } }>;
+      const valuesOf = (id: string) => Object.fromEntries(nodes.find((n) => n.id === id)!.component!.inputs.map((i) => [i.id, i]));
+      expect(valuesOf(second)).toMatchObject({
+        text: { source: 'own', value: 'Zweite Glocke' },
+        'text-2': { source: 'default', value: 'Zweite Zeile' },
+        'text-3': { source: 'default', value: 4 },
+      });
+      expect(valuesOf(made.placement.id)).toMatchObject({ text: { source: 'default' }, 'text-2': { source: 'own', value: 'Eigene Zeile' } });
+      const definitionPage = await ok(KEY_A, 'get_page', { siteId, pageId: `page-${definitionId}` });
+      expect((definitionPage.nodes as Array<{ id: string }>).some((n) => n.id === created.title)).toBe(true);
+
+      // And the editor reopens what the agent stored.
+      const reopened = await repository.loadProjectWithVersion(scope, siteId);
+      expect(reopened.version).toBe(version + 2);
+      const stored = (id: string) => (reopened.project.pages.get(homePageId)!.findComponent(id)!.props as { inputs?: unknown }).inputs;
+      expect(stored(second)).toEqual({ text: 'Zweite Glocke' });
+      expect(stored(made.placement.id)).toEqual({ 'text-2': 'Eigene Zeile' });
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   it('deletePage through apply_batch: the row goes, links are counted, refusals write nothing, the published page stays', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     try {

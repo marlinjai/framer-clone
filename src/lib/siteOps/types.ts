@@ -172,7 +172,18 @@ export const OperationSchema = z.discriminatedUnion('op', [
     pageId: id,
     definitionId: id,
     to: placeSchema.optional(),
+    /** The placement's own values, by input id (getSite lists each component's inputs); absent ones show the default. */
+    inputs: z.record(id, z.unknown()).optional(),
     ref: ref.optional(),
+  }),
+  /**
+   * Set or reset values of one placement: each key an input id, a value to set it,
+   * null to go back to the component's default. Checked as the editor checks them.
+   */
+  z.strictObject({
+    op: z.literal('setComponentInputs'),
+    nodeId: id,
+    values: z.record(id, z.unknown()).refine((values) => Object.keys(values).length > 0, 'name at least one input'),
   }),
 ]);
 

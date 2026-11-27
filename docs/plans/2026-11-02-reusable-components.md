@@ -1053,6 +1053,56 @@ and the paragraph rule reads the whole definition, not only its root.
 | A3 | Authoring: no operation creates a definition, makes, adds, renames, retypes or removes an input, or changes a default | `createComponentFromSelection`, `makeInput`, `addInput`, `renameInput`, `changeInputType`, `removeInput` on `ProjectModel` (slices 5, 8, 9). `changeInputType` takes a whole input, so it can carry a new default (read in code, not tried) |
 | A4 | Editor, found by the same proofs: a connected input's default cannot be edited, and unlinking then making the input again creates a second one while placements keep values nobody reads. Solve in the same model step as A3's default operation | None found in `InputsSection.tsx` |
 
+### Slices for A1 to A4 (added 2026-11-27)
+
+Marlin asked on 2026-11-27 that all four are built. Two branches, each under about 1,500 changed lines, each with its
+own checks, review and push.
+
+**Branch 1, `feat/agent-components-read-place`: A1 and A2.**
+
+- `getSite` lists per definition its id, name, description, the id of its own page, every input whole (id, name, type,
+  default, options, limits, list fields), its states, and how many placements use it.
+- `getPage` reads a definition's page as well as a site page (an agent needs its node ids for branch 2). A placement
+  shows `component: { definitionId, name, inputs: [{ id, name, type, value, source }] }` where `source` is `own`,
+  `default`, `bound` (with the expression; the value comes from data) or `refused` (a stored value the input refuses,
+  shown with the reason, the default rendering instead). Values are not cut to an excerpt: a cut value sent back would
+  lose data. A responsive value is keyed by breakpoint key, as styles are.
+- `describeVocabulary` explains inputs, values and the new operation.
+- `placeComponent` takes `inputs: { <inputId>: value }`. `setComponentInputs { nodeId, values: { <inputId>: value or
+  null } }` sets or resets (null) values of one placement. Both go through one new model action,
+  `ProjectModel.setPlacementInputs`, which the panel's value rows use too, so the editor and agents share one write path.
+- A value is stored as written, not as `parseInputValue` returns it: a number with a unit parses to `"5px"`, which the
+  render step would refuse on its own second parse and silently replace with the default.
+
+**Branch 2, `feat/agent-components-author`: A3 and A4.**
+
+- Operations `createComponent { pageId, nodeIds, name, ref?, placementRef? }`, `renameComponent`, `addComponentInput
+  { definitionId, input, connect?: { nodeId, slot } }` (with `connect` it is the editor's Make input), `renameComponentInput`,
+  `removeComponentInput` (the answer counts the placement values and connections it took, across every page),
+  `setComponentInputDefault { definitionId, inputId, default or null }`.
+- One new model action `ProjectModel.setInputDefault`, used by the operation and by a Default field in the panel's
+  Inputs section (A4, first half).
+- Make input (A4, second half): when the definition holds an input no field reads any more, of the type the row asks
+  for, Make input connects that one again instead of minting a second: the one with the row's name, else the only such
+  input. The placement values on it are read again. With several unnamed candidates it still makes a new one, and the
+  Inputs section's "Not connected" line shows the leftovers.
+- Each definition operation counts as a touch of the definition's page, so every use of the definition is judged again
+  by the gate (a default no use can take refuses the batch).
+- Changing an input's type is not an operation in this slice (not in the brief); the editor keeps it.
+
+**Who each guard protects against.**
+
+| Guard | Protects | Against |
+|---|---|---|
+| `parseInputValue` on every value and default an agent writes | Visitors and the site owner | A wrong or prompt-injected agent writing a `javascript:` link, an unsafe CSS value or a value of the wrong type, which the render step would drop silently |
+| Unknown input id, an `event` input, a value on an input bound to data: refused | The site owner | A write that looks accepted but that nothing reads (the binding wins in `resolveInputValues`) |
+| An Unsplash photo address refused as an image value | The site owner | A stock photo shown without the credit its licence asks for: a placement has nowhere to keep the credit, unlike `setProps` on an `img` |
+| Addresses: https, http or a site path (`isSafeSrc`, the rule `setProps` applies), not site paths only as the generator's `checkPlacement` does | Nobody further | The generator's narrower rule guards against invented addresses in model output; an agent places addresses the way it already may through `setProps` |
+| `expectedVersion` on every batch | The person in the editor and other agents | Two writers overwriting each other (the version lock, `site_changed`) |
+| A refused operation writes nothing (all or nothing) | The site owner | A half-applied batch |
+| Definition operations judged at every use | Visitors | An edit inside a definition breaking a page it is used on (#487's gate) |
+| Removing an input takes its values with it, counted in the answer | The site owner | Orphan values nobody reads, decision 6 |
+
 ## What this does not cover
 
 - **Overrides of inner nodes,** by decision 7.

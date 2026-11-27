@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Unpublish a site from the Published versions dialog or from its card on the projects page. The project, its versions, address and domains are kept.
+- Site agents read and set component inputs. `get_site` lists each component with its inputs (id, name, type, default, options), its own page and how many placements use it; `get_page` shows each placement's values and where each comes from (its own, the default, data, or a stored value the input refuses), and reads a component's own page. `placeComponent` takes values, and the new `setComponentInputs` sets or resets values of a placement. Each value is checked against its input's type as in the editor, which now writes through the same model action; an unknown input, an event input, an input bound to data or a refused value refuses the batch and writes nothing.
 
 ### Fixed
 
