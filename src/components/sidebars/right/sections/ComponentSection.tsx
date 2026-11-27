@@ -429,8 +429,13 @@ const InputRow = observer(({
   const meta: BindableSlotMeta = { label: input.name, allowedModes: ['read'], scopeHint: 'any' };
   // One write path with the site operations: ProjectModel.setPlacementInputs checks the value.
   const change = (next: unknown) => {
-    const result = editorUI.currentProject?.setPlacementInputs(component.id, { [input.id]: next });
-    if (result && !result.ok) editorUI.setEditorNotice({ kind: 'refused', message: result.message });
+    const project = editorUI.currentProject;
+    if (!project) {
+      editorUI.setEditorNotice({ kind: 'refused', message: 'No site is open, so the value was not stored.' });
+      return;
+    }
+    const result = project.setPlacementInputs(component.id, { [input.id]: next });
+    if (!result.ok) editorUI.setEditorNotice({ kind: 'refused', message: result.message });
   };
   const write = (next: unknown) => change(next);
   const reset = () => change(undefined);

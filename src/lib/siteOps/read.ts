@@ -203,11 +203,11 @@ export interface PlacementOutline {
 function placementOutline(
   node: ComponentInstance,
   idToKey: ReadonlyMap<string, string>,
-  components: ProjectModelType['components'] | undefined,
+  components: ProjectModelType['components'],
 ): PlacementOutline {
   const stored = node.props as Partial<PlacementProps>;
   const definitionId = typeof stored.component === 'string' ? stored.component : '';
-  const definition = components?.get(definitionId) as ComponentDefinitionInstance | undefined;
+  const definition = components.get(definitionId) as ComponentDefinitionInstance | undefined;
   if (!definition) return { definitionId, missing: true };
   const defaultKeys = breakpointKeysOf(definition.page as PageModelType);
   const own = (isObj(stored.inputs) ? getPlain(stored.inputs) : {}) as Record<string, unknown>;
@@ -276,7 +276,8 @@ function outlineNode(
     rest[k] = excerpt(isObj(v) ? getPlain(v) : v, VALUE_EXCERPT);
   }
   if (Object.keys(rest).length > 0) out.props = rest;
-  if (placement) out.component = placementOutline(node, idToKey, components);
+  // Only with the site's components at hand: without them nothing is known of the definition.
+  if (placement && components) out.component = placementOutline(node, idToKey, components);
   return out;
 }
 

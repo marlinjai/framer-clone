@@ -275,7 +275,8 @@ function colourMapFor(page: PageModelType, inputId: string, value: Record<string
   const out: Record<string, unknown> = {};
   for (const [name, entry] of Object.entries(value)) {
     const wanted = name.trim().toLowerCase();
-    const breakpoint = keyed.find((b) => b.key.toLowerCase() === wanted || b.label.trim().toLowerCase() === wanted);
+    // A key first (what getPage shows), a frame's label only when no key matches.
+    const breakpoint = keyed.find((b) => b.key.toLowerCase() === wanted) ?? keyed.find((b) => b.label.trim().toLowerCase() === wanted);
     if (!breakpoint) {
       const known = keyed.map((b) => b.key).join(', ') || 'none';
       throw new OpRefused(`${inputId}: unknown breakpoint ${JSON.stringify(name)}; this page has ${known}`);
@@ -877,7 +878,8 @@ export async function applyOperations(
         if (!parent) throw new OpRefused('that node has no parent to place beside it in; name a parent, or a node inside the page');
         const closed = containerRefusal(parent);
         if (closed) throw new OpRefused(closed);
-        const definition = project.components.get(definitionId)!;
+        const definition = project.components.get(definitionId);
+        if (!definition) throw new OpRefused(`unknown component id ${JSON.stringify(op.definitionId)}; getSite lists the site's components`);
         const changes = op.inputs ? placementChanges(definition, page, op.inputs, {}, false) : {};
         const result = project.placeComponent(page.id, definitionId, target);
         if (!result.ok) throw new OpRefused(result.message);

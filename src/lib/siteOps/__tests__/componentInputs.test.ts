@@ -143,6 +143,11 @@ describe('getPage shows a placement\'s values and where each comes from (A1)', (
     expect(outline.nodes.find((n) => n.id === 'gone')!.component).toEqual({ definitionId: 'deleted-card', missing: true });
   });
 
+  it('without the site\'s components nothing is claimed about a placement', () => {
+    const outline = pageOutline(home(makeProject()), { maxChars: 80_000 });
+    expect(outline.nodes.find((n) => n.id === 'mine')!.component).toBeUndefined();
+  });
+
   it('a long value comes back whole, never cut to an excerpt', async () => {
     const project = makeProject();
     const long = 'Glocke '.repeat(60);
