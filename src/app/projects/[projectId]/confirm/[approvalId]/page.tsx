@@ -18,6 +18,8 @@ import { approvalView, checkApprover, freshSignInUrl, signedInRecently } from '@
 import AuthUnavailable from '../../../AuthUnavailable';
 import ApproveButton from './ApproveButton';
 
+export const metadata = { title: 'Approve a change | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 interface Props {

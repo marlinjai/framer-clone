@@ -11,7 +11,7 @@ import TemplateComposer from '../../composer/TemplateComposer';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata = { title: 'Template composer' };
+export const metadata = { title: 'Template composer | Lumitra Sites' };
 
 export default async function TemplateComposerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

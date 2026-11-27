@@ -11,6 +11,8 @@ import React from 'react';
 import BooksHome from './BooksHome';
 import { tabFrom } from './tabs';
 
+export const metadata = { title: 'Books | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 export default async function BooksPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {

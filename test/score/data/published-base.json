@@ -9,7 +9,7 @@
   "inputs": {
     "src/app/(site)/site.css": "07fdcfee38b9748cf06d7e0e5753f0f07b13a87872e4bb00a55d5c1d3944de40",
     "src/app/theme-tokens.css": "03f5b68f42304a6a0b36d3e0ab8f15ce842df541579df5869ddb764cf72bb9d5",
-    "src/app/layout.tsx": "63029ab1f10fabb9c3a94e4b6f92cabc5b6f3d96345ce2a3f6f1c79e81a89e81",
+    "src/app/layout.tsx": "63d49af8e5d7bd35e9944236cad5f5ed61b8efff136292136958c95e8690b8f1",
     "src/app/(site)/layout.tsx": "95d5fb37a288fc7ece75be3bebe75f6db8734b35b1ca016c24097a256e1810c1",
     "next": "15.5.28",
     "tailwindcss": "4.2.1",
