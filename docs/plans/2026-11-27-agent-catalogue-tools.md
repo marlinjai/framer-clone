@@ -2,8 +2,8 @@
 type: plan
 status: draft
 date: 2026-11-27
-title: "Agent catalogue tools: site agents manage products, variants, prices, stock and collections"
-summary: "MCP tools on the Lumitra Sites agent endpoint that read and write the company catalogue (products, variants, options, prices in whole cents, tax class, stock through the stock ledger, collections) through the same repository functions the editor's catalogue uses, with the editor's access rule (viewSite to read, editSite to write), the company and tenant group taken only from the verified key, idempotent creates and stock moves, and an audit row per write. One open question for Marlin: are collections per project (site) or per company."
+title: "Agent catalogue tools, and whether the shop catalogue belongs to the project (site) or to the company"
+summary: "MCP tools on the Lumitra Sites agent endpoint that read and write a shop catalogue (products, variants, options, prices in whole cents, tax class, stock through the stock ledger, collections) through the repository functions the editor uses, with the editor's access rule and the company, tenant group and site verified from the key on every call. Open for Marlin, who leans toward it: the whole catalogue per project (site) instead of per company. This plan lays out that model with a two-shop example, its costs (shared stock, Books, Stripe, existing data and the stock ledger, erasure) and a later shared catalogue. Only scope-neutral work (the read tools named by site, the access layer) starts before the answer."
 tags: [framer-clone, commerce, catalogue, mcp, agents]
 projects: [framer-clone]
 ---
@@ -15,165 +15,229 @@ Trigger: a prospect, Konditorei Fritzenkoetter, gets a shop on Lumitra Sites' ow
 create its products. The catalogue is editable only signed in to the editor (`/projects/catalog`), and the MCP
 endpoint (`src/server/mcp/tools.ts`, the Lumitra Sites agent tools) has nothing for products, prices or stock.
 
-Parents: [the catalogue design](2026-10-25-catalogue-design.md) (the company catalogue this writes to),
+Parents: [the catalogue design](2026-10-25-catalogue-design.md) (today's company catalogue),
 [the agent plugin plan](2026-11-02-lumitra-sites-agent-plugin.md) (the MCP endpoint and its key rules),
-[the business platform plan](2026-10-25-business-platform-architecture.md) (one catalogue per company).
+[the business platform plan](2026-10-25-business-platform-architecture.md) (which decided one catalogue per
+company on 2026-10-25; the question below would revise that).
 
-## Open question for Marlin: collections per project (site) or per company?
+## Open for Marlin: the shop catalogue per project (site), or per company
 
-Everything in slices 1 and 2 below is independent of this answer; only slice 3 waits for it.
+Not decided. Marlin leans toward the whole catalogue per project (2026-11-27, through the Fritzenkoetter lead);
+the coordinator asks him the consolidated question. Until he answers, nothing in this plan's build commits to
+either model (see "What starts now").
 
-**What a collection is today.** A company-level, manually ordered list of products (`collection`,
-`collection_product`, migration 020), edited in the catalogue's Collections tab and used as a filter and a bulk
-action ("add to collection") in the product table. **No published page reads collections**: the shop's product
-list component lists the company's whole catalogue (published, not archived) minus the products switched off for
-that site (`product_site_hidden`, the per-site visibility of the catalogue design). So the choice changes the
-admin and future site features, not anything a visitor sees today.
+### Today: per company
 
-**Option A: collections stay per company** (no change). One "Torten" collection serves every site of the company.
-Which products a site shows stays the per-site switch. Cheapest; but a company with two sites (a café site and a
-catering site) cannot group the same cakes differently per site.
+Products, variants, prices, stock and collections belong to the company (`tenant_id` on every catalogue table,
+migration 020). Every site of the company shows every published product unless it is switched off for that site
+(`product_site_hidden`). One stock per item, one Books, one Stripe Connect account. No published page reads
+collections yet: the shop's product list shows the company's catalogue minus the switched-off products.
 
-**Option B: collections per project (recommended, and the Fritzenkoetter lead's and Marlin's lean).** Products,
-variants, prices and stock stay per company (one stock, one Books ledger, one Stripe Connect account); a
-collection belongs to one site and groups that site's products for display.
-- Schema: a tenant migration adds `collection.site_id` (TEXT, the main site's id; sites live in the public
-  schema, so no foreign key, as `product_site_hidden.site_id`), the live-handle unique index becomes
-  (company, site, handle), and a `NOT VALID` check refuses new collections without a site.
-- Existing rows: a backfill script (as `catalogue:assign-company` did for 020) copies each existing collection,
-  with its members and order, to every site of the company, then validates the check. Copying, not moving, so
-  nothing is lost; on production this concerns the test jewellery company's two sample collections only.
-- Branches: a collection keys to the main site, never a branch id; on a branch the editor and the agent work on
-  the main site's collections.
-- Visibility: `product_site_hidden` stays the rule for which products a site sells; collections only group. (A
-  later step could let a site sell exactly its collections' products; not proposed here.)
-- Editor: the Collections tab and the table's collection filter and bulk action get a site picker (the catalogue
-  page is company level today); the product panel's Collections section shows them per site.
-- Published pages: the payoff is a product list bound to one collection of its site ("show the Torten
-  collection here"), a small follow-on of slice 3.
+### The proposal: per project
 
-**Option C: company collections with an optional site.** `site_id` nullable: empty means usable on every site.
-Most flexible, but two kinds of collection in every list and picker, for a need nobody has yet.
+Every product (with its options, variants, prices, stock and images) and every collection belongs to exactly one
+site of the company. A site's shop and its editor see only that site's catalogue. What stays per company: the
+Books (invoice numbers, receipts, customers), contacts, the Stripe Connect account, and the company erasure.
 
-**Recommendation: B.** It matches how a company with several sites presents itself, the shared stock and
-accounting stay single, and since no published page reads collections yet, the move costs one additive migration,
-a copy backfill and a site picker. Answer A, B or C; until then slice 3 is not started.
+### A concrete two-shop example
+
+Konditorei Fritzenkoetter runs two sites: the pastry shop (order cakes for pickup) and a catering site (platters
+for events). Both sell the Schwarzwälder Kirschtorte; the shop also sells strawberry jam in jars, 40 jars on one
+shelf.
+
+| | Per company (today) | Per project (proposal) |
+|---|---|---|
+| The cake | one product, one price, shown on both sites (or switched off on one) | two products, one per site; each can have its own price (38 EUR pickup, 45 EUR catering), photos, text and variants |
+| The jam, 40 jars, if both sites sell it | one product, one stock of 40; a sale on either site lowers it | two products with two stocks; the 40 jars must be split by hand (say 25 and 15), or one site does not track stock and can oversell |
+| Collections | "Torten" is one list for both sites | each site groups its own products ("Torten" on the shop, "Platten" on catering) |
+| Books | both sites' receipts in one Books, one number series | the same: one Books, one series; a receipt line points at the site's own variant |
+| Stripe | one account, both sites pay into it | the same |
+| An agent working on the shop | sees and can change the catering prices too | sees and changes only the shop's catalogue |
+
+Made-to-order cakes do not track stock, so for Fritzenkoetter's cakes per project costs nothing; the jam is where
+it shows.
+
+### What the proposal changes and costs
+
+1. **Shared physical stock is lost.** One item sold on two sites becomes two products with two stocks. Stock
+   stays in the ledger (`inventory_item`, `inventory_level`, `stock_movement`, keyed by SKU, and a SKU stays
+   unique within the organisation), so the two products get two SKUs and two stock counts. Only the later shared
+   catalogue (below) brings one stock back.
+2. **Books.** Receipts, customers and invoice numbering stay per company (one legal seller, one GoBD-compliant
+   number series). The invoice line picker (`GET /api/books/catalogue`) lists the items of all the company's
+   sites, grouped by site. A company that uses only the Books has no site, yet invoices services from the
+   catalogue today (the Books' own list was folded into the catalogue in October): those items need a home
+   without a site. Proposed: they stay company items (no site), offered only to the Books. So "everything per
+   project" is in fact "everything sold on a site per project".
+3. **Stripe Connect stays per company** (one account per company, fixed once set, migration 022): the company is
+   the seller of record. A site that must pay out to a different bank account under a different legal entity is a
+   different company in auth-brain, not a different site.
+4. **Contacts stay per company** (`@marlinjai/contacts-core`, one customer list): a customer who buys on both
+   sites is one contact.
+5. **Existing catalogue data and the stock ledger** (production holds the test jewellery company's products and
+   any demo products; the exact counts are read by a dry run before anything is written):
+   - a company with one site: every product and collection goes to that site;
+   - a company with several sites: a product goes to the sites that show it today (not switched off); the
+     original row, with its id, SKU, stock history and order references, goes to the site that sold it most
+     recently (orders carry `site_id`), else the oldest site; every further site gets a copy with new ids, a new
+     SKU and zero stock, listed in the dry run's report so the owner can set the stock;
+   - collections are copied to each site whose products they contain;
+   - a company with no site keeps its items as company items (point 2);
+   - orders, receipts and invoice lines keep pointing at the originals, which keep their ids, so nothing issued
+     changes;
+   - `product_site_hidden` is the input of the assignment and is dropped afterwards (pre-launch, no back-compat).
+   Done by an additive migration (a nullable `site_id` on `product` and `collection`, handles unique per company
+   and site) and a backfill script with a dry run, as `catalogue:assign-company` did for 020. Running it on
+   production is a release step, Marlin's.
+6. **Deleting a site** must now take its catalogue along: its products and collections are soft-deleted (the
+   catalogue has `deleted_at`), and those an order references are archived and kept, so receipts and the ledger
+   stay intact. Today deleting a site leaves the catalogue untouched because it is the company's.
+7. **Company erasure** is unchanged: it deletes by company (`tenant_id`), and every catalogue row keeps its
+   company column. Its coverage list (`ERASURE_COVERAGE`) and tests gain the new column; nothing per site is
+   personal data.
+8. **The editor.** The catalogue moves from the company area (`/projects/catalog`) into the project (a site's
+   own catalogue page, or the same page with a site picker); bulk actions, filters and the product panel work per
+   site. The published shop's product list reads its site's products instead of "company minus switched off".
+9. **Permissions do not get finer.** A company's sites all live in one editor workspace, and the access rule is
+   the workspace role, so a person or key that may edit one site's catalogue may edit every site's of that company.
+   Per-site people would be an auth-brain model change, outside this plan.
+
+### A later shared catalogue, if ever needed
+
+The proposal keeps the door open without moving data again: a company item (no site, point 2) can be offered to
+several sites through a small link table (company, product, site). Visibility becomes "the site's own products,
+plus company items listed for the site", one product and one stock across those sites. Purely additive: a new
+table, one more condition in the storefront read, a "share with sites" control in the editor.
+
+### Recommendation
+
+Per project matches how Marlin wants Sites projects to work and keeps an agent on one site from touching
+another's prices. Its real cost is shared stock between sites; the shared catalogue above covers that when a
+customer needs it. If Marlin chooses per project, the build order below applies; if per company, slice 2 is
+dropped and the write tools act on the company catalogue.
+
+## What starts now (scope-neutral)
+
+The read tools take a **required `siteId`** and answer "the catalogue of this site": today that is the company's
+products not switched off for the site; after a per-project migration it is the site's own products. The same
+contract holds under both models, so an agent written now keeps working. Nothing that creates or edits catalogue
+data is built before the answer, because a create would mean "a product of every site" under one model and "a
+product of this site" under the other.
+
+## How the company and the site are verified (reads and writes)
+
+On every call, in order, first failure wins:
+
+1. The key is verified (`verifyCompanyKey`): a company key with the `sites` grant, mapped by the server to its
+   company's workspace and tenant group. Nothing the request names is read for this.
+2. The action: `viewSite` for reads, `editSite` for writes, through the key's caller (`authorizeKeyAction`), the
+   rule the editor's catalogue routes use. A key acts as at most a workspace admin, so writes need an owner or admin
+   key; a key whose company role is `member` or `viewer` reaches nothing.
+3. The site: the `siteId` argument is looked up through the site repository scoped to the key's workspace and
+   tenant group (`getSite`, the site operations' own read). A site of another company is `not_found`, never
+   `forbidden`. A branch id resolves to its main site (`branchOfSite`); the catalogue keys to the main site. The
+   site's stamped company (`sites.company_id`) must be the key's company; an unstamped site in the key's own
+   workspace is accepted under the existing rule (the workspace belongs to one company, checked at step 1).
+4. The shop schema: `commerceTenantDbChecked(key.scope.tenantGroupId)`; not provisioned answers
+   `catalog_not_provisioned`.
+5. The rows: every query filters on the key's company, and (after a per-project migration) on the verified site.
+   Another company's or another site's product id answers `not_found`.
+
+## Live shop changes (separate from authorization)
+
+Authorization above decides who may change a catalogue. Separately, this plan proposes **no extra confirmation**
+before an agent publishes a product or changes a price: an admin key equals a person with `editSite`, who has no
+such step either; every write is reversible (archive, the old price) and audited; Fritzenkoetter's shop is not
+live. This proposal is not an approval to change any live shop: before an agent works on a shop that already
+sells, Marlin decides whether those two changes need a person's yes (the site publish's confirmation exists to
+reuse).
 
 ## Decided here (say so if you disagree)
 
-1. **Same access rule as the editor's catalogue.** Reads need `viewSite`, writes `editSite`, checked through the
-   key's caller (`authorizeKeyAction`): a key acts as at most a workspace admin, so writes need a company owner or
-   admin key; a key whose company role is `member` or `viewer` reaches nothing. No new permission action is added
-   (the catalogue design put the catalogue behind the `sites` grant and these two checks, and a new action would
-   have to be added to the machine allow list with no different rule behind it).
-2. **The company and tenant group come only from the verified key** (`key.tenantId`, `key.scope.tenantGroupId`),
-   never from tool arguments; the handle is `commerceTenantDbChecked(tgId)` and the scope `catalogScope(...)`,
-   exactly as the editor's guard (`src/server/catalog/http/route.ts`). A tenant group without a provisioned shop
-   schema answers `catalog_not_provisioned` with the next step in it.
-3. **No write path of its own.** A thin catalogue operations layer (`src/server/catalogOps/`) checks access,
-   resolves the scope, maps `CatalogError` codes to tool errors and writes the audit row; every write calls the
-   repository functions the editor's routes call (`createProduct`, `updateProduct`, `setOptions`, `updateVariant`,
-   `setVariantStock`, and in slice 3 the collection functions). The tools live in their own file
-   (`src/server/mcp/catalogTools.ts`), not in the 1,100-line `tools.ts`.
-4. **Granular tools, each one transaction**, rather than one "create product with everything" tool: the
-   repository functions each open their own transaction, so a composite tool would half-apply on a failure. Every
-   step is either idempotent by key (create, stock moves) or declarative (an update sets values; repeating it
-   changes nothing), so an agent that retries a whole sequence ends in the same state.
-5. **Idempotent creates without a new table.** `create_product` requires an `idempotencyKey`; the product id is
-   derived from (company, key id, idempotency key) by SHA-256 shaped as a UUID. A repeat hits the primary key and
-   answers the existing product with `replayed: true`; a repeat with a different title or kind is refused
-   (`idempotency_key_reused`). `createProduct` gains an internal `id` option for this (not reachable from HTTP).
-6. **Stock only through the ledger, two tools.** `adjust_stock` (a signed delta, "20 delivered", "3 broken")
-   with a required `idempotencyKey`, booked as one `adjust` movement whose `request_id` is
-   `agent:<company>:<key id>:<sha256 of the idempotency key>`, so one company's key can never collide with, or
-   silently swallow, another company's movement (the request id is unique per tenant group, not per company). A
-   repeat with the same key and the same variant and delta is a no-op answering `replayed: true`; with a
-   different variant or delta it is refused (`idempotency_key_reused`), instead of the ledger's silent no-op.
-   `set_stock` is the editor's "set available to N" (`setVariantStock`), declarative and so safe to repeat.
-   Lowering below what open orders reserved is refused, as in the editor. A direct count write does not exist.
-7. **Create takes the product fields too.** `create_product` accepts the update fields (description, tax class,
-   price basis, tags, SEO, unit label); they are validated before anything is written, then applied by
-   `updateProduct` right after the create. A failure between the two leaves a product that a repeat of the same
-   call completes (the create replays, the update is declarative).
-8. **Options by name.** `set_product_options` takes the whole option list as the editor's options editor does;
-   the operations layer fills in the ids of options and values the agent names without an id by matching the
-   stored ones case-insensitively, so a retried or re-sent list keeps every existing variant (its price, stock and
-   SKU) instead of replacing them.
-9. **Archive, never delete.** The catalogue has no hard delete; `update_product` with status `archived` (and
-   back) is the only removal, so orders that reference a product keep their reference. Removing a variant happens
-   only by removing its option value, as in the editor.
-10. **Audit rows in the public schema.** A new Prisma table `catalog_operation_audits` beside
-    `site_operation_audits` (which needs a site id): company, workspace, tenant group, actor kind and id, actor
-    detail (service account, key name), the tool, and the product, variant or collection ids it touched. Ids
-    only, never content or prices. Written after the write succeeds, as the site operations do.
-11. **Out of this plan:** product photos (an agent cannot send a 2 MB image through a 2 MiB MCP body; it needs
-    an import from a stock photo or a checked URL, its own small plan, roadmap line), per-site visibility
-    (`product_site_hidden`, moves with slice 3 since it is the same site question), orders, payments, refunds and
-    the Books (the brief's trigger names them; writing them stays a person's job, `editBooks` is never allowed for
-    keys).
-12. **Collections stay out of slices 1 and 2 entirely**, including the `collections` field of a product read,
-    so nothing an agent learns now changes meaning after the answer.
+1. **No new permission action**: `viewSite` and `editSite`, as the editor; a new action would need adding to the
+   machine allow list with no different rule behind it.
+2. **No write path of its own**: a thin catalogue operations layer (`src/server/catalogOps/`) does the checks
+   above, maps `CatalogError` codes to tool errors and writes the audit row; writes call the repository functions
+   the editor's routes call. The tools live in their own file (`src/server/mcp/catalogTools.ts`).
+3. **Granular tools, each one transaction** (the repository functions each open their own), not a composite
+   "create everything" tool that could half-apply. Every step is idempotent by key or declarative, so a retried
+   sequence ends in the same state.
+4. **Idempotent creates without a new table**: `create_product` requires an `idempotencyKey`; the product id is
+   derived from (company, key id, idempotency key) by SHA-256 shaped as a UUID. A repeat answers the existing
+   product with `replayed: true`; a repeat with a different title or kind is refused (`idempotency_key_reused`).
+5. **Stock only through the ledger.** `adjust_stock` (a signed delta) with a required `idempotencyKey`, booked as
+   one `adjust` movement whose `request_id` is `agent:<company>:<key id>:<sha256 of the key>`: the request id is
+   unique per organisation, not per company, so the company in it keeps one company's key from colliding with, or
+   silently swallowing, another's movement. A repeat with the same variant and delta is a no-op (`replayed: true`);
+   a different one is refused, instead of the ledger's silent no-op. `set_stock` is the editor's "set available to
+   N", declarative. Lowering below what open orders reserved is refused. No direct count write exists.
+6. **Create takes the product fields too** (description, tax class, price basis, tags, SEO, unit label),
+   validated before anything is written and applied right after the create; a repeat completes a half-done one.
+7. **Options by name**: the operations layer fills in the ids of options and values named without an id from the
+   stored ones (case-insensitive), so a re-sent list keeps every variant's price, stock and SKU.
+8. **Archive, never delete**, as the catalogue already does; orders keep their references.
+9. **Audit rows in the public schema**: a Prisma table `catalog_operation_audits` beside `site_operation_audits`
+   (which needs a site id and would mix two feeds): company, workspace, tenant group, site, actor, the tool, the
+   ids touched. Ids only, never content or prices. Written after the write succeeds, as the site operations do.
+10. **Out of this plan**: product photos (a 2 MB image does not fit the 2 MiB MCP body; it needs an import from a
+    stock photo or a checked URL, its own roadmap line), orders, payments, refunds and the Books (writing them
+    stays a person's job; `editBooks` is never allowed for keys).
+11. **Collections are left out of reads until the answer**, including a product's `collections` field.
 
 ## Protections, and who each protects against
 
 | Protection | Protects against | State |
 |---|---|---|
 | Key verification and the `sites` grant | anyone without a company key, a company without Lumitra Sites | exists (agent plugin) |
-| `viewSite` / `editSite` on the key's role | a key of a member, viewer or billing account changing the catalogue | built, the editor's rule |
-| Company and tenant group from the key only | another company of the same organisation (one schema holds several companies) and every other organisation (separate schema) | built |
-| Another company's id answers `not_found`, never `forbidden` | an agent probing which product ids exist elsewhere | exists in the repository, kept |
+| `viewSite` / `editSite` on the key's role | a member, viewer or billing account's key changing or reading the catalogue | built, the editor's rule |
+| Company and tenant group from the key only | another company of the same organisation (one schema holds several companies) and every other organisation (its own schema) | built |
+| Site looked up in the key's workspace, branch to main site | an agent naming another company's site | built |
+| Site filter on rows (per-project model only) | an agent on one site changing another site's catalogue of the same company | built with the migration |
+| Another company's or site's id answers `not_found` | an agent probing which ids exist elsewhere | exists in the repository, kept |
 | Idempotency keys (create, adjust) | duplicate products or double-booked stock when an agent or the network retries; not an attacker | built |
-| Company in the stock request id | one company's key turning another company's stock movement into a silent no-op | built |
+| Company in the stock request id | one company's key turning another company's stock movement into a no-op | built |
 | Per-key read and write rate limits | a runaway agent loop | exists (reused) |
 | Audit row per write | (not a guard) lets the owner and the operator see what an agent changed | built |
-| A person's yes before a product goes live or a live price changes | a confused or prompt-injected agent changing a shop that already sells | **not built**: an admin key equals a person with editSite, who has no such step either; every write is reversible and audited; Fritzenkoetter's shop is not live. Revisit before an agent manages a live shop |
+| A person's yes before a product goes live or a live price changes | a confused or prompt-injected agent changing a shop that sells | **not built**, see "Live shop changes"; Marlin decides before any live shop |
 
 ## Tools
 
-All answers are the endpoint's usual text plus structured content, prices in whole cents (EUR), refusals with the
+Answers are the endpoint's usual text plus structured content, prices in whole cents (EUR), refusals with the
 catalogue's own codes in lower case (`not_found`, `duplicate_handle`, `duplicate_sku`, `shape`, `kind_locked`,
 `stock_not_tracked`, `sku_required`, `stock_below_reserved`, `invalid_input` with the field issues).
 
-Slice 1, reads:
-- `list_products`: search, status, kind, product type, stock state, sort, a cursor; the editor table's list
-  (`listProducts`), without collections.
-- `get_product`: one product with options, variants (SKU, price, compare-at price, tracking, available stock),
-  tax class, price basis and SEO fields (`getProduct`), without collections.
-- `list_product_types`: the company's product types (`listProductTypes`).
-
-Slice 2, writes:
-- `create_product`, `update_product` (fields, status draft, published or archived), `set_product_options`,
-  `update_variant` (price, compare-at, SKU, barcode, stock tracking, backorder), `adjust_stock`, `set_stock`.
-
-Slice 3, after the answer: `list_collections`, `get_collection`, `create_collection`, `update_collection`
-(including archive), `set_collection_products` (members and order), `set_product_collections`, and per-site
-visibility (`set_product_sites`); with option B also the migration, the backfill, the editor's site picker and the
-product list bound to a collection.
+- Reads (slice 1, every one with a required `siteId`): `list_products` (search, status, kind, product type, stock
+  state, sort, a cursor), `get_product` (options, variants with SKU, price, compare-at price, tracking and
+  available stock, tax class, price basis, SEO), `list_product_types`.
+- Writes (slice 3): `create_product`, `update_product` (fields; status draft, published or archived),
+  `set_product_options`, `update_variant` (price, compare-at, SKU, barcode, tracking, backorder), `adjust_stock`,
+  `set_stock`.
+- Collections (slice 4): `list_collections`, `get_collection`, `create_collection`, `update_collection` (including
+  archive), `set_collection_products`, `set_product_collections`.
 
 ## Slices (each one branch, about 1,500 changed lines at most)
 
-1. **Read tools** (plan included): the operations layer with access and scope, the three read tools, the tool
-   list test, the server instructions and the plugin README, unit tests and an integration test through the
-   MCP route.
-2. **Product, variant, price and stock writes**: the six write tools, the derived-id create, the ledger-keyed
-   adjust, options by name, the audit table (one additive Prisma migration), unit and integration tests.
-3. **Collections** (waits for the answer): with option B split into 3a (migration, backfill, editor site picker)
-   and 3b (the collection tools and the collection-bound product list).
+1. **Now**: the operations layer with the verification above, the three read tools, the tool list test, the
+   server instructions and the plugin README, unit tests and an integration test through the MCP route.
+2. **After the answer, per project only**: 2a the migration, the backfill with its dry run, the storefront read
+   and site deletion; 2b the editor's catalogue in the project and the Books picker grouped by site.
+3. **Writes** (site-scoped under per project, company-scoped under per company) with the audit table.
+4. **Collections**, then a product list bound to a collection on published pages.
 
 ## Proof
 
 Integration tests through the real MCP route (`/api/mcp`) and the real key verification, on a throwaway database
 (the integration Docker Postgres) with a provisioned shop schema, connected as the low-privilege commerce role:
-- create a product with options, variants, prices and stock, read it back, repeat the create and the stock move
-  with the same keys (nothing doubles), and a reused key with a different payload is refused;
-- a second company in the same tenant group reads none of it and its writes on these ids answer `not_found`
-  with nothing written; a key of a second tenant group (its own schema) likewise;
-- a key whose company role is `member` gets `forbidden` on every write and on reads, with row counts unchanged.
+- reads: a product read back through `list_products` and `get_product` for a site of the key's company; a site of
+  another company answers `not_found`; a second company in the same tenant group and a key of a second tenant
+  group (its own schema) see nothing; a key whose company role is `member` gets `forbidden`;
+- writes (slice 3): create a product with options, variants, prices and stock, read it back, repeat the create
+  and the stock move with the same keys (nothing doubles), a reused key with another payload is refused, and the
+  refusals for another company and for a `member` key write nothing (row counts unchanged).
 
 The repository has no `AGENTS.md` and no single check command; CI runs the guard check (`pnpm lint:guards`),
 typecheck, lint, three unit shards, the build and two integration shards. Before each push: typecheck, lint, the
-changed unit tests, and the touched integration files through the hermes slot (`hermes-slot run`). Gap reported to
-the coordinator, not fixed here.
+changed unit tests, and the touched integration files through the hermes slot (`hermes-slot run`).
 
 ## Never
 
