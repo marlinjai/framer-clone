@@ -404,7 +404,7 @@ const CollectionRail: React.FC<CollectionRailProps> = ({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 if (pendingDelete) onDelete(pendingDelete.id);
                 setPendingDelete(null);
