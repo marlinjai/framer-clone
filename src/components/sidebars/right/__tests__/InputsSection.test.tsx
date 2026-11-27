@@ -330,6 +330,13 @@ describe('the default of each input', () => {
     expect(card(project).inputs[1].default).toBe('/');
   });
 
+  it('emptying a text default removes it rather than storing an empty one', async () => {
+    const { project } = setup();
+    mount();
+    await type(screen.getByLabelText('Default of Title'), '');
+    expect(card(project).inputs[0].default).toBeUndefined();
+  });
+
   it('removing the default is one step, and the field then shows none', async () => {
     const { project } = setup();
     mount();

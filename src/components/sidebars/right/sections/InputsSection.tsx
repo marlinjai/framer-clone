@@ -25,6 +25,7 @@ import { observer } from 'mobx-react-lite';
 import { ArrowDown, ArrowUp, RotateCcw, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { getSnapshot } from 'mobx-state-tree';
 import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
+import { isResponsiveMap } from '@/lib/responsive/cascade';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentDefinitionInstance } from '@/models/ComponentDefinitionModel';
 import {
@@ -75,7 +76,8 @@ const InputItem = observer(({
     if (!result.ok) refuse(result.message);
   };
   const setDefault = (value: unknown) => {
-    const result = project.setInputDefault(definition.id, input.id, value);
+    // An emptied text field removes the default rather than storing an empty one.
+    const result = project.setInputDefault(definition.id, input.id, value === '' ? undefined : value);
     if (!result.ok) refuse(result.message);
   };
   // The definition's own frames: a default per breakpoint is keyed by them; the largest shows.
@@ -197,6 +199,9 @@ const InputItem = observer(({
             <p className={HINT}>This type has no field here.</p>
           )}
           <p className={HINT}>What every placement without its own value shows.</p>
+          {isResponsiveMap(input.default, new Set(frames.map((frame) => frame.id))) && (
+            <p className={HINT}>Set per breakpoint; the largest is shown. A change here sets it for every breakpoint.</p>
+          )}
         </div>
       )}
       <p className={HINT}>

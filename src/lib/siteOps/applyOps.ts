@@ -303,6 +303,16 @@ function connectRefusal(node: ComponentInstance, slot: string): string | null {
   return `${JSON.stringify(slot)} is not a field an input can set: children, href, src, alt, visible, style.<property>, or input.<id> on a placed component`;
 }
 
+/** The input types a field takes when an agent connects one (a nested placement's input: its own type, checked apart). */
+function typesForSlot(slot: string): readonly string[] | undefined {
+  if (slot === 'children') return ['text', 'number', 'richtext', 'date', 'choice'];
+  if (slot === 'href') return ['link', 'file'];
+  if (slot === 'src' || slot === 'alt') return ['image'];
+  if (slot === 'visible') return ['toggle'];
+  if (slot.startsWith('style.')) return ['text', 'number', 'color', 'choice', 'border', 'shadow', 'transition', 'cursor'];
+  return undefined;
+}
+
 /** A free input id from a name ("Opening hours" -> "opening-hours", "-2" when taken). */
 function inputIdFrom(name: string, taken: readonly InputDefinition[]): string {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'input';
@@ -998,6 +1008,8 @@ export async function applyOperations(
         const refused = connectRefusal(node, slot);
         if (refused) throw new OpRefused(refused);
         if (!mayBindToSlot(input.type, slot)) throw new OpRefused(`a ${input.type} input cannot set ${slot}: an address takes an image, link or file input`);
+        const fits = typesForSlot(slot);
+        if (fits && !fits.includes(input.type)) throw new OpRefused(`${slot} takes a ${fits.join(', ')} input, not ${input.type}`);
         let inner: InputDefinition | undefined;
         if (slot.startsWith('input.')) {
           const innerDefinition = project.components.get(String(node.props?.component ?? ''));

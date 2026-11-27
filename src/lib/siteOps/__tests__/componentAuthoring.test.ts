@@ -182,6 +182,9 @@ describe('addComponentInput (A3)', () => {
     expect(await refusal(add({ name: 'X', type: 'text' }, { nodeId: 'bell-root', slot: 'children' }))).toMatch(/holds no text/);
     expect(await refusal(add({ name: 'X', type: 'text' }, { nodeId: 'bell-root', slot: 'style.notAThing' }))).toMatch(/not a style property/);
     expect(await refusal(add({ name: 'X', type: 'image' }, { nodeId: 'bell-link', slot: 'src' }))).toMatch(/no img/);
+    expect(await refusal(add({ name: 'X', type: 'toggle' }, { nodeId: 'bell-root', slot: 'style.color' }))).toMatch(/style.color takes a text, number, color/);
+    expect(await refusal(add({ name: 'X', type: 'list', fields: [{ id: 'a', name: 'A', type: 'text' }] }, { nodeId: 'bell-link', slot: 'children' }))).toMatch(/children takes a text/);
+    expect(await refusal(add({ name: 'X', type: 'text' }, { nodeId: 'bell-link', slot: 'visible' }))).toMatch(/visible takes a toggle/);
     // A node of a page, not of the component.
     expect(await refusal(add({ name: 'X', type: 'text' }, { nodeId: 'hero-title', slot: 'children' }))).toMatch(/unknown node "hero-title" inside "Glockenkarte"/);
   });
@@ -286,15 +289,35 @@ describe('ProjectModel.setInputDefault and Make input (A4)', () => {
     expect(valueOn(project, 'first', 'text')).toMatchObject({ source: 'own', value: 'Erste' });
   });
 
-  it('with several unconnected inputs, the one named like the row is taken; none named and several: a new one', () => {
+  it('with several unconnected inputs, the one the row is named after and holding its value is taken', () => {
     const project = makeProject();
     for (const id of ['bell-title', 'bell-place']) (bellPage(project).findComponent(id) as ComponentInstance).clearBinding('children');
-    // Both "Text" and "Text 2" are unconnected; the row's label is "Text 2", so that one.
+    // Both "Text" and "Text 2" are unconnected; the row is "Text 2" and holds "Ort", the default of text-2.
     expect(makeAgain(project, 'bell-place', 'Text 2')).toMatchObject({ inputId: 'text-2', reused: true });
-    (bellPage(project).findComponent('bell-place') as ComponentInstance).clearBinding('children');
-    // A row labelled differently, with two candidates: nothing says which, so a new input.
-    expect(makeAgain(project, 'bell-place', 'Ort')).toMatchObject({ reused: false });
-    expect(bell(project).inputs.map((i) => i.name)).toEqual(['Text', 'Text 2', 'Text 3', 'Ort']);
+  });
+
+  it('an input renamed since is still found by the field\'s value (the Fritzenkoetter case: "Titel der Karte")', () => {
+    const project = makeProject();
+    expect(project.renameInput('bell', 'text', 'Titel der Karte').ok).toBe(true);
+    (bellPage(project).findComponent('bell-title') as ComponentInstance).clearBinding('children');
+    expect(makeAgain(project, 'bell-title')).toMatchObject({ inputId: 'text', reused: true });
+    expect(bell(project).inputs).toHaveLength(3);
+  });
+
+  it('the only unconnected input, with another name and another value, is not taken: a new input', () => {
+    const project = makeProject();
+    // The review's case: "Email" unlinked elsewhere, then Make input on an "Address" row.
+    bell(project).setInputs([...bell(project).inputs, { id: 'email', name: 'Email', type: 'text', default: 'a@b.de' }]);
+    expect(makeAgain(project, 'bell-link', 'Address')).toMatchObject({ reused: false, inputId: 'address' });
+  });
+
+  it('two candidates both matching only one way: nothing says which, so a new input', () => {
+    const project = makeProject();
+    for (const id of ['bell-title', 'bell-place']) (bellPage(project).findComponent(id) as ComponentInstance).clearBinding('children');
+    // Make text-2 hold the title's value too: "Text" by name, "Text 2" by value, neither both.
+    expect(project.setInputDefault('bell', 'text', 'Anders').ok).toBe(true);
+    expect(project.setInputDefault('bell', 'text-2', 'Glocke').ok).toBe(true);
+    expect(makeAgain(project, 'bell-title')).toMatchObject({ reused: false });
   });
 
   it('a single unconnected input of another type is not taken', () => {

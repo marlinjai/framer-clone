@@ -429,7 +429,7 @@ describe('the MCP endpoint against a real database', () => {
 
       // An editor tab still on version 2 (or another agent) is refused.
       const stale = await tool(KEY_A, 'apply_batch', { siteId, expectedVersion: 2, ops: [{ op: 'setComponentInputDefault', definitionId, inputId: 'text-2', default: 'Alt' }] });
-      expect(stale.structuredContent).toMatchObject({ code: 'site_changed', currentVersion: 3 });
+      expect(stale.structuredContent).toMatchObject({ error: { code: 'site_changed', currentVersion: 3 } });
 
       const outline = await ok(KEY_A, 'get_page', { siteId, pageId: homePageId });
       const nodes = outline.nodes as Array<{ id: string; component?: { name: string; inputs: Array<Record<string, unknown>> } }>;
