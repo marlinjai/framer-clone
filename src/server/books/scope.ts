@@ -16,6 +16,7 @@ import { assertTenantGroupId, type TenantGroupId } from '@marlinjai/tenant-db';
 import type { CommerceDB } from '../commerce/db-types';
 import { BooksError } from './errors';
 import type { RecipientDirectory } from './recipients';
+import type { SenderDirectory } from './sender';
 
 export interface BooksScope {
   /** The scoped handle into `tg_<id>` (never the base handle). */
@@ -28,6 +29,8 @@ export interface BooksScope {
    * contacts database (opened lazily on first use); tests pass a fake.
    */
   readonly recipients?: RecipientDirectory;
+  /** Where a linked sender is read from (sender.ts). Defaults to the shared contacts database. */
+  readonly senders?: SenderDirectory;
 }
 
 const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -41,7 +44,7 @@ export function booksScope(
   db: Kysely<CommerceDB>,
   tgId: string,
   tenantId: string,
-  options: { recipients?: RecipientDirectory } = {},
+  options: { recipients?: RecipientDirectory; senders?: SenderDirectory } = {},
 ): BooksScope {
   const group = assertTenantGroupId(tgId);
   if (typeof tenantId !== 'string' || !TENANT_ID.test(tenantId)) {
@@ -49,5 +52,5 @@ export function booksScope(
       issues: [{ path: 'tenantId', message: 'expected a lowercase uuid' }],
     });
   }
-  return Object.freeze({ db, tgId: group, tenantId, recipients: options.recipients });
+  return Object.freeze({ db, tgId: group, tenantId, recipients: options.recipients, senders: options.senders });
 }
