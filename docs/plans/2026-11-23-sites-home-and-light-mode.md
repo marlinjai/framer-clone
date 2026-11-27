@@ -3,7 +3,7 @@ title: A real home at app.lumitra.co, a light mode, and a readable dark mode
 description: Plan for what app.lumitra.co shows first (signed in and signed out), where the demo editor moves, an interface theme preference (System, Light, Dark) across every editor surface, and a lifted dark palette whose panels and fields separate.
 summary: Marlin reported on 2026-11-23 that app.lumitra.co opens straight into "Framer Clone Demo" instead of his projects, that he wants a light mode throughout the product, and that the dark editor is too dark to read. Measured on production the same day, text contrast is fine (17 to 1) but panel surface on background is 1.02 to 1 and field borders 1.2 to 1, so every panel melts into one black. The plan makes `/` a home for a signed-in person (Direction A, a grid of site cards) and a welcome page for a signed-out visitor, with the demo one click away and no login, keeps the demo at `/` by address so no tenant page is shadowed, fixes its return paths, adds a System, Light and Dark preference kept per browser with no flash from a shared Lumitra-wide palette in suite-theme, lifts the dark palette into a three-step ramp with field borders of at least 3 to 1, and proves both modes with a contrast check, a raw-colour check and browser runs. Selection everywhere is a complete glowing ring, never a one-sided edge. Decided by Marlin on 2026-11-23; five slices, each under about 1,500 changed lines.
 type: plan
-status: decided
+status: in-progress
 date: 2026-11-23
 tags: [framer-clone, editor, dashboard, theme, light-mode, accessibility, plan]
 projects: [framer-clone, suite-theme]
@@ -225,7 +225,7 @@ push, landed through land-pr.
    or `?preview=1`, the signed-out case as D4 decides), the return paths and the allow-list, the home in the chosen
    direction (D2), company switcher, account menu with sign out and the theme, empty state ("No sites yet" with New
    site and Try the demo), the phone layout (fixes the overflow of section 1.4), titles per route.
-5. **S5, proof:** the browser runs of section 5 on a local build, then on production after Marlin's deploy yes.
+5. **S5, proof:** the browser runs of section 5 on a local build, then on production after Marlin's deploy yes. Done on production on 2026-11-27 after release 3 (1b82fe3c); results in section 8.
 
 S1 to S3 and S4 touch different files and can run in parallel after D1 and D2; S4 does not wait for the theme.
 
@@ -267,3 +267,33 @@ S1 to S3 and S4 touch different files and can run in parallel after D1 and D2; S
 
 Thumbnails captured from published pages; a theme preference stored in the account; restyling auth-brain's login
 (its own repository, which follows if D1 is "suite"); the marketing site lumitra.co (stays dark).
+
+## 8. Proof on production (2026-11-27, release 3 at 1b82fe3c, read-only)
+
+Run headless on the automation profile (signed in, company Lumitra) and in a clean browser (signed out). Nothing was
+saved: the only state written was the `lumitra_ui_theme` cookie, removed again at the end. Screenshots:
+`~/software-dev/orchestration/sites-home-theme/shots/s5/`.
+
+| Check | Result |
+|---|---|
+| Entry, signed in | `/` goes to `/projects`, the home with the site cards |
+| Entry, signed out | `/` answers 200 with the welcome page, no login; "Try the editor" opens `/?demo=1`; `/projects` goes to the login; an old `/?page=<id>` still opens the demo; `/demo` is a 404 (no new route over a site's own page) |
+| Theme, forward | Light and Dark from the Appearance menu change the page without a reload and write the cookie |
+| Theme, resume | the first HTML of `/`, of a reload, of a new tab and of a deep link into `/projects/<id>` already carries `data-ui-theme`, so there is no flash |
+| Theme, backtrack | System removes the cookie and follows the system setting in both directions while the page is open |
+| Theme, re-entry | by construction: the cookie is host-only on app.lumitra.co for a year and the sign-out happens on auth.lumitra.co, which cannot clear it (not signed out on production, which would end the profile's session) |
+| Isolation | published pages carry no `data-ui-theme` in their HTML whatever the cookie; a site in the canvas keeps its own white page in both interface modes and holds no `data-ui-theme` inside |
+| Contrast, light | text 15.7, muted 5.8, brand 4.9, link 4.9, destructive 4.6, warning 4.9, field border 3.4 (worst of the four grounds) |
+| Contrast, dark | text 10.3, muted 6.4, brand 8.8, link 5.5, destructive 4.8, warning 6.0, field border 4.4 |
+| Accessibility (axe, WCAG 2 A and AA) | welcome: none; home: a missing document title (fixed, below); demo editor: `meta-viewport`, the deliberate trade-off of `useEditorGestureGuard` (docs/plans/2026-10-24-editor-on-phones.md), kept |
+| Keyboard | every stop on the welcome page and the home shows a visible ring; a project card rings as a whole (the selection ring) |
+| Responsive | home and welcome at 390, 768, 1280 and 1680 px: no horizontal scroll |
+| Demo, keep as project | not run on production (it saves a project); covered by `DemoProjectSaving.test.tsx` and the local run of S4 |
+
+All five slices are done. The plan stays in progress only for its open question on a public Sites product page
+(the roadmap line "Sites has no public product page"), whose copy and publish are Marlin's.
+
+Found and fixed in the same change: the projects home, Books, Catalog, Payments and both previews sent no `<title>`
+(slice S4 had named only `/`). Each editor page now names its tab "<what> | Lumitra Sites", the root gives the editor
+host "Lumitra Sites" as the fallback, published pages still name themselves, and `src/app/__tests__/pageTitles.test.ts`
+holds every editor page to it.
