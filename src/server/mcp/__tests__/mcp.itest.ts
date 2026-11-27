@@ -367,3 +367,4 @@ describe('the MCP endpoint against a real database', () => {
     expect(await prisma.site.count({ where: { tenantGroupId: GROUP_A } })).toBe(before);
   });
 });
+// ci-replay touch

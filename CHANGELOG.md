@@ -69,3 +69,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Refactor UI layout and optimize Canvas component for performance
 - Clean up test components and editor UI types
+<!-- ci-replay touch -->

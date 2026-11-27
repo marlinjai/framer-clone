@@ -375,3 +375,4 @@ connections to the suite. The four lines below are in that order.
 See the individual plan files under `docs/plans/` and `docs/specs/` for status and evidence; this
 roadmap only tracks open work, per the one-home-per-open-item rule
 (`knowledge-base/standards/document-lifecycle.md` section 4).
+<!-- ci-replay touch -->
