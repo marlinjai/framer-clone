@@ -156,6 +156,38 @@ describe('a pull request asks what it can affect, and fails open', () => {
   });
 });
 
+describe('one browser for the long effects proofs on a pull request', () => {
+  const narrowed = specs.filter((spec) => select.narrowable(spec));
+
+  it('narrows the four long effects proofs, and only through the helper', () => {
+    expect(narrowed).toEqual(['test/behaviour/fx.spec.ts', 'test/behaviour/fxCanvas.spec.ts', 'test/behaviour/fxOracle.spec.ts', 'test/behaviour/fxRingOracle.spec.ts']);
+  });
+
+  it('a pull request sets chromium on every shard and installs only chromium for a narrowed spec', () => {
+    const plan = select.plan({ tier: 'pr', changed: ['src/lib/fx/ring.ts'] });
+    expect(plan.behaviour.every((s: Shard & { behaviour_engines: string }) => s.behaviour_engines === 'chromium')).toBe(true);
+    for (const s of plan.behaviour as Shard[]) {
+      const want = [...new Set(s.files.split(' ').flatMap((f) => (narrowed.includes(f) ? ['chromium'] : select.enginesOf(f))))].sort().join(' ');
+      expect(s.engines).toBe(want);
+    }
+  });
+
+  it('main and nightly narrow nothing', () => {
+    for (const tier of ['main', 'nightly'] as const) {
+      expect(select.plan({ tier, seed: 1 }).behaviour.every((s: { behaviour_engines: string }) => s.behaviour_engines === '')).toBe(true);
+    }
+  });
+
+  it('the helper narrows a list, refuses an unknown engine and a list it would empty', async () => {
+    const { behaviourEngines } = await import('../../../test/behaviour/engines');
+    const list = [['chromium', 1], ['webkit', 2]] as const;
+    expect(behaviourEngines(list, {})).toHaveLength(2);
+    expect(behaviourEngines(list, { BEHAVIOUR_ENGINES: 'chromium' })).toEqual([['chromium', 1]]);
+    expect(() => behaviourEngines(list, { BEHAVIOUR_ENGINES: 'edge' })).toThrow();
+    expect(() => behaviourEngines(list, { BEHAVIOUR_ENGINES: 'firefox' })).toThrow(/no engine/);
+  });
+});
+
 describe('shards', () => {
   it('put the longest first into the emptiest shard and stay within the cap', () => {
     const shards = select.shard(specs, durations);

@@ -19,6 +19,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserContext, type BrowserType, type Locator, type Page } from 'playwright';
+import { behaviourEngines } from './engines';
 import { PNG } from 'pngjs';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -212,7 +213,7 @@ beforeAll(async () => {
   origin = await publishPages(process.env.BEHAVIOUR_PORT!, { pages: PAGES });
 }, 180_000);
 
-describe.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])('in %s', (name, engine) => {
+describe.each(behaviourEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][]))('in %s', (name, engine) => {
   let browser: Browser;
   const contexts: BrowserContext[] = [];
 

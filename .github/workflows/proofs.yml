@@ -160,9 +160,12 @@ jobs:
         with:
           engines: ${{ matrix.engines }}
 
+      # BEHAVIOUR_ENGINES narrows the specs whose engine list goes through test/behaviour/engines.ts (chromium on a
+      # pull request; empty, every engine, after merge).
       - name: Behaviour proofs
         env:
           FILES: ${{ matrix.files }}
+          BEHAVIOUR_ENGINES: ${{ matrix.behaviour_engines }}
         run: |
           echo "nproc $(nproc), $(free -g | awk '/Mem:/ {print $2}') GB memory"
           # shellcheck disable=SC2086 # FILES is a space separated list of paths, split on purpose

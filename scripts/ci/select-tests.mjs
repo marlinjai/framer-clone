@@ -184,12 +184,25 @@ export function shard(files, durations, { targetMs = 120_000, maxShards = 8 } = 
   return shards.map((s) => ({ ...s, files: s.files.sort() }));
 }
 
-export function behaviourMatrix(files, durations) {
-  const shards = shard(files, durations);
+/** Whether a spec's engine list goes through test/behaviour/engines.ts, so BEHAVIOUR_ENGINES narrows it. */
+export function narrowable(file) {
+  return fs.readFileSync(path.join(ROOT, file), 'utf8').includes('behaviourEngines(');
+}
+
+/**
+ * The behaviour shards. With `oneBrowser` (the pull request tier) every shard sets BEHAVIOUR_ENGINES=chromium: the
+ * specs whose list goes through behaviourEngines (the long effects proofs, which run Chromium and WebKit, about half
+ * their time each) then run in Chromium only, and count half their measured time; the others run as written.
+ */
+export function behaviourMatrix(files, durations, { oneBrowser = false } = {}) {
+  const narrowed = new Set(oneBrowser ? files.filter(narrowable) : []);
+  const weights = Object.fromEntries(files.map((file) => [file, (durations[file] ?? 60_000) * (narrowed.has(file) ? 0.5 : 1)]));
+  const shards = shard(files, weights);
   return shards.map((s, index) => ({
     name: `${index + 1} of ${shards.length}`,
     files: s.files.join(' '),
-    engines: [...new Set(s.files.flatMap(enginesOf))].sort().join(' '),
+    engines: [...new Set(s.files.flatMap((file) => (narrowed.has(file) ? ['chromium'] : enginesOf(file))))].sort().join(' '),
+    behaviour_engines: oneBrowser ? 'chromium' : '',
     estimate: `${Math.round(s.ms / 1000)} s`,
   }));
 }
@@ -281,7 +294,7 @@ export function plan({ tier, changed = [], seed }) {
   if (tier === 'pr') {
     const behaviour = selectBehaviour(changed);
     const form = renderGateForm(changed);
-    return { behaviour: behaviourMatrix(behaviour.files, durations), behaviourReasons: behaviour.reasons, renderGate: renderGateMatrix(form), form, seed: '' };
+    return { behaviour: behaviourMatrix(behaviour.files, durations, { oneBrowser: true }), behaviourReasons: behaviour.reasons, renderGate: renderGateMatrix(form), form, seed: '' };
   }
   const all = behaviourSpecs();
   const nightlySeed = tier === 'nightly' ? String(seed ?? randomInt(1, 2 ** 31 - 1)) : '';
