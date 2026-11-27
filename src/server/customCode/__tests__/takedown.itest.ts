@@ -23,7 +23,7 @@ import { SiteBranchRepository } from '@/server/sites/branches/repository';
 import { customCodeHash, parseDeclaration, type CustomCodeDeclaration } from '@/lib/customCode/contract';
 import { loadLiveCustomCode } from '@/server/customCode/liveBlocks';
 import { readCustomCodeStatus, writeCustomCodeBlob } from '@/server/customCode/authoring';
-import { DerivedChainTooLongError, blockCustomCodeHash, disableCustomCodeForSite, liftCustomCodeDisable, unblockCustomCodeHash } from '@/server/customCode/takedown';
+import { blockCustomCodeHash, disableCustomCodeForSite, liftCustomCodeDisable, unblockCustomCodeHash } from '@/server/customCode/takedown';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
 
 const TENANT_GROUP = '018f9c10-0000-7000-8000-0000000c5e03';
@@ -118,7 +118,7 @@ describe('forward: blocking a hash takes it down on every site', () => {
     expect((await live(a, [onA])).has(onA)).toBe(true);
 
     const result = await blockCustomCodeHash(onA, OPERATOR);
-    expect(result).toEqual({ sha256: onA, listChanged: true, sites: [a.siteId, b.siteId].sort(), derived: [] });
+    expect(result).toEqual({ sha256: onA, listChanged: true, sites: [a.siteId, b.siteId].sort(), derived: [], keptBlocked: [], chainComplete: true });
 
     expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256: onA }, select: { blockedBy: true, reason: true } }))
       .toEqual({ blockedBy: OPERATOR.label, reason: OPERATOR.reason });
@@ -150,7 +150,7 @@ describe('resume: a repeated block keeps the first time', () => {
     const sha256 = await blob(a, `render("again ${randomUUID()}")`);
     await blockCustomCodeHash(sha256, OPERATOR, undefined, () => new Date('2026-11-27T10:00:00Z'));
     const again = await blockCustomCodeHash(sha256, { ...OPERATOR, reason: 'phishing form reported twice' }, undefined, () => new Date('2026-11-27T11:00:00Z'));
-    expect(again).toEqual({ sha256, listChanged: false, sites: [], derived: [] });
+    expect(again).toEqual({ sha256, listChanged: false, sites: [], derived: [], keptBlocked: [], chainComplete: true });
     const listed = await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } });
     expect(listed?.blockedAt.toISOString()).toBe('2026-11-27T10:00:00.000Z');
     expect(listed?.reason).toBe(OPERATOR.reason);
@@ -167,14 +167,14 @@ describe('backtrack: unblocking reverses a block made in error', () => {
     await blockCustomCodeHash(sha256, OPERATOR);
 
     const result = await unblockCustomCodeHash(sha256, { label: 'operator', reason: 'phishing form reported in error' });
-    expect(result).toEqual({ sha256, listChanged: true, sites: [a.siteId, b.siteId].sort(), derived: [] });
+    expect(result).toEqual({ sha256, listChanged: true, sites: [a.siteId, b.siteId].sort(), derived: [], keptBlocked: [], chainComplete: true });
     expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } })).toBeNull();
     expect((await prisma.customCodeBlob.findMany({ where: { sha256 }, select: { blockedAt: true } })).every((row) => row.blockedAt === null)).toBe(true);
     expect((await audit(a)).map((row) => row.action)).toEqual(['blob-block', 'blob-unblock']);
     expect((await live(a, [sha256])).has(sha256)).toBe(true);
 
     // Unblocking again changes nothing.
-    expect(await unblockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: false, sites: [], derived: [] });
+    expect(await unblockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: false, sites: [], derived: [], keptBlocked: [], chainComplete: true });
   });
 });
 
@@ -182,7 +182,7 @@ describe('re-entry: hashes no site holds, and published versions', () => {
   it('lists a hash no site holds, with no audit line, and refuses it when written later', async () => {
     const code = `render("never stored ${randomUUID()}")`;
     const sha256 = await customCodeHash(code, DECLARATION);
-    expect(await blockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: true, sites: [], derived: [] });
+    expect(await blockCustomCodeHash(sha256, OPERATOR)).toEqual({ sha256, listChanged: true, sites: [], derived: [], keptBlocked: [], chainComplete: true });
     await repo.saveProject(a.scope, project(a.siteId, [sha256]), { mustExist: true });
     const written = await writeCustomCodeBlob({
       siteId: a.siteId, ...a.scope, actor: OWNER, pageId: 'home', nodeId: 'block-0',
@@ -284,15 +284,52 @@ describe('rows a personal-data erase rewrote the code into (D115)', () => {
     expect(blocked.derived).toEqual([{ siteId: a.siteId, sha256: x }]);
     expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: b.siteId, sha256: other } } }))?.blockedAt).toBeNull();
     expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: b.siteId, sha256: x } } }))?.blockedAt).toBeNull();
+    // The unblock reaches the same rows and no others.
+    await prisma.customCodeBlob.update({ where: { siteId_sha256: { siteId: b.siteId, sha256: other } }, data: { blockedAt: new Date() } });
+    const unblocked = await unblockCustomCodeHash(h, OPERATOR);
+    expect(unblocked.derived).toEqual([{ siteId: a.siteId, sha256: x }]);
+    expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: b.siteId, sha256: other } } }))?.blockedAt).not.toBeNull();
   });
 
-  it('refuses as a whole, changing nothing, when the chain is too long to follow', async () => {
-    const h = hex();
+  it('R3-1: title-only erases (a hash into itself) never count toward the cap, and the block lands', async () => {
+    const code = `render("abusive ${randomUUID()}")`;
+    const h = await blob(a, code);
+    await prisma.customCodeAudit.createMany({
+      data: Array.from({ length: 300 }, () => ({ siteId: a.siteId, ...a.scope, actor: OWNER, action: 'blob-erase', sha256: h, detail: { replaces: h } })),
+    });
+    const result = await blockCustomCodeHash(h, OPERATOR);
+    expect(result).toMatchObject({ listChanged: true, sites: [a.siteId], derived: [], chainComplete: true });
+    expect((await live(a, [h])).has(h)).toBe(false);
+  });
+
+  it('R3-1: past the cap still lists the hash and blocks its own rows, and says the chain was not followed', async () => {
+    const code = `render("abusive ${randomUUID()}")`;
+    const h = await blob(a, code);
     await prisma.customCodeAudit.createMany({
       data: Array.from({ length: 257 }, () => ({ siteId: a.siteId, ...a.scope, actor: OWNER, action: 'blob-erase', sha256: hex(), detail: { replaces: h } })),
     });
-    await expect(blockCustomCodeHash(h, OPERATOR)).rejects.toBeInstanceOf(DerivedChainTooLongError);
-    expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256: h } })).toBeNull();
+    const result = await blockCustomCodeHash(h, OPERATOR);
+    expect(result).toMatchObject({ listChanged: true, sites: [a.siteId], chainComplete: false });
+    expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256: h } })).not.toBeNull();
+    expect((await live(a, [h])).has(h)).toBe(false);
+  });
+
+  it('N3-3: leaves every copy of a rewritten hash blocked when one site\'s copy is taken down for another reason', async () => {
+    const [h, x, other] = [hex(), hex(), hex()];
+    // Sites A and B both rewrote H into X; B's X also came from another listed hash.
+    await eraseLine(a, x, h);
+    await row(a, x);
+    await eraseLine(b, x, h);
+    await eraseLine(b, x, other);
+    await row(b, x);
+    await blockCustomCodeHash(other, OPERATOR);
+    await blockCustomCodeHash(h, OPERATOR);
+    const unblocked = await unblockCustomCodeHash(h, OPERATOR);
+    expect(unblocked.derived).toEqual([]);
+    expect(unblocked.keptBlocked).toEqual([{ siteId: a.siteId, sha256: x }, { siteId: b.siteId, sha256: x }].sort((p, q) => p.siteId.localeCompare(q.siteId)));
+    for (const site of [a, b]) {
+      expect((await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: site.siteId, sha256: x } } }))?.blockedAt).not.toBeNull();
+    }
   });
 
   it('leaves a rewritten row blocked on unblock when its own hash is taken down', async () => {

@@ -109,19 +109,19 @@ describe('POST /api/internal/custom-code/block: the body', () => {
 
 describe('POST /api/internal/custom-code/block: the actions', () => {
   it('blocks a hash as `operator` by default, with the trimmed reason', async () => {
-    blockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], derived: [{ siteId: 'site-a', sha256: 'b'.repeat(64) }] });
+    blockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], derived: [{ siteId: 'site-a', sha256: 'b'.repeat(64) }], keptBlocked: [], chainComplete: true });
     const res = await POST(req({ ...block, reason: '  phishing form  ' }));
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(await res.json()).toEqual({ action: 'block', sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], derived: [{ siteId: 'site-a', sha256: 'b'.repeat(64) }] });
+    expect(await res.json()).toEqual({ action: 'block', sha256: HASH, listChanged: true, sites: ['site-a', 'site-b'], derived: [{ siteId: 'site-a', sha256: 'b'.repeat(64) }], keptBlocked: [], chainComplete: true });
     expect(blockCustomCodeHash).toHaveBeenCalledWith(HASH, { label: 'operator', reason: 'phishing form' });
   });
 
   it('unblocks a hash under a channel label', async () => {
-    unblockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: false, sites: [], derived: [] });
+    unblockCustomCodeHash.mockResolvedValue({ sha256: HASH, listChanged: false, sites: [], derived: [], keptBlocked: [{ siteId: 'site-c', sha256: 'c'.repeat(64) }], chainComplete: false });
     const res = await POST(req({ action: 'unblock', sha256: HASH, reason: 'reported in error', by: 'operator:abuse-report' }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ action: 'unblock', sha256: HASH, listChanged: false, sites: [], derived: [] });
+    expect(await res.json()).toEqual({ action: 'unblock', sha256: HASH, listChanged: false, sites: [], derived: [], keptBlocked: [{ siteId: 'site-c', sha256: 'c'.repeat(64) }], chainComplete: false });
     expect(unblockCustomCodeHash).toHaveBeenCalledWith(HASH, { label: 'operator:abuse-report', reason: 'reported in error' });
   });
 
@@ -152,14 +152,6 @@ describe('POST /api/internal/custom-code/block: the actions', () => {
 
     liftCustomCodeDisable.mockResolvedValueOnce({ ok: false, reason: 'branch_site' });
     expect((await POST(req({ action: 'lift-site', siteId: 'branch-1', reason: 'x' }))).status).toBe(400);
-  });
-
-  it('answers 409 when the erase chain is too long to follow, with nothing changed', async () => {
-    const { DerivedChainTooLongError } = await import('@/server/customCode/takedown');
-    blockCustomCodeHash.mockRejectedValue(new DerivedChainTooLongError());
-    const res = await POST(req(block));
-    expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ error: { code: 'derived_chain_too_long' } });
   });
 
   it('answers 500 on a database failure, with nothing changed', async () => {

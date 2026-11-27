@@ -777,8 +777,10 @@ takedown '{"action":"disable-site","siteId":"<site id>","reason":"<why>"}'
 
 `by` is `operator` (the default) or `operator:` with lower case words joined by hyphens; `reason` is at most 500
 characters and names no person, because the takedown list outlives a company erasure. The answer lists the sites
-changed by id (and, under `derived`, rows a personal-data erase rewrote this code into, which follow the block) and
-never carries code. Repeating a call is safe: it changes only what the first call left, which is normally nothing; a
+changed by id (and, under `derived`, rows a personal-data erase rewrote this code into, which follow the block;
+under `keptBlocked`, rewritten rows an unblock left blocked because they are taken down for another reason too) and
+never carries code. `"chainComplete": false` means the erase chain was longer than a takedown follows: the hash
+itself was still changed, and the rewritten hashes in the custom code audit (`blob-erase`) are taken down one by one. Repeating a call is safe: it changes only what the first call left, which is normally nothing; a
 row of the same code that another site saved in the very moment of the block is marked by repeating the block (it is
 never served either way, because the takedown list decides). A site disabled this
 way stays off until an operator lifts it with `"action":"lift-site"` (same body as a disable); lifting leaves the

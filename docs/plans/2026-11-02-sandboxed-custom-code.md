@@ -1483,9 +1483,14 @@ says which hash it `follows`. The first step may be on any site (`replaces` is a
 every later step stays on that site, so another site's identical code and its own erases are never reached (second
 review, R2-2). It never lists their hashes (the erase never lists, B1). An unblock leaves a rewritten row blocked when
 its own hash, or any hash it was rewritten from on its site other than the one unblocked (a row may have several
-parents), is listed or blocked on a row outside this chain (R2-1); erring that way leaves a row blocked, and the
-answer names what it unblocked. More than 256 erase lines from one hash refuse the whole takedown with 409
-`derived_chain_too_long` and change nothing, rather than follow part of a chain (M1). An erase that commits between
+parents; the walk stops at the unblocked hash, N3-2), is listed or blocked on a row outside this chain (R2-1), and then
+leaves blocked every other rewritten row of the same hash, so one site's copy is never served while another's stays
+taken down (N3-3); the answer names what it unblocked (`derived`) and what it left blocked (`keptBlocked`, N3-1).
+**The cap never stops the hash itself** (third review, R3-1): the list change and the hash's own rows always land.
+At most 256 distinct rewritten rows are followed, and a title-only erase (a hash into itself) is skipped, so repeating
+erases cannot inflate the count; past the cap, or past 4,096 erase lines when an unblock reads what each row came
+from (read once for all sites, R3-2, and then every rewritten row is left blocked), the answer says
+`chainComplete: false` and a log line names the hash, and the operator takes down the rewritten hashes one by one. An erase that commits between
 the chain's read and the site locks is missed like the race below, and repeating the call picks it up (M2). **Accepted residual**
 (finding 4): a guarded write on another site that had not committed when the block's lock query began can still
 write the same code there; that row is not marked, gets no audit line, is not in the answer, can be pruned like any
