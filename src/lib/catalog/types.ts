@@ -80,6 +80,8 @@ export interface ProductListQuery {
   status?: ProductStatus | 'all';
   type?: string;
   collection?: string;
+  /** Only the products this site shows (not switched off for it). */
+  site?: string;
   stock?: StockState;
   sort?: ProductSort;
   dir?: SortDirection;

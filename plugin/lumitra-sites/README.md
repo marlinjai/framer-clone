@@ -34,6 +34,8 @@ It ships five components, discovered at the fixed locations the spec defines:
 | `publish` | Publish the draft, with the person's approval. |
 | `list_revisions` | The published versions of a site, and which one is live. |
 | `rollback` | Serve an earlier published version again, with the person's approval. |
+| `list_products` | The products a site's shop sells: title, kind, status, variant count, price range in cents, stock. Read only. |
+| `get_product` | One shop product with its options, variants, prices in cents, stock, tax class and images. Read only. |
 
 ### Branch tools
 

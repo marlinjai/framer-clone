@@ -19,6 +19,9 @@ import 'server-only';
 // `{ error: { code, message, ... } }`: the library's own code (site_changed with
 // currentVersion, rejected with each operation's index and reason, forbidden,
 // rate_limited with retryAfterSec), never a stack trace and never the key.
+//
+// The shop catalogue tools (list_products, get_product) live in ./catalogTools.ts and run the catalogue
+// operations (src/server/catalogOps) the same way.
 
 import { z } from 'zod';
 import { INPUT_TYPES } from '@/lib/components/inputs';
@@ -67,6 +70,7 @@ import { APPROVAL_TTL_MS, approvalUrl, type ApprovalStore, type ApprovalSubject 
 import { liveAgentId } from '@/server/siteOps/audit';
 import { PLAN_LIMITS, PLAN_SECTION_KINDS, sanitizePlanTitle } from '@/lib/projects/liveEvents';
 import { announcePlan, clearPlan } from './livePlans';
+import { catalogToolDefs } from './catalogTools';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -1128,6 +1132,8 @@ export const TOOLS: ToolDef[] = [
         })),
       ),
   }),
+  // The shop catalogue of a site (./catalogTools.ts).
+  ...catalogToolDefs({ read, toolResult, errorResult }),
 ];
 
 // ---------- what tools/list answers ----------

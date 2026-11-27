@@ -75,6 +75,9 @@ Motion follows these rules, without exception:
 4. `get_site` gives pages, breakpoints (largest first), theme tokens, components and the current
    `version`. `get_page` gives the outline of a page with node ids; a long page comes in parts
    through `nextCursor`.
+5. When the site sells something, `list_products` and `get_product` (with the `siteId`) show its
+   shop catalogue: products, variants, prices in cents and stock. Use their real titles and prices
+   in the pages you write. These tools only read: a person changes products in the editor's Catalog.
 
 ## 4. Structure first, then sections
 

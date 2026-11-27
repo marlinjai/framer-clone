@@ -321,10 +321,10 @@ describe('protocol', () => {
     const { result } = (await res.json()) as { result: { tools: typeof LISTED_TOOLS } };
     expect(result.tools.map((t) => t.name)).toEqual([
       'list_sites', 'get_site', 'get_page', 'describe_vocabulary', 'create_site', 'apply_batch', 'announce_sections', 'clear_sections',
-      'generate_page', 'find_images', 'preview_url', 'publish', 'list_revisions', 'rollback',
+      'generate_page', 'find_images', 'preview_url', 'publish', 'list_revisions', 'rollback', 'list_products', 'get_product',
     ]);
     const byName = Object.fromEntries(result.tools.map((t) => [t.name, t]));
-    for (const name of ['list_sites', 'get_site', 'get_page', 'describe_vocabulary', 'preview_url', 'list_revisions', 'find_images']) {
+    for (const name of ['list_sites', 'get_site', 'get_page', 'describe_vocabulary', 'preview_url', 'list_revisions', 'find_images', 'list_products', 'get_product']) {
       expect(byName[name].annotations.readOnlyHint).toBe(true);
     }
     for (const name of ['publish', 'rollback', 'apply_batch', 'generate_page']) {
