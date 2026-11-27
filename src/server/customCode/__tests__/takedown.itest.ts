@@ -166,12 +166,18 @@ describe('resume: a repeated block keeps the first time', () => {
 });
 
 describe('overlapping calls on one hash', () => {
-  /** How many other backends of this database wait for a lock. */
-  const waiting = async () =>
+  /**
+   * How many backends wait behind the holder, directly or through one another. Only this chain: the other
+   * integration files share the database and run at the same time, so their lock waits must not count.
+   */
+  const queuedBehind = async (holderPid: number) =>
     Number((await prisma.$queryRaw<{ n: bigint }[]>`
-      SELECT pg_catalog.count(*) AS n FROM pg_catalog.pg_stat_activity
-       WHERE datname = pg_catalog.current_database() AND wait_event_type = 'Lock'`)[0].n);
-  const untilWaiting = (n: number) => expect.poll(waiting, { timeout: 4_000, interval: 25 }).toBe(n);
+      WITH RECURSIVE queued(pid) AS (
+        SELECT a.pid FROM pg_catalog.pg_stat_activity a WHERE ${holderPid}::int = ANY(pg_catalog.pg_blocking_pids(a.pid))
+        UNION
+        SELECT a.pid FROM pg_catalog.pg_stat_activity a JOIN queued q ON q.pid = ANY(pg_catalog.pg_blocking_pids(a.pid))
+      )
+      SELECT pg_catalog.count(*) AS n FROM queued`)[0].n);
 
   it('serializes a block behind an unblock, so the list and the rows never disagree', async () => {
     const sha256 = await blob(a, `render("overlap ${randomUUID()}")`);
@@ -179,22 +185,23 @@ describe('overlapping calls on one hash', () => {
 
     // Hold the site row, so the unblock stops before it changes anything, then start the block behind it.
     let release!: () => void;
-    let locked!: () => void;
-    const held = new Promise<void>((resolve) => { locked = resolve; });
+    let locked!: (pid: number) => void;
+    const held = new Promise<number>((resolve) => { locked = resolve; });
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const holder = prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT s.id FROM public.sites s WHERE s.id = ${a.siteId} FOR NO KEY UPDATE`;
-      locked();
+      locked((await tx.$queryRaw<{ pid: number }[]>`SELECT pg_catalog.pg_backend_pid() AS pid`)[0].pid);
       await gate;
     }, { timeout: 12_000 });
-    await held;
+    const holderPid = await held;
+    const untilQueued = (n: number) => expect.poll(() => queuedBehind(holderPid), { timeout: 4_000, interval: 25 }).toBe(n);
     let unblock: ReturnType<typeof unblockCustomCodeHash> | undefined;
     let block: ReturnType<typeof blockCustomCodeHash> | undefined;
     try {
       unblock = unblockCustomCodeHash(sha256, OPERATOR);
-      await untilWaiting(1);
+      await untilQueued(1);
       block = blockCustomCodeHash(sha256, OPERATOR);
-      await untilWaiting(2);
+      await untilQueued(2);
     } finally {
       release();
       await holder;
