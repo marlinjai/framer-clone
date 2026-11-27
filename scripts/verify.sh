@@ -28,6 +28,15 @@ stage() {
   return 1
 }
 
+# CI compares with `git diff`; this compares with a copy, so the command also runs on a copy of the worktree that has
+# no .git folder (check-on-hermes), and a not yet committed, correctly generated file passes.
+database_types() {
+  local file=src/server/commerce/db-types.ts
+  cp "$file" "$LOGS/db-types.before" || return 1
+  pnpm db:codegen-commerce || return 1
+  diff -u "$LOGS/db-types.before" "$file"
+}
+
 # The dummy connection string CI gives the steps that only need the generated client or the build.
 export DATABASE_URL="${DATABASE_URL:-postgresql://ci:ci@localhost:5432/framer_clone_ci}"
 
@@ -43,7 +52,7 @@ stage "lint" pnpm lint
 stage "unit tests" pnpm test
 stage "build" pnpm build
 stage "integration tests" pnpm test:integration
-stage "database types" bash -c 'pnpm db:codegen-commerce && git diff --exit-code src/server/commerce/db-types.ts'
+stage "database types" database_types
 stage "roadmap check" npx --yes github:marlinjai/actions-shared#roadmap-check-v1 --root .
 
 if [ "$FAILED" -eq 0 ]; then
