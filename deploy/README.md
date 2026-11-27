@@ -312,6 +312,7 @@ says where each comes from.
 | `CUSTOM_CODE_DISABLED` | no, for custom code | The kill switch, read exactly as the box reads it (D16): only `0` lets pages frame the box; unset or any other value keeps every block on its fallback. Read by the middleware at run time, so a change takes a restart |
 | `CUSTOM_CODE_AVAILABLE` | no, for custom code | Turns on writing custom code blocks in the editor (slice C4, D99): only `1` shows the Components panel's Custom code item and opens `/api/projects/<id>/custom-code`; unset or any other value hides the item and the route answers 404 `custom_code_unavailable`. Leave it unset in production until slice C7. It does not stop serving: that is `CUSTOM_CODE_DISABLED`. Read at request time on the server, never in the client bundle |
 | `CUSTOM_DOMAIN_SYNC_TOKEN` | for custom domains | Bearer token (at least 32 characters, generated) the host timers present to `GET /api/internal/custom-domains/hostnames`, `POST /api/internal/custom-domains/recheck`, `POST /api/internal/commerce/expired-payments` and `POST /api/internal/commerce/jobs/run`. Unset means all four answer 503, the proxy keeps its last file, live domains are not re-checked, the expired payment sweep is off (each order's expiry job still closes it) and the job watchdog is off (the poller still runs) |
+| `CUSTOM_CODE_OPERATOR_TOKEN` | no, for custom code | Bearer token (at least 32 characters, generated) the operator presents to `POST /api/internal/custom-code/block` to take down custom code (see "Taking down custom code" below). Its own token, so the host timers' token cannot take code down. Unset or shorter means the route answers 503 |
 
 A published site only injects analytics when its `lumitraEnabled` flag is set.
 
@@ -751,6 +752,31 @@ check: while pinned it deploys that run's digest again, which is only right when
 `override_guard` holds for the first attempt of a run only: a re-run of an override run (GitHub repeats its inputs) is
 refused by the guard, so an old override can never deploy its commit over a newer production. Start a new manual run
 instead, after checking again what runs.
+
+## Taking down custom code (the operator's route)
+
+After an abuse report (plan `docs/plans/2026-11-02-sandboxed-custom-code.md`, "Abuse handling" and D116 to D119), an
+operator takes code down through `POST /api/internal/custom-code/block` on the editor host, with its own token
+`CUSTOM_CODE_OPERATOR_TOKEN` (at least 32 characters, generated, never the host timers' `CUSTOM_DOMAIN_SYNC_TOKEN`).
+Unset, the route answers 503 and changes nothing. Run it from a shell where the token is in the environment (through
+Infisical or the secrets proxy), never typed on the command line:
+
+```bash
+# One block's code, on every site that holds it: the box answers 410 within six minutes and it cannot be saved again.
+curl --fail-with-body -sS -X POST "https://app.lumitra.co/api/internal/custom-code/block" \
+  -H "authorization: Bearer $CUSTOM_CODE_OPERATOR_TOKEN" -H 'content-type: application/json' \
+  -d '{"action":"block","sha256":"<64 hex>","reason":"<why, naming no person>","by":"operator:abuse-report"}'
+# The same with "action":"unblock" reverses a takedown made in error.
+# A whole site: every block shows its fallback at the next request, and its editors read the reason in the panel.
+  -d '{"action":"disable-site","siteId":"<site id>","reason":"<why>"}'
+```
+
+`by` is `operator` (the default) or `operator:` with lower case words joined by hyphens; `reason` is at most 500
+characters and names no person, because the takedown list outlives a company erasure. The answer lists the sites
+changed by id and never carries code. Repeating a block, unblock or lift changes nothing more. A site disabled this
+way stays off until an operator lifts it with `"action":"lift-site"` (same body as a disable); lifting leaves the
+switch off, and the site's own admin switches it on again through the enable step of slice C7, which must refuse while
+the operator's disable stands.
 
 ## Operator commands (from a checkout, against a forwarded database)
 

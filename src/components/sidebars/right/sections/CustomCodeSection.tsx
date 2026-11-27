@@ -590,7 +590,12 @@ function Notices({ authoring, projectId, proposal, invalid, retry }: {
     const status = authoring.state.status;
     if (!projectId) lines.push({ text: 'Save the project first: a block\'s code is stored with its site.' });
     if (status.branch) lines.push({ text: 'Custom code is written on the main site, not on a branch. Open the main site to change this block.' });
-    else if (!status.enabled) lines.push({ text: 'Custom code is not switched on for this site, so its code cannot be saved and the block shows its fallback.' });
+    else if (!status.enabled && status.disabledByLumitra) {
+      lines.push({
+        text: `Lumitra switched custom code off for this site, so every block shows its fallback. Contact support to have it reviewed.${status.disabledByLumitra.reason ? ` Reason given: ${status.disabledByLumitra.reason}` : ''}`,
+        alert: true,
+      });
+    } else if (!status.enabled) lines.push({ text: 'Custom code is not switched on for this site, so its code cannot be saved and the block shows its fallback.' });
     else if (!status.canManage) lines.push({ text: 'Only a workspace admin can change custom code. You can read it here.' });
     if (!status.serving) lines.push({ text: 'This server does not run custom code right now, so published blocks show their fallback.' });
   }

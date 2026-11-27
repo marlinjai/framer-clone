@@ -49,6 +49,10 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
     uses: 11, kind: 'sees-branches',
     why: 'the custom code write locks the site row by id and REFUSES a branch (its blobs would not exist for main after a merge, D100); the status read says whether the id is a branch; the budget and the prune go through named.ts with that one main site',
   },
+  'src/server/customCode/takedown.ts': {
+    uses: 13, kind: 'sees-branches',
+    why: 'the operator takedown (D116 to D119): blocking or unblocking a hash locks, by id, the sites holding a row of it, which are always mains (a branch writes no code, D100); a site disable or lift reads the row by id and REFUSES a branch (its switch is never on, D30); the reason read is keyed by the site id',
+  },
   'src/server/customCode/named.ts': {
     uses: 11, kind: 'sees-branches',
     why: 'the one reading of "named" (D113): a site\'s working copy, its revisions, and its branches\' working copies, base copies and kept pre-merge copies, keyed by the main site; a branch\'s names keep main\'s blobs alive and count in main\'s budget',

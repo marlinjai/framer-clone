@@ -213,6 +213,7 @@ export const HOST_ROUTES: readonly HostRoute[] = [
   { route: '/api/receipts/[token]', why: 'the receipt link in the confirmation mail names the editor host' },
   { route: '/api/internal/commerce/expired-payments', why: 'host timer, bearer token' },
   { route: '/api/internal/commerce/jobs/run', why: 'host timer, bearer token' },
+  { route: '/api/internal/custom-code/block', why: 'operator takedown of custom code, its own bearer token (src/server/customCode/operatorAuth.ts)' },
   { route: '/api/internal/custom-domains/hostnames', why: 'host timer, bearer token' },
   { route: '/api/internal/custom-domains/recheck', why: 'host timer, bearer token' },
   { route: '/api/internal/erasure', why: 'auth-brain erasure webhook, HMAC-signed body (src/server/erasure)' },

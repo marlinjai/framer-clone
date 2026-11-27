@@ -16,6 +16,8 @@ export interface CustomCodeStatus {
   canManage: boolean;
   serving: boolean;
   usedBytes: number;
+  /** Set when Lumitra switched the site's custom code off (a takedown), with the reason the operator gave. */
+  disabledByLumitra?: { reason: string; at: string } | null;
   limits: { blockBytes: number; siteBytes: number; blocksPerPage: number; writesPerHour: number };
 }
 

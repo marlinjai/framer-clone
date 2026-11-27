@@ -24,6 +24,17 @@ function tokenMatches(presented: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+/**
+ * True when the request carries `Authorization: Bearer <expected>`, compared in constant time. The core every
+ * bearer-gated internal route shares; each route keeps its own token, so one leaked caller's token opens only
+ * that caller's routes (the custom code takedown route uses it with its own, src/server/customCode/operatorAuth.ts).
+ */
+export function bearerMatches(req: Request, expected: string): boolean {
+  const header = req.headers.get('authorization') ?? '';
+  const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+  return presented.length > 0 && tokenMatches(presented, expected);
+}
+
 /** Null when the request may proceed, else the ready error response. */
 export function checkInternalRequest(req: Request): Response | null {
   if (!isEditorHost(req.headers.get('host'))) {
@@ -34,9 +45,7 @@ export function checkInternalRequest(req: Request): Response | null {
     console.error('[domains] CUSTOM_DOMAIN_SYNC_TOKEN is not set (or too short); the internal endpoints are off');
     return jsonError(CUSTOM_DOMAINS_NOT_CONFIGURED, 'the custom-domain feed is not configured', 503);
   }
-  const header = req.headers.get('authorization') ?? '';
-  const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
-  if (!presented || !tokenMatches(presented, expected)) {
+  if (!bearerMatches(req, expected)) {
     return jsonError('unauthorized', 'authentication required', 401);
   }
   return null;

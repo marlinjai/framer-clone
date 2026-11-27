@@ -1394,7 +1394,8 @@ with Tab and moves through and scrolls it with the keyboard (review 1, M2).
 
 Numbering continues after D112. C5 is built in four pull requests, each under about 1,500 changed lines: (1) pruning
 and the budget at save and publish, (2) erase reaching code, (3) the operator's block route and proposals, (4) the
-publish dialog's listing, the publish warnings and frames in the standalone preview. No part needs a migration: the
+publish dialog's listing, the publish warnings and frames in the standalone preview. Part 3 lands as two pull requests,
+the operator's route first (D116 to D119, access-deciding, with its own security review) and proposals after it. No part needs a migration: the
 C1b tables allow deleting a blob (its trigger guards updates only), a site's disable reason fits the audit line's
 `detail`, and deleting a site deletes its blobs and proposals.
 
@@ -1454,6 +1455,48 @@ names each rewritten block, because code can stop working where a text in it cha
 old hash for up to six minutes (its 60 second lookup cache plus the 300 second HTTP cache, the same bound as for a
 disabled block), and no page names that hash any more; what a visitor's browser already loaded is outside the site's
 reach, as for any erased value.
+
+**D116. The takedown route has its own token (part 3).** "Abuse handling" names an operator token; the handoff
+suggested reusing `checkInternalRequest`. That gate is bound to `CUSTOM_DOMAIN_SYNC_TOKEN`, which sits in the systemd
+units of the shared server and is presented by the host timers every few minutes, so reusing it would let whoever reads
+a timer unit take down any site's code or switch any site off. **Who this protects against:** a person or process that
+obtains the host timers' token (a leaked unit file, a copied server). The route therefore reads
+`CUSTOM_CODE_OPERATOR_TOKEN` (at least 32 characters; unset or shorter answers 503
+`custom_code_operator_not_configured`, never an open route), shares only the constant-time comparison
+(`bearerMatches` in `src/server/domains/internalAuth.ts`, whose four routes behave exactly as before), and answers
+404 off the editor host. Production needs no change for this part: with the token unset the route is off. Setting it
+is an operator step with the switch-on, not part of this slice.
+
+**D117. Blocking a hash: the list decides, every site's row follows, one audit line per site.** A block writes the hash
+to `custom_code_blocked_hashes` first (D32; `blocked_by` the operator label of D34, checked in the route so a wrong
+label is a 400 and never the database's CHECK as a 500), then locks, in id order and FOR NO KEY UPDATE, every site
+holding a row of it (always main sites: a branch writes no code, D100), sets `blocked_at` on each row not yet blocked,
+and writes `blob-block` for each site whose row it newly blocked, with the reason in `detail`. A hash no site holds is
+listed alone, with no audit line (the audit needs a site; the list row is the record). A repeated block keeps the first
+time, reason and label and writes nothing more. **Unblock is in:** without it a takedown made in error would mean
+hand-run SQL on production; it reverses all three (list, rows, `blob-unblock` per site) and is idempotent too.
+**Accepted residual:** a guarded write on another site that read the list just before the block committed can still
+write the same code there, unblocked on its row; the list is what the box, the published page and every later write
+read, so it is never served and never written again.
+
+**D118. Disabling a site, and who lifts it.** The same route's `disable-site` sets `custom_code_enabled = false` and
+writes a `disable` line by the operator with the reason, on every call (also when already off, since the reason is what
+the owner is told; the last one wins). A branch id is refused with 400 (its switch is never on, D30) and an unknown id
+with 404. The site's editors read the reason in the custom code panel ("Lumitra switched custom code off for this
+site ... Reason given: ..."), through the status read's `disabledByLumitra`, which is set while the latest switch
+change is an operator's `disable` that was not lifted. **Site settings** shows nothing yet because it has no custom
+code section before C7's enable dialog; C7 shows the same reason there. **Lifting:** `lift-site` writes a `disable`
+line with `lifted: true` (the audit's actions are fixed by a CHECK and nothing is switched on, so it is no `enable`),
+leaves the switch off, and writes nothing when no operator disable stands. **For C7:** the enable step must refuse
+while `readOperatorDisable` (in `src/server/customCode/takedown.ts`) answers a reason, so an owner cannot undo a
+takedown by switching the site on again.
+
+**D119. Lock order and what the takedown never touches.** Every action is one transaction that locks the site rows it
+changes FOR NO KEY UPDATE, the lock the guarded write takes and that a save and a publish (FOR UPDATE) and the erase
+conflict with, so pruning (which skips a blocked row, D113) and a write never interleave with a takedown of the same
+site. The route never reads or returns code; its answers and log lines hold the action, the hash, the label and site
+ids. The reason must name no person (the takedown list outlives a company erasure, D32, D34); no constraint can hold
+that, so the route's error and `deploy/README.md` say it.
 
 ## For Marlin
 
