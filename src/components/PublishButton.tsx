@@ -343,7 +343,7 @@ function PublishLegalNotice({ check, language, onCreateLegal, onOpenPage, onPubl
           onCancel();
         }
       }}
-      className="fixed right-4 top-16 phone:top-12 z-100 mt-2 flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      className="fixed right-4 top-16 phone:top-12 z-100 mt-2 flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-3 rounded-md border border-warning-edge bg-warning-surface text-foreground p-3 text-xs shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-warning"
     >
       <p id="publish-legal-title" className="text-[13px] font-semibold">
         {check.missingImpressum

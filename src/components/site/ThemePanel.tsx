@@ -339,7 +339,7 @@ export const ThemeForm = observer(({ project }: { project: ProjectModelType }) =
       </div>
 
       {warnings.length > 0 && (
-        <ul className="flex flex-col gap-1 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100" data-testid="theme-warnings">
+        <ul className="flex flex-col gap-1 rounded-md border border-warning-edge bg-warning-surface text-foreground px-3 py-2 text-xs" data-testid="theme-warnings">
           {warnings.map((w) => (
             <li key={w}>{w}</li>
           ))}

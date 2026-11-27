@@ -13,23 +13,16 @@ import { useStore } from '@/hooks/useStore';
 import { useProductPreview } from '@/lib/commerce/productPreview';
 import { isProductPageSlug } from '@/lib/pages/slug';
 
-const TONES = {
-  light: {
-    select: 'min-w-0 max-w-[220px] rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900',
-    text: 'text-xs text-gray-600',
-    error: 'text-xs text-red-700',
-  },
-  dark: {
-    select: 'min-w-0 max-w-[220px] max-md:max-w-[120px] bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100',
-    text: 'text-xs text-gray-400',
-    error: 'text-xs text-red-300',
-  },
+// One look in the notice stack and the preview toolbar: both follow the interface's Light and Dark.
+const classes = {
+  select: 'min-w-0 max-w-[220px] max-md:max-w-[120px] rounded border border-input bg-background px-2 py-1 text-xs text-foreground',
+  text: 'text-xs text-muted-foreground',
+  error: 'text-xs text-destructive',
 } as const;
 
-export function ProductPreviewPicker({ slug, tone }: { slug: string; tone: keyof typeof TONES }) {
+export function ProductPreviewPicker({ slug }: { slug: string }) {
   const preview = useProductPreview();
   if (!preview || preview.status === 'loading' || !isProductPageSlug(slug)) return null;
-  const classes = TONES[tone];
 
   if (preview.status === 'error') {
     return <span role="alert" className={classes.error}>Products could not be loaded: {preview.message}</span>;
@@ -62,10 +55,10 @@ const ProductPreviewBar = observer(() => {
   return (
     <div
       data-editor-ui="true"
-      className="pointer-events-auto flex max-w-[640px] items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 shadow"
+      className="pointer-events-auto flex max-w-[640px] items-center gap-2 rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow"
     >
       <span className="shrink-0">Showing</span>
-      <ProductPreviewPicker slug={slug} tone="light" />
+      <ProductPreviewPicker slug={slug} />
     </div>
   );
 });

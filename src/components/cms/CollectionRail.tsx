@@ -114,7 +114,7 @@ const CollectionRail: React.FC<CollectionRailProps> = ({
           aria-selected={activeTab === 'collections'}
           data-testid="rail-tab-collections"
           type="button"
-          className="flex-1 rounded-[6px] bg-background py-1.5 text-center text-[12px] font-medium text-foreground shadow-xs"
+          className="flex-1 rounded-[6px] bg-background py-1.5 text-center text-[12px] font-medium text-foreground shadow-selection"
         >
           Collections
         </button>
@@ -266,7 +266,7 @@ const CollectionRail: React.FC<CollectionRailProps> = ({
                   data-testid={`cms-rail-collection-${c.id}`}
                   className={[
                     'group relative flex h-8 items-center rounded-[6px] transition-colors',
-                    active ? 'bg-brand/10' : 'hover:bg-accent',
+                    active ? 'bg-brand/10 shadow-selection z-[1]' : 'hover:bg-accent',
                   ].join(' ')}
                 >
                   {active && (

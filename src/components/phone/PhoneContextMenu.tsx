@@ -295,7 +295,7 @@ const PhoneContextMenu = observer(({ editorUI }: { editorUI: EditorUIType }) => 
                 onClick={() => run(item)}
                 className={cn(
                   'flex h-11 w-full items-center gap-3 px-3 text-left text-[15px] hover:bg-foreground/8 focus-visible:bg-foreground/8 focus-visible:outline-none data-[highlighted=true]:bg-foreground/12',
-                  meta.destructive && 'text-red-600 dark:text-red-400',
+                  meta.destructive && 'text-destructive',
                 )}
               >
                 <span className="flex-1">{fxPick?.kind === 'layer' ? `${meta.label} layer` : meta.label}</span>

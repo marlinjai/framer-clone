@@ -122,8 +122,8 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
       <div
         className={
           fill
-            ? 'w-full h-full flex items-center justify-center bg-white text-sm text-gray-400'
-            : 'flex items-center justify-center bg-white text-sm text-gray-400'
+            ? 'w-full h-full flex items-center justify-center bg-background text-sm text-muted-foreground'
+            : 'flex items-center justify-center bg-background text-sm text-muted-foreground'
         }
         style={fill ? undefined : { width, height }}
       >

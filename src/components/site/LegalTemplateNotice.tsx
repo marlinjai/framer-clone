@@ -49,7 +49,7 @@ const LegalTemplateNotice = observer(() => {
       data-editor-ui="true"
       data-testid="legal-template-notice"
       // Placed by EditorApp's notice stack under the top bar (below the editor notice, if any).
-      className="pointer-events-auto flex max-w-[640px] items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow"
+      className="pointer-events-auto flex max-w-[640px] items-start gap-2 rounded-md border border-warning-edge bg-warning-surface text-foreground px-3 py-2 text-xs shadow"
     >
       <Scale size={14} aria-hidden="true" className="mt-px shrink-0" />
       <span>

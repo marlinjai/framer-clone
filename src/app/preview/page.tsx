@@ -58,8 +58,8 @@ function DemoPreview() {
   if (mode.kind === 'demo') return <PreviewShell missingPageId={mode.missingPageId} />;
   if (mode.kind === 'empty') {
     return (
-      <main className="flex h-screen w-screen flex-col items-center justify-center gap-3 bg-gray-900 px-6 text-center text-gray-300">
-        <h1 className="text-base font-medium text-gray-100">Nothing to preview</h1>
+      <main className="flex h-screen w-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center text-muted-foreground">
+        <h1 className="text-base font-medium text-foreground">Nothing to preview</h1>
         <p className="max-w-md text-sm">
           The demo project lives only in the browser tab it was made in, and is gone after a full
           reload. To keep your work, use Keep as project in the editor: it makes the demo a project of its own.

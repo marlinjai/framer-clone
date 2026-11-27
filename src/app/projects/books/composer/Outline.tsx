@@ -218,7 +218,7 @@ export default function Outline(props: OutlineProps) {
               <div
                 ref={setNodeRef}
                 style={style}
-                className={`flex items-center gap-1 rounded-md pl-2 ${selected ? 'bg-brand/10 ring-1 ring-brand/80' : ''} ${isDragging ? 'opacity-50' : ''}`}
+                className={`flex items-center gap-1 rounded-md pl-2 ${selected ? 'relative bg-brand/10 shadow-selection z-[1]' : ''} ${isDragging ? 'opacity-50' : ''}`}
               >
                 <button
                   type="button"

@@ -156,7 +156,7 @@ const CollectionList: React.FC<CollectionListProps> = ({
                 data-testid={`cms-collection-${c.id}`}
                 className={[
                   'group relative flex h-9 items-center gap-2.5 rounded-md px-2 transition-colors',
-                  active ? 'bg-brand/10' : 'hover:bg-accent',
+                  active ? 'bg-brand/10 shadow-selection z-[1]' : 'hover:bg-accent',
                 ].join(' ')}
               >
                 {active && (
