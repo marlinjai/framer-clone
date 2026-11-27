@@ -227,7 +227,7 @@ jobs:
           deadline=$(( $(date +%s) + 1200 ))
           while :; do
             listing=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
-              --jq '.jobs[] | select(.name | endswith("behaviour (build)")) | "\(.run_attempt) \(.status) \(.conclusion // "")"')
+              --jq '.jobs[] | select(.name | endswith("behaviour (build)")) | "\(.run_attempt) \(.status) \(.conclusion // "")"') || listing=''  # one failed poll is asked again
             picked=$(printf '%s\n' "$listing" | node scripts/ci/pick-build.mjs "$ATTEMPT")
             state=${picked#* }
             case "$picked" in
