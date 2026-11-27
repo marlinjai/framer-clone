@@ -1,0 +1,206 @@
+name: proofs
+
+# The two long proofs, the render gate (test/renderGate) and the behaviour proofs (test/behaviour), as one
+# reusable workflow for every tier (plan: knowledge-base docs/plans/2026-11-27-ci-under-ten-minutes.md 4.1):
+#
+#   pr       ci.yml on a pull request: the proofs the change can affect, sharded, and the render gate's short
+#            deterministic form (Chromium, a fixed-seed sample), or its long form (every probe, still Chromium
+#            only, as the standard's pull request tier says) when the renderer, the gate or a stored-node format
+#            changes.
+#   main     after-merge.yml on every push to main: every proof, every engine, every probe.
+#   nightly  after-merge.yml at night: main's set with the render gate's full cross, shuffled by a fresh seed.
+#
+# scripts/ci/select-tests.mjs decides what runs (its map and why are in that file) and prints it in the job
+# summary. The path filter lives on jobs, never on the workflow: a job skipped by `if:` reports "skipped",
+# which settles; a workflow skipped by `paths:` never reports and would hold a required check for ever.
+# The two rollup jobs carry the check names `render-gate` and `behaviour` and fail unless every job they
+# stand for succeeded or was skipped on purpose.
+
+on:
+  workflow_call:
+    inputs:
+      tier:
+        type: string
+        required: true
+      seed:
+        description: 'nightly only: the seed for the render gate shuffle; empty draws a fresh one'
+        type: string
+        default: ''
+      max-parallel:
+        description: 'At most this many jobs of each matrix at once (after merge, so pull requests keep runners)'
+        type: number
+        default: 20
+    outputs:
+      seed:
+        description: 'The render gate seed this run used (nightly)'
+        value: ${{ jobs.select.outputs.seed }}
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: select
+    runs-on: ubuntu-latest
+    outputs:
+      behaviour: ${{ steps.select.outputs.behaviour }}
+      behaviour_run: ${{ steps.select.outputs.behaviour_run }}
+      render_gate: ${{ steps.select.outputs.render_gate }}
+      render_gate_run: ${{ steps.select.outputs.render_gate_run }}
+      seed: ${{ steps.select.outputs.seed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # A pull request's merge commit and its first parent, the base: the change is the diff between them.
+          fetch-depth: 2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # Dependency free, so no install: seconds.
+      - name: Select the proofs
+        id: select
+        env:
+          TIER: ${{ inputs.tier }}
+          SEED: ${{ inputs.seed }}
+        run: |
+          if [ "$TIER" = pr ]; then
+            node scripts/ci/select-tests.mjs --tier pr --base HEAD^1 --head HEAD
+          elif [ -n "$SEED" ]; then
+            node scripts/ci/select-tests.mjs --tier "$TIER" --seed "$SEED"
+          else
+            node scripts/ci/select-tests.mjs --tier "$TIER"
+          fi
+
+  render-gate-run:
+    name: render-gate (${{ matrix.name }})
+    needs: select
+    if: needs.select.outputs.render_gate_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max-parallel }}
+      matrix: ${{ fromJSON(needs.select.outputs.render_gate) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browsers
+        uses: ./.github/actions/playwright-browsers
+        with:
+          engines: ${{ matrix.install }}
+
+      # Whether anything stored can act on a page, through both renderers. The variables pick the engines, the
+      # sample and the slice (test/renderGate/selection.ts); empty ones ask everything.
+      - name: Render gate
+        env:
+          RENDER_GATE_ENGINES: ${{ matrix.engines }}
+          RENDER_GATE_SEED: ${{ matrix.seed }}
+          RENDER_GATE_SAMPLE: ${{ matrix.sample }}
+          RENDER_GATE_SLICE: ${{ matrix.slice }}
+          RENDER_GATE_FULL: ${{ matrix.full }}
+          FILES: ${{ matrix.files }}
+        run: |
+          echo "nproc $(nproc), $(free -g | awk '/Mem:/ {print $2}') GB memory"
+          # shellcheck disable=SC2086 # FILES is a space separated list of paths, split on purpose
+          pnpm test:render-gate $FILES
+
+  # The runtime on a real production build, through the real published route on a real Postgres, in real
+  # Chromium, Firefox and WebKit. Each shard boots its own Postgres and build (test/behaviour/setup.ts), so the
+  # shards share nothing; inside one, files still run one after another (timing proofs measure wall clock).
+  behaviour-run:
+    name: behaviour (${{ matrix.name }})
+    needs: select
+    if: needs.select.outputs.behaviour_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      # The shard's `next build` (test/behaviour/setup.ts) skips type checking and lint, which ci.yml's `static`
+      # job proves once for the whole change (next.config.ts).
+      NEXT_BUILD_SKIP_CHECKS: 1
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max-parallel }}
+      matrix: ${{ fromJSON(needs.select.outputs.behaviour) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browsers
+        uses: ./.github/actions/playwright-browsers
+        with:
+          engines: ${{ matrix.engines }}
+
+      # BEHAVIOUR_ENGINES narrows the specs whose engine list goes through test/behaviour/engines.ts (chromium on a
+      # pull request; empty, every engine, after merge).
+      - name: Behaviour proofs
+        env:
+          FILES: ${{ matrix.files }}
+          BEHAVIOUR_ENGINES: ${{ matrix.behaviour_engines }}
+        run: |
+          echo "nproc $(nproc), $(free -g | awk '/Mem:/ {print $2}') GB memory"
+          # shellcheck disable=SC2086 # FILES is a space separated list of paths, split on purpose
+          pnpm test:behaviour $FILES
+
+  # The check names. `if: always()` so a failed shard never skips its rollup (a skipped check reads as passed),
+  # and the selection itself must have succeeded: a broken select skips every shard, which is not a pass.
+  render-gate:
+    name: render-gate
+    needs: [select, render-gate-run]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every render gate job passed
+        env:
+          SELECT: ${{ needs.select.result }}
+          RUN: ${{ needs.render-gate-run.result }}
+          WANTED: ${{ needs.select.outputs.render_gate_run }}
+        run: |
+          echo "select: $SELECT, render gate jobs: $RUN, asked: $WANTED"
+          [ "$SELECT" = success ] || exit 1
+          if [ "$WANTED" = true ]; then [ "$RUN" = success ] || exit 1; else [ "$RUN" = skipped ] || exit 1; fi
+
+  behaviour:
+    name: behaviour
+    needs: [select, behaviour-run]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every behaviour shard passed
+        env:
+          SELECT: ${{ needs.select.result }}
+          RUN: ${{ needs.behaviour-run.result }}
+          WANTED: ${{ needs.select.outputs.behaviour_run }}
+        run: |
+          echo "select: $SELECT, behaviour shards: $RUN, asked: $WANTED"
+          [ "$SELECT" = success ] || exit 1
+          if [ "$WANTED" = true ]; then [ "$RUN" = success ] || exit 1; else [ "$RUN" = skipped ] || exit 1; fi

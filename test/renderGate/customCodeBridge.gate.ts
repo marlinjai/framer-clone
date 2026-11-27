@@ -22,6 +22,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type BrowserType, type Page } from 'playwright';
+import { asks, selectEngines, selection, skipWithoutEngines } from './selection';
 import { boxDocumentHeaders, composeBoxDocument } from '@/lib/customCode/contract';
 import type { IslandBlock, BlockState } from '@/lib/customCode/registry';
 import type { BehaviourProgram } from '@/lib/behaviour/program';
@@ -554,12 +555,19 @@ const firstMessageOf = async (page: Page, id: string) => {
 // Engines
 // ---------------------------------------------------------------------------
 
+// RENDER_GATE_ENGINES (selection.ts) narrows the three on purpose, as a pull request's short form does; Firefox is only
+// required when it is one of the engines asked.
+const firefoxAsked = !selection.engines || selection.engines.includes('firefox');
 const firefoxInstalled = fs.existsSync(firefox.executablePath());
-if (!firefoxInstalled && process.env.CUSTOM_CODE_GATE_NO_FIREFOX !== '1') {
+if (firefoxAsked && !firefoxInstalled && process.env.CUSTOM_CODE_GATE_NO_FIREFOX !== '1') {
   throw new Error('Firefox is not installed: run `pnpm exec playwright install firefox`, or set CUSTOM_CODE_GATE_NO_FIREFOX=1 to leave it out on purpose');
 }
-const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit], ...(firefoxInstalled ? [['firefox', firefox] as [string, BrowserType]] : [])];
+const ENGINES: [string, BrowserType][] = selectEngines(
+  [['chromium', chromium], ['webkit', webkit], ...(firefoxInstalled ? [['firefox', firefox] as [string, BrowserType]] : [])],
+  selection,
+);
 
+skipWithoutEngines(ENGINES);
 describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
   let browser: Browser;
   beforeAll(async () => {
@@ -1271,7 +1279,8 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
 // Review 3 of pull request #452, M1: under site isolation, as desktop Chrome ships it, the frame runs in its own
 // process, so only the broker stands between its window messages and the page. The page reads no message's data
 // itself here (`quiet`), so whatever the click costs is the broker's.
-describe('the custom code bridge in chromium with site isolation', () => {
+// Chromium only, so a job that asks other engines alone skips it (selection.ts).
+describe.runIf(asks('chromium'))('the custom code bridge in chromium with site isolation', () => {
   let browser: Browser;
   beforeAll(async () => {
     browser = await chromium.launch({ args: ['--site-per-process'] });

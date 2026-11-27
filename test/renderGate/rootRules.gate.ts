@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { chromium, webkit, type Browser, type BrowserType } from 'playwright';
+import { selectEngines, selection, skipWithoutEngines } from './selection';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
@@ -22,7 +23,7 @@ import PageModel from '@/models/PageModel';
 import { ComponentTypeEnum } from '@/models/ComponentModel';
 import { BREAKPOINTS, publishedDocument } from '../score/lib/published';
 
-const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
+const ENGINES: [string, BrowserType][] = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
 const PHONE = { width: 390, height: 844 };
 const cmsRepo = { listRows: async () => ({ rows: [], total: 0 }), getRow: async () => null } as unknown as CmsReadRepository;
 
@@ -96,6 +97,7 @@ const bannerFacts = () =>
     };
   })();
 
+skipWithoutEngines(ENGINES);
 describe.each(ENGINES)('a rule on the document in %s', (_name, type) => {
   const withBrowser = async (work: (browser: Browser) => Promise<void>) => {
     const browser = await type.launch();

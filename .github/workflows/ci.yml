@@ -1,10 +1,13 @@
 name: CI
 
-# First real correctness gate for framer-clone. Runs the full local verify
-# suite on every push and PR to main: typecheck, lint, unit tests, build, and
-# the Dockerized Postgres integration tests (which run nowhere today). The
-# integration globalSetup boots its own throwaway Postgres via testcontainers,
-# so the runner only needs a working Docker daemon (ubuntu-latest ships one).
+# The pull request tier (plan: knowledge-base docs/plans/2026-11-27-ci-under-ten-minutes.md, standard
+# standards/ci-cd-speed.md section 0.5): about five minutes at the median, at most ten. Typecheck, lint, the
+# unit tests in shards, the Dockerized Postgres integration tests (their globalSetup boots a throwaway Postgres
+# through testcontainers; ubuntu-latest ships Docker), the build, a real `docker build`, and the two long proofs
+# in the form the change can affect (proofs.yml). Every proof in full runs after the merge on main and at night
+# (after-merge.yml), where a failure opens an issue.
+#
+# On a push to main only the fast jobs run here; the long proofs run in after-merge.yml.
 
 on:
   push:
@@ -28,17 +31,12 @@ jobs:
         with:
           max-age: 30
 
-  verify:
-    name: verify
+  # Seconds, no install: the guards, the plugin, the score files.
+  static:
+    name: static
     runs-on: ubuntu-latest
     env:
-      # Dummy connection string for the steps that only need the generated
-      # Prisma client or the Next build; none of these connect. The integration
-      # globalSetup (vitest.integration.setup.ts) owns the real test database and
-      # overrides DATABASE_URL at run time, exactly as it does locally. The same
-      # globalSetup also owns COMMERCE_APP_DATABASE_URL (it provisions the
-      # commerce_app role + the demo tg_<demo> schema on its container and
-      # exports the URL), so do NOT add a static commerce URL here.
+      # Dummy connection string for the steps that only need the generated Prisma client; none of these connect.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
     steps:
       - name: Checkout
@@ -91,7 +89,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # postinstall already runs prisma generate, but keep it explicit so the
-      # client is guaranteed present before typecheck and build.
+      # client is guaranteed present before typecheck.
       - name: Generate Prisma client
         run: pnpm exec prisma generate
 
@@ -107,22 +105,125 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+  # 700 files took 600 s on one runner (2026-11-27); in three shards each is a third. The shards are vitest's
+  # own (`--shard`), over both projects, so every file runs in exactly one of them.
+  unit:
+    name: unit (${{ matrix.shard }} of 3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Unit tests
-        run: pnpm test
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          echo "nproc $(nproc), $(free -g | awk '/Mem:/ {print $2}') GB memory"
+          # vitest itself: `pnpm test --shard` is refused by pnpm, whose `test` shortcut takes no options.
+          pnpm exec vitest run --shard="$SHARD/3"
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    env:
+      # The Next build needs a connection string to be set, never a database.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Build
         run: pnpm build
 
+  # 98 files took 283 s on one runner (2026-11-27); in two shards each boots its own Postgres (the globalSetup), so
+  # they share nothing.
+  integration:
+    name: integration (${{ matrix.shard }} of 2)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      # The integration globalSetup (vitest.integration.setup.ts) owns the real test database and overrides
+      # DATABASE_URL at run time, exactly as it does locally. The same globalSetup also owns
+      # COMMERCE_APP_DATABASE_URL (it provisions the commerce_app role and the demo tg_<demo> schema on its
+      # container and exports the URL), so do NOT add a static commerce URL here.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       # Boots a throwaway Postgres via testcontainers and runs prisma migrate
       # deploy before the suite. Docker is preinstalled on ubuntu-latest.
       - name: Integration tests
-        run: pnpm test:integration
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: pnpm exec vitest run --config vitest.integration.config.ts --shard="$SHARD/2"
 
       # db-types.ts is generated from the live tenant DDL (scripts/commerce-codegen.ts).
       # A hand edit, or a migration without a regenerated file, fails here: it drifted
       # once (010) before this check existed.
       - name: Database types match the migrations
+        if: matrix.shard == 1
         run: pnpm db:codegen-commerce && git diff --exit-code src/server/commerce/db-types.ts
+
+  # The check name the four jobs above stand for (the one job they were until 2026-11-27). `if: always()` so a
+  # failed job never skips it: a skipped check reads as passed.
+  verify:
+    name: verify
+    needs: [static, unit, build, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every verify job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "static, unit, build, integration: $RESULTS"
+          for result in $RESULTS; do [ "$result" = success ] || exit 1; done
 
   docker-build:
     name: docker-build
@@ -147,71 +248,11 @@ jobs:
           context: .
           push: false
 
-  # Real Chromium and WebKit, so it has a job of its own beside verify rather than
-  # adding to the wait on it (a pull request reports back in the longer of the two).
-  render-gate:
-    name: render-gate
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # Bounded: `--with-deps` runs apt-get, which retries a mirror it cannot resolve for as long as the job
-      # may run (6 hours by default; on 2026-11-11 a runner-side name-lookup outage held this step for over
-      # 30 minutes on every run). Measured over 114 successful runs: median 43 s, 95th percentile 148 s,
-      # slowest 924 s. 20 minutes passes a slow mirror and ends a hung one. Firefox is for the custom code
-      # bridge (test/renderGate/customCodeBridge.gate.ts), which runs in all three engines and fails without it.
-      - name: Install browsers
-        timeout-minutes: 20
-        run: pnpm exec playwright install --with-deps chromium webkit firefox
-
-      # Whether anything stored can act on a page, through both renderers.
-      - name: Render gate fuzz
-        run: pnpm test:render-gate
-
-  # The runtime on a real production build, through the real published route on a real
-  # Postgres, in real Chromium, Firefox and WebKit. A job of its own for the same reason as the
-  # render gate. It is the only place a page that hangs a tab can show.
-  behaviour:
-    name: behaviour
-    runs-on: ubuntu-latest
-    env:
-      NEXT_TELEMETRY_DISABLED: 1
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # Bounded: `--with-deps` runs apt-get, which retries a mirror it cannot resolve for as long as the job
-      # may run (6 hours by default; on 2026-11-11 a runner-side name-lookup outage held this step for over
-      # 30 minutes on every run). Measured over 114 successful runs: median 43 s, 95th percentile 148 s,
-      # slowest 924 s. 20 minutes passes a slow mirror and ends a hung one.
-      - name: Install browsers
-        timeout-minutes: 20
-        run: pnpm exec playwright install --with-deps chromium firefox webkit
-
-      - name: Behaviour proofs
-        run: pnpm test:behaviour
+  # The render gate and the behaviour proofs, in the form this change can affect (proofs.yml says how it is
+  # chosen). On a push to main they run in full in after-merge.yml instead.
+  proofs:
+    name: proofs
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/proofs.yml
+    with:
+      tier: pr

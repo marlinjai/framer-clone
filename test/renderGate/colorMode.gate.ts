@@ -19,10 +19,11 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType } from 'playwright';
+import { selectEngines, selection, skipWithoutEngines } from './selection';
 import { withColorMode } from '@/lib/rules/colorMode';
 import { parseRule } from '@/lib/rules/rules';
 
-const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
+const ENGINES: [string, BrowserType][] = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
 
 /** True at the probe's 800 pixel width, and false. */
 const TRUE = '(min-width: 0px)';
@@ -68,6 +69,7 @@ function sweep(): string[] {
 const substituted = (prelude: string, mode: 'light' | 'dark') =>
   prelude.replace(/prefers-color-scheme\s*:\s*(light|dark)/gi, (_whole, value: string) => (value.toLowerCase() === mode ? TRUE.slice(1, -1) : FALSE.slice(1, -1)));
 
+skipWithoutEngines(ENGINES);
 describe.each(ENGINES)('withColorMode against matchMedia in %s', (_name, type) => {
   let browser: Browser;
   beforeAll(async () => {

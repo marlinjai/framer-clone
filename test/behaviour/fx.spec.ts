@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserContext, type BrowserContextOptions, type BrowserType, type Page } from 'playwright';
+import { behaviourEngines } from './engines';
 import { PNG } from 'pngjs';
 import { PRESETS, serializeScene } from '@/lib/fx/format';
 import { png } from '@/lib/images/__tests__/fixtures';
@@ -28,7 +29,7 @@ const hubHero = preset('gold-noise-gradient');
 const godraysHero = preset('godrays-hero');
 const bokehFocuspull = preset('bokeh-focuspull');
 
-const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
+const ENGINES: [string, BrowserType][] = behaviourEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][]);
 
 /** The box's own CSS background: a blue no frame of the hub hero (gold on black) contains. */
 const BLUE = { r: 20, g: 60, b: 200 };

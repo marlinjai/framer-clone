@@ -1,0 +1,61 @@
+name: Playwright browsers
+description: >
+  Installs only the Playwright engines a job asks, from a cache keyed on the Playwright version (never the
+  lockfile, so an unrelated dependency bump keeps it). System libraries are not in the cache, so a hit still
+  installs them. Only main saves: a cache saved on a pull request is visible to that pull request alone, and
+  saving it there would only crowd the repository's 10 GB out of the caches main shares with every branch.
+  Needs dependencies installed first (it reads the Playwright version from node_modules).
+
+inputs:
+  engines:
+    description: 'Space separated: chromium, webkit, firefox'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Playwright version
+      id: version
+      shell: bash
+      env:
+        ENGINES: ${{ inputs.engines }}
+      run: |
+        echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+        # One cache per set of engines, named the same however the set was written.
+        echo "engines=$(echo "$ENGINES" | tr ' ' '\n' | sed '/^$/d' | sort -u | paste -sd- -)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore browsers
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.version.outputs.version }}-${{ steps.version.outputs.engines }}
+
+    # Bounded: `--with-deps` and `install-deps` run apt-get, which retries a mirror it cannot resolve for as long
+    # as the job may run (6 hours by default; on 2026-11-11 a runner-side name-lookup outage held this step for
+    # over 30 minutes on every run). Measured over 114 successful runs: median 43 s, 95th percentile 148 s,
+    # slowest 924 s. 20 minutes passes a slow mirror and ends a hung one.
+    - name: Install browsers (cache miss)
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        ENGINES: ${{ inputs.engines }}
+      run: |
+        # shellcheck disable=SC2086 # ENGINES is a space separated list, split on purpose
+        timeout 1200 pnpm exec playwright install --with-deps $ENGINES
+
+    - name: Install system libraries (cache hit)
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      env:
+        ENGINES: ${{ inputs.engines }}
+      run: |
+        # shellcheck disable=SC2086 # ENGINES is a space separated list, split on purpose
+        timeout 1200 pnpm exec playwright install-deps $ENGINES
+
+    - name: Save browsers (main only)
+      if: steps.cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ steps.cache.outputs.cache-primary-key }}

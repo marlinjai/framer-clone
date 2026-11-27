@@ -1,0 +1,128 @@
+name: after-merge
+
+# The long proofs in full, off the pull request's path (plan: knowledge-base
+# docs/plans/2026-11-27-ci-under-ten-minutes.md, standard standards/ci-cd-speed.md section 0.5):
+#
+#   push to main  every behaviour proof and the whole render gate, every engine, every probe (proofs.yml, tier main)
+#   nightly       the same with the render gate's full cross (RENDER_GATE_FULL=1), shuffled by a fresh seed
+#
+# A failure is never silent: the run fails, and the report job opens an issue labelled `after-merge-failure`
+# (or adds to the open one) with the commit, the run and the seed to ask again. The next green run on main
+# closes it. The repository's next release waits for main to be green again (the release lead checks this
+# workflow on the release commit).
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 02:17 UTC, outside the working day of most merges, so it does not take runners from pull requests.
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: 'main (every proof) or nightly (the full cross, fresh seed)'
+        type: choice
+        options: [main, nightly]
+        default: main
+      seed:
+        description: 'nightly: ask this seed again (empty draws a fresh one)'
+        type: string
+        default: ''
+      prove_report:
+        description: 'Fail on purpose after the proofs, to prove the failure issue opens (and closes on the next green run)'
+        type: boolean
+        default: false
+
+# One run at a time per trigger, never cancelled once it started: cancelling on every merge would mean the full
+# proofs never finish on a busy day. A newer push waiting replaces an older one waiting, and runs on everything
+# the older one would have.
+concurrency:
+  group: after-merge-${{ github.event_name == 'schedule' && 'nightly' || inputs.tier || 'main' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  proofs:
+    name: proofs
+    uses: ./.github/workflows/proofs.yml
+    with:
+      tier: ${{ github.event_name == 'schedule' && 'nightly' || inputs.tier || 'main' }}
+      seed: ${{ inputs.seed || '' }}
+      # Leaves runners for pull requests: the account runs 20 jobs at once on the free plan, shared by every
+      # repository, and this limit applies to each of the two matrices. After merge has no time budget.
+      max-parallel: 4
+
+  prove-report:
+    name: prove-report
+    if: inputs.prove_report == true
+    needs: proofs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on purpose
+        run: |
+          echo "Asked to fail (prove_report), so the failure issue opens."
+          exit 1
+
+  # Only for runs on main: a manual run on another branch or tag must neither open main's issue nor close it. Such a
+  # run still fails visibly by itself.
+  report:
+    name: report
+    needs: [proofs, prove-report]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open, add to or close the failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PROOFS: ${{ needs.proofs.result }}
+          PROVE: ${{ needs.prove-report.result }}
+          TIER: ${{ github.event_name == 'schedule' && 'nightly' || inputs.tier || 'main' }}
+          SEED: ${{ needs.proofs.outputs.seed }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          label=after-merge-failure
+          # One issue per tier: a green main run says nothing about a nightly seed's finding, and the reverse.
+          title="After-merge proofs failed on main (${TIER})"
+          gh label create "$label" --color B60205 --description "The long proofs failed on main (after-merge.yml)" 2>/dev/null || true
+          open=$(gh issue list --label "$label" --state open --json number,title \
+            | jq -r --arg t "$title" '[.[] | select(.title == $t)][0].number // empty')
+          echo "proofs: $PROOFS, prove-report: $PROVE, open issue: ${open:-none}"
+
+          failed=false
+          [ "$PROOFS" = success ] || failed=true
+          [ "$PROVE" = failure ] && failed=true
+
+          if [ "$failed" = true ]; then
+            {
+              echo "The ${TIER} proofs failed on main at ${SHA}."
+              echo
+              echo "- Run: ${RUN_URL}"
+              echo "- Proofs: ${PROOFS}"
+              if [ -n "$SEED" ]; then
+                echo "- Render gate seed: \`RENDER_GATE_SEED=${SEED}\` (ask it again: Actions, after-merge, Run workflow, tier nightly, this seed)"
+              fi
+              if [ "$PROVE" = failure ]; then
+                echo "- Failed on purpose (prove_report): this run proves the report, not a defect."
+              fi
+              echo
+              echo "A fix or a revert goes in at once; the next release waits until this workflow is green on main again."
+            } > body.md
+            if [ -n "$open" ]; then
+              gh issue comment "$open" --body-file body.md
+            else
+              gh issue create --label "$label" --title "$title" --body-file body.md
+            fi
+            exit 1
+          fi
+
+          # Green on main settles main's open issue. A nightly finding is closed by its fix, never by a later
+          # night: the next night asks another seed, so its green says nothing about the one that failed.
+          if [ -n "$open" ] && [ "$TIER" = main ]; then
+            gh issue close "$open" --comment "Green again at ${SHA}: ${RUN_URL}"
+          fi

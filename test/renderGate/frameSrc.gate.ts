@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { chromium, webkit, type BrowserType, type Page } from 'playwright';
+import { asks, selectEngines, selection, skipWithoutEngines } from './selection';
 import { middleware } from '@/middleware';
 import { MAPS_CONSENT_COOKIE } from '@/lib/site/cspReportOnly';
 import { parseMapEmbed } from '@/lib/mapEmbed/mapEmbed';
@@ -146,8 +147,10 @@ const CASES: { name: string; url: string; cookie: string; expected: Record<strin
   },
 ];
 
+const ENGINES = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
+
 describe('the enforced frame policy', () => {
-  for (const [browserName, type] of [['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][]) {
+  for (const [browserName, type] of ENGINES) {
     it.each(CASES)(`in ${browserName}: $name`, async ({ url, cookie, expected }) => {
       const headers = await headersFor(url, cookie);
       expect(headers['content-security-policy']).toMatch(/frame-src /);
@@ -161,7 +164,8 @@ describe('the enforced frame policy', () => {
     }, 60_000);
   }
 
-  it('lets the map load after consent and refuses it before, read from the document the browser received', async () => {
+  // Chromium only (it launches Chromium itself), so a job that asks WebKit alone skips it (selection.ts).
+  it.runIf(asks('chromium'))('lets the map load after consent and refuses it before, read from the document the browser received', async () => {
     const browser = await chromium.launch();
     try {
       const url = `https://${SITE}/contact`;
@@ -184,6 +188,7 @@ describe('the enforced frame policy', () => {
 // real render of such a page, it must leave the header's decision about the map alone and
 // refuse another site's box path, which the header alone allows.
 describe("the per-site policy of a page with custom code", () => {
+  skipWithoutEngines(ENGINES);
   const SITE_ID = BOX_FRAME.split('/')[4];
   const OTHER_SITE_BOX = BOX_FRAME.replace(SITE_ID, 'ffffffff-1c2d-4e5f-8a9b-0c1d2e3f4a5b');
 
@@ -217,7 +222,7 @@ describe("the per-site policy of a page with custom code", () => {
       .replace("other: { src: ", `stranger: { src: ${JSON.stringify(OTHER_SITE_BOX)}, sandbox: 'allow-scripts' },\n    other: { src: `)
       .replace("{ box: 'pending', map: 'pending', other: 'pending' }", "{ box: 'pending', map: 'pending', other: 'pending', stranger: 'pending' }");
 
-  for (const [browserName, type] of [['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][]) {
+  for (const [browserName, type] of ENGINES) {
     it(`in ${browserName}: the map follows consent, and another site's box is refused`, async () => {
       const meta = await siteMeta();
       expect(meta).toContain(`frame-src ${BOX_ORIGIN}/box/${SITE_ID}/ https://www.google.com`);
@@ -266,7 +271,8 @@ const CONSENT_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><b
 </script></body></html>`;
 
 describe('maps consent given on a page already loaded', () => {
-  it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])(
+  skipWithoutEngines(ENGINES);
+  it.each(ENGINES)(
     'in %s: the yes loads a new document whose policy allows the map, and the map loads',
     async (_name, type) => {
       const url = `https://${SITE}/contact`;
@@ -327,7 +333,8 @@ const PLUGIN_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><bo
 </script></body></html>`;
 
 describe('objects and embeds under the enforced policy', () => {
-  it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])('in %s: a published page refuses both', async (_name, type) => {
+  skipWithoutEngines(ENGINES);
+  it.each(ENGINES)('in %s: a published page refuses both', async (_name, type) => {
     const url = `https://${SITE}/about`;
     const headers = await headersFor(url, '');
     expect(headers['content-security-policy']).toContain("object-src 'none'");

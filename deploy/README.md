@@ -70,7 +70,8 @@ oldest one should a company ever have several).
 | `boot.sh` | The start sequence, see below. Runnable on its own for tests: `docker run --entrypoint ./boot.sh -e ...`. |
 | `scripts/commerce-migrate.ts` | The commerce start step (source of `commerce-migrate.cjs`). Logic in `src/server/commerce/provisioning/deploy.ts`. |
 | `prisma/sql/commerce-roles.sql` | Creates the two commerce roles with all their privileges. Applied once per database, as the database superuser, before the first start, and again whenever the file changes (it pins both roles to the shape it describes, taking away anything an earlier version granted). No passwords. |
-| `.github/workflows/ci.yml` | Typecheck, lint, guards, unit tests, Docker integration tests, build, and a real `docker build` of the production image, on every push and pull request. |
+| `.github/workflows/ci.yml` | The pull request tier: guards, typecheck and lint, unit tests in three shards, Docker integration tests, build, a real `docker build` of the production image, and the long proofs in the form the change can affect (`proofs.yml`). On a push to main only the fast jobs. |
+| `.github/workflows/after-merge.yml` | Every behaviour proof and the whole render gate after each merge to main, and nightly with a fresh seed; a failure opens an `after-merge-failure` issue. A release waits until it is green on main. |
 | `.github/workflows/deploy.yml` | Manual for now (`gh workflow run deploy --ref main`): builds and pushes the image, fires the Coolify webhook, then polls `https://app.lumitra.co/api/health/db` for up to 180 seconds. |
 | `src/app/api/health/route.ts` | `GET /api/health`, liveness, `{ "ok": true }` without touching the database. Coolify's health check uses it. |
 | `src/app/api/health/db/route.ts` | `GET /api/health/db`, readiness, runs `SELECT 1` through Prisma; a 503 names the error. The deploy workflow polls it. |

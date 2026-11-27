@@ -12,15 +12,16 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
+import { behaviourEngines } from './engines';
 import { PNG } from 'pngjs';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import { fxFromPreset, setFxParam, setFxStart, type FxEdit } from '@/lib/fxScene/edit';
 import { bundleEditor, openEditor, placeTree } from '../score/lib/canvasBundle';
 
-const ENGINES: [string, BrowserType][] = [
+const ENGINES: [string, BrowserType][] = behaviourEngines([
   ['chromium', chromium],
   ['webkit', webkit],
-];
+] as [string, BrowserType][]);
 
 function stored(edit: FxEdit) {
   if (!edit.ok) throw new Error(edit.message);

@@ -10,7 +10,13 @@ import type { NextConfig } from "next";
 // harness's stand-ins, so the worker fetches the same paths as in production.
 const HARNESS = process.env.BOOKS_ENGINE_HARNESS === '1';
 
+// CI's behaviour proof shards build the app only to run it (.github/workflows/proofs.yml): type checking and lint
+// are proven once by ci.yml's `static` job, and repeating them cost each shard about 70 of its 180 build seconds.
+// Every other build (production image, the `build` job, local) keeps both.
+const SKIP_BUILD_CHECKS = process.env.NEXT_BUILD_SKIP_CHECKS === '1';
+
 const nextConfig: NextConfig = {
+  ...(SKIP_BUILD_CHECKS ? { typescript: { ignoreBuildErrors: true }, eslint: { ignoreDuringBuilds: true } } : {}),
   ...(HARNESS
     ? {
         distDir: '.next-harness',

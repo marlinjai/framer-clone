@@ -15,6 +15,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { CONSENT_TAP_GUARD_MS } from '@/lib/consent/consent';
 import { describe, expect, it, vi } from 'vitest';
 import { chromium, webkit, type BrowserType, type Page } from 'playwright';
+import { selectEngines, selection, skipWithoutEngines } from './selection';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
@@ -241,11 +242,12 @@ async function bannerAnswers(page: Page): Promise<void> {
   expect(await page.evaluate(choice)).toBe('granted');
 }
 
-const ENGINES = [['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][];
+const ENGINES = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
 
 describe('nothing stored covers the consent banner', () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 
+  skipWithoutEngines(ENGINES);
   for (const [name, type] of ENGINES) {
     for (const viewport of WIDTHS) {
       it.each(PROBES.map((probe) => [probe.id, probe] as const))(`${name} at ${viewport.width}: %s`, async (_id, probe) => {
