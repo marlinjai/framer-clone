@@ -209,6 +209,9 @@ describe('one browser for the long effects proofs on a pull request', () => {
     const { behaviourEngines } = await import('../../../test/behaviour/engines');
     const list = [['chromium', 1], ['webkit', 2]] as const;
     expect(behaviourEngines(list, {})).toHaveLength(2);
+    // What proofs.yml sets after the merge: every engine, never a refusal.
+    expect(behaviourEngines(list, { BEHAVIOUR_ENGINES: '' })).toHaveLength(2);
+    expect(behaviourEngines(list, { BEHAVIOUR_ENGINES: ' ' })).toHaveLength(2);
     expect(behaviourEngines(list, { BEHAVIOUR_ENGINES: 'chromium' })).toEqual([['chromium', 1]]);
     expect(() => behaviourEngines(list, { BEHAVIOUR_ENGINES: 'edge' })).toThrow();
     expect(() => behaviourEngines(list, { BEHAVIOUR_ENGINES: 'firefox' })).toThrow(/no engine/);
