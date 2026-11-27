@@ -376,3 +376,7 @@ connections to the suite. The four lines below are in that order.
 See the individual plan files under `docs/plans/` and `docs/specs/` for status and evidence; this
 roadmap only tracks open work, per the one-home-per-open-item rule
 (`knowledge-base/standards/document-lifecycle.md` section 4).
+
+## Leftovers
+
+- [ ] fix: main is red after #489 (41c628749c), the next release waits until it is green again: "score" failed (https://github.com/marlinjai/framer-clone/actions/runs/46077045897): its run on the parent commit ended failure, so it proves nothing. <!-- land-pr:main-red 41c62874 --> (2026-11-27)
