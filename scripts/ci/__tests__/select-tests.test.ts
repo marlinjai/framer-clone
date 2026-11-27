@@ -192,6 +192,13 @@ describe('one browser for the long effects proofs on a pull request', () => {
     }
   });
 
+  it('the deploy proof command, a child process that launches its own browsers, is given the engines of its spec', () => {
+    // It runs both engines by default, and a narrowed shard installs only chromium (shard 1 of run 46077892655).
+    const spec = fs.readFileSync(path.join(ROOT, 'test/behaviour/fx.spec.ts'), 'utf8');
+    expect(spec).toMatch(/'test\/fx-proof\/run\.ts'.*'--engines', engines/);
+    expect(spec).toContain("const engines = ENGINES.map(([name]) => name).join(',');");
+  });
+
   it('main and nightly narrow nothing', () => {
     for (const tier of ['main', 'nightly'] as const) {
       expect(select.plan({ tier, seed: 1 }).behaviour.every((s: { behaviour_engines: string }) => s.behaviour_engines === '')).toBe(true);
