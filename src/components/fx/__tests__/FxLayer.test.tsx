@@ -331,6 +331,40 @@ describe('the canvas renderer decides where Live draws', () => {
     expect(active()).toHaveLength(0);
   });
 
+  it.each([
+    ['has no stored scene', undefined],
+    ['has a scene the reader refuses', { version: 99 }],
+  ])('a box that %s is the plain box: its still is off, with no loading placeholder and no hold on the box', async (_what, stored) => {
+    vi.useFakeTimers();
+    const { box, frames } = setup();
+    act(() => box.setProps({ [FX_PROP]: stored }));
+    render(frames);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(5000)));
+    const stills = [...document.querySelectorAll<HTMLElement>('[data-fc-fx-still]')];
+    expect(stills.length).toBeGreaterThan(0);
+    for (const still of stills) {
+      expect(still.getAttribute('data-fc-fx-still')).toBe('off');
+      expect(still.querySelector('[data-fc-fx-placeholder]')!.getAttribute('data-fc-fx-placeholder')).toBe('hidden');
+      expect(still.parentElement!.style.isolation).toBe('');
+    }
+  });
+
+  // No picture was asked for yet (here: no size; on the canvas also a box off screen), so the request's key is
+  // empty before and after: the still has to notice that there is no scene left all the same.
+  it('a scene taken away before its still was asked for turns the still off too', async () => {
+    vi.useFakeTimers();
+    const { box, frames } = setup();
+    render(frames);
+    const pass = () => act(async () => void (await vi.advanceTimersByTimeAsync(5000)));
+    await pass();
+    const states = () => [...document.querySelectorAll('[data-fc-fx-still]')].map((still) => still.getAttribute('data-fc-fx-still'));
+    expect(new Set(states())).toEqual(new Set(['waiting']));
+    act(() => box.setProps({ [FX_PROP]: undefined }));
+    await pass();
+    expect(new Set(states())).toEqual(new Set(['off']));
+    expect(document.querySelector('[data-fc-fx-placeholder="shown"]')).toBeNull();
+  });
+
   it('gives the context up under the preview over the editor, and takes it back', async () => {
     const { box, breakpoints, frames } = setup();
     render(frames);
