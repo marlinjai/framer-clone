@@ -17,3 +17,4 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   return <DocumentEditor id={id} />;
 }
+// ci-replay touch

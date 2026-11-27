@@ -26,3 +26,4 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
   }
   return <CatalogHome initialQuery={query.toString()} />;
 }
+// ci-replay touch
