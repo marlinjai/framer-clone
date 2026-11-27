@@ -215,7 +215,8 @@ jobs:
           engines: ${{ matrix.engines }}
 
       # Bounded: the build takes about 2 to 3 minutes; a build that fails, is cancelled or skipped fails this shard
-      # at once, and 20 minutes ends a wait on one that hangs.
+      # at once, and 20 minutes ends a wait on one that hangs. The jobs of every attempt are read, so a rerun of a failed
+      # shard alone finds the earlier build (scripts/ci/pick-build.mjs).
       - name: Wait for the build
         env:
           GH_TOKEN: ${{ github.token }}
@@ -225,13 +226,15 @@ jobs:
         run: |
           deadline=$(( $(date +%s) + 1200 ))
           while :; do
-            state=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" \
-              --jq '.jobs[] | select(.name | endswith("behaviour (build)")) | "\(.status) \(.conclusion)"' | head -1)
-            case "$state" in
-              "completed success") echo "build: $state"; break ;;
-              completed*) echo "build: $state"; exit 1 ;;
+            listing=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+              --jq '.jobs[] | select(.name | endswith("behaviour (build)")) | "\(.run_attempt) \(.status) \(.conclusion // "")"')
+            picked=$(printf '%s\n' "$listing" | node scripts/ci/pick-build.mjs "$ATTEMPT")
+            state=${picked#* }
+            case "$picked" in
+              ready*) echo "build: $state"; break ;;
+              failed*) echo "build: $state"; exit 1 ;;
             esac
-            if [ "$(date +%s)" -ge "$deadline" ]; then echo "build not done after 20 minutes: ${state:-not found}"; exit 1; fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then echo "build not done after 20 minutes: $state"; exit 1; fi
             sleep 5
           done
 
