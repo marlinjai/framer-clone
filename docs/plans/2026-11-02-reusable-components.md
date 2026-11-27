@@ -1041,7 +1041,8 @@ warning; a site operation has to refuse it instead.
 gate ran the renderers' tag rule on the placement, which no renderer draws. The same refusal hit any later operation
 on a node holding a placement (restyling a section around the header, say). The gate now judges the definition's tree
 where the placement stands, and refuses a missing, cyclic, too deep or unopenable definition. `placeComponent`
-refuses the targets `insertNodes` refuses.
+refuses the targets `insertNodes` refuses, the page root included. A removal inside a definition is judged at every use too,
+and the paragraph rule reads the whole definition, not only its root.
 
 **Open, in this order.** Evidence: the proofs of 2026-11-27 on a disposable copy of a client concept.
 

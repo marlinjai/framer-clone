@@ -364,20 +364,48 @@ const PHRASING_TAGS: ReadonlySet<string> = new Set([
   'svg', 'textarea', 'time', 'u', 'var', 'video', 'wbr',
 ]);
 
-function holdsInteractive(tree: unknown, definitions: ComponentDefinitions, stack: readonly string[] = []): boolean {
-  if (!isRecord(tree)) return false;
-  if (typeof tree.type === 'string' && INTERACTIVE_TAGS.has(tree.type)) return true;
-  if (isPlacementType(tree.type)) {
+// The start tags at which a parser ends an open paragraph (HTML standard, "in body").
+const PARAGRAPH_CLOSERS: ReadonlySet<string> = new Set([
+  'address', 'article', 'aside', 'blockquote', 'center', 'dd', 'details', 'dialog', 'dir', 'div', 'dl', 'dt', 'fieldset',
+  'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'li', 'listing',
+  'main', 'menu', 'nav', 'ol', 'p', 'plaintext', 'pre', 'search', 'section', 'summary', 'table', 'ul', 'xmp',
+]);
+// Below these the parser no longer reaches the paragraph outside.
+const PARAGRAPH_SHIELDS: ReadonlySet<string> = new Set(['button', 'foreignObject']);
+const NO_SHIELDS: ReadonlySet<string> = new Set();
+
+/**
+ * The first of the `wanted` tags in a tree or in the definitions it places, or null.
+ * `entered` spans the whole walk, so each definition is read once however often it
+ * is placed (and a cycle ends). One set per question: it never carries over.
+ */
+function firstTagIn(
+  tree: unknown,
+  definitions: ComponentDefinitions,
+  wanted: ReadonlySet<string>,
+  entered: Set<string>,
+  shields: ReadonlySet<string> = NO_SHIELDS,
+): string | null {
+  if (!isRecord(tree)) return null;
+  const type = typeof tree.type === 'string' ? tree.type : '';
+  if (wanted.has(type)) return type;
+  if (isPlacementType(type)) {
     const { component } = (tree.props ?? {}) as { component?: unknown };
-    if (typeof component !== 'string' || stack.includes(component)) return false;
-    return holdsInteractive(treeOf(definitions[component]), definitions, [...stack, component]);
+    if (typeof component !== 'string' || entered.has(component)) return null;
+    entered.add(component);
+    return firstTagIn(treeOf(definitions[component]), definitions, wanted, entered, shields);
   }
-  return Array.isArray(tree.children) && tree.children.some(child => holdsInteractive(child, definitions, stack));
+  if (shields.has(type) || !Array.isArray(tree.children)) return null;
+  for (const child of tree.children) {
+    const found = firstTagIn(child, definitions, wanted, entered, shields);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 /**
  * Why a placement of this definition may not sit inside these ancestors' tags, or
- * null. Reads the definition's root tag and whether it holds interactive content,
+ * null. Reads everything the definition draws, the components it places included,
  * because the placement itself has no element for a drop to ask about.
  */
 export function contentModelRefusal(
@@ -388,11 +416,15 @@ export function contentModelRefusal(
   const tree = treeOf(definitions[definitionId]);
   if (!isRecord(tree)) return null;
   const inside = ancestorTags.find(tag => tag === 'a' || tag === 'button');
-  if (inside && holdsInteractive(tree, definitions, [definitionId])) {
+  if (inside && firstTagIn(tree, definitions, INTERACTIVE_TAGS, new Set([definitionId])) !== null) {
     return `This component holds a link or a control, and a browser would move it out of the <${inside}>.`;
   }
-  if (ancestorTags.includes('p') && !PHRASING_TAGS.has(String(tree.type))) {
-    return `A browser would end the paragraph at this component's <${String(tree.type)}>.`;
+  if (ancestorTags.includes('p')) {
+    // The root has to be phrasing content; further down, only what ends the paragraph counts.
+    const closer = PHRASING_TAGS.has(String(tree.type))
+      ? firstTagIn(tree, definitions, PARAGRAPH_CLOSERS, new Set([definitionId]), PARAGRAPH_SHIELDS)
+      : String(tree.type);
+    if (closer !== null) return `A browser would end the paragraph at this component's <${closer}>.`;
   }
   return null;
 }

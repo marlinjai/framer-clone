@@ -12,7 +12,7 @@ import ProjectModel, { type ProjectModelType } from '@/models/ProjectModel';
 import type { ComponentInstance } from '@/models/ComponentModel';
 import type { PageModelType } from '@/models/PageModel';
 import { defaultViewportSnapshots } from '@/lib/canvas/defaultViewports';
-import type { ComponentDefinitions } from '@/lib/components/definition';
+import { contentModelRefusal, type ComponentDefinitions } from '@/lib/components/definition';
 import { applyOperations } from '../applyOps';
 import { renderGateProblem } from '../gate';
 
@@ -149,6 +149,14 @@ describe('placeComponent refuses, writing nothing', () => {
     expect(await refusal([place({ to: target })], project)).toMatch(reason);
   });
 
+  it.each([
+    ['cannot have children', node('leaf-root', 'img', { src: '/a.jpg', alt: '' }), /<img> cannot contain/],
+    ['holds its own text', node('leaf-root', 'div', { children: 'Own text' }), /parent holds text/],
+  ])('no target, on a page whose root %s', async (_name, tree, reason) => {
+    const project = makeProject({ leaf: definition('leaf', tree) });
+    expect(await refusal([place({ pageId: 'page-leaf' })], project)).toMatch(reason);
+  });
+
   it('a target inside another placement', async () => {
     const project = makeProject({}, [placed('old', 'card')]);
     expect(await refusal([place({ to: { parentId: 'old' } })], project)).toMatch(/cannot contain/);
@@ -202,6 +210,24 @@ describe('a later edit inside a definition is judged where the component is used
     expect(await refusal([insert('page-card', 'card-root', [{ type: 'a', props: { href: '/y', children: 'Inner' } }])], project)).toMatch(/placement use on page "Home" \(home\).*holds a link or a control/);
   });
 
+  // "holder" already draws a component the site lacks, so its use on the page is broken.
+  const holder = () => definition('holder', node('holder-root', 'div', {}, [placed('broken', 'gone'), node('spare', 'p', { children: 'Spare' })]));
+
+  it('judges the uses again after a removal inside a definition', async () => {
+    const project = makeProject({ holder: holder() }, [placed('use', 'holder')]);
+    expect(await refusal([{ op: 'removeNode', nodeId: 'spare' }], project)).toMatch(/placement use on page "Home".*"gone" is not one of this site's components/);
+  });
+
+  it('allows the removal that repairs every use', async () => {
+    const project = makeProject({ holder: holder() }, [placed('use', 'holder')]);
+    await applied(project, [{ op: 'removeNode', nodeId: 'broken' }]);
+  });
+
+  it('does not judge what stays on a page a node was removed from', async () => {
+    const project = makeProject({}, [node('legacy', 'div', {}, [node('old-style', 'style'), node('plain', 'p', { children: 'Plain' })])]);
+    await applied(project, [{ op: 'removeNode', nodeId: 'plain' }]);
+  });
+
   it('allows the same edit when no use stands in such a place', async () => {
     const project = makeProject({ group }, [placed('use', 'group')]);
     await applied(project, [insert('page-group', 'group-root', [text])]);
@@ -238,6 +264,23 @@ describe('renderGateProblem on a stored placement', () => {
     const chain = (length: number) => of(Array.from({ length }, (_, i) => [`d${i}`, i + 1 < length ? node(`r${i}`, 'div', {}, [placed(`p${i}`, `d${i + 1}`)]) : node(`r${i}`, 'div')]));
     expect(renderGateProblem(placed('p', 'd0') as never, false, chain(8))).toBeNull();
     expect(renderGateProblem(placed('p', 'd0') as never, false, chain(9))).toMatch(/nest more than 8/);
+  });
+
+  it.each([
+    ['a link', 'a', /holds a link or a control/],
+    ['a paragraph', 'p', null],
+  ])('asks about wide, deep nesting inside %s once per definition', (_name, ancestor, hit) => {
+    // Eight levels of forty placements each; spans, so the paragraph rule has to walk all of it.
+    const wide = (leaf: string) => Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [
+        `w${i}`,
+        definition(`w${i}`, node(`r${i}`, 'span', {}, i < 7 ? Array.from({ length: 40 }, (_, n) => placed(`p${i}-${n}`, `w${i + 1}`)) : [node('leaf', leaf)])),
+      ]),
+    ) as unknown as ComponentDefinitions;
+    const started = performance.now();
+    expect(contentModelRefusal(wide('b'), 'w0', [ancestor])).toBeNull();
+    if (hit) expect(contentModelRefusal(wide('input'), 'w0', [ancestor])).toMatch(hit);
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 
   it('judges wide, deep nesting once per definition rather than once per placement', () => {

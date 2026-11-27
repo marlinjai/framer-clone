@@ -282,10 +282,10 @@ function collectIds(tree: unknown, into: Set<string>, depth = 0): void {
 
 // ---------- the gates over a whole result ----------
 
-/** A node a write created or changed, on its page. */
+/** A node a write created or changed, on its page; without a nodeId, a node taken off the page. */
 export interface TouchedNode {
   page: PageModelType;
-  nodeId: string;
+  nodeId?: string;
 }
 
 /**
@@ -326,7 +326,7 @@ function definitionUseProblem(project: ProjectModelType, definitions: ComponentD
 /**
  * Why a written project must not be stored, or null: a touched node a renderer
  * would drop something of (checked in the namespace it stands in), an edit inside
- * a definition that a use of it cannot take, a site over
+ * a definition (a removal included) that a use of it cannot take, a site over
  * the save size limit, or a snapshot the editor model refuses to read back.
  * Shared by a batch and by a generated page (src/lib/siteOps/generated.ts).
  */
@@ -335,10 +335,13 @@ export function projectGateProblem(project: ProjectModelType, touched: readonly 
   const edited = new Set<string>();
   for (const { page, nodeId } of touched) {
     if (!isAlive(page)) continue; // its page was deleted by a later operation of the batch
-    const node = page.findComponent(nodeId) as ComponentInstance | undefined;
-    if (!node) continue; // removed by a later operation of the batch
-    const problem = renderGateProblem(getSnapshot(node) as unknown as GateNode, foreignContentOf(ancestorTypes(page, node)), definitions);
-    if (problem) return problem;
+    // A removal leaves nothing new to render, and what stays on the page was not written.
+    if (nodeId !== undefined) {
+      const node = page.findComponent(nodeId) as ComponentInstance | undefined;
+      if (!node) continue; // removed by a later operation of the batch
+      const problem = renderGateProblem(getSnapshot(node) as unknown as GateNode, foreignContentOf(ancestorTypes(page, node)), definitions);
+      if (problem) return problem;
+    }
     const owner = Array.from(project.components.values()).find((definition) => definition.page === page);
     if (owner) edited.add(owner.id as string);
   }
@@ -755,8 +758,10 @@ export async function applyOperations(
       case 'removeNode': {
         const { page, node } = nodeFor(op.nodeId);
         if (node.id === (page.appComponentTree as ComponentInstance).id) throw new OpRefused('the page root cannot be removed');
-        if (!page.deleteComponent(node.id)) throw new OpRefused('the node could not be removed');
-        return `removed ${node.id}`;
+        const { id } = node; // read before the node is destroyed
+        if (!page.deleteComponent(id)) throw new OpRefused('the node could not be removed');
+        touched.push({ page });
+        return `removed ${id}`;
       }
 
       case 'addRule': {
@@ -804,13 +809,14 @@ export async function applyOperations(
           throw new OpRefused(`unknown component id ${JSON.stringify(op.definitionId)}; getSite lists the site's components`);
         }
         // The model would put a target without a parent at the page root, and takes parents insertNodes refuses.
-        if (target.kind === 'parent' || target.kind === 'sibling') {
-          const parentId = target.kind === 'parent' ? target.parentId : (page.findComponent(target.siblingId) as ComponentInstance).parentId;
-          const parent = parentId ? (page.findComponent(parentId) as ComponentInstance | undefined) : undefined;
-          if (!parent) throw new OpRefused('that node has no parent to place beside it in; name a parent, or a node inside the page');
-          const closed = containerRefusal(parent);
-          if (closed) throw new OpRefused(closed);
-        }
+        // Not in the model's own refusal: an editor drop may turn a parent's text into a text node.
+        const parentId = target.kind === 'sibling'
+          ? (page.findComponent(target.siblingId) as ComponentInstance).parentId
+          : target.kind === 'parent' ? target.parentId : (page.appComponentTree as ComponentInstance).id;
+        const parent = parentId ? (page.findComponent(parentId) as ComponentInstance | undefined) : undefined;
+        if (!parent) throw new OpRefused('that node has no parent to place beside it in; name a parent, or a node inside the page');
+        const closed = containerRefusal(parent);
+        if (closed) throw new OpRefused(closed);
         const result = project.placeComponent(page.id, definitionId, target);
         if (!result.ok) throw new OpRefused(result.message);
         claimRef(op.ref, result.placement.id);
