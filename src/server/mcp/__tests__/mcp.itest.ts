@@ -75,6 +75,7 @@ vi.mock('@/server/sites/companyCommerce', () => ({
 }));
 
 import { getPrismaClient } from '@/server/db';
+import { SiteRepository } from '@/server/sites';
 import { clearKeyCache } from '@/lib/auth-machine';
 import { POST } from '@/app/api/mcp/route';
 import { POST as DECIDE } from '@/app/api/projects/[projectId]/confirmations/[approvalId]/route';
@@ -232,6 +233,42 @@ describe('the MCP endpoint against a real database', () => {
       const { plansSnapshot } = await import('../livePlans');
       expect(plansSnapshot(siteId, { workspaceId: 'not-the-owner', tenantGroupId: 'not-the-owner' })).toEqual([]);
       expect(await ok(KEY_A, 'clear_sections', { siteId, planId: plan.planId })).toEqual({ cleared: true, planId: plan.planId });
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it('placeComponent through apply_batch: placed and read back through MCP, a missing definition writes nothing', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const { siteId, homePageId } = (await ok(KEY_A, 'create_site', { name: 'MCP components' })) as { siteId: string; homePageId: string };
+      const inserted = await ok(KEY_A, 'apply_batch', {
+        siteId,
+        expectedVersion: 1,
+        ops: [{ op: 'insertNodes', pageId: homePageId, nodes: [{ ref: 'card', type: 'section', children: [{ type: 'h2', props: { children: 'Card' } }] }] }],
+      });
+      // Only the editor makes a definition: its model action, stored by the repository.
+      const repository = new SiteRepository(prisma);
+      const scope = { workspaceId: 'mcp_ws_a', tenantGroupId: GROUP_A };
+      const tab = await repository.loadProjectWithVersion(scope, siteId);
+      const made = tab.project.createComponentFromSelection(homePageId, [(inserted.created as Record<string, string>).card], 'Card');
+      if (!made.ok) throw new Error(made.message);
+      const { version } = await repository.saveProject(scope, tab.project, { expectedVersion: tab.version });
+
+      const refused = await tool(KEY_A, 'apply_batch', { siteId, expectedVersion: version, ops: [{ op: 'placeComponent', pageId: homePageId, definitionId: 'no-such-component' }] });
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.structuredContent)).toMatch(/unknown component id/);
+
+      const listed = await ok(KEY_A, 'get_site', { siteId });
+      expect(listed.version).toBe(version);
+      expect(listed.components).toMatchObject([{ id: made.definitionId, name: 'Card' }]);
+
+      const placed = await ok(KEY_A, 'apply_batch', { siteId, expectedVersion: version, ops: [{ op: 'placeComponent', pageId: homePageId, definitionId: made.definitionId, ref: 'again' }] });
+      expect(placed.version).toBe(version + 1);
+      const outline = await ok(KEY_A, 'get_page', { siteId, pageId: homePageId });
+      const nodes = outline.nodes as Array<{ id: string; tag: string; props?: Record<string, unknown> }>;
+      expect(nodes.find((n) => n.id === (placed.created as Record<string, string>).again)).toMatchObject({ tag: '#component', props: { component: made.definitionId } });
+      expect(nodes.filter((n) => n.tag === '#component')).toHaveLength(2);
     } finally {
       info.mockRestore();
     }

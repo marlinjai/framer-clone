@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: in-progress
 date: 2026-11-02
 title: "Reusable components and component states: the contract for definitions, placements, inputs, states and interactions"
 summary: "How a component is built once per site and placed many times. A definition is a small page stored under ProjectModel, so the canvas, Layers, rules and undo work on it unchanged. A placement is a `#component` node holding the definition id, input values and its own layout. One pure step expands placements before hydration, so forms, stylesheets, fonts and every later pass see ordinary nodes. Inputs are a new `{{input.x}}` binding frame, parsed after they resolve, under a shared byte and node budget. Breakpoint ids differ per page, so definitions are mapped by width. States store only style differences. Hover, Pressed and Focused are plain CSS; custom states compile to the behaviour model's `choice` state, `when` rules and scopes, and interactions are its triggers, so there is one event format and one runtime. No existing page changes. Revised after an independent review. Seventeen slices, 30 new score rows and four new fixtures. The first Create component button waits for the immutable published copy."
@@ -1020,6 +1020,37 @@ button: nobody can reach them.
 **What the slices add up to:** every cell of the 30 rows, 150 of 150, and 4 of 4 fixtures, as ceilings.
 
 **A matrix pass here proves less than it reads,** as the selector contract says of its own rows. The corpus is the test.
+
+## The site agent interface (added 2026-11-27)
+
+The slices above cover the editor and the in-editor AI generator. The other writer is an outside agent using the site
+operations (`src/lib/siteOps`, offered over the Model Context Protocol as `apply_batch`, plan
+`2026-11-02-lumitra-sites-agent-plugin.md`). It has `placeComponent` and no other component operation.
+
+**Where the slices stand, checked against `origin/main` at `be3c5b81`.** Slices 1 to 12 and 14 have merge commits
+(#232, #236, #238, #241, #244, #254, #256, #284, #287, #290, #294, #298, #303). No merge commit was found for 13 (the
+state canvas) or 15 (connectors). Slices 16 and 17 (the generator placing and writing components) are three commits
+(`96bd185b`, `70437dc0`, `3bd0cb62`) on the local branch `feat/components-ai-write`: no remote branch holds them,
+no pull request was found, and their new files are not on main. They were built for the in-editor generator, but two
+parts are the starting point for A1 and A2: `componentSummaries` (`summaries.ts`: each definition with its whole
+inputs and states) and `checkPlacement` (`validatePlacement.ts`: input values by id or name through
+`parseInputValue`, pictures and files only from the site's own paths, the starting state). It drops a bad value with a
+warning; a site operation has to refuse it instead.
+
+**Fixed 2026-11-27: every agent `placeComponent` was refused** with `<#component> is not rendered here`. The render
+gate ran the renderers' tag rule on the placement, which no renderer draws. The same refusal hit any later operation
+on a node holding a placement (restyling a section around the header, say). The gate now judges the definition's tree
+where the placement stands, and refuses a missing, cyclic, too deep or unopenable definition. `placeComponent`
+refuses the targets `insertNodes` refuses.
+
+**Open, in this order.** Evidence: the proofs of 2026-11-27 on a disposable copy of a client concept.
+
+| # | Gap | What exists to build on |
+|---|---|---|
+| A1 | Read inputs: `getSite` gives input names only, `getPage` shows a placement's stored values by input id, and `describeVocabulary` never mentions inputs. An agent needs each input's id, name, type and default, and a placement's resolved values with which are its own | `resolveInputValues` (`expand.ts`); `componentSummaries` on the unmerged branch |
+| A2 | Values per placement: `placeComponent` takes none, and `setProps` refuses a placement. Needs `inputs` on `placeComponent` and an operation that sets or resets one field, each checked by `parseInputValue` | `checkPlacement` on the unmerged branch. On main the panel writes `setProps({ inputs })` itself (`ComponentSection.tsx`); there is no model action to share |
+| A3 | Authoring: no operation creates a definition, makes, adds, renames, retypes or removes an input, or changes a default | `createComponentFromSelection`, `makeInput`, `addInput`, `renameInput`, `changeInputType`, `removeInput` on `ProjectModel` (slices 5, 8, 9). `changeInputType` takes a whole input, so it can carry a new default (read in code, not tried) |
+| A4 | Editor, found by the same proofs: a connected input's default cannot be edited, and unlinking then making the input again creates a second one while placements keep values nobody reads. Solve in the same model step as A3's default operation | None found in `InputsSection.tsx` |
 
 ## What this does not cover
 

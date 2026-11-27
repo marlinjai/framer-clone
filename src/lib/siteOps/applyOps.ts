@@ -37,6 +37,7 @@ import ComponentModel, { type ComponentInstance, type ComponentSnapshotIn, type 
 import type { SiteTheme } from '@/lib/site/theme';
 import { referencedIds } from '@/lib/ai/pageGen/generatedTheme';
 import { isPlacementType } from '@/lib/components/placement';
+import { contentModelRefusal, placedDefinitionIds, type ComponentDefinitions } from '@/lib/components/definition';
 import { isTextNodeType, TEXT_NODE_TYPE } from '@/lib/renderer/textNode';
 import { isVoidTag } from '@/lib/drag/voidTags';
 import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
@@ -149,6 +150,16 @@ function ancestorTypes(page: PageModelType, node: ComponentInstance): string[] {
 
 const asBreakpointKeys = (keyed: KeyedBreakpoint[]): BreakpointKey[] =>
   keyed.map(({ key, label, minWidth }) => ({ key, label, minWidth }));
+
+/** Why nothing may be put inside this node, for an operation that adds or places one, or null. */
+function containerRefusal(parent: ComponentInstance): string | null {
+  if (parent.isViewportNode) return 'a breakpoint frame holds the page, not nodes; insert into the page root';
+  if (isVoidTag(parent.type) || isTextNodeType(parent.type) || isPlacementType(parent.type) || parent.props?.['data-component-kind']) {
+    return `<${parent.type}> cannot contain other nodes`;
+  }
+  if (typeof parent.props?.children === 'string') return 'the parent holds text; insert into a container, or replace its text with nodes';
+  return null;
+}
 
 /**
  * A breakpoint the caller named, as the id to write on: undefined for the largest
@@ -278,19 +289,61 @@ export interface TouchedNode {
 }
 
 /**
+ * Why a place that draws one of the `edited` definitions, directly or through another
+ * component, could no longer take it, or null. An edit inside a definition is judged on
+ * the definition's own page, which says nothing about where the component is used.
+ */
+function definitionUseProblem(project: ProjectModelType, definitions: ComponentDefinitions, edited: ReadonlySet<string>): string | null {
+  const drawing = new Set(edited);
+  for (let size = 0; size !== drawing.size; ) {
+    size = drawing.size;
+    for (const [id, definition] of Object.entries(definitions)) {
+      if (placedDefinitionIds(definition.page?.appComponentTree).some((placed) => drawing.has(placed))) drawing.add(id);
+    }
+  }
+  const visit = (node: GateNode, ancestors: readonly string[], on: PageModelType): string | null => {
+    const id = isPlacementType(node.type) ? node.props?.component : undefined;
+    if (typeof id === 'string' && drawing.has(id)) {
+      const problem = renderGateProblem(node, foreignContentOf(ancestors), definitions) ?? contentModelRefusal(definitions, id, ancestors);
+      // The batch edited the component, so say where the use is that cannot take the edit.
+      return problem && `the placement ${node.id} on page "${on.metadata.title}" (${on.id}) cannot take this change: ${problem}`;
+    }
+    for (const child of node.children ?? []) {
+      const problem = visit(child, [...ancestors, node.type], on);
+      if (problem) return problem;
+    }
+    return null;
+  };
+  for (const page of pagesOf(project)) {
+    for (const root of [page.appComponentTree as ComponentInstance, ...(page.canvasNodes.values() as Iterable<ComponentInstance>)]) {
+      const problem = visit(getSnapshot(root) as unknown as GateNode, [], page);
+      if (problem) return problem;
+    }
+  }
+  return null;
+}
+
+/**
  * Why a written project must not be stored, or null: a touched node a renderer
- * would drop something of (checked in the namespace it stands in), a site over
+ * would drop something of (checked in the namespace it stands in), an edit inside
+ * a definition that a use of it cannot take, a site over
  * the save size limit, or a snapshot the editor model refuses to read back.
  * Shared by a batch and by a generated page (src/lib/siteOps/generated.ts).
  */
 export function projectGateProblem(project: ProjectModelType, touched: readonly TouchedNode[]): string | null {
+  const { definitions } = project;
+  const edited = new Set<string>();
   for (const { page, nodeId } of touched) {
     if (!isAlive(page)) continue; // its page was deleted by a later operation of the batch
     const node = page.findComponent(nodeId) as ComponentInstance | undefined;
     if (!node) continue; // removed by a later operation of the batch
-    const problem = renderGateProblem(getSnapshot(node) as unknown as GateNode, foreignContentOf(ancestorTypes(page, node)));
+    const problem = renderGateProblem(getSnapshot(node) as unknown as GateNode, foreignContentOf(ancestorTypes(page, node)), definitions);
     if (problem) return problem;
+    const owner = Array.from(project.components.values()).find((definition) => definition.page === page);
+    if (owner) edited.add(owner.id as string);
   }
+  const broken = edited.size > 0 ? definitionUseProblem(project, definitions, edited) : null;
+  if (broken) return broken;
   const snapshot = getSnapshot(project);
   const bytes = JSON.stringify(snapshot).length;
   if (bytes > PROJECT_BODY_MAX_BYTES) return `the site would be ${bytes} bytes, over the limit of ${PROJECT_BODY_MAX_BYTES}`;
@@ -519,13 +572,8 @@ export async function applyOperations(
           ? page.findComponent(resolveId(op.parentId))
           : page.appComponentTree) as ComponentInstance | undefined;
         if (!parent) throw new OpRefused(`unknown parent ${JSON.stringify(op.parentId)} on this page`);
-        if (parent.isViewportNode) throw new OpRefused('a breakpoint frame holds the page, not nodes; insert into the page root');
-        if (isVoidTag(parent.type) || isTextNodeType(parent.type) || isPlacementType(parent.type) || parent.props?.['data-component-kind']) {
-          throw new OpRefused(`<${parent.type}> cannot contain other nodes`);
-        }
-        if (typeof parent.props?.children === 'string') {
-          throw new OpRefused('the parent holds text; insert into a container, or replace its text with nodes');
-        }
+        const closed = containerRefusal(parent);
+        if (closed) throw new OpRefused(closed);
 
         const keyed = keyedBreakpoints(page);
         const { nodes: input, refs } = stripRefs(op.nodes);
@@ -691,6 +739,9 @@ export async function applyOperations(
         const refusal = page.dropRefusal(node.id, target);
         if (refusal) throw new OpRefused(refusal);
         const moved = page.moveTreeComponent(node.id, target);
+        // The model lets a node move into an element a browser gives no children.
+        const into = moved?.parentId ? (page.findComponent(moved.parentId) as ComponentInstance | undefined) : undefined;
+        if (into && isVoidTag(into.type)) throw new OpRefused(`<${into.type}> cannot contain other nodes`);
         if (!moved) throw new OpRefused('the node cannot move there (the page root, a frame, or into itself)');
         // A shop part leaving its control lands renewed, under a new id: the old id (and every id that led to it) now names the new node.
         if (moved.id !== node.id) {
@@ -748,7 +799,19 @@ export async function applyOperations(
       case 'placeComponent': {
         const page = pageFor(op.pageId);
         const target: InsertTarget = op.to ? targetFor(page, op.to) : { kind: 'appTree' };
-        const result = project.placeComponent(page.id, resolveId(op.definitionId), target);
+        const definitionId = resolveId(op.definitionId);
+        if (!project.components.has(definitionId)) {
+          throw new OpRefused(`unknown component id ${JSON.stringify(op.definitionId)}; getSite lists the site's components`);
+        }
+        // The model would put a target without a parent at the page root, and takes parents insertNodes refuses.
+        if (target.kind === 'parent' || target.kind === 'sibling') {
+          const parentId = target.kind === 'parent' ? target.parentId : (page.findComponent(target.siblingId) as ComponentInstance).parentId;
+          const parent = parentId ? (page.findComponent(parentId) as ComponentInstance | undefined) : undefined;
+          if (!parent) throw new OpRefused('that node has no parent to place beside it in; name a parent, or a node inside the page');
+          const closed = containerRefusal(parent);
+          if (closed) throw new OpRefused(closed);
+        }
+        const result = project.placeComponent(page.id, definitionId, target);
         if (!result.ok) throw new OpRefused(result.message);
         claimRef(op.ref, result.placement.id);
         touched.push({ page, nodeId: result.placement.id });
