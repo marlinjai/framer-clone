@@ -158,7 +158,7 @@ const HistoryList = observer(() => {
         aria-current={history.undoIdx === 0 ? 'true' : undefined}
         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs italic ${
           history.undoIdx === 0
-            ? 'bg-brand/10 text-foreground forced-colors:outline forced-colors:outline-2 forced-colors:-outline-offset-2'
+            ? 'bg-brand/10 text-foreground shadow-selection relative z-[1] forced-colors:outline forced-colors:outline-2 forced-colors:-outline-offset-2'
             : 'text-muted-foreground hover:bg-accent'
         }`}
       >

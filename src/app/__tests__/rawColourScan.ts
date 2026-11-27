@@ -8,11 +8,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const PALETTE = 'gray|neutral|zinc|slate|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|white|black';
-const UTILITY = 'bg|text|border|ring|ring-offset|from|to|via|fill|stroke|outline|divide|placeholder|shadow|decoration|accent|caret';
+const UTILITY = 'bg|text|border|border-[lrtbxyse]|ring|ring-offset|from|to|via|fill|stroke|outline|divide|placeholder|shadow|decoration|accent|caret';
 /** A Tailwind colour utility naming a palette colour: `bg-gray-100`, `text-white`, `ring-black/5`. */
 export const RAW_CLASS = new RegExp(`(?<![\\w-])(?:${UTILITY})-(?:${PALETTE})(?:-\\d{2,3})?(?:/\\d+)?(?![\\w-])`, 'g');
-/** A colour written out: `#1a2b3c`, `rgb(…)`, `rgba(…)`, `hsl(…)`, `oklch(…)` with a number in it. */
-export const COLOUR_LITERAL = /#[0-9a-fA-F]{3,8}(?![\w-])|\b(?:rgba?|hsla?|oklch)\(\s*[\d.]/g;
+/**
+ * A colour written out: `#1a2b3c`, `rgb(…)`, `rgba(…)`, `hsl(…)`, `oklch(…)` with a number in it.
+ * A function is recorded whole (one level of nested brackets, as in `var(--a)`), so a changed
+ * channel no longer matches the allow-list; one left open on its line is recorded to the line's end.
+ */
+export const COLOUR_LITERAL = /#[0-9a-fA-F]{3,8}(?![\w-])|\b(?:rgba?|hsla?|oklch)\(\s*[\d.](?:[^()]|\([^()]*\))*\)?/g;
 
 /** The editor's own code: components, routes and helpers. */
 export const SCANNED_ROOTS = ['src/components', 'src/app', 'src/utils'];
