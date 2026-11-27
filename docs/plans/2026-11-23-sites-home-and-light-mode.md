@@ -114,7 +114,7 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 | 2026-11-23 | Approved as drawn: the editor chrome, the proposed dark and light, the phone layout | Marlin |
 | 2026-11-23 | Selection is a complete ring that blooms outward (`--ui-selection-ring`), never a one-sided edge such as the left bar on the selected Layers row or the selected page. Applied to every selection treatment in the editor and the home, consistently | Marlin |
 
-| 2026-11-26 | The lighter dark replaces the proposed dark (amends D3): background `#1e282b`, surface `#263236`, raised `#2f3c41`, as shown in the visual direction, with its full set (sunken `#182124`, line `#3a4c52`, field edge `#758f97`, text `#edf5f2`, muted `#b2c6c1`, accent text `#86b6ff`). Built as suite-theme #3 (release 0.3.0); Sites lifts its destructive red so it keeps 4.5 : 1 on the lighter grounds and gives destructive fills dark ink (`--destructive-foreground`) | Marlin, relayed by the coordinator |
+| 2026-11-26 | The lighter dark replaces the proposed dark (amends D3): background `#1e282b`, surface `#263236`, raised `#2f3c41`, as shown in the visual direction, with its full set (sunken `#182124`, line `#3a4c52`, field edge `#758f97`, text `#edf5f2`, muted `#b2c6c1`, accent text `#86b6ff`). Built as suite-theme #3 and shipped in release 0.3.1 (0.3.0 put the text value on the brand token by mistake; suite-theme #4 fixed it and pins the brand tokens in its verify step); Sites lifts its destructive red so it keeps 4.5 : 1 on the lighter grounds and gives destructive fills dark ink (`--destructive-foreground`) | Marlin, relayed by the coordinator |
 | 2026-11-23 | Publishing `@marlinjai/suite-theme-core` 0.2.0 to npm. Tagged `v0.2.0` on suite-theme `e477bb7`, published by the Trusted Publisher workflow; `tokens.css` byte-identical to 0.1.2 | Marlin, relayed by the coordinator |
 
 ### Decided while building S2 (say so if you disagree)
@@ -187,7 +187,7 @@ recomputed against the values of the table above:
 
 | Check | Dark | Light | Floor |
 | --- | --- | --- | --- |
-| Text | 10.0 | 15.7 | 4.5 |
+| Text | 10.3 | 15.7 | 4.5 |
 | Muted text | 6.4 | 5.8 | 4.5 |
 | Field edge (line-strong) | 3.3 | 3.1 | 3.0 |
 | Ink on primary fill | 14.6 | 14.6 | 4.5 |
