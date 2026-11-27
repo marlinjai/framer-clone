@@ -122,7 +122,13 @@ describe('a pull request asks what it can affect, and fails open', () => {
       const plan = pr([file]);
       expect([...filesOf(plan.behaviour)].sort()).toEqual(specs);
       expect(plan.form).toBe('long');
-      expect(plan.renderGate).toEqual(select.plan({ tier: 'main' }).renderGate);
+      // Every probe in Chromium, nothing sampled: the main tier's Chromium jobs, with the fuzz in one job.
+      const entries = plan.renderGate as Entry[];
+      expect(entries.every((e) => e.engines === 'chromium' && e.install === 'chromium' && e.sample === '' && e.seed === '')).toBe(true);
+      expect([...new Set(entries.flatMap((e) => e.files.split(' ')))].sort()).toEqual(gates);
+      expect(entries.filter((e) => e.files.endsWith('editor.gate.ts')).map((e) => e.slice)).toEqual(['1/2', '2/2']);
+      expect(entries.filter((e) => e.files.endsWith('fuzz.gate.ts')).map((e) => e.slice)).toEqual(['']);
+      expect(entries).toHaveLength(4);
     }
   });
 

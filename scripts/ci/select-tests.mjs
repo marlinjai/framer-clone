@@ -207,9 +207,9 @@ export const PR_SEED = '20261127';
  * 5.7 minutes for a runner. Two editor slices take about 3 minutes each; the WebKit fuzz (418 s whole) halves.
  */
 export const EDITOR_SLICES = 2;
-export const FUZZ_SLICES = { main: 2, nightly: 8 };
+export const FUZZ_SLICES = { long: 1, main: 2, nightly: 8 };
 
-/** 'skip' (nothing it can see changed), 'sample' (the short form) or 'long' (main's form on a pull request). */
+/** 'skip' (nothing it can see changed), 'sample' (the short form) or 'long' (every probe, in Chromium). */
 export function renderGateForm(changed) {
   let form = 'skip';
   for (const file of changed) {
@@ -223,9 +223,16 @@ export function renderGateForm(changed) {
 const entry = (name, files, install, extra = {}) => ({ name, files: files.join(' '), install, engines: '', seed: '', sample: '', slice: '', full: '', ...extra });
 
 /**
- * The render gate as matrix entries. The short form is one job in Chromium on the fixed sample. The long form
- * asks every probe in every engine: per engine the gate files without the two long ones, the fuzz (in slices at
- * night) and the editor gate in slices; Firefox only for the custom code bridge, the one file that uses it.
+ * The render gate as matrix entries, by form:
+ *   sample   a pull request: one job in Chromium on the fixed sample.
+ *   long     a pull request touching the renderer, the gate or a stored-node format: every probe, in Chromium only,
+ *            as the standard's pull request tier says (one browser; the browser matrix runs after merge). Four jobs,
+ *            so the path that asks everything stays within the account's 20 jobs at once: in runs 46068825364 and
+ *            46070223983 the long form in all engines (11 to 17 jobs) made shards wait up to 5.7 minutes.
+ *   main     after merge: every probe in Chromium and WebKit, the custom code bridge in Firefox too.
+ *   nightly  main's set with the fuzz's full cross, shuffled by a fresh seed.
+ * Per engine: the gate files without the two long ones, the fuzz (in slices on main and at night) and the editor gate
+ * in slices. Firefox runs only the custom code bridge, the one file that uses it.
  */
 export function renderGateMatrix(form, { files = gateFiles(), seed = '' } = {}) {
   if (form === 'skip') return [];
@@ -233,15 +240,16 @@ export function renderGateMatrix(form, { files = gateFiles(), seed = '' } = {}) 
     return [entry('chromium, fixed sample', files, 'chromium', { engines: 'chromium', seed: PR_SEED, sample: PR_SAMPLE })];
   }
   const nightly = form === 'nightly';
+  const engines = form === 'long' ? ['chromium'] : ['chromium', 'webkit'];
   const editor = files.filter((file) => file.endsWith('/editor.gate.ts'));
   const fuzz = files.filter((file) => file.endsWith('/fuzz.gate.ts'));
   const rest = files.filter((file) => !editor.includes(file) && !fuzz.includes(file));
   const bridge = files.filter((file) => file.endsWith('/customCodeBridge.gate.ts'));
   const shared = nightly ? { seed, full: '1' } : {};
   const out = [];
-  for (const engine of ['chromium', 'webkit']) {
+  for (const engine of engines) {
     out.push(entry(`${engine}, gate files`, rest, engine, { engines: engine }));
-    const fuzzSlices = nightly ? FUZZ_SLICES.nightly : FUZZ_SLICES.main;
+    const fuzzSlices = FUZZ_SLICES[form];
     for (let k = 1; k <= fuzzSlices; k++) {
       out.push(entry(`${engine}, fuzz ${k} of ${fuzzSlices}`, fuzz, engine, { engines: engine, ...shared, slice: fuzzSlices > 1 ? `${k}/${fuzzSlices}` : '' }));
     }
@@ -250,7 +258,7 @@ export function renderGateMatrix(form, { files = gateFiles(), seed = '' } = {}) 
       out.push(entry(`${engine}, editor ${k} of ${EDITOR_SLICES}`, editor, engine, { engines: engine, seed: nightly ? seed : '', slice: `${k}/${EDITOR_SLICES}` }));
     }
   }
-  out.push(entry('firefox, custom code bridge', bridge, 'firefox', { engines: 'firefox' }));
+  if (form !== 'long') out.push(entry('firefox, custom code bridge', bridge, 'firefox', { engines: 'firefox' }));
   return out.filter((e) => e.files.length > 0);
 }
 
@@ -280,8 +288,8 @@ export function plan({ tier, changed = [], seed }) {
   return {
     behaviour: behaviourMatrix(all, durations),
     behaviourReasons: ['everything'],
-    renderGate: renderGateMatrix(tier === 'nightly' ? 'nightly' : 'long', { seed: nightlySeed }),
-    form: tier === 'nightly' ? 'nightly' : 'long',
+    renderGate: renderGateMatrix(tier, { seed: nightlySeed }),
+    form: tier,
     seed: nightlySeed,
   };
 }

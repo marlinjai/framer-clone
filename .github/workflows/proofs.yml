@@ -4,8 +4,9 @@ name: proofs
 # reusable workflow for every tier (plan: knowledge-base docs/plans/2026-11-27-ci-under-ten-minutes.md 4.1):
 #
 #   pr       ci.yml on a pull request: the proofs the change can affect, sharded, and the render gate's short
-#            deterministic form (Chromium, a fixed-seed sample), or its long form when the renderer, the gate
-#            or a stored-node format changes.
+#            deterministic form (Chromium, a fixed-seed sample), or its long form (every probe, still Chromium
+#            only, as the standard's pull request tier says) when the renderer, the gate or a stored-node format
+#            changes.
 #   main     after-merge.yml on every push to main: every proof, every engine, every probe.
 #   nightly  after-merge.yml at night: main's set with the render gate's full cross, shuffled by a fresh seed.
 #
