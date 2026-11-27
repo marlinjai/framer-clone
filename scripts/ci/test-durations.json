@@ -1,5 +1,5 @@
 {
-  "measured": "CI run 46033259401 (2026-11-27), behaviour job, one runner, files one after another. Milliseconds per file, used only to balance shards: a file missing here counts as 60000.",
+  "measured": "CI run 46033259401 (2026-11-27), behaviour job, one runner, files one after another. Milliseconds per file, used only to balance shards: a file missing here counts as 60000. fxScoped.spec.ts and fxScopedMounted.spec.ts (split on 2026-11-28) are its per-test sums in run 46073911035 (Chromium only).",
   "behaviour": {
     "test/behaviour/behaviourPanel.spec.ts": 39995,
     "test/behaviour/branchReview.spec.ts": 10311,
@@ -16,7 +16,8 @@
     "test/behaviour/fxPick.spec.ts": 29554,
     "test/behaviour/fxRingOracle.spec.ts": 226901,
     "test/behaviour/fxRingStill.spec.ts": 105262,
-    "test/behaviour/fxScoped.spec.ts": 327306,
+    "test/behaviour/fxScoped.spec.ts": 195500,
+    "test/behaviour/fxScopedMounted.spec.ts": 178300,
     "test/behaviour/fxTextBox.spec.ts": 30469,
     "test/behaviour/fxTiming.spec.ts": 62064,
     "test/behaviour/generated.spec.ts": 17702,

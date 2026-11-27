@@ -37,11 +37,13 @@ on:
 
 permissions:
   contents: read
+  # A behaviour shard reads its run's jobs to wait for the shared build.
+  actions: read
 
 jobs:
   select:
     name: select
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       behaviour: ${{ steps.select.outputs.behaviour }}
       behaviour_run: ${{ steps.select.outputs.behaviour_run }}
@@ -79,7 +81,7 @@ jobs:
     name: render-gate (${{ matrix.name }})
     needs: select
     if: needs.select.outputs.render_gate_run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LARGE || 'ubuntu-latest' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -121,20 +123,72 @@ jobs:
           # shellcheck disable=SC2086 # FILES is a space separated list of paths, split on purpose
           pnpm test:render-gate $FILES
 
+  # The production build every behaviour shard runs, made once (it was one build per shard until 2026-11-28, about
+  # 100 s of each shard's time). It skips type checking and lint, which ci.yml's `static` job proves once for the
+  # whole change (next.config.ts). The artifact holds what `next start` reads: `.next` without its compiler cache
+  # and the standalone copy (only the Docker image uses that), and public/fonts, which `pnpm build` writes.
+  behaviour-build:
+    name: behaviour (build)
+    needs: select
+    if: needs.select.outputs.behaviour_run == 'true'
+    runs-on: ${{ vars.CI_RUNNER_LARGE || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      NEXT_BUILD_SKIP_CHECKS: 1
+      # The build needs a connection string to be set, never a database.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: |
+          echo "nproc $(nproc), $(free -g | awk '/Mem:/ {print $2}') GB memory"
+          pnpm build
+
+      - name: Pack the build
+        run: |
+          tar --zstd -cf behaviour-build.tar.zst --exclude=.next/cache --exclude=.next/standalone .next public/fonts
+          ls -lh behaviour-build.tar.zst
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: behaviour-build
+          path: behaviour-build.tar.zst
+          retention-days: 1
+          # Already zstd.
+          compression-level: 0
+          if-no-files-found: error
+
   # The runtime on a real production build, through the real published route on a real Postgres, in real
-  # Chromium, Firefox and WebKit. Each shard boots its own Postgres and build (test/behaviour/setup.ts), so the
-  # shards share nothing; inside one, files still run one after another (timing proofs measure wall clock).
+  # Chromium, Firefox and WebKit. Each shard boots its own Postgres (test/behaviour/setup.ts) on the shared build,
+  # so the shards share no state; inside one, files still run one after another (timing proofs measure wall clock).
+  # A shard does not wait for the build job to start: it installs dependencies and browsers while the build runs,
+  # then waits for that job and downloads its artifact, so the build costs the critical path only what is left of it.
   behaviour-run:
     name: behaviour (${{ matrix.name }})
     needs: select
     if: needs.select.outputs.behaviour_run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LARGE || 'ubuntu-latest' }}
     timeout-minutes: 45
     env:
       NEXT_TELEMETRY_DISABLED: 1
-      # The shard's `next build` (test/behaviour/setup.ts) skips type checking and lint, which ci.yml's `static`
-      # job proves once for the whole change (next.config.ts).
-      NEXT_BUILD_SKIP_CHECKS: 1
+      # test/behaviour/setup.ts starts the build unpacked below instead of building again.
+      BEHAVIOUR_REUSE_BUILD: 1
     strategy:
       fail-fast: false
       max-parallel: ${{ inputs.max-parallel }}
@@ -160,6 +214,41 @@ jobs:
         with:
           engines: ${{ matrix.engines }}
 
+      # Bounded: the build takes about 2 to 3 minutes; a build that fails, is cancelled or skipped fails this shard
+      # at once, and 20 minutes ends a wait on one that hangs. The jobs of every attempt are read, so a rerun of a failed
+      # shard alone finds the earlier build (scripts/ci/pick-build.mjs).
+      - name: Wait for the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          deadline=$(( $(date +%s) + 1200 ))
+          while :; do
+            listing=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+              --jq '.jobs[] | select(.name | endswith("behaviour (build)")) | "\(.run_attempt) \(.status) \(.conclusion // "")"') || listing=''  # one failed poll is asked again
+            picked=$(printf '%s\n' "$listing" | node scripts/ci/pick-build.mjs "$ATTEMPT")
+            state=${picked#* }
+            case "$picked" in
+              ready*) echo "build: $state"; break ;;
+              failed*) echo "build: $state"; exit 1 ;;
+            esac
+            if [ "$(date +%s)" -ge "$deadline" ]; then echo "build not done after 20 minutes: $state"; exit 1; fi
+            sleep 5
+          done
+
+      - name: Download the build
+        uses: actions/download-artifact@v4
+        with:
+          name: behaviour-build
+
+      - name: Unpack the build
+        run: |
+          tar --zstd -xf behaviour-build.tar.zst
+          rm behaviour-build.tar.zst
+          test -f .next/BUILD_ID
+
       # BEHAVIOUR_ENGINES narrows the specs whose engine list goes through test/behaviour/engines.ts (chromium on a
       # pull request; empty, every engine, after merge).
       - name: Behaviour proofs
@@ -177,7 +266,7 @@ jobs:
     name: render-gate
     needs: [select, render-gate-run]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Every render gate job passed
         env:
@@ -191,16 +280,21 @@ jobs:
 
   behaviour:
     name: behaviour
-    needs: [select, behaviour-run]
+    needs: [select, behaviour-build, behaviour-run]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Every behaviour shard passed
         env:
           SELECT: ${{ needs.select.result }}
+          BUILD: ${{ needs.behaviour-build.result }}
           RUN: ${{ needs.behaviour-run.result }}
           WANTED: ${{ needs.select.outputs.behaviour_run }}
         run: |
-          echo "select: $SELECT, behaviour shards: $RUN, asked: $WANTED"
+          echo "select: $SELECT, build: $BUILD, behaviour shards: $RUN, asked: $WANTED"
           [ "$SELECT" = success ] || exit 1
-          if [ "$WANTED" = true ]; then [ "$RUN" = success ] || exit 1; else [ "$RUN" = skipped ] || exit 1; fi
+          if [ "$WANTED" = true ]; then
+            [ "$BUILD" = success ] && [ "$RUN" = success ] || exit 1
+          else
+            [ "$BUILD" = skipped ] && [ "$RUN" = skipped ] || exit 1
+          fi

@@ -40,6 +40,8 @@ describe('the files there are', () => {
   it('reads each spec engines from its playwright import', () => {
     expect(select.enginesOf('test/behaviour/headItems.spec.ts')).toContain('firefox');
     expect(select.enginesOf('test/behaviour/fxScoped.spec.ts')).toEqual(['chromium']);
+    // Through its stage module, which launches the browser for it.
+    expect(select.enginesOf('test/behaviour/fxScopedMounted.spec.ts')).toEqual(['chromium']);
     for (const spec of specs) expect(select.enginesOf(spec)).toContain('chromium');
   });
 });
@@ -170,6 +172,7 @@ describe('a pull request asks what it can affect, and fails open', () => {
     expect(filesOf(plan.behaviour)).toEqual(['test/behaviour/maps.spec.ts']);
     expect(plan.renderGate).toEqual([]);
     expect([...filesOf(pr(['test/behaviour/fxPick.entry.tsx']).behaviour)].sort()).toEqual(fxSpecs);
+    expect([...filesOf(pr(['test/behaviour/fxScopedStage.ts']).behaviour)].sort()).toEqual(fxSpecs);
   });
 });
 
@@ -189,6 +192,13 @@ describe('one browser for the long effects proofs on a pull request', () => {
     }
   });
 
+  it('the deploy proof command, a child process that launches its own browsers, is given the engines of its spec', () => {
+    // It runs both engines by default, and a narrowed shard installs only chromium (shard 1 of run 46077892655).
+    const spec = fs.readFileSync(path.join(ROOT, 'test/behaviour/fx.spec.ts'), 'utf8');
+    expect(spec).toMatch(/'test\/fx-proof\/run\.ts'.*'--engines', engines/);
+    expect(spec).toContain("const engines = ENGINES.map(([name]) => name).join(',');");
+  });
+
   it('main and nightly narrow nothing', () => {
     for (const tier of ['main', 'nightly'] as const) {
       expect(select.plan({ tier, seed: 1 }).behaviour.every((s: { behaviour_engines: string }) => s.behaviour_engines === '')).toBe(true);
@@ -199,6 +209,9 @@ describe('one browser for the long effects proofs on a pull request', () => {
     const { behaviourEngines } = await import('../../../test/behaviour/engines');
     const list = [['chromium', 1], ['webkit', 2]] as const;
     expect(behaviourEngines(list, {})).toHaveLength(2);
+    // What proofs.yml sets after the merge: every engine, never a refusal.
+    expect(behaviourEngines(list, { BEHAVIOUR_ENGINES: '' })).toHaveLength(2);
+    expect(behaviourEngines(list, { BEHAVIOUR_ENGINES: ' ' })).toHaveLength(2);
     expect(behaviourEngines(list, { BEHAVIOUR_ENGINES: 'chromium' })).toEqual([['chromium', 1]]);
     expect(() => behaviourEngines(list, { BEHAVIOUR_ENGINES: 'edge' })).toThrow();
     expect(() => behaviourEngines(list, { BEHAVIOUR_ENGINES: 'firefox' })).toThrow(/no engine/);
@@ -208,7 +221,7 @@ describe('one browser for the long effects proofs on a pull request', () => {
 describe('shards', () => {
   it('put the longest first into the emptiest shard and stay within the cap', () => {
     const shards = select.shard(specs, durations);
-    expect(shards.length).toBeLessThanOrEqual(8);
+    expect(shards.length).toBeLessThanOrEqual(10);
     const longest = Math.max(...specs.map((spec) => durations[spec]));
     const loads = shards.map((s: { ms: number }) => s.ms);
     // No shard is more than the longest file over the lightest one: the greedy bound.

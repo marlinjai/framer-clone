@@ -899,13 +899,14 @@ single run with a known procedure.
   with the oracle's own tolerance. It refuses two canvases of different sizes, because then nothing can be compared.
 - **`test/fx-proof/run.ts`, the command:** `pnpm tsx test/fx-proof/run.ts --fx <address with a scene> --plain <address
   without one> [--compare <address>]`. Chromium and WebKit, a desktop and a phone width, with and without reduced
-  motion: 16 readings, and with `--compare` four comparisons with their pictures. It only reads pages. Exit code 0
+  motion: 16 readings, and with `--compare` four comparisons with their pictures (`--engines chromium` narrows both,
+  which only CI's pull request tier does). It only reads pages. Exit code 0
   means every reading is as it must be.
 - **Rehearsed on a real production build** inside the two existing FX browser specs (no new spec): the collector on
   pages with a scene, without one, with two, under reduced motion in both calm states, and on four wrong pages that it
   must name; the comparison on the same scene at two addresses (0 pixels differ), under content that covers it (still
   0), on a changed scene (over the tolerance) and on a box of another size (refused); and the command itself, run as it
-  will be run, in both engines.
+  will be run, in both engines (on a pull request in Chromium only).
 
 Decided here, say so if you disagree:
 

@@ -932,14 +932,16 @@ describe.each(ENGINES)('in %s', (name, engine) => {
   }
 });
 
-// The command that is run after a deploy (test/fx-proof/run.ts), once, as it will be run: both engines, a desktop
-// and a phone width, with and without reduced motion, and the two-address comparison. Here the addresses are
+// The command that is run after a deploy (test/fx-proof/run.ts), once, as it will be run: both engines (on a pull
+// request only those this spec runs in, the only ones its shard installs), a desktop and a phone width, with and
+// without reduced motion, and the two-address comparison. Here the addresses are
 // this build's; after a deploy they are a sites.lumitra.co test page and, for the comparison, lumitra.co.
 describe('the deploy proof command', () => {
   /** Run the command to its end without holding this worker still (two browsers and twenty page loads take a while). */
   const runProof = (args: string[], timeoutMs = 280_000): Promise<{ status: number | null; stdout: string; stderr: string }> =>
     new Promise((resolve, reject) => {
-      const child = spawn('pnpm', ['exec', 'tsx', 'test/fx-proof/run.ts', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const engines = ENGINES.map(([name]) => name).join(',');
+      const child = spawn('pnpm', ['exec', 'tsx', 'test/fx-proof/run.ts', ...args, ...(args.length > 0 ? ['--engines', engines] : [])], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
@@ -955,7 +957,7 @@ describe('the deploy proof command', () => {
       });
     });
 
-  it('reads every address in both engines, finds nothing wrong, and writes its readings and pictures', async () => {
+  it('reads every address in every engine asked, finds nothing wrong, and writes its readings and pictures', async () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-proof-'));
     const run = await runProof(['--fx', `${origin}/fx-frame`, '--plain', `${origin}/fx-none`, '--compare', `${origin}/fx-frame`, '--out', out]);
     expect(run.status, run.stderr.slice(-2000)).toBe(0);
@@ -963,13 +965,13 @@ describe('the deploy proof command', () => {
       readings: { engine: string; width: string; page: string; reducedMotion: boolean; problems: string[] }[];
       comparisons: { engine: string; width: string; same: boolean; differing: number }[];
     };
-    // Two engines, two widths, with and without reduced motion, two pages.
-    expect(report.readings).toHaveLength(16);
+    // Each engine, two widths, with and without reduced motion, two pages.
+    expect(report.readings).toHaveLength(ENGINES.length * 8);
     expect(report.readings.filter((reading) => reading.problems.length > 0)).toEqual([]);
-    expect(new Set(report.readings.map((reading) => `${reading.engine} ${reading.width}`)).size).toBe(4);
-    expect(report.comparisons).toHaveLength(4);
+    expect(new Set(report.readings.map((reading) => `${reading.engine} ${reading.width}`)).size).toBe(ENGINES.length * 2);
+    expect(report.comparisons).toHaveLength(ENGINES.length * 2);
     expect(report.comparisons.every((comparison) => comparison.same && comparison.differing === 0)).toBe(true);
-    expect(fs.readdirSync(out).filter((name) => name.endsWith('.png'))).toHaveLength(8);
+    expect(fs.readdirSync(out).filter((name) => name.endsWith('.png'))).toHaveLength(ENGINES.length * 4);
     fs.rmSync(out, { recursive: true, force: true });
   }, 300_000);
 
@@ -993,7 +995,7 @@ describe('the deploy proof command', () => {
     const run = await runProof(['--fx', `${origin}/fx-immediate`, '--plain', `${origin}/fx-none`, '--compare', `${origin}/fx-immediate`, '--out', out]);
     expect(run.status).toBe(1);
     expect(run.stdout).toMatch(/draws nothing under reduced motion.*calm: \\"frame\\"/);
-    // Named at once on each of the four comparisons, not after four timeouts of 45 seconds.
+    // Named at once on each comparison, not after a timeout of 45 seconds each.
     expect(Date.now() - started).toBeLessThan(150_000);
     fs.rmSync(out, { recursive: true, force: true });
   }, 300_000);

@@ -1,9 +1,9 @@
 // The FX browser proof against real addresses (see ./proof.ts). It only reads pages.
 //
 //   pnpm tsx test/fx-proof/run.ts --fx <address with an FX scene> --plain <address without one> \
-//     [--compare <address of the same scene elsewhere>] [--out <folder>]
+//     [--compare <address of the same scene elsewhere>] [--out <folder>] [--engines chromium,webkit]
 //
-// For each of Chromium and WebKit, at a desktop and a phone width, with and without
+// For each of Chromium and WebKit (or only those --engines names), at a desktop and a phone width, with and without
 // reduced motion, it records what slice F7 of the plan asks for and says whether each
 // reading is what it must be. With --compare it also draws the scene at both addresses at
 // the still frame and compares the pictures (slice F8). The readings are printed as JSON
@@ -28,14 +28,22 @@ const compare = argument('compare');
 const out = path.resolve(argument('out') ?? 'test/fx-proof/.out');
 
 if (!fx || !plain) {
-  console.error('usage: tsx test/fx-proof/run.ts --fx <address with an FX scene> --plain <address without one> [--compare <address>] [--out <folder>]');
+  console.error('usage: tsx test/fx-proof/run.ts --fx <address with an FX scene> --plain <address without one> [--compare <address>] [--out <folder>] [--engines chromium,webkit]');
   process.exit(2);
 }
 
-const ENGINES: [string, BrowserType][] = [
+const ALL_ENGINES: [string, BrowserType][] = [
   ['chromium', chromium],
   ['webkit', webkit],
 ];
+// Both engines unless --engines narrows them: CI's pull request tier installs one browser. A flag, never an
+// environment variable, so nothing left in a shell can narrow the proof after a deploy.
+const askedEngines = process.argv.includes('--engines') ? (argument('engines') ?? '').split(',') : ALL_ENGINES.map(([name]) => name);
+if (!askedEngines.every((asked) => ALL_ENGINES.some(([name]) => name === asked))) {
+  console.error(`--engines takes chromium, webkit or both, comma separated, not "${askedEngines.join(',')}"`);
+  process.exit(2);
+}
+const ENGINES = ALL_ENGINES.filter(([name]) => askedEngines.includes(name));
 const WIDTHS = [
   { name: 'desktop', viewport: { width: 1440, height: 900 } },
   { name: 'phone', viewport: { width: 390, height: 844 } },

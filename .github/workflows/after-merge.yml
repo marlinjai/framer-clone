@@ -42,6 +42,8 @@ concurrency:
 
 permissions:
   contents: read
+  # proofs.yml: a behaviour shard reads its run's jobs to wait for the shared build.
+  actions: read
 
 jobs:
   proofs:
@@ -50,15 +52,16 @@ jobs:
     with:
       tier: ${{ github.event_name == 'schedule' && 'nightly' || inputs.tier || 'main' }}
       seed: ${{ inputs.seed || '' }}
-      # Leaves runners for pull requests: the account runs 20 jobs at once on the free plan, shared by every
-      # repository, and this limit applies to each of the two matrices. After merge has no time budget.
-      max-parallel: 4
+      # 4 while these jobs shared GitHub's 20 jobs at once with every repository's pull requests; on Ubicloud
+      # (vars.CI_RUNNER_LARGE) they do not, so a red main shows within one shard's time. Back to 4 if the variable
+      # is ever unset.
+      max-parallel: 20
 
   prove-report:
     name: prove-report
+    # Not after the proofs: a failed proof would skip it (run 46077139610), and it proves the issue path by itself.
     if: inputs.prove_report == true
-    needs: proofs
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Fail on purpose
         run: |
@@ -71,7 +74,7 @@ jobs:
     name: report
     needs: [proofs, prove-report]
     if: always() && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       issues: write
     steps:
