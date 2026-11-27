@@ -19,6 +19,7 @@
 // Plus the daily ceiling, the parallel limit, a refusal, VAT and CHF invoices,
 // and what 010 guarantees for staging rows and the ledger. Synthetic data only.
 
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -35,6 +36,7 @@ import {
   openBooksEnv,
   rejectionCode,
   scopeFor,
+  syntheticSender,
   type BooksEnv,
 } from '../../__tests__/booksFixtures';
 import { createCompanySlots } from '../limits';
@@ -395,6 +397,44 @@ describe('re-entry', () => {
     const r = await extractItem(scope, item.id, deps([toolTurn(toolInput({ number: null }))], book).deps);
     expect(r.problems).toContainEqual({ code: 'number_missing', path: null, blocking: true, count: null });
     await expect(confirmItem(scope, book, item.id, { expectedVersion: r.version })).rejects.toMatchObject({ code: 'IMPORT_NOT_READY' });
+  });
+});
+
+describe('a linked sender that cannot be read (books/sender.ts)', () => {
+  it('a paid reading is kept and the row says why it is not ready; once readable, a correction checks it again', async () => {
+    const { tenantId, book, scope } = await company();
+    const contactId = randomUUID();
+    await env.ownerDb.updateTable('books_company_settings').set({ sender_contact_id: contactId }).where('tenant_id', '=', tenantId).execute();
+    let down = true;
+    const sender = syntheticSender();
+    const linked = {
+      ...scope,
+      senders: {
+        async getSender() {
+          if (down) throw new Error('synthetic contacts outage');
+          return {
+            definitions: [],
+            contact: { id: contactId, kind: 'organization', archived: false, version: 1, name: sender.legalName, legalForm: null, addressLine1: sender.addressLine1, addressLine2: null, postalCode: sender.postalCode, city: sender.city, country: sender.countryCode, vatId: sender.vatId, email: null, phone: null, customFields: {} } as never,
+          };
+        },
+      },
+    };
+    const item = await staged(linked, `sender-down-${tenantId}`);
+    const read = await extractItem(linked, item.id, deps([toolTurn(toolInput())], book).deps);
+    expect(read.status).toBe('needs_attention');
+    expect(codes(read)).toEqual(['contacts_unavailable']);
+    expect(read.extractionId).not.toBeNull();
+    await expect(confirmItem(linked, book, item.id, { expectedVersion: read.version })).rejects.toMatchObject({ code: 'IMPORT_NOT_READY' });
+
+    down = false;
+    const now = await getItem(linked.db, linked, item.id);
+    const checked = await correctItem(linked, book, item.id, {
+      printed: typedByUser(toolInput() as unknown as Record<string, unknown>),
+      extractionId: now.extractionId!,
+      expectedVersion: now.version,
+    });
+    expect(checked.status).toBe('ready');
+    expect(codes(checked)).toContain('sender_from_company');
   });
 });
 

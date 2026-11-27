@@ -56,6 +56,7 @@ const TEXT: Record<string, string> = {
   recipient_ambiguous: 'More than one contact carries this recipient name. Make the name unique in the contacts first.',
   counter_missing: 'The Books are not set up for this company yet (no invoice counter).',
   contacts_unavailable: 'The contacts database could not be read. Check again in a moment.',
+  sender_unusable: 'Your company’s sender contact cannot be used. Open the Books to see why, correct it in the receipts app, then check again.',
   // Warnings: imported as printed, check against the PDF.
   line_not_quantity_times_price: 'Line total is not quantity times price (kept as printed).',
   line_tax_not_rate_times_net: 'Line VAT is not its rate times its net (kept as printed).',

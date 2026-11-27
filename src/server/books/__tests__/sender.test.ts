@@ -106,6 +106,16 @@ describe('resolveSender', () => {
   });
 });
 
+describe('the legal form', () => {
+  it.each([
+    ['a name without it', 'Contact Studio', 'GmbH', 'Contact Studio GmbH'],
+    ['a name that already says it', 'Contact Studio GmbH', 'GmbH', 'Contact Studio GmbH'],
+    ['no legal form recorded', 'Contact Studio', null, 'Contact Studio'],
+  ])('is printed with the sender name: %s', (_case, name, legalForm, printed) => {
+    expect(checkSender(record({ name, legalForm })).legalName).toBe(printed);
+  });
+});
+
 describe('checkSender', () => {
   const problems = (r: SenderRecord): unknown => {
     try {

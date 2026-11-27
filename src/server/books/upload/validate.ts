@@ -155,7 +155,14 @@ export async function validateItem(
   scope: BooksScope,
   book: ContactBook,
   item: ImportItem,
-  ctx: { bytes: Uint8Array; others: readonly ImportItem[]; companySender: SenderBlockV1 | null; now?: Date },
+  ctx: {
+    bytes: Uint8Array;
+    others: readonly ImportItem[];
+    companySender: SenderBlockV1 | null;
+    /** The company's linked sender could not be read or used (sender.ts): shown on the row, nothing is checked. */
+    senderProblem?: 'contacts_unavailable' | 'sender_unusable';
+    now?: Date;
+  },
 ): Promise<Validation> {
   const done = (problems: Problem[], record: HistoricalInvoice | null): Validation => ({
     status: problems.some((p) => p.blocking) ? 'needs_attention' : 'ready',
@@ -164,6 +171,7 @@ export async function validateItem(
   });
   const printed = effectivePrinted(item);
   if (!printed) return done([problem(item.extractionError ? `extraction_failed:${item.extractionError}` : 'not_read')], null);
+  if (ctx.senderProblem) return done([problem(ctx.senderProblem)], null);
 
   const sender = withCompanySender(printed, ctx.companySender);
   const mapped = mapPrintedInvoice(sender.printed, { origin: 'upload_extracted', now: ctx.now });

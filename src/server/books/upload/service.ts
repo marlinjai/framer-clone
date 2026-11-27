@@ -39,7 +39,8 @@ import { counterRaiseUnconfirmed, IMPORT_RENDERER, importHistoricalInvoice, newI
 import { isPdfBytes } from '../pdfBytes';
 import type { BooksScope } from '../scope';
 import { resolveSender } from '../sender';
-import { readSettings } from '../settings';
+import { readSettings, type CompanySettings } from '../settings';
+import type { SenderBlockV1 } from '../snapshots';
 import { extractPrintedInvoice } from './extract';
 import { describeError } from '../http/describeError';
 import { CLAIM_TIMEOUT_MS, DAILY_WINDOW_MS, EXTRACT_CALL_BUDGET_MS, type CompanySlots } from './limits';
@@ -138,12 +139,33 @@ export async function stageUpload(scope: BooksScope, file: { fileName: string; b
   }
 }
 
+/**
+ * The company's sender for a row's check, as fallback for what a historical PDF does not print. A linked sender
+ * that cannot be read or used is a problem of the row, never a thrown error: a paid reading or a correction is
+ * already stored when the row is checked, and it must say why it is not ready.
+ */
+async function companySenderFor(
+  scope: BooksScope,
+  settings: CompanySettings | null,
+): Promise<{ companySender: SenderBlockV1 | null; senderProblem?: 'contacts_unavailable' | 'sender_unusable' }> {
+  if (!settings) return { companySender: null };
+  try {
+    return { companySender: (await resolveSender(scope, settings)).block };
+  } catch (err) {
+    if (isBooksError(err, 'SENDER_UNAVAILABLE')) return { companySender: null, senderProblem: 'contacts_unavailable' };
+    if (isBooksError(err, 'SENDER_NOT_FOUND') || isBooksError(err, 'SENDER_INVALID')) {
+      return { companySender: null, senderProblem: 'sender_unusable' };
+    }
+    throw err;
+  }
+}
+
 /** Validate a row and store the outcome (when it is still at `version`); returns the row as stored. */
 async function revalidate(scope: BooksScope, book: ContactBook, item: ImportItem, now: Date): Promise<ImportItem> {
   const bytes = await itemContent(scope.db, scope, item.id);
   if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId: item.id });
   const [others, settings] = await Promise.all([listOpenItems(scope.db, scope), readSettings(scope.db, scope)]);
-  const v = await validateItem(scope, book, item, { bytes, others, companySender: settings ? (await resolveSender(scope, settings)).block : null, now });
+  const v = await validateItem(scope, book, item, { bytes, others, ...(await companySenderFor(scope, settings)), now });
   const stored = await updateItem(scope.db, scope, item.id, { status: v.status, problems: v.problems }, {
     expectedVersion: item.version,
     whenStatus: ['ready', 'needs_attention'],
@@ -604,7 +626,7 @@ export async function confirmItem(
   const bytes = await itemContent(scope.db, scope, itemId);
   if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId });
   const [others, settings] = await Promise.all([listOpenItems(scope.db, scope), readSettings(scope.db, scope)]);
-  const v = await validateItem(scope, book, item, { bytes, others, companySender: settings ? (await resolveSender(scope, settings)).block : null, now });
+  const v = await validateItem(scope, book, item, { bytes, others, ...(await companySenderFor(scope, settings)), now });
   const checked = await updateItem(scope.db, scope, itemId, { status: v.status, problems: v.problems }, {
     expectedVersion: item.version,
     whenStatus: ['ready', 'needs_attention'],

@@ -119,6 +119,10 @@ export function unusableSenderFields(definitions: readonly FieldDefinition[]): A
 export function senderBlockFromContact(contact: Contact): SenderBlockV1 {
   const block: Record<string, string | null> = {};
   for (const [field, column] of Object.entries(FIXED_FIELDS)) block[field] = clean(contact[column]);
+  // A company's documents must name its legal form, which a contact may keep in its own field: appended
+  // unless the name already says it, the rule the recipient's address block follows (render/model.ts).
+  const legalForm = clean(contact.legalForm);
+  if (block.legalName && legalForm && !block.legalName.includes(legalForm)) block.legalName = `${block.legalName} ${legalForm}`;
   for (const [field, custom] of CUSTOM_ENTRIES) block[field] = clean(contact.customFields[custom.key]);
   block.countryCode = block.countryCode?.toUpperCase() ?? null;
   return senderBlockV1Schema.parse(block);
