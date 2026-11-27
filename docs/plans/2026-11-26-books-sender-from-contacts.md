@@ -3,7 +3,7 @@ type: plan
 status: decided
 date: 2026-11-26
 title: "Books: the invoice sender comes from shared contacts"
-summary: "Invoices read the business sender details (name, address, tax ids, bank details) from one organization in the shared contacts database instead of the separately maintained books_company_settings.sender_block. Books keeps a pointer to that contact; tax status, exemption note, payment terms, numbering and templates stay in Books. Issued documents keep their frozen sender snapshot. Decided 2026-11-27: no extra approval step while the company has one user; a Books confirmation of bank changes is required before a second user or a client company links a sender."
+summary: "Invoices read the business sender details (name, address, tax ids, bank details) from one organization in the shared contacts database instead of the separately maintained books_company_settings.sender_block. Books keeps a pointer to that contact; tax status, exemption note, payment terms, numbering and templates stay in Books. Issued documents keep their frozen sender snapshot. Decided 2026-11-27: no extra approval step while the company has one user; a Books confirmation of bank changes must be built before any company with more than one user, or any client company, has a linked sender."
 tags: [framer-clone, books, invoices, contacts, tenancy, bank-details, migration]
 projects: [framer-clone, contacts, receipt-ocr-app]
 ---
@@ -117,7 +117,8 @@ code were not counted.
 - **C (chosen, 2026-11-27): no extra guard.** The only person who can edit the contact is the person
   who may change where customers pay, so a guard would protect against nobody today. The checksum
   still catches typing errors. **Condition:** A is built before a second user gets access to a
-  company with a linked sender, or before a client company links one.
+  company with a linked sender, before a company that already has more than one user links one, or
+  before a client company links one.
 - **A: Books confirms bank changes.** Books stores a fingerprint of the payment fields (name, IBAN,
   BIC, bank name) approved for the pointer. When the contact differs, issuing and shop payments are
   refused until a user with a new owner-or-admin Books right sees old and new in Books and
@@ -151,7 +152,12 @@ Each branch stays at about 1,500 changed lines at most.
 4. **Only when A's condition is met:** approval column, right, screen and tests.
 5. **Cleanup, a later release,** after at least one invoice issued from the contact: stop writing
    and requiring `sender_block` for linked companies, require a sender contact when a new company is
-   initialised, then drop the column.
+   initialised and remove `--unlink` (linking another contact stays), then drop the column. The drop
+   needs every settings row in every tenant schema to have a `sender_contact_id`, because an
+   unlinked company still prints from the block. A company still unlinked is linked first, with the same
+   parity report as gate 2 and under A's condition. The migration runs per tenant schema, so it
+   checks its own schema and fails there, dropping nothing, while a pointer is null; the check
+   across all schemas is gate 3's count, before the deploy.
 
 framer-clone has no single check command found in this investigation; part 2 first confirms what
 `ci.yml` runs and uses exactly that. Review: a Claude reviewer for the access and snapshot parts,
@@ -165,7 +171,8 @@ Mercury for the rest.
 2. **Link Whiz-Art Media** (one production write). Before it, the same day: parity report with zero
    differences, fingerprint. After it: a draft's render shows the sender, readiness is ready, the
    fingerprint is unchanged. Rollback: `--unlink`, which returns to the stored block.
-3. **Part 5's column drop**, much later, with its own backup.
+3. **Part 5's column drop**, much later, with its own backup and, the same day, a count of settings
+   rows without a sender contact across all tenant schemas, which must be zero.
 
 `sender_block` is frozen from the moment of linking. If the contact changed since, unlinking or
 redeploying an older image prints the old values: run the parity report first and update the stored
