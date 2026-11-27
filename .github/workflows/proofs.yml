@@ -131,6 +131,9 @@ jobs:
     timeout-minutes: 45
     env:
       NEXT_TELEMETRY_DISABLED: 1
+      # The shard's `next build` (test/behaviour/setup.ts) skips type checking and lint, which ci.yml's `static`
+      # job proves once for the whole change (next.config.ts).
+      NEXT_BUILD_SKIP_CHECKS: 1
     strategy:
       fail-fast: false
       max-parallel: ${{ inputs.max-parallel }}

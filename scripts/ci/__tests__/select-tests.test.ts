@@ -79,6 +79,20 @@ describe('main and nightly ask everything', () => {
   });
 });
 
+describe('every gate test honours the engines a job asks', () => {
+  // A job installs only the engines it asks (RENDER_GATE_ENGINES), so a test that launches an engine itself,
+  // outside the file's engine list, must ask `asks('<engine>')` first: on 2026-11-27 two such Chromium-only tests
+  // failed the WebKit and Firefox jobs with "Executable doesn't exist".
+  for (const file of gates) {
+    it(`${file} launches no engine it was not asked for`, () => {
+      const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      for (const engine of ['chromium', 'webkit', 'firefox']) {
+        if (new RegExp(`\\b${engine}\\.launch\\(`).test(text)) expect(text).toContain(`asks('${engine}')`);
+      }
+    });
+  }
+});
+
 describe('a pull request asks what it can affect, and fails open', () => {
   const pr = (changed: string[]) => select.plan({ tier: 'pr', changed });
 

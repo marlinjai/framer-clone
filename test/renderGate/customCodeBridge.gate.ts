@@ -22,7 +22,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type BrowserType, type Page } from 'playwright';
-import { selectEngines, selection } from './selection';
+import { asks, selectEngines, selection } from './selection';
 import { boxDocumentHeaders, composeBoxDocument } from '@/lib/customCode/contract';
 import type { IslandBlock, BlockState } from '@/lib/customCode/registry';
 import type { BehaviourProgram } from '@/lib/behaviour/program';
@@ -1278,7 +1278,8 @@ describe.each(ENGINES)('the custom code bridge in %s', (engine, type) => {
 // Review 3 of pull request #452, M1: under site isolation, as desktop Chrome ships it, the frame runs in its own
 // process, so only the broker stands between its window messages and the page. The page reads no message's data
 // itself here (`quiet`), so whatever the click costs is the broker's.
-describe('the custom code bridge in chromium with site isolation', () => {
+// Chromium only, so a job that asks other engines alone skips it (selection.ts).
+describe.runIf(asks('chromium'))('the custom code bridge in chromium with site isolation', () => {
   let browser: Browser;
   beforeAll(async () => {
     browser = await chromium.launch({ args: ['--site-per-process'] });

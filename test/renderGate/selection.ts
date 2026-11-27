@@ -88,6 +88,15 @@ export function selectEngines<T extends readonly [string, unknown]>(engines: rea
   return engines.filter(([name]) => selection.engines!.includes(name as Engine));
 }
 
+/**
+ * Whether this run asks an engine, for a test written for one engine only (it launches that engine itself rather
+ * than going through a list): `it.runIf(asks('chromium'))`. A job that installed only WebKit then skips it, and the
+ * job that asks Chromium runs it.
+ */
+export function asks(engine: Engine, chosen: Selection = selection): boolean {
+  return !chosen.engines || chosen.engines.includes(engine);
+}
+
 /** One line for the log: what was asked, so a fresh-seed finding can be asked again. */
 export function describeSelection(selection: Selection, asked: number, of: number): string {
   const parts = [

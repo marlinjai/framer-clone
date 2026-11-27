@@ -11,7 +11,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { chromium, webkit, type BrowserType, type Page } from 'playwright';
-import { selectEngines, selection } from './selection';
+import { asks, selectEngines, selection } from './selection';
 import { middleware } from '@/middleware';
 import { MAPS_CONSENT_COOKIE } from '@/lib/site/cspReportOnly';
 import { parseMapEmbed } from '@/lib/mapEmbed/mapEmbed';
@@ -164,7 +164,8 @@ describe('the enforced frame policy', () => {
     }, 60_000);
   }
 
-  it('lets the map load after consent and refuses it before, read from the document the browser received', async () => {
+  // Chromium only (it launches Chromium itself), so a job that asks WebKit alone skips it (selection.ts).
+  it.runIf(asks('chromium'))('lets the map load after consent and refuses it before, read from the document the browser received', async () => {
     const browser = await chromium.launch();
     try {
       const url = `https://${SITE}/contact`;
