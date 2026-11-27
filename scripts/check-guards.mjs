@@ -81,8 +81,8 @@
  *       drei, which the plan keeps out of Sites, cannot come back unnoticed).
  *       Its tests may also import FX_TEST_PACKAGES and `node:` built-ins.
  *  FX2: a file outside src/lib/fx reaches the engine only through its public
- *       entries (FX_PUBLIC_ENTRIES: `@/lib/fx` and the render-free
- *       `@/lib/fx/format`), never through another file inside it.
+ *       entries (FX_PUBLIC_ENTRIES: `@/lib/fx`, the render-free `@/lib/fx/format`
+ *       and the few narrower ones listed there), never through another file inside it.
  * Both rules read every static import, re-export, dynamic import() and
  * require() with a literal specifier; see scanFxBoundary. They also run over
  * `test` (FX_ONLY_ROOTS): a test reaches the engine as the app does, and gets
@@ -150,8 +150,11 @@ export const FX_DIR = 'src/lib/fx';
  *  - `@/lib/fx/pick`: picking a layer on the editor's live canvas. EDITOR ONLY: its one importer
  *    is src/components/fx/FxLayer.tsx, by a dynamic import of its own, so a published page's
  *    island never carries it (src/lib/fx/__tests__/importGraph.test.ts pins both).
+ *  - `@/lib/fx/ring`: the particle ring's core and the canvas pixel ratio rule, for the published
+ *    page's first still of a ring (src/lib/fxScene/ringStill.ts). Render-free and two files only,
+ *    because the island that imports it is in every published page's code (importGraph pins it).
  */
-export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`, `${FX_DIR}/unified`, `${FX_DIR}/pick`];
+export const FX_PUBLIC_ENTRIES = [`${FX_DIR}/index`, `${FX_DIR}/format`, `${FX_DIR}/unified`, `${FX_DIR}/pick`, `${FX_DIR}/ring`];
 
 /**
  * Roots scanned for the FX rules ONLY, beside DEFAULT_ROOTS: the browser suites and
@@ -579,7 +582,7 @@ export function scanFxBoundary(file) {
         violations.push({ rule: 'FX1', line, message: `the FX engine (${FX_DIR}) imports nothing from the rest of the repository, found "${specifier}"` });
       }
     } else if (target !== null && isInsideFx(target) && !isFxPublicEntry(target)) {
-      violations.push({ rule: 'FX2', line, message: `import the FX engine through "@/lib/fx" or "@/lib/fx/format" only, not "${specifier}"` });
+      violations.push({ rule: 'FX2', line, message: `import the FX engine through its public entries only (${FX_PUBLIC_ENTRIES.map((entry) => `"@/${entry.replace(/^src\//, '')}"`).join(', ')}), not "${specifier}"` });
     }
   }
   return violations;

@@ -76,6 +76,8 @@ export const FX_LAYER_ATTR = 'data-fc-fx-layer';
 export const FX_STILL_ATTR = 'data-fc-fx-still';
 /** The loading placeholder of a scene (./placeholder.ts). */
 export const FX_PLACEHOLDER_ATTR = 'data-fc-fx-placeholder';
+/** The published page's first still of a particle ring, shown until the live scene is (./ringStill.ts). */
+export const FX_RING_STILL_ATTR = 'data-fc-fx-ring-still';
 
 /** True for an attribute only the published page may write: `data-fc-fx` and every `data-fc-fx-*`. */
 export function isFxIssuedAttribute(name: string): boolean {

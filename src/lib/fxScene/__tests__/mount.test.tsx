@@ -198,6 +198,8 @@ describe('mountFxScene, the published page\'s way in', () => {
     act(() => lastProps().onFirstFrame?.());
     expect(made.style.opacity).toBe('1');
     expect(onLive).toHaveBeenCalledTimes(1);
+    // The layer itself, which the island's still watches until it is opaque (not the box).
+    expect(onLive).toHaveBeenCalledWith(made);
     await act(async () => teardown());
     await act(async () => teardown());
     expect(box.innerHTML).toBe('<h1>Over the scene</h1>');

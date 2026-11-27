@@ -408,8 +408,8 @@ export function renderFxStill(
 }
 
 export interface MountFxOptions {
-  /** The first frame is drawn and the layer is fading in. */
-  onLive: () => void;
+  /** The first frame is drawn and `layer` (the scene's layer in the box) is fading in. */
+  onLive: (layer: HTMLElement) => void;
   /** The scene cannot be drawn, or stopped. The layer is already gone. */
   onOff: (reason: FxOffReason) => void;
 }
@@ -443,7 +443,7 @@ export function mountFxScene(
   const handle = renderFxScene(layer, stored, {
     onLive: () => {
       layer.style.opacity = "1";
-      onLive();
+      onLive(layer);
     },
     onOff: (reason) => {
       remove();

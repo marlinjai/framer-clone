@@ -1152,6 +1152,71 @@ decision is not a deploy authorization.
 held FX defect (screen and overlay ignoring source alpha on content layers, held until the lumitra.co comparison F8).
 No production deploy or site publish comes with this change; it waits for the existing release gate.
 
+### Addendum: the ring's own still while the engine loads (2026-11-24)
+
+**Why.** Marlin reviewed the loading placeholder of the addendum above and found the faint glow effectively
+invisible. He asked to test a lightweight, immediately visible still image of the actual particle ring as the
+placeholder, handing over cleanly to the live animation: accurate at every responsive size, no visual jump, measured
+cold and warm, accessible and calm under reduced motion, with a fallback, and without extra load that makes the page
+slower.
+
+**What was tested first: a stored poster image.** A picture of the ring, captured once and scaled by CSS with the
+ring's own radius rule (`min(0.37 W, 0.47 H)`, through container units on an inner layer), compared pixel by pixel
+with the live first frame at phone, tablet and desktop boxes and pixel ratios 1 and 1.75 (scripts and results under
+`~/software-dev/orchestration/fx-ring-scratch/poster/exp`). It matches only near the radius it was captured at. The
+ring's points are sized in device pixels while its radius follows the box, so a smaller ring is denser and brighter:
+captured at a radius of 300 pixels, the picture is 38 percent too dark in a phone box (radius 144) and 24 percent too
+bright on a desktop (radius 376). Within about 5 percent of the captured radius the difference is that of the image
+compression alone; at 20 percent off it is plainly visible at the hand-over. Correcting the brightness by the square
+of the radius ratio halves the error but leaves the texture wrong. A WebP of the ring costs 40 KB at ratio 1 and
+100 KB at 1.75 per captured radius, it needs one capture per radius band (a hero sized by the window's height changes
+radius continuously), and storing it touches the site image quota, the in-use scan and the published copy.
+
+**Decided (say so if you disagree).**
+
+1. **The still is drawn, not stored.** The ring is plain WebGL math (`src/lib/fx/particleRingCore.ts`: the seeded
+   particles and the two shaders; the pixel oracle holds the engine's ring equal to the `<lumitra-light>` component,
+   which is exactly that math in a bare WebGL 2 canvas). The island draws the frame the engine starts on (time
+   `RING_START_TIME`, no pointer lean) with that math in a short-lived WebGL 2 context, at the box's exact size and at
+   the pixel ratio the live canvas will use (`src/lib/fx/pixelRatio.ts`, shared with the engine, so a touch device
+   draws at 1 in both), copies it into a plain 2D canvas and releases the context before it returns. No image is
+   downloaded or stored, and the still is exact at every size. Measured on the Mac's GPU (WebKit): the first frame is
+   on screen 22 to 32 ms after its script runs.
+2. **Where it sits and how it leaves** (`src/lib/fxScene/ringStill.ts`). Behind the content and behind the live layer
+   (z-index -2 against -1, inside the box hold), taking no pointer, hidden from assistive technology, faded in over
+   150 ms. When the live scene's first frame is drawn, the still stays under the live layer until that layer's 300 ms
+   fade is over and only then goes, so the hand-over is never a two-sided cross-fade (which dips in brightness). A box
+   that changes size, or a device pixel ratio that changes (another display, a zoom), before the live scene is there
+   gets the still drawn again, at the ratio current then. When the page is put away it goes at
+   once.
+3. **When it is drawn.** Only for a scene that is one visible particle ring on its background (no other visible layer,
+   no post pass, no param animation, no scoped target: those change the first frame in ways this short path does not
+   draw). A `settled` or `immediate` scene draws it as soon as the island runs, without waiting for the page's load; a
+   `visible` scene only when the box comes near, together with its engine fetch. Under reduced motion it follows the
+   calm setting: `background` draws nothing (as before), `frame` shows the still, which is also the frame the engine
+   then holds. A second scene on a page stays calm with neither. Scenes that are not one ring keep the loading
+   placeholder.
+4. **Only on a graphics card.** Where WebGL draws on the processor (SwiftShader, llvmpipe and the like: machines
+   without a usable graphics card, some virtual machines, blocklisted drivers), the ring's frame takes most of a
+   second and copying it out waits for all of it on the page's main thread. Measured in Chromium on hermes (no
+   graphics card), cold: the page's largest paint went from 0.64 s to about 1.5 s, the longest task from 0.73 s to
+   about 1.2 s, and the ring was seen later (1.4 to 1.6 s) than the live scene alone (0.94 s). So the still asks for a
+   context the browser may refuse when it would be slow (`failIfMajorPerformanceCaveat`), and, because Chromium's
+   SwiftShader does not refuse it, also checks the renderer's name; on software it is left out and the placeholder
+   shows, exactly as before.
+5. **Fallback.** No WebGL 2, a shader that does not compile or a box without a size: no still, and the placeholder as
+   before. When the engine cannot draw (its chunk does not arrive, a renderer error), the still stays as the picture:
+   it is the scene's own first frame, and the frame a visitor asking for reduced motion gets anyway. A scene the engine
+   refuses takes its still with it.
+6. **Its own small entry.** The island is part of every published page's code, so it reaches the ring core through a
+   new render-free entry `@/lib/fx/ring` that is exactly two files (pinned in `src/lib/fx/__tests__/importGraph.test.ts`),
+   not through `@/lib/fx/format`, which would bring the scene format, the schemas and the presets onto pages without
+   a scene.
+
+**Not changed.** One WebGL context per page while the engine runs (the still's context is gone before the engine
+starts), the reduced-motion rules, the editor's still frames, the held FX defect. No production deploy or site publish
+comes with this change; it waits for the existing release gate.
+
 ### Addendum: the ring's glow in hundredths (2026-11-25)
 
 Asked by Marlin through the coordinator on 2026-11-25: the particle ring's Glow should move in steps of 0.01, so the look
