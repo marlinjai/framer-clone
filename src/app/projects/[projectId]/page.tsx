@@ -18,6 +18,9 @@ import { loadProjectSnapshot } from './loader';
 import EditorMount from './EditorMount';
 import { isCustomCodeAvailable } from '@/lib/customCode/authoring';
 
+// The tab's name (the editor renames it to the project once it loads).
+export const metadata = { title: 'Editor | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 interface ProjectEditorPageProps {

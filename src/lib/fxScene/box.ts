@@ -28,19 +28,52 @@ export const FX_LAYER_STYLE = {
   borderRadius: 'inherit',
 } as const;
 
+/** The holds on each box: the first applies the footing, the last one released takes it back. */
+const holds = new WeakMap<HTMLElement, { count: number; isolation: string; position: string; positioned: boolean }>();
+
 /**
  * Make `box` hold a layer: a stacking context of its own, and a position when it has
- * none. Returns the undo. `positionIsOwned` says, at the time of the undo, that
- * something else has set the box's inline position since (the editor's renderer,
- * after the author gave the box a position): then it is left alone.
+ * none. Returns the undo (once; later calls do nothing). Holds nest in any order (a
+ * placeholder, a still frame and the live scene may overlap for a moment): the box
+ * gets its footing from the first and back from the last undo. `positionIsOwned`
+ * says, at the time of that last undo, that something else has set the box's inline
+ * position since (the editor's renderer, after the author gave the box a position):
+ * then it is left alone.
  */
 export function holdFxBox(box: HTMLElement): (positionIsOwned?: boolean) => void {
-  const before = { isolation: box.style.isolation, position: box.style.position };
-  box.style.isolation = 'isolate';
-  const positioned = getComputedStyle(box).position === 'static';
-  if (positioned) box.style.position = 'relative';
+  let held = holds.get(box);
+  if (held) held.count += 1;
+  else {
+    held = { count: 1, isolation: box.style.isolation, position: box.style.position, positioned: false };
+    box.style.isolation = 'isolate';
+    held.positioned = getComputedStyle(box).position === 'static';
+    if (held.positioned) box.style.position = 'relative';
+    holds.set(box, held);
+  }
+  const mine = held;
+  let released = false;
   return (positionIsOwned = false) => {
-    box.style.isolation = before.isolation;
-    if (positioned && !positionIsOwned) box.style.position = before.position;
+    if (released) return;
+    released = true;
+    mine.count -= 1;
+    if (mine.count > 0 || holds.get(box) !== mine) return;
+    holds.delete(box);
+    box.style.isolation = mine.isolation;
+    if (mine.positioned && !positionIsOwned) box.style.position = mine.position;
   };
+}
+
+/**
+ * The box's own position was set or taken away while it is held: take the footing again on the new
+ * one, keeping every hold (the editor's renderer has already written the new position).
+ */
+export function reholdFxBox(box: HTMLElement): void {
+  const held = holds.get(box);
+  if (!held) return;
+  // Our own footing (written by this hold or another on the box) is not the box's position: nothing changed.
+  if (held.positioned && box.style.position === 'relative') return;
+  held.position = box.style.position;
+  box.style.isolation = 'isolate';
+  held.positioned = getComputedStyle(box).position === 'static';
+  if (held.positioned) box.style.position = 'relative';
 }

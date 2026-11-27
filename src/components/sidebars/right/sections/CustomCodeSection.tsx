@@ -160,16 +160,19 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   const projectId = project && !editorUI.isUnsavedDemo ? project.id : null;
   const status = authoring.state.phase === 'ready' ? authoring.state.status : null;
   const mayWrite = !!status && status.enabled && status.canManage && !status.branch && !!projectId;
+  // The running save lives in the provider, not here (review 2 of #459, M1): this section is rebuilt when
+  // another element is selected, and the save outlives it. A section that comes back mid-save stays locked.
+  const { keepDraft, announce, updateSave, saveNow } = authoring;
+  const saving = authoring.saveOf(component.id)?.running === true;
 
   // --- the stored code -----------------------------------------------------------------
   const [loaded, setLoaded] = React.useState<{ key: string; value: Loaded }>({ key: '', value: { phase: 'loading' } });
-  const savedHere = React.useRef<{ key: string; value: Loaded } | null>(null);
   const [loadGeneration, setLoadGeneration] = React.useState(0);
   React.useEffect(() => {
-    if (savedHere.current && savedHere.current.key === storedKey) {
+    const written = saveNow(component.id)?.written;
+    if (written && written.key === storedKey) {
       // What this panel just saved: no need to read it back.
-      setLoaded(savedHere.current);
-      savedHere.current = null;
+      setLoaded(written);
       return;
     }
     if (!block) {
@@ -199,6 +202,10 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
     // block is derived from storedKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storedKey, projectId, authoring.available, loadGeneration]);
+  // Forgotten only once `loaded` holds it: until then the render reads it from the save record.
+  React.useEffect(() => {
+    if (saveNow(component.id)?.written?.key === loaded.key) updateSave(component.id, { written: null });
+  }, [loaded, saveNow, updateSave, component.id]);
 
   // --- the draft (D109) ----------------------------------------------------------------
   // A draft left when another element was selected comes back (review 1 of #459, L3).
@@ -207,7 +214,6 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   );
   // Spoken through the provider's live region, which exists before this section does, so a sentence
   // set as the section opens is a change a screen reader announces (review 2 of #459, L1).
-  const { keepDraft, announce, updateSave, saveNow } = authoring;
   const [restored] = React.useState(() => !!edits && edits.key === storedKey);
   React.useEffect(() => {
     if (restored) announce('Your unsaved edits to this block are back.');
@@ -215,9 +221,6 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
   const [problem, setProblem] = React.useState<string | null>(null);
   // What a save that ended said, kept visible here (a save can end while another element is selected).
   const [notice, setNotice] = React.useState<string | null>(null);
-  // The running save lives in the provider, not here (review 2 of #459, M1): this section is rebuilt when
-  // another element is selected, and the save outlives it. A section that comes back mid-save stays locked.
-  const saving = authoring.saveOf(component.id)?.running === true;
   React.useEffect(() => {
     keepDraft(component.id, edits && Object.keys(edits.fields).length > 0 ? edits : null);
   }, [keepDraft, component.id, edits]);
@@ -249,7 +252,12 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
     updateSave(component.id, { outcome: null });
   }, [outcome, announce, updateSave, component.id]);
 
-  const current: Loaded = loaded.key === storedKey ? loaded.value : { phase: 'loading' };
+  // `loaded` follows a new value only in an effect. What was just saved is known in the render that
+  // first sees the value, so the field never shows empty in between.
+  // From the provider's state, not its live record: a render reads the snapshot it was rendered for.
+  const written = authoring.saveOf(component.id)?.written;
+  const known = loaded.key === storedKey ? loaded : written?.key === storedKey ? written : null;
+  const current: Loaded = known ? known.value : { phase: 'loading' };
   const baseDeclaration = current.phase === 'ready' ? current.declaration : DEFAULT_DECLARATION;
   const base: Fields = {
     title: block?.title ?? proposal?.title ?? '',
@@ -310,7 +318,7 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
     const keyAtStart = storedKey;
     const nodeId = component.id;
     const posted: Fields = { title: checked.value.title, document: checked.value.document, declaration: checked.value.declaration, emitsText: fields.emitsText };
-    updateSave(nodeId, { running: true, ownWrite: null, outcome: null });
+    updateSave(nodeId, { running: true, ownWrite: null, written: null, outcome: null });
     announce('Saving the code. The fields are locked until the server answers.');
     // Every end goes through the provider, so a section rebuilt meanwhile says it (review 2 of #459, M1).
     const end = (kind: 'done' | 'refused', message: string) => updateSave(nodeId, { running: false, outcome: { kind, message } });
@@ -325,10 +333,13 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
           return end('done', 'Nothing changed.');
         }
         const ownKey = keyOf({ sha256, title: checked.value.title });
-        updateSave(nodeId, { ownWrite: ownKey });
+        // Recorded before the write, so whichever copy of the section sees the new value has its code.
+        updateSave(nodeId, { ownWrite: ownKey, written: { key: ownKey, value: current } });
         const write = component.setCustomCode({ sha256, title: checked.value.title });
-        if (!write.ok) return end('refused', write.reason);
-        savedHere.current = { key: ownKey, value: current };
+        if (!write.ok) {
+          updateSave(nodeId, { ownWrite: null, written: null });
+          return end('refused', write.reason);
+        }
         return end('done', 'Title saved.');
       }
       // D108: the server must hold the block before it can check the declaration against it.
@@ -365,17 +376,20 @@ const CustomCodeSectionBody = observer(({ component }: { component: ComponentIns
       }
       // Recorded before the write, so the section that sees the new value knows it as this save's own.
       const ownKey = keyOf({ sha256: result.value.sha256, title: checked.value.title });
-      updateSave(nodeId, { ownWrite: ownKey });
+      updateSave(nodeId, {
+        ownWrite: ownKey,
+        written: { key: ownKey, value: { phase: 'ready', document: checked.value.document, declaration: checked.value.declaration } },
+      });
       const write = component.setCustomCode({ sha256: result.value.sha256, title: checked.value.title });
       if (!write.ok) {
-        updateSave(nodeId, { ownWrite: null });
+        updateSave(nodeId, { ownWrite: null, written: null });
         return end('refused', write.reason);
       }
-      savedHere.current = { key: ownKey, value: { phase: 'ready', document: checked.value.document, declaration: checked.value.declaration } };
       end('done', result.value.created ? 'Code saved. Publish the page to put it live.' : 'Code saved; this exact code was already stored.');
       authoring.reload();
     } catch (error) {
       console.error('[custom code] save failed', error instanceof Error ? error.name : error);
+      updateSave(nodeId, { ownWrite: null, written: null });
       end('refused', 'The code could not be saved. Nothing was changed; try again.');
     }
   };

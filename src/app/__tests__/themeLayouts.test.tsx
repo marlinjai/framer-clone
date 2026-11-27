@@ -139,3 +139,19 @@ describe('the interface mode on <html> (data-ui-theme)', () => {
     error.mockRestore();
   });
 });
+
+describe('root metadata', () => {
+  async function rootMetadata() {
+    const { generateMetadata } = await import('@/app/layout');
+    return generateMetadata();
+  }
+
+  it('gives an editor page with no title of its own the product name', async () => {
+    expect((await rootMetadata()).title).toBe('Lumitra Sites');
+  });
+
+  it('gives a published page no editor title, so the site names itself', async () => {
+    withSite(theme('dark'));
+    expect((await rootMetadata()).title).toBeUndefined();
+  });
+});

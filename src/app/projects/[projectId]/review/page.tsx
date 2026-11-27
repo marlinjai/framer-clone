@@ -13,6 +13,8 @@ import ClosedBranch from '../../ClosedBranch';
 import { loadProjectSnapshot } from '../loader';
 import ReviewMount from './ReviewMount';
 
+export const metadata = { title: 'Review | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 interface ReviewPageProps {

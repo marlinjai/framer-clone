@@ -3,7 +3,7 @@ title: A real home at app.lumitra.co, a light mode, and a readable dark mode
 description: Plan for what app.lumitra.co shows first (signed in and signed out), where the demo editor moves, an interface theme preference (System, Light, Dark) across every editor surface, and a lifted dark palette whose panels and fields separate.
 summary: Marlin reported on 2026-11-23 that app.lumitra.co opens straight into "Framer Clone Demo" instead of his projects, that he wants a light mode throughout the product, and that the dark editor is too dark to read. Measured on production the same day, text contrast is fine (17 to 1) but panel surface on background is 1.02 to 1 and field borders 1.2 to 1, so every panel melts into one black. The plan makes `/` a home for a signed-in person (Direction A, a grid of site cards) and a welcome page for a signed-out visitor, with the demo one click away and no login, keeps the demo at `/` by address so no tenant page is shadowed, fixes its return paths, adds a System, Light and Dark preference kept per browser with no flash from a shared Lumitra-wide palette in suite-theme, lifts the dark palette into a three-step ramp with field borders of at least 3 to 1, and proves both modes with a contrast check, a raw-colour check and browser runs. Selection everywhere is a complete glowing ring, never a one-sided edge. Decided by Marlin on 2026-11-23; five slices, each under about 1,500 changed lines.
 type: plan
-status: decided
+status: in-progress
 date: 2026-11-23
 tags: [framer-clone, editor, dashboard, theme, light-mode, accessibility, plan]
 projects: [framer-clone, suite-theme]
@@ -114,6 +114,7 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 | 2026-11-23 | Approved as drawn: the editor chrome, the proposed dark and light, the phone layout | Marlin |
 | 2026-11-23 | Selection is a complete ring that blooms outward (`--ui-selection-ring`), never a one-sided edge such as the left bar on the selected Layers row or the selected page. Applied to every selection treatment in the editor and the home, consistently | Marlin |
 
+| 2026-11-26 | The lighter dark replaces the proposed dark (amends D3): background `#1e282b`, surface `#263236`, raised `#2f3c41`, as shown in the visual direction, with its full set (sunken `#182124`, line `#3a4c52`, field edge `#758f97`, text `#edf5f2`, muted `#b2c6c1`, accent text `#86b6ff`). Built as suite-theme #3 and shipped in release 0.3.1 (0.3.0 put the text value on the brand token by mistake; suite-theme #4 fixed it and pins the brand tokens in its verify step); Sites lifts its destructive red so it keeps 4.5 : 1 on the lighter grounds and gives destructive fills dark ink (`--destructive-foreground`) | Marlin, relayed by the coordinator |
 | 2026-11-23 | Publishing `@marlinjai/suite-theme-core` 0.2.0 to npm. Tagged `v0.2.0` on suite-theme `e477bb7`, published by the Trusted Publisher workflow; `tokens.css` byte-identical to 0.1.2 | Marlin, relayed by the coordinator |
 
 ### Decided while building S2 (say so if you disagree)
@@ -136,6 +137,25 @@ with renders in `shots/vd-light.png` and `shots/vd-dark.png` next to it, and the
 The welcome copy is the visual direction's ("Build and run your website in one place." and its two sentences), which he
 approved with the page.
 
+### Decided while building S3 (2026-11-26, say so if you disagree)
+
+- **What counts as a selection.** Selected rows and items (Layers, pages, FX layers, collections, the composer
+  outline, the collection icon picker, the current history entry) and tabs (the left pane's tabs, the CMS rail, the
+  interaction-state switcher) get `shadow-selection`, the complete ring of `--ui-selection-ring`, and keep the mint
+  wash. **Value toggles** (Block/Flex/Grid, the colour-mode switch, toggle groups) keep the raised chip: they show a
+  chosen value rather than a selection, and a glow on every toggle of the properties panel would drown the real
+  selection. Selections drawn **on content** (the canvas selection, the composer's PDF page) are not chrome and stay
+  as they are, on the allow-list.
+- **Floating notices** (the editor's notice stack, the legal notice before publishing, the preview's notice bar) take
+  two new editor tokens, `--warning-surface` (the warning colour mixed into the popover, so opaque over the canvas)
+  and `--warning-edge`, in place of fixed amber; both follow Light and Dark.
+- **The preview** follows the interface: its toolbar is the card colour, its stage the canvas ground, and
+  `ColorModeSwitch` and the product picker lose their `tone` prop (one look everywhere).
+- **The allow-list** of the raw-colour check (`src/app/__tests__/rawColours.test.ts`) names each remaining file
+  with its exact matches and a reason: a page's white backing or paper, marks drawn on a site's content, values a
+  person edits (colour-input defaults, swatches, examples). A stale entry
+  fails the check as well as a new raw colour.
+
 ### Whether a public Sites landing page exists (checked 2026-11-23)
 
 No. lumitra.co (still served by lumitra-web) lists Lumitra QR, Ultra Power, email-mcp, Studio and Analytics, not Sites;
@@ -148,31 +168,31 @@ a separate item for the lumitra.co rebuild, recorded on the roadmap.
 
 ## 3. Tokens (decided; numbers computed 2026-11-23, enforced by the suite-theme build)
 
-| Token | Dark (lifted) | Light |
+| Token | Dark (lighter, 2026-11-26) | Light |
 | --- | --- | --- |
-| background | `#0c1316` | `#f3f7f5` |
-| surface (panels, cards) | `#131e23` | `#ffffff` |
-| raised (menus, popovers) | `#1a272d` | `#ffffff` with shadow |
-| sunken (canvas ground, wells) | `#0a1012` | `#e9efec` |
-| line (dividers, decorative) | `#2a3b42` | `#d6e0dc` |
-| line-strong (field and control edges) | `#5c7780` | `#768b85` |
-| text | `#e8f2ef` | `#0a1714` |
-| muted text | `#9cb3ae` | `#4b5f5a` |
+| background | `#1e282b` | `#f3f7f5` |
+| surface (panels, cards) | `#263236` | `#ffffff` |
+| raised (menus, popovers) | `#2f3c41` | `#ffffff` with shadow |
+| sunken (canvas ground, wells) | `#182124` | `#e9efec` |
+| line (dividers, decorative) | `#3a4c52` | `#d6e0dc` |
+| line-strong (field and control edges) | `#758f97` | `#768b85` |
+| text | `#edf5f2` | `#0a1714` |
+| muted text | `#b2c6c1` | `#4b5f5a` |
 | primary fill / ink | `#52ffa5` / `#03140c` | `#52ffa5` / `#03140c` |
 | primary as text, links, focus ring, the star | `#52ffa5` | `#06764a` (mint is 1.3 : 1 on white) |
-| accent as text | `#6aa5ff` | `#1d5fd6` |
+| accent as text | `#86b6ff` | `#1d5fd6` |
 
 Every figure is the lowest ratio of the pair against all four grounds (background, surface, raised, sunken),
 recomputed against the values of the table above:
 
 | Check | Dark | Light | Floor |
 | --- | --- | --- | --- |
-| Text | 13.4 | 15.7 | 4.5 |
-| Muted text | 6.9 | 5.8 | 4.5 |
-| Field edge (line-strong) | 3.2 | 3.1 | 3.0 |
+| Text | 10.3 | 15.7 | 4.5 |
+| Muted text | 6.4 | 5.8 | 4.5 |
+| Field edge (line-strong) | 3.3 | 3.1 | 3.0 |
 | Ink on primary fill | 14.6 | 14.6 | 4.5 |
-| Primary as text or focus ring | 11.8 | 4.9 | 4.5 text, 3.0 ring |
-| Accent as text | 6.2 | 4.9 | 4.5 |
+| Primary as text or focus ring | 8.8 | 4.9 | 4.5 text, 3.0 ring |
+| Accent as text | 5.5 | 4.9 | 4.5 |
 
 Surface steps stay small by design (1.1 : 1, like Linear or Figma); the separation comes from the step plus a
 visible line and, in light, a shadow. The suite's `tokens.css` sets `color-scheme: dark` on `:root`, so the light set
@@ -205,7 +225,7 @@ push, landed through land-pr.
    or `?preview=1`, the signed-out case as D4 decides), the return paths and the allow-list, the home in the chosen
    direction (D2), company switcher, account menu with sign out and the theme, empty state ("No sites yet" with New
    site and Try the demo), the phone layout (fixes the overflow of section 1.4), titles per route.
-5. **S5, proof:** the browser runs of section 5 on a local build, then on production after Marlin's deploy yes.
+5. **S5, proof:** the browser runs of section 5 on a local build, then on production after Marlin's deploy yes. Done on production on 2026-11-27 after release 3 (1b82fe3c); results in section 8.
 
 S1 to S3 and S4 touch different files and can run in parallel after D1 and D2; S4 does not wait for the theme.
 
@@ -247,3 +267,33 @@ S1 to S3 and S4 touch different files and can run in parallel after D1 and D2; S
 
 Thumbnails captured from published pages; a theme preference stored in the account; restyling auth-brain's login
 (its own repository, which follows if D1 is "suite"); the marketing site lumitra.co (stays dark).
+
+## 8. Proof on production (2026-11-27, release 3 at 1b82fe3c, read-only)
+
+Run headless on the automation profile (signed in, company Lumitra) and in a clean browser (signed out). Nothing was
+saved: the only state written was the `lumitra_ui_theme` cookie, removed again at the end. Screenshots:
+`~/software-dev/orchestration/sites-home-theme/shots/s5/`.
+
+| Check | Result |
+|---|---|
+| Entry, signed in | `/` goes to `/projects`, the home with the site cards |
+| Entry, signed out | `/` answers 200 with the welcome page, no login; "Try the editor" opens `/?demo=1`; `/projects` goes to the login; an old `/?page=<id>` still opens the demo; `/demo` is a 404 (no new route over a site's own page) |
+| Theme, forward | Light and Dark from the Appearance menu change the page without a reload and write the cookie |
+| Theme, resume | the first HTML of `/`, of a reload, of a new tab and of a deep link into `/projects/<id>` already carries `data-ui-theme`, so there is no flash |
+| Theme, backtrack | System removes the cookie and follows the system setting in both directions while the page is open |
+| Theme, re-entry | by construction: the cookie is host-only on app.lumitra.co for a year and the sign-out happens on auth.lumitra.co, which cannot clear it (not signed out on production, which would end the profile's session) |
+| Isolation | published pages carry no `data-ui-theme` in their HTML whatever the cookie; a site in the canvas keeps its own white page in both interface modes and holds no `data-ui-theme` inside |
+| Contrast, light | text 15.7, muted 5.8, brand 4.9, link 4.9, destructive 4.6, warning 4.9, field border 3.4 (worst of the four grounds) |
+| Contrast, dark | text 10.3, muted 6.4, brand 8.8, link 5.5, destructive 4.8, warning 6.0, field border 4.4 |
+| Accessibility (axe, WCAG 2 A and AA) | welcome: none; home: a missing document title (fixed, below); demo editor: `meta-viewport`, the deliberate trade-off of `useEditorGestureGuard` (docs/plans/2026-10-24-editor-on-phones.md), kept |
+| Keyboard | every stop on the welcome page and the home shows a visible ring; a project card rings as a whole (the selection ring) |
+| Responsive | home and welcome at 390, 768, 1280 and 1680 px: no horizontal scroll |
+| Demo, keep as project | not run on production (it saves a project); covered by `DemoProjectSaving.test.tsx` and the local run of S4 |
+
+All five slices are done. The plan stays in progress only for its open question on a public Sites product page
+(the roadmap line "Sites has no public product page"), whose copy and publish are Marlin's.
+
+Found and fixed in the same change: the projects home, Books, Catalog, Payments and both previews sent no `<title>`
+(slice S4 had named only `/`). Each editor page now names its tab "<what> | Lumitra Sites", the root gives the editor
+host "Lumitra Sites" as the fallback, published pages still name themselves, and `src/app/__tests__/pageTitles.test.ts`
+holds every editor page to it.

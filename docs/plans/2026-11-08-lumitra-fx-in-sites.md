@@ -171,6 +171,8 @@ Following the map embed and the 3D primitive: an ordinary `div` with a marker at
 - **Canvas:** the editor shows several breakpoints side by side, so live WebGL in each would exceed Safari's 8 contexts.
   The canvas draws the box's CSS background and the children by default; a "Live" toggle in the FX section draws the
   scene in one breakpoint at a time (the selected one). Parameter changes apply live to that one context.
+  Changed 2026-11-23 (addendum "Still frames in every breakpoint" below): every other frame now shows a still frame of
+  the scene at its own size, made one short-lived context at a time.
 - **Preview** (`/preview`) behaves as the published page.
 - **leva:** split out of `LumitraScene.tsx` into an optional editor entry, so the engine module no longer imports it. Sites
   never imports that entry. lumitra-web's frozen copy keeps its leva panel unchanged.
@@ -1097,6 +1099,123 @@ inside a group.
 
 P3's colour restyle does not need P2 and can go first; only the hero scene waits for the deploy. The rest of the new
 site (the hub page) is still black and gold; it belongs to R1 and is not part of this request.
+
+### Addendum: still frames in every breakpoint, and a faster start on the published page (2026-11-23)
+
+**Why.** Marlin reviewed the `/services` draft with the particle ring and reported two things: on the editor's
+canvas the ring shows in the selected breakpoint only (the other two frames are blank), and on the page it takes a
+noticeable moment to appear. Both were measured first. The blank frames were the design above (one live context on the
+canvas, because Safari allows about eight), not a defect. The slow start was mostly a fixed wait: the published
+`settled` start waited for `load` plus 1.5 seconds before it even fetched the engine (about 343 KB compressed in 8
+chunks), and the scene then took about 120 ms to build. Warm, the scene was visible about 2.1 to 2.9 seconds after
+navigation, of which the fixed wait was 1.5 seconds. Marlin asked for the scene in all three breakpoints at once, for
+the effect to appear as quickly as possible, and for a tasteful loading indication where loading is still visible.
+
+**Decided (say so if you disagree).**
+
+1. **Still frames, not more live contexts (option B).** Every breakpoint frame the box is not drawn live in shows one
+   still frame of its scene, at that frame's own layout size and at the pixel ratio the live scene would use there
+   (bounded at two megapixels). It is exactly the frame a visitor with reduced motion sees (the engine's `still` mode
+   pins every clock), copied into a plain 2D canvas, after which the WebGL context is released. Rejected: a live
+   context per frame (option A; three to six contexts per page with two scene boxes, past Safari's limit, and three
+   times the GPU work while editing), and one shared context drawing every frame (option C; the right shape for
+   motion in all frames later, but a renderer rewrite).
+2. **Bounded resources.** One still is made at a time (`src/lib/fxScene/stillQueue.ts`), so the canvas never holds more
+   than the live context plus one still context, which one shared still renderer keeps while stills are asked for and releases four seconds after the last (so a scene is set up once for all the frames of a row, not once per frame); each starts in idle time; requests for the same picture (scene,
+   size, pixel ratio) share one job; a request whose box left is dropped before it starts or aborted while it runs;
+   six pictures nobody shows are kept, so a frame Live moves away from has its picture at once; a scene that cannot
+   be drawn is not tried again for the same key. A box never on or near the screen asks for nothing.
+3. **Edits.** A changed scene or size draws the stills again 800 ms after the last change (setting a changed scene up is one main-thread task of about 0.4 s on a laptop, so it waits until tuning pauses; all frames are drawn in one shared still context, so it is paid once per edit, not once per frame); the old picture stays until
+   the new one is there, so nothing blinks. The live frame keeps its still under the live scene until the live one has
+   faded in, so switching frames never shows an empty box.
+4. **Faster published start** (the second pull request, stacked on the first). `settled` now starts in the browser's first idle moment after `load` (at most 500 ms),
+   and a `settled` or `immediate` scene fetches its engine as soon as the start decision says it will draw, so the
+   fetch runs while the page loads. A `visible` scene still fetches nothing until it comes near the screen, and a
+   scene that is calm under reduced motion or has no WebGL fetches nothing at all.
+5. **Loading placeholder.** Where a scene genuinely still loads (published page, and an editor still that has no
+   picture yet), the box shows a soft glow in its own text colour at 10 percent that breathes slowly
+   (`src/lib/fxScene/placeholder.ts`). It appears only after 400 ms, so a fast load never flickers; it cross-fades
+   with the scene's own 300 ms fade-in; under reduced motion it does not breathe; it is hidden from assistive
+   technology and takes no pointer.
+6. **Box holds nest.** `holdFxBox` is reference-counted, so the placeholder, a still and the live layer can overlap on
+   one box and the box gets its own style back only when the last one goes.
+
+**Decided by Marlin (2026-11-23, relayed by the coordinator).** He accepts the measured cost of the still frames:
+after an edit settles, about 0.43 s of main-thread work on a laptop while the other breakpoints' stills are set up
+(one task per edit, through the shared still renderer). This holds on the condition measured in
+`test/behaviour/fxEditorTiming.spec.ts`: typing and dragging stay as responsive as on main (no long tasks during a
+burst of edits). If that ever stops holding, the cost is to be reduced again, not accepted. The look of the loading
+placeholder is still his to review (screenshots in the session's scratch folder); a roadmap line tracks it. This
+decision is not a deploy authorization.
+
+**Not changed.** The live scene's single-context rule, the reduced-motion behaviour on the published page, the
+held FX defect (screen and overlay ignoring source alpha on content layers, held until the lumitra.co comparison F8).
+No production deploy or site publish comes with this change; it waits for the existing release gate.
+
+### Addendum: the ring's own still while the engine loads (2026-11-24)
+
+**Why.** Marlin reviewed the loading placeholder of the addendum above and found the faint glow effectively
+invisible. He asked to test a lightweight, immediately visible still image of the actual particle ring as the
+placeholder, handing over cleanly to the live animation: accurate at every responsive size, no visual jump, measured
+cold and warm, accessible and calm under reduced motion, with a fallback, and without extra load that makes the page
+slower.
+
+**What was tested first: a stored poster image.** A picture of the ring, captured once and scaled by CSS with the
+ring's own radius rule (`min(0.37 W, 0.47 H)`, through container units on an inner layer), compared pixel by pixel
+with the live first frame at phone, tablet and desktop boxes and pixel ratios 1 and 1.75 (scripts and results under
+`~/software-dev/orchestration/fx-ring-scratch/poster/exp`). It matches only near the radius it was captured at. The
+ring's points are sized in device pixels while its radius follows the box, so a smaller ring is denser and brighter:
+captured at a radius of 300 pixels, the picture is 38 percent too dark in a phone box (radius 144) and 24 percent too
+bright on a desktop (radius 376). Within about 5 percent of the captured radius the difference is that of the image
+compression alone; at 20 percent off it is plainly visible at the hand-over. Correcting the brightness by the square
+of the radius ratio halves the error but leaves the texture wrong. A WebP of the ring costs 40 KB at ratio 1 and
+100 KB at 1.75 per captured radius, it needs one capture per radius band (a hero sized by the window's height changes
+radius continuously), and storing it touches the site image quota, the in-use scan and the published copy.
+
+**Decided (say so if you disagree).**
+
+1. **The still is drawn, not stored.** The ring is plain WebGL math (`src/lib/fx/particleRingCore.ts`: the seeded
+   particles and the two shaders; the pixel oracle holds the engine's ring equal to the `<lumitra-light>` component,
+   which is exactly that math in a bare WebGL 2 canvas). The island draws the frame the engine starts on (time
+   `RING_START_TIME`, no pointer lean) with that math in a short-lived WebGL 2 context, at the box's exact size and at
+   the pixel ratio the live canvas will use (`src/lib/fx/pixelRatio.ts`, shared with the engine, so a touch device
+   draws at 1 in both), copies it into a plain 2D canvas and releases the context before it returns. No image is
+   downloaded or stored, and the still is exact at every size. Measured on the Mac's GPU (WebKit): the first frame is
+   on screen 22 to 32 ms after its script runs.
+2. **Where it sits and how it leaves** (`src/lib/fxScene/ringStill.ts`). Behind the content and behind the live layer
+   (z-index -2 against -1, inside the box hold), taking no pointer, hidden from assistive technology, faded in over
+   150 ms. When the live scene's first frame is drawn, the still stays under the live layer until that layer's 300 ms
+   fade is over and only then goes, so the hand-over is never a two-sided cross-fade (which dips in brightness). A box
+   that changes size, or a device pixel ratio that changes (another display, a zoom), before the live scene is there
+   gets the still drawn again, at the ratio current then. When the page is put away it goes at
+   once.
+3. **When it is drawn.** Only for a scene that is one visible particle ring on its background (no other visible layer,
+   no post pass, no param animation, no scoped target: those change the first frame in ways this short path does not
+   draw). A `settled` or `immediate` scene draws it as soon as the island runs, without waiting for the page's load; a
+   `visible` scene only when the box comes near, together with its engine fetch. Under reduced motion it follows the
+   calm setting: `background` draws nothing (as before), `frame` shows the still, which is also the frame the engine
+   then holds. A second scene on a page stays calm with neither. Scenes that are not one ring keep the loading
+   placeholder.
+4. **Only on a graphics card.** Where WebGL draws on the processor (SwiftShader, llvmpipe and the like: machines
+   without a usable graphics card, some virtual machines, blocklisted drivers), the ring's frame takes most of a
+   second and copying it out waits for all of it on the page's main thread. Measured in Chromium on hermes (no
+   graphics card), cold: the page's largest paint went from 0.64 s to about 1.5 s, the longest task from 0.73 s to
+   about 1.2 s, and the ring was seen later (1.4 to 1.6 s) than the live scene alone (0.94 s). So the still asks for a
+   context the browser may refuse when it would be slow (`failIfMajorPerformanceCaveat`), and, because Chromium's
+   SwiftShader does not refuse it, also checks the renderer's name; on software it is left out and the placeholder
+   shows, exactly as before.
+5. **Fallback.** No WebGL 2, a shader that does not compile or a box without a size: no still, and the placeholder as
+   before. When the engine cannot draw (its chunk does not arrive, a renderer error), the still stays as the picture:
+   it is the scene's own first frame, and the frame a visitor asking for reduced motion gets anyway. A scene the engine
+   refuses takes its still with it.
+6. **Its own small entry.** The island is part of every published page's code, so it reaches the ring core through a
+   new render-free entry `@/lib/fx/ring` that is exactly two files (pinned in `src/lib/fx/__tests__/importGraph.test.ts`),
+   not through `@/lib/fx/format`, which would bring the scene format, the schemas and the presets onto pages without
+   a scene.
+
+**Not changed.** One WebGL context per page while the engine runs (the still's context is gone before the engine
+starts), the reduced-motion rules, the editor's still frames, the held FX defect. No production deploy or site publish
+comes with this change; it waits for the existing release gate.
 
 ### Addendum: the ring's glow in hundredths (2026-11-25)
 

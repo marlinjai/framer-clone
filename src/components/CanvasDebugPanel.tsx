@@ -41,16 +41,16 @@ const CanvasDebugPanel = observer(() => {
   };
 
   return (
-    <div className="fixed top-24 right-24 bg-white rounded-lg shadow-lg p-4 text-sm max-w-sm z-50">
+    <div className="fixed top-24 right-24 bg-popover text-popover-foreground border border-border rounded-lg shadow-lg p-4 text-sm max-w-sm z-50">
       <h3 className="font-semibold mb-3">Canvas Debug Panel</h3>
       
       {/* Root Canvas Components Info */}
       <div className="mb-4">
-        <div className="text-gray-600 mb-2">
+        <div className="text-muted-foreground mb-2">
           Floating Elements: {currentPage.floatingElements.length}
         </div>
         {currentPage.floatingElements.map((component) => (
-          <div key={component.id} className="text-xs text-gray-500 mb-1">
+          <div key={component.id} className="text-xs text-muted-foreground mb-1">
             • {component.type} at ({component.canvasX || 0}, {component.canvasY || 0})
           </div>
         ))}
@@ -60,7 +60,7 @@ const CanvasDebugPanel = observer(() => {
       <div className="space-y-2">
         <button
           onClick={handleClearAndReset}
-          className="w-full px-3 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
+          className="w-full px-3 py-1 bg-destructive text-destructive-foreground rounded text-xs hover:bg-destructive/90"
         >
           Clear & Reset Elements
         </button>
@@ -72,21 +72,21 @@ const CanvasDebugPanel = observer(() => {
         </button>
         <button
           onClick={handleAddText}
-          className="w-full px-3 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
+          className="w-full px-3 py-1 bg-secondary text-secondary-foreground rounded text-xs hover:bg-accent"
         >
           Add Text
         </button>
         <button
           onClick={handleAddComponent}
-          className="w-full px-3 py-1 bg-purple-500 text-white rounded text-xs hover:bg-purple-600"
+          className="w-full px-3 py-1 bg-secondary text-secondary-foreground rounded text-xs hover:bg-accent"
         >
           Add Component
         </button>
       </div>
 
       {/* Architecture Info */}
-      <div className="mt-4 pt-3 border-t border-gray-200">
-        <div className="text-gray-600 text-xs">
+      <div className="mt-4 pt-3 border-t border-border">
+        <div className="text-muted-foreground text-xs">
           <div>✓ Ground Wrapper Architecture</div>
           <div>✓ Component-Based Canvas Elements</div>
           <div>✓ Page-Specific Root Components</div>

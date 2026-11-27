@@ -45,6 +45,7 @@ import type { Camera, Object3D } from "three";
 import { planPipeline } from "./pipeline";
 import { MAIN_PRIORITY, MainRender, ScopedGroup, setChannel, useHeldComposer } from "./effects/ScopedGroup";
 import { getLayerDefinition } from "./registry";
+import { isTouchLikely, liveDprRange } from "./pixelRatio";
 import { FrameRateMonitor } from "./FrameRateMonitor";
 import type {
   Layer,
@@ -93,6 +94,21 @@ interface LumitraSceneProps {
    * mount every layer again. The published page never passes it, so its scene graph is unchanged.
    */
   onProbe?: (probe: SceneProbe | null) => void;
+  /**
+   * Draw the scene as one still frame whatever this device's motion preference: exactly the frame a
+   * visitor who asks for reduced motion sees (every layer's clock pinned, drawn on demand). For the
+   * editor's still frames of a scene (src/components/fx/FxStillLayer.tsx), which copy the picture out of
+   * the canvas: so the drawing buffer is kept after the frame, and the frame rate is not watched (a
+   * canvas drawn on demand has no frame rate, and the step down would change the picture). Fixed for
+   * the life of the canvas.
+   */
+  still?: boolean;
+  /**
+   * Called after every frame the canvas has drawn (in the next animation frame, when the picture is
+   * on the canvas). A still frame's host copies the picture then: images and fonts that arrive late
+   * draw a frame again.
+   */
+  onFrame?: () => void;
 }
 
 /**
@@ -180,6 +196,29 @@ function FirstFrame({ onFirstFrame }: { onFirstFrame: () => void }) {
   return null;
 }
 
+/** Reports every drawn frame, one animation frame later (when its picture is on the canvas). */
+function FrameReport({ onFrame }: { onFrame: () => void }) {
+  const latest = useRef(onFrame);
+  useEffect(() => {
+    latest.current = onFrame;
+  }, [onFrame]);
+  const pending = useRef<number | null>(null);
+  useFrame(() => {
+    if (pending.current !== null) return;
+    pending.current = requestAnimationFrame(() => {
+      pending.current = null;
+      latest.current();
+    });
+  });
+  useEffect(
+    () => () => {
+      if (pending.current !== null) cancelAnimationFrame(pending.current);
+    },
+    [],
+  );
+  return null;
+}
+
 function extractValues<P extends ParamsSchema>(params: P): ParamValues<P> {
   const out = {} as Record<string, ParamSchema["value"]>;
   for (const [k, schema] of Object.entries(params)) {
@@ -191,16 +230,6 @@ function extractValues<P extends ParamsSchema>(params: P): ParamValues<P> {
 function readPrefersReducedMotion(): boolean {
   if (typeof window === "undefined") return false;
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-/**
- * Coarse-pointer (touch) heuristic. We don't ship Fluid on phones, and we
- * pre-clamp the dpr cap there even before PerformanceMonitor fires. Same
- * predicate Tailwind / drei use; safe in SSR (returns false).
- */
-function isMobileLikely(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 }
 
 /**
@@ -244,9 +273,10 @@ class WebGLErrorBoundary extends Component<
   }
 }
 
-export function LumitraScene({ config, className, fallback, onFirstFrame, onFail, layoutSize = false, onProbe }: LumitraSceneProps) {
+export function LumitraScene({ config, className, fallback, onFirstFrame, onFail, layoutSize = false, onProbe, still = false, onFrame }: LumitraSceneProps) {
   const [objects, setObjects] = useState<Record<string, Object3D>>({});
-  const reduce = useMemo(() => readPrefersReducedMotion(), []);
+  // `still` is fixed for the life of the canvas, like the preference read once here.
+  const reduce = useMemo(() => still || readPrefersReducedMotion(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // WebGL capability gate. If the GPU can't hand us a context (crashed/wedged
   // process, locked-down browser), render `fallback` instead of mounting the
@@ -268,7 +298,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   // Performance downshift state (sticky). Initialized true on mobile-class
   // pointers so we don't pay the "decline -> downshift" cost on devices that
   // were never going to clear the 60fps bar anyway.
-  const [perfLow, setPerfLow] = useState<boolean>(() => isMobileLikely());
+  const [perfLow, setPerfLow] = useState<boolean>(() => isTouchLikely());
 
   // A content layer hands over its object through a ref callback written
   // inline, so React calls it with `null` and then with the same object again
@@ -335,7 +365,8 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
   // A host that picks layers holds every content layer in its group from the start.
   const wrapped = scoped || onProbe !== undefined;
 
-  const dprClamp = perfLow ? ([1, 1] as [number, number]) : config.dpr;
+  // A still frame is drawn at exactly the ratio it was asked for (its size is checked against it); only a live scene steps down.
+  const dprClamp = still ? config.dpr : liveDprRange(config.dpr, perfLow);
 
   return (
     <div
@@ -357,7 +388,7 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
             // what is under it stays reachable. Layers that follow the pointer
             // listen on the window (./interactivity), not on the canvas.
             style={{ pointerEvents: "none" }}
-            gl={{ antialias: true, powerPreference: "high-performance" }}
+            gl={{ antialias: true, powerPreference: "high-performance", preserveDrawingBuffer: still }}
             camera={{ position: [0, 0, 5], fov: 50 }}
             onCreated={({ gl }) => {
               // If the GPU process dies mid-session, fall back instead of
@@ -374,8 +405,9 @@ export function LumitraScene({ config, className, fallback, onFirstFrame, onFail
           >
             {/* Once the step down happened it is final, so the monitor
                 has nothing left to report and is unmounted. */}
-            {!perfLow && <FrameRateMonitor onDecline={() => setPerfLow(true)} />}
+            {!perfLow && !still && <FrameRateMonitor onDecline={() => setPerfLow(true)} />}
             {onFirstFrame && <FirstFrame onFirstFrame={onFirstFrame} />}
+            {onFrame && <FrameReport onFrame={onFrame} />}
             {onProbe && <ProbeBridge onProbe={onProbe} contentLayers={contentLayers} roots={roots} />}
             <color attach="background" args={[config.background]} />
             {contentLayers.map((layer) =>

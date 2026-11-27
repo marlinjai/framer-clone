@@ -1390,6 +1390,71 @@ description saying how to leave and indent. Until the chunk loads, and if it fai
 read-only state with `aria-readonly`, never `editable: false`, which took the content out of the tab order: a reader reaches the code
 with Tab and moves through and scrolls it with the keyboard (review 1, M2).
 
+## Decided in slice C5, say so if you disagree
+
+Numbering continues after D112. C5 is built in four pull requests, each under about 1,500 changed lines: (1) pruning
+and the budget at save and publish, (2) erase reaching code, (3) the operator's block route and proposals, (4) the
+publish dialog's listing, the publish warnings and frames in the standalone preview. No part needs a migration: the
+C1b tables allow deleting a blob (its trigger guards updates only), a site's disable reason fits the audit line's
+`detail`, and deleting a site deletes its blobs and proposals.
+
+**D113. One reading of "named", and what keeps a blob.** `src/server/customCode/named.ts` is the only place that says
+which code a site still names; the guarded write's budget (D107), the budget at save and publish (D114) and pruning
+all read it, because two copies would disagree and pruning is the one that deletes. A blob of site S is named while
+any of these holds its hash under a `customCode.sha256` key: S's working copy (pages and component definitions), the
+working copy of every branch of S (a branch names S's blobs, D100), every branch record's base copy, merge draft and
+the copy kept for "Undo this merge", and S's kept revisions. C4's budget therefore now also counts what branches and
+those copies name, which can only make it stricter. **Pruning** deletes S's blobs that nothing names, are not blocked
+and are older than 7 days (D4). It runs under the site's row lock at three moments: every publish, after the revisions
+are pruned; every guarded write, which reads the same names for its budget anyway, so a site that writes code and
+never saves cannot pile blobs up past the week; and a save of the main site whose working copy names a different set
+of hashes than before. A save that changes no block (text, styles, layout: nearly all of them) does not prune, and a
+branch's save never does (the blobs are main's; its next save, publish or write prunes them). **A blocked blob is
+never pruned:** its row is the record that the code was taken down, which the guarded write reads to refuse the same
+code again (D3), so pruning it would let the same code back in. **Cost:** a site whose main site stores no blob pays
+one indexed read per save and nothing else; a site with code pays two reads of its own working copy per save, and
+reads branches and revisions only when the names changed.
+
+**D114. The site budget at save and publish refuses only a write that brings code to life.** D107 left a residual:
+several blobs written before a save names them can together take a site past 1 megabyte. Every save and the publish's
+working-copy write now compare the hashes the written copy names with those it named before. A hash that is new to
+the copy and named by nothing else (another branch, a branch record, a kept revision, or main's copy for a branch)
+brings code to life; when it does, all the site's live code is counted, and a total over 1 megabyte refuses the write
+with 400 `custom_code_budget` and a sentence naming the size, the limit and the next step ("Remove a custom code
+block, or make one smaller in its panel; the page then saves again"). Nothing is written and the transaction rolls
+back. A save that removes a block, edits anything else, or names code something else already keeps alive is never
+refused, so a site that is over the budget for any reason keeps saving and can always get back under. The status is
+400 on purpose: the editor's autosave tries once more after each change that follows a 400, and the change the
+sentence asks for is exactly such a change. A branch's merge into main is not checked: it names code main's branch
+already kept alive, so it brings nothing new.
+
+**D115. An erase of personal data reaches the code itself, under a new hash.** D9 asked that an erase inside code
+rewrite the hash in every kept copy in one transaction. The erase now searches, beside the working copy, the versions
+and the branches, the code and stored title of every blob of the site (named or not, blocked or not) and the code
+and title of every proposal; they appear in the erase panel as "Custom code" and "Proposed custom code (not active)".
+A blob row is never changed (D27), so a block whose ticked code changed is written under the hash its new code gives
+with its old declaration, and every copy that names the old hash (working copy, every kept revision, every branch's
+working copy, base copy and the copy for "Undo this merge") is pointed at the new one, in the erase's own transaction.
+All old rows of rewritten blocks are deleted first and the new rows written after, so blocks whose rewritten code
+meets other code share one row, and a block whose new code is another rewritten block's old code still finds a row.
+The new row keeps the old one's age, so pruning (D113) treats it alike. **Taken-down code stays taken down:** the
+new row is blocked when the old row was blocked or its hash listed, and when the new hash is itself listed or blocked
+on any site's row (the check the guarded write makes), so an erase can never bring taken-down code back to life.
+**The erase never writes the takedown list** (security review of this part, B1): the new hash follows the owner's
+replacement, so listing it could take down another site's identical code that no operator judged. One residual is
+accepted: a blocked row under the new hash makes the guarded write refuse that exact code for new writes on any site
+(D3 reads blocked rows everywhere), while a block already serving it elsewhere keeps serving. A title-only change
+keeps the hash and is not reported as rewritten code. The audit writes `blob-erase` with both hashes and nothing else. A proposal is
+rewritten in place (it is never served, so there is no hash to follow). A block's `sha256` is a structural key now,
+so a search inside words for something like "cafe" can never cut into a hash and orphan a block. The erase refuses,
+with 422 and a sentence that holds no value, code it cannot take: a block left with no code ("erase with a
+replacement instead"), code past 256 KB, or a stored declaration that no longer parses; the refusal comes after the
+staleness checks, so a stale preview is told it is stale. After the erase the panel
+names each rewritten block, because code can stop working where a text in it changed. The box may still answer the
+old hash for up to six minutes (its 60 second lookup cache plus the 300 second HTTP cache, the same bound as for a
+disabled block), and no page names that hash any more; what a visitor's browser already loaded is outside the site's
+reach, as for any erased value.
+
 ## For Marlin
 
 **M2 done on 2026-11-02:** `lumitrausercontent.com` is registered at Cloudflare Registrar (through Lumitra Mail's buy-a-domain flow, in the Lumitra Mail workspace "Lumitra Infrastructure"), held by Marlin for Lumitra, expiring 2027-11-02 with auto-renew, privacy and transfer lock on. Its DNS zone is in Lumitra's Cloudflare account (zone id `2d1f61f852327bc23ef420fda0651121`, nameservers blair and lochlan at Cloudflare) with no records yet and no mail setup. Slice O1 can now bring the zone under Terraform and add the box's records. The Lumitra Mail order is deliberately left in "needs attention": never retry it, because a retry would try to make it a sending domain.

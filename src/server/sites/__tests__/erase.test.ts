@@ -20,6 +20,7 @@ import {
   redactedPath,
   redactionMatcher,
   REDACTED_SEGMENT,
+  renameCustomCodeHashes,
   replacementProblem,
   rewriteDocument,
   type EraseLocation,
@@ -495,5 +496,74 @@ describe('assertShapeKept', () => {
     const doc = (toggle: string) => ({ pages: [{ pageId: 'p', slug: '', snapshot: { appComponentTree: tree(toggle) } }] });
     expect(() => assertShapeKept(doc('s1'), doc('s1'), { revision: false })).not.toThrow();
     expect(() => assertShapeKept(doc('s1'), doc('gone'), { revision: false })).toThrow(/behaviour on page 0/);
+  });
+});
+
+describe('custom code (sandboxed custom code plan, D9 and D115)', () => {
+  const HASH = 'cafe'.repeat(16);
+  const NEW = 'beef'.repeat(16);
+  const block = (sha256: string) => ({ id: 'cc', type: 'div', componentType: 'host', props: { customCode: { sha256, title: 'Map', height: 300 } }, children: [] });
+  const doc = (sha256: string) => ({ pages: [{ pageId: 'p', slug: '', snapshot: { appComponentTree: block(sha256) } }] });
+
+  it('never cuts inside a block\'s hash, even when searching inside words', () => {
+    // "cafe" is a word an owner may well search for; a cut inside the hash would orphan the block.
+    const blocked = blockedOf(doc(HASH), 'cafe', { insideWords: true });
+    expect(blocked).toHaveLength(16);
+    expect(blocked.every(([path, why]) => path === '/pages/0/snapshot/appComponentTree/props/customCode/sha256' && why === 'structural')).toBe(true);
+    const rewritten = rewriteDocument(doc(HASH), REV, match('cafe', { insideWords: true }), 'x', ticked(doc(HASH), 'cafe', { insideWords: true }));
+    expect(rewritten.erased).toEqual([]);
+    expect((rewritten.document as ReturnType<typeof doc>).pages[0].snapshot.appComponentTree.props.customCode.sha256).toBe(HASH);
+  });
+
+  it('searches a block\'s own document, its code and its title, as custom code', () => {
+    const location: EraseLocation = { kind: 'custom-code', sha256: HASH, title: 'Team' };
+    const found = findMatches({ code: 'const owner = "Max Mustermann";', title: 'Team of Max Mustermann' }, location, match('Max Mustermann'));
+    expect(found.map((m) => [m.path, m.area, m.blocked])).toEqual([
+      ['/code', 'custom-code', null],
+      ['/title', 'custom-code', null],
+    ]);
+    // Two blocks holding the same text give different ids: the id carries the hash.
+    const other = findMatches({ code: 'const owner = "Max Mustermann";', title: 'x' }, { kind: 'custom-code', sha256: NEW, title: 'x' }, match('Max Mustermann'));
+    expect(other[0].id).not.toBe(found[0].id);
+  });
+
+  it('points every block naming a renamed hash at its new hash, and nothing else', () => {
+    const before = {
+      pages: [{ pageId: 'p', slug: '', snapshot: { appComponentTree: { ...block(HASH), children: [block(HASH), block('a'.repeat(64))] } } }],
+      // the same string outside a customCode object is text, not a block
+      siteSettings: { note: HASH, customCode: { other: HASH } },
+    };
+    const after = renameCustomCodeHashes(before, new Map([[HASH, NEW]])) as typeof before;
+    const tree = after.pages[0].snapshot.appComponentTree;
+    expect(tree.props.customCode.sha256).toBe(NEW);
+    expect(tree.children[0].props.customCode.sha256).toBe(NEW);
+    expect(tree.children[1].props.customCode.sha256).toBe('a'.repeat(64));
+    expect(after.siteSettings).toBe(before.siteSettings);
+    expect(before.pages[0].snapshot.appComponentTree.props.customCode.sha256).toBe(HASH);
+  });
+
+  it('cuts exactly the match inside code with an empty replacement, and tidies the title like prose', () => {
+    const location: EraseLocation = { kind: 'custom-code', sha256: HASH, title: 'Team' };
+    const document = { code: 'f(["Max Mustermann", "Erika"]);', title: 'Team: Max Mustermann, Erika' };
+    const rewritten = rewriteDocument(document, location, match('Max Mustermann'), '', new Set(findMatches(document, location, match('Max Mustermann')).map((m) => m.id)));
+    // The comma and the quotes are the program's: only the match goes.
+    expect(rewritten.document).toEqual({ code: 'f(["", "Erika"]);', title: 'Team: Erika' });
+  });
+
+  it('finds and replaces a value inside a code token when searching inside words, leaving the token\'s rest', () => {
+    const location: EraseLocation = { kind: 'custom-code', sha256: HASH, title: 'Team' };
+    const document = { code: 'const mustermannId = 1;', title: 't' };
+    const query = match('mustermann', { insideWords: true });
+    const rewritten = rewriteDocument(document, location, query, 'x', new Set(findMatches(document, location, query).map((m) => m.id)));
+    expect((rewritten.document as { code: string }).code).toBe('const xId = 1;');
+    // Case-sensitive: a different case is not the value.
+    const strict = match('mustermann', { insideWords: true, caseSensitive: true });
+    expect(findMatches({ code: 'MUSTERMANN', title: '' }, location, strict)).toEqual([]);
+  });
+
+  it('returns the very same document when nothing is renamed, so a caller writes nothing', () => {
+    const before = doc(HASH);
+    expect(renameCustomCodeHashes(before, new Map())).toBe(before);
+    expect(renameCustomCodeHashes(before, new Map([[NEW, HASH]]))).toBe(before);
   });
 });

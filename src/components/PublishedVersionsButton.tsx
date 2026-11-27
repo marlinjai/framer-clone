@@ -11,11 +11,14 @@
 // The list mounts only while the dialog is open, so every open loads the
 // server's current list. Every failure is shown, with a retry for the list.
 //
+// It also holds "Unpublish site", which takes the site offline and keeps the
+// draft, the versions and the address (src/lib/projects/unpublishProject.ts).
+//
 // The same dialog holds "Erase personal data" (ErasePersonalDataPanel.tsx):
 // these versions are where an old value lives on, so that is where it is erased.
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { RefreshCw, Undo } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -27,9 +30,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useSiteAddress } from '@/contexts/SiteAddressContext';
 import { useStore } from '@/hooks/useStore';
 import { useControllableOpen, type ControllableOpenProps } from '@/hooks/useControllableOpen';
 import { hasPublishIssues, type PublishCheck } from '@/lib/legal/publishCheck';
+import { unpublishProject } from '@/lib/projects/unpublishProject';
 import { ErasePersonalDataPanel } from './ErasePersonalDataPanel';
 
 interface VersionItem {
@@ -121,11 +126,82 @@ function ConfirmMakeLive({ confirm, online, onConfirm, onCancel }: {
   );
 }
 
+/**
+ * "Unpublish site", with its question. It stays reachable on an offline site that
+ * has been published: when clearing the caches failed, the site reads as offline
+ * while visitors may still see it, and asking again is what clears them. The
+ * question takes the focus on Cancel, the safe choice, and Cancel gives it back.
+ */
+function Unpublish({ online, state, disabled, onAsk, onConfirm, onCancel }: {
+  online: boolean;
+  state: UnpublishState;
+  disabled: boolean;
+  onAsk: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const askRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const wasAsking = useRef(false);
+  const asking = state.kind === 'asking';
+  useEffect(() => {
+    if (asking) cancelRef.current?.focus();
+    else if (wasAsking.current) askRef.current?.focus();
+    wasAsking.current = asking;
+  }, [asking]);
+
+  if (state.kind === 'asking') {
+    return (
+      <div role="group" aria-label="Confirm unpublish" className="space-y-2 rounded border border-border p-3">
+        <p className="text-sm font-medium">Take this site offline?</p>
+        <p className="text-sm text-muted-foreground">
+          Visitors get a &ldquo;not found&rdquo; page on its address and on every connected domain. The project, its
+          published versions, the address and the domains are kept, and you can publish again.
+        </p>
+        <div className="flex gap-2">
+          <Button type="button" size="sm" variant="destructive" onClick={onConfirm}>Take offline</Button>
+          <Button ref={cancelRef} type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+        </div>
+      </div>
+    );
+  }
+  const failed = state.kind === 'failed';
+  return (
+    <div className="space-y-2">
+      {failed && <p role="alert" className="text-sm text-destructive">{state.message}</p>}
+      <Button
+        ref={askRef}
+        type="button"
+        size="sm"
+        variant={online || failed ? 'outline' : 'ghost'}
+        disabled={disabled || state.kind === 'working'}
+        onClick={failed ? onConfirm : onAsk}
+      >
+        {state.kind === 'working'
+          ? 'Unpublishing...'
+          : failed
+            ? 'Try unpublishing again'
+            : online
+              ? 'Unpublish site'
+              : 'Still visible to visitors? Unpublish again'}
+      </Button>
+    </div>
+  );
+}
+
+type UnpublishState =
+  | { kind: 'idle' }
+  | { kind: 'asking' }
+  | { kind: 'working' }
+  | { kind: 'failed'; message: string };
+
 function VersionsPanel({ projectId }: { projectId: string }) {
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [busy, setBusy] = useState<number | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [unpublish, setUnpublish] = useState<UnpublishState>({ kind: 'idle' });
+  const { everPublished } = useSiteAddress().address;
 
   const refresh = useCallback(async () => {
     setLoad({ kind: 'loading' });
@@ -180,6 +256,25 @@ function VersionsPanel({ projectId }: { projectId: string }) {
     }
   };
 
+  const takeOffline = async () => {
+    setFailure(null);
+    setUnpublish({ kind: 'working' });
+    const result = await unpublishProject(projectId);
+    setUnpublish(result.ok ? { kind: 'idle' } : { kind: 'failed', message: result.message });
+    // Also after a failure: the site may be offline already, and the list says so.
+    await refresh();
+  };
+
+  const unpublishControl = (
+    <Unpublish
+      online={load.kind === 'ready' && load.list.status === 'published'}
+      state={unpublish}
+      disabled={busy !== null || confirm !== null}
+      onAsk={() => setUnpublish({ kind: 'asking' })}
+      onConfirm={() => void takeOffline()}
+      onCancel={() => setUnpublish({ kind: 'idle' })}
+    />
+  );
   if (load.kind === 'loading') return <p className="text-sm text-muted-foreground">Loading...</p>;
   if (load.kind === 'error') {
     return (
@@ -188,6 +283,8 @@ function VersionsPanel({ projectId }: { projectId: string }) {
         <Button type="button" size="sm" variant="outline" onClick={() => void refresh()}>
           <RefreshCw size={14} /> Try again
         </Button>
+        {/* An unpublish that did not finish keeps its reason and retry when the reload fails too. */}
+        {unpublish.kind === 'failed' && unpublishControl}
       </div>
     );
   }
@@ -196,11 +293,18 @@ function VersionsPanel({ projectId }: { projectId: string }) {
   const online = list.status === 'published';
   if (list.revisions.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        {online
-          ? 'This site went live before versions were kept. Its first version is recorded with the next save (the editor saves by itself) or Publish.'
-          : 'Nothing published yet. Each Publish is kept here.'}
-      </p>
+      <div className="space-y-2">
+        <p className="text-sm text-muted-foreground">
+          {online
+            ? 'This site went live before versions were kept. Its first version is recorded with the next save (the editor saves by itself) or Publish.'
+            : everPublished
+              ? 'This site is not online and no published versions are kept. Each Publish is kept here.'
+              : 'Nothing published yet. Each Publish is kept here.'}
+        </p>
+        {/* A site that went live before versions were kept has none, online or not.
+            One that was never published has nothing to take offline. */}
+        {(online || everPublished || unpublish.kind !== 'idle') && unpublishControl}
+      </div>
     );
   }
 
@@ -237,7 +341,7 @@ function VersionsPanel({ projectId }: { projectId: string }) {
                   type="button"
                   size="sm"
                   variant="outline"
-                  disabled={busy !== null || confirm !== null}
+                  disabled={busy !== null || confirm !== null || unpublish.kind === 'asking' || unpublish.kind === 'working'}
                   onClick={() => void askToMakeLive(revision.number)}
                 >
                   {busy === revision.number ? 'Working...' : 'Make live'}
@@ -247,6 +351,7 @@ function VersionsPanel({ projectId }: { projectId: string }) {
           );
         })}
       </ul>
+      <div className="border-t border-border pt-3">{unpublishControl}</div>
     </div>
   );
 }

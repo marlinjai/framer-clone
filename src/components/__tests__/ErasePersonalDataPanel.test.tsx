@@ -169,6 +169,55 @@ describe('ErasePersonalDataPanel', () => {
     await screen.findByText(/The check afterwards could not run/);
   });
 
+  it('names custom code places, says custom code in the confirmation, and lists the blocks whose code was rewritten (D115)', async () => {
+    const C1 = 'd'.repeat(32);
+    const C2 = 'e'.repeat(32);
+    const IN_CODE = {
+      token: 'f'.repeat(32),
+      total: 2,
+      erasable: 2,
+      blocked: 0,
+      truncated: false,
+      locations: [
+        { location: { kind: 'custom-code', sha256: '1'.repeat(64), title: 'Opening hours' }, createdAt: null, kind: null, live: false, matches: 1, erasable: 1 },
+        { location: { kind: 'custom-code-proposal', proposalId: 'p1', title: 'Map' }, createdAt: null, kind: null, live: false, matches: 1, erasable: 1 },
+      ],
+      matches: [
+        { id: C1, location: { kind: 'custom-code', sha256: '1'.repeat(64), title: 'Opening hours' }, area: 'custom-code', pageId: null, pageSlug: null, path: '/code', excerpt: 'owner = "Max Mustermann"', blocked: null },
+        { id: C2, location: { kind: 'custom-code-proposal', proposalId: 'p1', title: 'Map' }, area: 'custom-code', pageId: null, pageSlug: null, path: '/code', excerpt: 'by Max Mustermann', blocked: null },
+      ],
+    };
+    fetchMock.mockResolvedValueOnce(json(IN_CODE));
+    render(<ErasePersonalDataPanel projectId="site 1" />);
+    fireEvent.change(screen.getByLabelText('Value to find'), { target: { value: 'Max Mustermann' } });
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    await screen.findByText(/2 matches: 2 can be erased/);
+    expect(screen.getAllByText(/Custom code "Opening hours"/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Proposed custom code "Map" \(not active\)/).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tick all shown' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Erase 2 ticked matches...' }));
+    const confirm = screen.getByRole('group', { name: 'Confirm the erase' });
+    expect(within(confirm).getByText(/Erase 2 ticked matches in its custom code\? This cannot be undone/)).toBeTruthy();
+    fetchMock.mockResolvedValueOnce(json({ erased: 2, remaining: 0, erasableRemaining: 0, rewrittenCode: ['Opening hours'] }));
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Erase' }));
+    await screen.findByText(/The code of this custom code block was rewritten/);
+    expect(screen.getByRole('listitem').textContent).toBe('Opening hours');
+  });
+
+  it('shows why code could not be erased, and keeps the choices for another try', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(FOUND))
+      .mockResolvedValueOnce(json({ error: { code: 'custom_code_empty', message: 'Erasing would leave a custom code block with no code at all. Erase with a replacement text instead. Nothing was changed.' } }, 422));
+    render(<ErasePersonalDataPanel projectId="site 1" />);
+    await searchFor('Max Mustermann');
+    fireEvent.click(screen.getByRole('button', { name: 'Tick all shown' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Erase 2 ticked matches...' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Confirm the erase' })).getByRole('button', { name: 'Erase' }));
+    await screen.findByText(/Erase with a replacement text instead/);
+    expect(screen.getByRole('button', { name: 'Erase 2 ticked matches...' })).toBeTruthy();
+  });
+
   it('a stale preview offers a new search, which clears the choices', async () => {
     fetchMock
       .mockResolvedValueOnce(json(FOUND))

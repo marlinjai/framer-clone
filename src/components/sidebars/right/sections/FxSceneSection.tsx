@@ -509,7 +509,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     if (!live) {
       return (
         <p className={HINT}>
-          The canvas shows the box with its own background. Turn Live on to draw the scene there while you tune it: in one breakpoint at a time, the one you pick the box in.
+          Every breakpoint on the canvas shows one still frame of the scene, at that breakpoint&apos;s own size. Turn Live on to see it move while you tune it: in one breakpoint at a time, the one you pick the box in.
         </p>
       );
     }
@@ -526,7 +526,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
     return (
       <p role="status" className={HINT}>
         {status.state === 'live'
-          ? `The scene is drawn ${where}, and every change here shows at once. Pick the box in another breakpoint to draw it there. With reduced motion asked for on this device it is one still frame.`
+          ? `The scene moves ${where}, and every change here shows at once; the other breakpoints show a still frame, drawn again a moment after a change. Pick the box in another breakpoint to see it move there. With reduced motion asked for on this device it is one still frame.`
           : `Starting the scene ${where}...`}
       </p>
     );
@@ -827,7 +827,7 @@ export const FxSceneSection = observer(({ component }: FxSceneSectionProps) => {
         so pick one that works with the content.
       </p>
 
-      <PropertyRow label="Live" hint="Draw the scene on the canvas, in one breakpoint at a time">
+      <PropertyRow label="Live" hint="Let the scene move on the canvas, in one breakpoint at a time">
         <PropertySwitch
           checked={live}
           onCheckedChange={(on) => (on ? editorUI.startFxLive(component.id, editorUI.selectedViewportNode?.breakpointId ?? null) : editorUI.stopFxLive())}

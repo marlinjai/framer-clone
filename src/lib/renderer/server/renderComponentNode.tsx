@@ -33,7 +33,7 @@ import type { BindingScope } from '@/lib/bindings/resolver/scope';
 import { createScope } from '@/lib/bindings/resolver/scope';
 import CommerceIsland, { type CommerceIslandProps } from './CommerceIsland';
 import FormIsland, { FormFieldIsland, FormSubmitIsland } from '../forms/FormIsland';
-import { formKindOf } from '@/lib/forms/definition';
+import { formKindOf, withoutPrivateFormProps } from '@/lib/forms/definition';
 import { isStickyCta } from '@/lib/stickyCta/stickyCta';
 import { createStickyCtaElement } from '../stickyCta/stickyCtaElement';
 import { isMapEmbed, MAP_EMBED_PROP_KEYS, stripMapEmbedProps } from '@/lib/mapEmbed/mapEmbed';
@@ -219,8 +219,9 @@ export function renderComponentNode(
   // time feeds the no-JavaScript fill-time check of the submit endpoint.
   const formKind = formKindOf(node.props as Record<string, unknown> | undefined);
   if (formKind === 'form') {
-    // A client island's props are serialized into the page: no stored custom code value goes with them (D95).
-    return <FormIsland key={key} node={withoutCustomCodeTree(node, drawnAsItselfInIsland)} scope={scope} renderedAt={Date.now()} />;
+    // A client island's props are serialized into the page: neither the owner's private form settings nor any stored
+    // custom code value goes with them (D95).
+    return <FormIsland key={key} node={withoutCustomCodeTree(withoutPrivateFormProps(node), drawnAsItselfInIsland)} scope={scope} renderedAt={Date.now()} />;
   }
   if (formKind === 'form-field') return <FormFieldIsland key={key} node={withoutCustomCodeTree(node, drawnAsItselfInIsland)} />;
   if (formKind === 'form-submit') return <FormSubmitIsland key={key} node={withoutCustomCodeTree(node, drawnAsItselfInIsland)} />;

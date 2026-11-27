@@ -2,7 +2,8 @@
 // src/app/projects/ProjectCard.tsx
 //
 // One project on the dashboard (/projects): the name links into the editor,
-// and the card's menu ("More actions") offers Rename, which swaps the name for
+// and the card's menu ("More actions") offers Unpublish for a published site,
+// and Rename, which swaps the name for
 // an inline field (Enter or leaving the field saves, Escape cancels). The new
 // name shows at once; when the save fails the old one comes back with the
 // reason. On success the server-rendered list is refreshed so every place
@@ -20,6 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import ProjectNameInput from '@/components/ProjectNameInput';
 import DeleteProjectDialog from './DeleteProjectDialog';
+import UnpublishProjectDialog from './UnpublishProjectDialog';
 import { renameProject } from '@/lib/projects/renameProject';
 import type { SiteCardColors } from '@/lib/site/cardColors';
 import ProjectPicture from './ProjectPicture';
@@ -57,10 +59,11 @@ export default function ProjectCard({
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleted, setDeleted] = useState(false);
-  // Rename and Delete act only once the menu has CLOSED: while the menu is
+  const [unpublishOpen, setUnpublishOpen] = useState(false);
+  // Rename, Unpublish and Delete act only once the menu has CLOSED: while the menu is
   // open it traps focus, so a field or dialog focused earlier would lose it
   // straight away. Set on select, consumed when the menu has closed.
-  const chosen = useRef<'rename' | 'delete' | null>(null);
+  const chosen = useRef<'rename' | 'unpublish' | 'delete' | null>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   // Set when the field closes by save or cancel: focus returns to the card's
@@ -186,6 +189,10 @@ export default function ProjectCard({
               e.preventDefault();
               setError(null);
               setEditing(true);
+            } else if (action === 'unpublish') {
+              e.preventDefault();
+              setError(null);
+              setUnpublishOpen(true);
             } else if (action === 'delete') {
               e.preventDefault();
               setError(null);
@@ -203,6 +210,16 @@ export default function ProjectCard({
           >
             Rename
           </DropdownMenuItem>
+          {published ? (
+            <DropdownMenuItem
+              disabled={saving}
+              onSelect={() => {
+                chosen.current = 'unpublish';
+              }}
+            >
+              Unpublish
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             disabled={saving}
             className="text-destructive focus:text-destructive"
@@ -215,6 +232,22 @@ export default function ProjectCard({
         </DropdownMenuContent>
       </DropdownMenu>
       </div>
+      <UnpublishProjectDialog
+        open={unpublishOpen}
+        onOpenChange={setUnpublishOpen}
+        siteId={siteId}
+        name={shown}
+        liveHost={liveHost}
+        customDomains={customDomains}
+        onSettled={(announcement) => {
+          if (announcement) {
+            const status = document.getElementById('projects-status');
+            if (status) status.textContent = announcement;
+          }
+          router.refresh();
+        }}
+        returnFocusTo={() => triggerRef.current}
+      />
       <DeleteProjectDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}

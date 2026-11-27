@@ -228,7 +228,7 @@ export const ReviewPane = observer(function ReviewPane({ side, title, page, site
                 />
               </div>
             ) : (
-              <p style={{ padding: 16, font: '14px system-ui, sans-serif', color: '#6b7280' }}>{emptyText}</p>
+              <p style={{ padding: 16, font: '14px system-ui, sans-serif', color: 'var(--muted-foreground)' }}>{emptyText}</p>
             ),
             mount,
           )

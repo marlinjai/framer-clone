@@ -26,8 +26,8 @@ type Kind =
  */
 const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   'src/server/sites/repository.ts': {
-    uses: 68, kind: 'sees-branches',
-    why: 'listSites filters to mains; save works on a branch id, locking main\'s row shared first when it names an image (the image delete takes it exclusive), then its own row, and its image check against the images of main; publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches, moves an up-to-date fork point with main, and removes a kept pre-merge copy it could not clean fully and one past its 30 days, and lists the records with one narrow read; a rename of a branch drops its approval (the name is part of what a merge writes)',
+    uses: 82, kind: 'sees-branches',
+    why: 'listSites filters to mains; save works on a branch id, locking main\'s row shared first when it names an image (the image delete takes it exclusive) and FOR NO KEY UPDATE when it names a custom code hash (D113, D114), then its own row, which also reads its main site, and its image check against the images of main; a branch save is budget-checked against main\'s code and prunes nothing (main\'s next write does); publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches, moves an up-to-date fork point with main, and removes a kept pre-merge copy it could not clean fully and one past its 30 days, and lists the records with one narrow read; its custom code (D115) is main\'s blobs, and a block rewritten under a new hash is renamed in main, in every branch\'s working, base and pre-merge copy, and in the revisions; a rename of a branch drops its approval (the name is part of what a merge writes)',
   },
   'src/server/sites/branches/repository.ts': { uses: 35, kind: 'sees-branches', why: 'the branch repository itself; listing a site\'s branches also removes a kept pre-merge copy whose 30 days are over (only when its read found one) and always holds the latest merges and the closed branches they name; closing a branch deletes its public preview link and prunes the site\'s oldest closed records beyond 50, under main\'s lock; the fork point\'s name is read from its stored column' },
   'src/server/sites/branches/previewLinks.ts': {
@@ -46,8 +46,12 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
     why: 'the stored 3D models belong to a main site, as images do: one read of the site row stamps the isolation columns and REFUSES a branch id (callers resolve a branch to its main first); every other query is on site_models, keyed by the site',
   },
   'src/server/customCode/authoring.ts': {
-    uses: 15, kind: 'sees-branches',
-    why: 'the custom code write locks the site row by id and REFUSES a branch (its blobs would not exist for main after a merge, D100); the status read says whether the id is a branch; the budget reads the named hashes from the site\'s pages, definitions and revisions, all keyed by that one site',
+    uses: 11, kind: 'sees-branches',
+    why: 'the custom code write locks the site row by id and REFUSES a branch (its blobs would not exist for main after a merge, D100); the status read says whether the id is a branch; the budget and the prune go through named.ts with that one main site',
+  },
+  'src/server/customCode/named.ts': {
+    uses: 11, kind: 'sees-branches',
+    why: 'the one reading of "named" (D113): a site\'s working copy, its revisions, and its branches\' working copies, base copies and kept pre-merge copies, keyed by the main site; a branch\'s names keep main\'s blobs alive and count in main\'s budget',
   },
   'src/server/customCode/liveBlocks.ts': {
     uses: 2, kind: 'mains-only',
@@ -81,6 +85,10 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   'src/server/forms/editorScope.ts': {
     uses: 1, kind: 'sees-branches',
     why: 'resolves the scope of an editor forms request by site id; a branch collects no submissions (it has no host)',
+  },
+  'src/server/forms/purge.ts': {
+    uses: 1, kind: 'sees-branches',
+    why: 'the purge job of a deleted project reads the site row by id only to learn whether it is gone: a row there, a branch included, means the delete has not happened and nothing is purged; submissions only ever name published mains, and a project delete refuses a branch',
   },
   'src/server/forms/repository.ts': { uses: 1, kind: 'mains-only', why: 'sites of submissions, posted only to published sites' },
   'src/lib/auth-machine.ts': {

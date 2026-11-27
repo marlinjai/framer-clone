@@ -13,6 +13,8 @@ import React from 'react';
 
 import CatalogHome from './CatalogHome';
 
+export const metadata = { title: 'Catalog | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 export default async function CatalogPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {

@@ -39,10 +39,12 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '@/hooks/useStore';
-import { FX_LAYER_STYLE, holdFxBox } from '@/lib/fxScene/box';
+import { FX_FADE_MS, FX_LAYER_STYLE, holdFxBox, reholdFxBox } from '@/lib/fxScene/box';
 import { FxClaim } from '@/lib/fxScene/claim';
 import { parseFxProp } from '@/lib/fxScene/fxScene';
-import { FX_LAYER_ATTR, FX_STATE_ATTR, type FxState } from '@/lib/fxScene/marker';
+import { FX_LAYER_ATTR, FX_PLACEHOLDER_ATTR, FX_STATE_ATTR, FX_STILL_ATTR, type FxState } from '@/lib/fxScene/marker';
+import { breathe, FX_PLACEHOLDER_DELAY_MS, FX_PLACEHOLDER_STYLE } from '@/lib/fxScene/placeholder';
+import { createStillQueue, LASTING_FAILURES, stillPixelRatio, whenBrowserIdle, type StillQueue } from '@/lib/fxScene/stillQueue';
 import { FX_REDUCED_MOTION_QUERY, FX_WARNING, fxStartDecision, whenStarted, type FxStartSettings } from '@/lib/fxScene/start';
 import { editorSiteImageUrl } from '@/lib/site/siteImages';
 import { FxPickOutline } from './FxPickOutline';
@@ -109,6 +111,40 @@ interface DrawnLayerProps {
   elementRef?: React.RefObject<HTMLDivElement | null>;
 }
 
+/**
+ * While `active`, the box holds the layer: a stacking context, and a position when it has none
+ * (src/lib/fxScene/box.ts). Again whenever the box's own position changes, so a position the author sets
+ * or takes away while the layer is there is respected. Shared by the live layer and the still frame; a
+ * box shows one of them at a time, so two holds never overlap.
+ */
+function useFxBoxHold(layerRef: React.RefObject<HTMLDivElement | null>, active: boolean, ownPosition: unknown): void {
+  const hasOwnPosition = isOwn(ownPosition);
+  const latestPosition = useRef(ownPosition);
+  useBeforePaint(() => {
+    latestPosition.current = ownPosition;
+  });
+  const held = useRef<((positionIsOwned?: boolean) => void) | null>(null);
+  const heldFor = useRef({ active, hasOwnPosition });
+  useBeforePaint(() => {
+    const box = layerRef.current?.parentElement;
+    if (!active || !box) return;
+    held.current = holdFxBox(box);
+    return () => {
+      held.current?.(isOwn(latestPosition.current));
+      held.current = null;
+    };
+  }, [active]);
+  // The box's own position set or taken away while the layer is there: the box's footing is taken again on
+  // the new one (the renderer has already written it), for every hold on it.
+  useBeforePaint(() => {
+    const before = heldFor.current;
+    heldFor.current = { active, hasOwnPosition };
+    const box = layerRef.current?.parentElement;
+    if (!active || !box || before.active !== active || before.hasOwnPosition === hasOwnPosition) return;
+    reholdFxBox(box);
+  }, [active, hasOwnPosition]);
+}
+
 /** The layer itself, and the engine in it while `draws`. */
 function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId, ownPosition, onStatus, onProbe, elementRef }: DrawnLayerProps) {
   const ownRef = useRef<HTMLDivElement>(null);
@@ -122,31 +158,7 @@ function DrawnLayer({ stored, draws, idle, start, layoutSize = false, projectId,
     latest.current = { stored, projectId, onStatus, ownPosition };
   });
 
-  // The box holds the layer: a stacking context, and a position when it has none
-  // (src/lib/fxScene/box.ts). Again whenever the box's own position changes, so a
-  // position the author sets or takes away while the scene is live is respected.
-  const hasOwnPosition = isOwn(ownPosition);
-  const held = useRef<((positionIsOwned?: boolean) => void) | null>(null);
-  const heldFor = useRef({ draws, hasOwnPosition });
-  useBeforePaint(() => {
-    const box = layerRef.current?.parentElement;
-    if (!draws || !box) return;
-    held.current = holdFxBox(box);
-    return () => {
-      held.current?.(isOwn(latest.current.ownPosition));
-      held.current = null;
-    };
-  }, [draws]);
-  // The box's own position set or taken away while the scene is live: hold the box again on the new footing.
-  // The old hold leaves the position alone, because the renderer has already set the new one.
-  useBeforePaint(() => {
-    const before = heldFor.current;
-    heldFor.current = { draws, hasOwnPosition };
-    const box = layerRef.current?.parentElement;
-    if (!draws || !box || before.draws !== draws || before.hasOwnPosition === hasOwnPosition) return;
-    held.current?.(true);
-    held.current = holdFxBox(box);
-  }, [draws, hasOwnPosition]);
+  useFxBoxHold(layerRef, draws, ownPosition);
 
   useEffect(() => {
     const layer = layerRef.current;
@@ -279,6 +291,240 @@ export const FxCanvasLayer = observer(function FxCanvasLayer({ stored, ownPositi
       />
       {picker && <FxPickOutline editorUI={editorUI} layerRef={layerRef} boundsOf={picker.boundsOf} />}
     </>
+  );
+});
+
+/** How long a changed scene or size waits before its still frame is drawn again: edits come in bursts. */
+export const FX_STILL_DEBOUNCE_MS = 800;
+/** A still frame that failed for a reason that may pass is tried again this often, this long after. */
+const FX_STILL_RETRIES = 2;
+/** How long a first size must hold before its picture is asked for. */
+const FX_STILL_FIRST_MS = 120;
+const FX_STILL_RETRY_MS = 1500;
+
+/** One queue of still frames per editor (its store): one still context at a time, shared by every frame. */
+const stillQueues = new WeakMap<object, StillQueue>();
+function stillQueueOf(owner: object): StillQueue {
+  let queue = stillQueues.get(owner);
+  if (!queue) {
+    queue = createStillQueue({
+      // The engine by a dynamic import only, as for the live scene: fetched once the first still frame is wanted.
+      render: (target, signal) =>
+        import('@/lib/fxScene/mount')
+          .then(({ renderFxStill }) => renderFxStill(target.host, target.stored, { pixelRatio: target.pixelRatio, signal, resolveImage: target.resolveImage }))
+          .catch((reason: unknown) => {
+            // Once per picture (a job is shared by every frame that asks for it). A refused scene is the panel's to
+            // explain, and an aborted one was given up on purpose.
+            if (reason !== 'aborted' && reason !== 'refused') console.warn(FX_WARNING, `A still frame of the scene could not be drawn. Reason: ${typeof reason === 'string' ? reason : 'engine'}.`);
+            throw typeof reason === 'string' ? reason : 'engine';
+          }),
+      whenIdle: (run) => whenBrowserIdle(run),
+    });
+    stillQueues.set(owner, queue);
+  }
+  return queue;
+}
+
+/** A value that follows `value` once it has stayed the same for `ms`; the first value at once. */
+function useSettled<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    if (Object.is(value, settled)) return;
+    const timer = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, settled, ms]);
+  return settled;
+}
+
+type StillState = 'waiting' | 'loading' | 'live' | 'off';
+
+/**
+ * On the canvas, in every breakpoint frame an FX scene box is NOT drawn live in: one still frame of its
+ * scene at this frame's own size (the frame a visitor who asks for reduced motion sees), so every breakpoint
+ * shows the scene at once while only one of them runs a live WebGL context. The pictures are made one at a
+ * time in idle time by the editor's still queue (src/lib/fxScene/stillQueue.ts), and only for a box that is
+ * on or near the screen: a box that is never shown costs nothing. Made again when the scene or the box's
+ * size has settled after a change; the old picture stays until the new one is there. When it cannot be
+ * made (no WebGL, a refused scene), the box shows its own background, as on the published page.
+ */
+export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition, covered = false }: FxLayerProps & { covered?: boolean }) {
+  const { editorUI } = useStore();
+  const layerRef = useRef<HTMLDivElement>(null);
+  const pictureRef = useRef<HTMLCanvasElement>(null);
+  const placeholderRef = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(false);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const [state, setState] = useState<StillState>('waiting');
+  const [hasPicture, setHasPicture] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const reduce = useReducedMotion();
+  const projectId = editorUI.currentProject?.id;
+
+  // Under the live scene of this frame: kept until the live one has faded in over it (no dip in between),
+  // then hidden and no longer asked for. Shown again at once when the live scene goes.
+  const [hiddenUnder, setHiddenUnder] = useState(covered);
+  useEffect(() => {
+    if (!covered) {
+      setHiddenUnder(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setHiddenUnder(true), FX_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [covered]);
+
+
+  // Only for a box on or near the screen (half a screen around it), and from then on while it is mounted.
+  useEffect(() => {
+    const layer = layerRef.current;
+    if (!layer || near) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setNear(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setNear(true);
+    }, { rootMargin: '50%' });
+    // The box itself: its still layer is absolute and may cover the viewport while the box is static and far away.
+    observer.observe(layer.parentElement ?? layer);
+    return () => observer.disconnect();
+  }, [near]);
+
+  // The layer's layout size (the box's, untouched by the canvas zoom), followed.
+  useEffect(() => {
+    const layer = layerRef.current;
+    if (!layer) return;
+    const measure = () => {
+      const width = layer.offsetWidth;
+      const height = layer.offsetHeight;
+      setSize((prev) => (prev && prev.width === width && prev.height === height ? prev : { width, height }));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(layer);
+    return () => observer.disconnect();
+  }, []);
+
+  const read = parseFxProp(stored);
+  const scene = read.ok ? read.fx.scene : null;
+  // Once per change of the stored scene, not on every render of every frame.
+  const sceneJson = useMemo(() => (scene ? JSON.stringify(scene) : ''), [stored]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A failure that may pass (a lost context, a box out of the page for a moment) is tried again, twice, a moment later.
+  const [attempt, setAttempt] = useState(0);
+  const wanted = !hiddenUnder && near && size && size.width > 0 && size.height > 0 && scene ? `${size.width}x${size.height}|${projectId ?? ''}|${sceneJson}` : '';
+  // The first picture waits a moment for the layout to settle (a frame measured before its breakpoint is laid
+  // out has another size a moment later, measured: 1280 x 800 then 1280 x 240); a change waits until the edits settle.
+  const settledWanted = useSettled(wanted, hasPicture ? FX_STILL_DEBOUNCE_MS : FX_STILL_FIRST_MS);
+  const latestStored = useRef(stored);
+  // The stored value each wanted key was formed from, so a request draws the scene its key names (a later edit may land first).
+  const storedByWanted = useRef(new Map<string, typeof stored>());
+  // The stored value the settled key was first requested with: a retry draws that scene even after its map entry is evicted.
+  const settledPair = useRef<{ key: string; stored: typeof stored } | null>(null);
+  useBeforePaint(() => {
+    latestStored.current = stored;
+    if (wanted) {
+      const map = storedByWanted.current;
+      map.delete(wanted);
+      map.set(wanted, stored);
+      while (map.size > 16) map.delete(map.keys().next().value as string);
+    }
+  });
+
+  const clearPicture = () => {
+    const picture = pictureRef.current;
+    if (picture) picture.width = picture.height = 0;
+    setHasPicture(false);
+  };
+
+  useEffect(() => {
+    if (!read.ok && stored !== undefined) {
+      // A scene the reader refuses is drawn nowhere: the box's own background.
+      setState('off');
+      clearPicture();
+      return;
+    }
+    if (!settledWanted || !size || !scene) return;
+    const pixelRatio = stillPixelRatio(size.width, size.height, scene.dpr[1], window.devicePixelRatio || 1);
+    const key = `${pixelRatio}|${settledWanted}`;
+    if (settledPair.current?.key !== settledWanted) {
+      settledPair.current = { key: settledWanted, stored: storedByWanted.current.get(settledWanted) ?? latestStored.current };
+    }
+    const requestStored = settledPair.current.stored;
+    let retryTimer: number | undefined;
+    // The old picture stays shown until the new one is there.
+    setState((prev) => (prev === 'live' ? prev : 'loading'));
+    const leave = stillQueueOf(editorUI).request(
+      key,
+      () => {
+        const layer = layerRef.current;
+        if (!layer || !layer.isConnected) return null;
+        // A box resized while the job waited has a new key (the size observer above), which asks again; this picture is replaced by it.
+        return {
+          host: layer,
+          stored: requestStored,
+          pixelRatio,
+          resolveImage: (src: string) => (projectId ? editorSiteImageUrl(projectId, src) : null),
+        };
+      },
+      (outcome) => {
+        const picture = pictureRef.current;
+        if (!picture) return;
+        if (!outcome.ok) {
+          // The box's own background, as on the published page (warned once per picture, above).
+          clearPicture();
+          setState('off');
+          if (!LASTING_FAILURES.has(outcome.reason) && attempt < FX_STILL_RETRIES) retryTimer = window.setTimeout(() => setAttempt((n) => n + 1), FX_STILL_RETRY_MS);
+          return;
+        }
+        picture.width = outcome.picture.width;
+        picture.height = outcome.picture.height;
+        picture.getContext('2d')?.drawImage(outcome.picture, 0, 0);
+        setHasPicture(true);
+        setState('live');
+      },
+    );
+    return () => {
+      leave();
+      window.clearTimeout(retryTimer);
+    };
+    // `read`, `scene` and `size` are captured through `settledWanted`, which is keyed on all of them.
+  }, [settledWanted, editorUI, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A new scene or size starts the retries over.
+  useEffect(() => setAttempt(0), [settledWanted]);
+
+  // The box holds the layer only while it shows something here (a picture, or the placeholder on the way to
+  // one): a frame that is off screen, covered by the live scene or has nothing to show leaves the box as it is.
+  useFxBoxHold(layerRef, near && !hiddenUnder && state !== 'off', ownPosition);
+
+  // A first picture that takes a noticeable moment shows the loading placeholder meanwhile (src/lib/fxScene/placeholder.ts).
+  // Only for a box on or near the screen, which is the only one asking: an off-screen frame shows nothing at all.
+  const waiting = near && state !== 'off' && !hasPicture && !hiddenUnder;
+  useEffect(() => {
+    if (!waiting) {
+      setSlow(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlow(true), FX_PLACEHOLDER_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [waiting]);
+  const placeholderShown = waiting && slow;
+  useEffect(() => {
+    const element = placeholderRef.current;
+    if (!placeholderShown || !element) return;
+    return breathe(element, reduce);
+  }, [placeholderShown, reduce]);
+
+  return (
+    <div ref={layerRef} aria-hidden="true" {...{ [FX_STILL_ATTR]: state }} style={{ ...LAYER_STYLE, opacity: hiddenUnder ? 0 : 1 }}>
+      <div ref={placeholderRef} {...{ [FX_PLACEHOLDER_ATTR]: placeholderShown ? 'shown' : 'hidden' }} style={{ ...FX_PLACEHOLDER_STYLE, zIndex: 0, opacity: placeholderShown ? 1 : 0 }} />
+      <canvas
+        ref={pictureRef}
+        width={0}
+        height={0}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', opacity: hasPicture ? 1 : 0, transition: `opacity ${FX_FADE_MS}ms ease-out` }}
+      />
+    </div>
   );
 });
 

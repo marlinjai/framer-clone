@@ -14,6 +14,7 @@ import 'server-only';
 // Next then exits without waiting for this worker, so a handler still running is cut off, and its job becomes due again
 // when its lease ends. That counts as one open claim, as any crash does.
 
+import { countStuckPurges } from '@/server/forms/purge';
 import type { Kysely } from 'kysely';
 
 import { commerceTenantDbChecked, ensureCommerceBackstop, getCommerceBase, isCommerceTenantNotProvisioned } from '../db';
@@ -57,6 +58,13 @@ export interface CommercePassSummary {
 export interface CommerceJobReport extends CommercePassSummary {
   /** A count, never a failure: a dead row stays, so a red monitor would hide the next real fault. */
   deadUnacknowledged: number;
+  /** Form-submission purges of deleted projects that keep failing (src/server/forms/purge.ts): no transient error kills them, so this is how a permanent fault shows. A count, like the dead jobs. */
+  purgesStuck: number;
+  /**
+   * "ok", or "stuck" while `purgesStuck` is above 0. The field for its own Uptime Kuma keyword monitor (`"purges":"ok"`), so a
+   * deleted project's form submissions that cannot be removed turn that monitor red while the status code stays 200 for the others.
+   */
+  purges: 'ok' | 'stuck';
   /** Always 0 until B8 adds `payment_finding` and reconciliation: there is nothing to count before that. */
   findingsOpen: number;
   /** How late the oldest due job is, 0 with nothing due. Includes kinds this build does not know. */
@@ -194,6 +202,7 @@ export async function runCommerceWatchdogPass(options: CommercePassOptions = {})
   const pass = await runCommercePass(options);
   const at = now();
   let deadUnacknowledged = 0;
+  let purgesStuck = 0;
   let receiptsUnissued = 0;
   let oldestDueMs = Infinity;
   const read = await forEachTenantGroup('the watchdog read', async ({ db }) => {
@@ -211,8 +220,13 @@ export async function runCommerceWatchdogPass(options: CommercePassOptions = {})
       .orderBy('run_at')
       .limit(1)
       .executeTakeFirst();
+    // Read first, add after: `total += await read()` takes the total BEFORE the wait, so two groups read at once would overwrite
+    // each other's addition (groups are worked on several at a time).
+    const stuck = await countStuckPurges(db);
+    const unissued = await countUnissuedReceipts(db, at);
     deadUnacknowledged += Number(dead.jobs);
-    receiptsUnissued += await countUnissuedReceipts(db, at);
+    purgesStuck += stuck;
+    receiptsUnissued += unissued;
     if (due) oldestDueMs = Math.min(oldestDueMs, due.run_at.getTime());
   });
   return {
@@ -220,6 +234,8 @@ export async function runCommerceWatchdogPass(options: CommercePassOptions = {})
     // A group that fails usually fails both, so this counts it once. At least the number of groups that failed.
     failed: Math.max(pass.failed, read.failed),
     deadUnacknowledged,
+    purgesStuck,
+    purges: purgesStuck > 0 ? 'stuck' : 'ok',
     findingsOpen: 0,
     oldestDueSeconds: oldestDueMs === Infinity ? 0 : Math.floor((at.getTime() - oldestDueMs) / 1000),
     receiptsUnissued,

@@ -156,7 +156,7 @@ const CollectionList: React.FC<CollectionListProps> = ({
                 data-testid={`cms-collection-${c.id}`}
                 className={[
                   'group relative flex h-9 items-center gap-2.5 rounded-md px-2 transition-colors',
-                  active ? 'bg-brand/10' : 'hover:bg-accent',
+                  active ? 'bg-brand/10 shadow-selection z-[1]' : 'hover:bg-accent',
                 ].join(' ')}
               >
                 {active && (
@@ -279,7 +279,7 @@ const CollectionList: React.FC<CollectionListProps> = ({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 if (pendingDelete) onDelete(pendingDelete.id);
               }}

@@ -9,6 +9,8 @@ import React from 'react';
 
 import DocumentEditor from '../../DocumentEditor';
 
+export const metadata = { title: 'Document | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 export default async function DocumentPage({ params }: { params: Promise<{ id: string }> }) {

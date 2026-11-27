@@ -306,8 +306,10 @@ describe('the real upload and cleanup code under concurrent, jittered runs on Po
       };
       const deleter: BlobDeleter = {
         snapshot: async (k) => { await jitter(); return storage.ids(k); },
-        // `slowRemove` widens the window between a cleaner's tombstone and its storage delete (a slow storage call).
-        removeSnapshot: async (_k, snap) => { await (opts.slowRemove ? sleep(15 + Math.floor(Math.random() * 20)) : jitter()); for (const id of snap as string[]) storage.files.delete(id); },
+        // `slowRemove` widens the window between a cleaner's tombstone and its storage delete (a slow storage call). Wide
+        // enough that the mutated upload below gets past its blob check inside it even when the full integration run
+        // loads the shared Postgres (15 to 35 ms was not, 2026-11-26).
+        removeSnapshot: async (_k, snap) => { await (opts.slowRemove ? sleep(50 + Math.floor(Math.random() * 40)) : jitter()); for (const id of snap as string[]) storage.files.delete(id); },
         hasBlob: async (k) => { await jitter(); return storage.has(k); },
       };
       const siteB = await makeSite(); const siteC = await makeSite();
@@ -350,11 +352,24 @@ describe('the real upload and cleanup code under concurrent, jittered runs on Po
   }, 280_000);
 
   it('MUTATION: an upload that ignores tombstones is caught by the same concurrent rounds', async () => {
+    const raced = new Set<string>();
+    // At most 60 s of waiting over the whole test, well inside its 280 s, even if many rounds found no cleaner.
+    const waitBudgetEnds = Date.now() + 60_000;
     class IgnoresTombstones extends PrismaSiteModels {
       override async beginUpload(i: Parameters<PrismaSiteModels['beginUpload']>[0]) {
         // Arrives after the cleaner's tombstone (a later request) and removes it first, as if the check were not there.
-        await sleep(12);
-        await prisma.modelBlobTombstone.deleteMany({ where: { key: { in: [`served/${i.record.sha256}`, `original/${i.record.originalSha256}`] } } });
+        // It waits for that tombstone to exist rather than for a fixed time: a fixed 12 ms sleep missed the cleaner
+        // in every round when the full integration run shared Postgres with the other files (80 rounds, nothing
+        // caught, 2026-11-26), so the flaw went unexercised. Bounded, so a round without a cleaner still ends. Only the
+        // first upload of a blob for each site races the cleaners; its retry after recovery finds no cleaner and must
+        // not wait.
+        const keys = [`served/${i.record.sha256}`, `original/${i.record.originalSha256}`];
+        const id = `${i.record.siteId} ${keys[0]}`;
+        const first = !raced.has(id);
+        raced.add(id);
+        const until = first ? Math.min(Date.now() + 2000, waitBudgetEnds) : 0;
+        while (Date.now() < until && (await prisma.modelBlobTombstone.count({ where: { key: { in: keys } } })) === 0) await sleep(2);
+        await prisma.modelBlobTombstone.deleteMany({ where: { key: { in: keys } } });
         return super.beginUpload(i);
       }
     }

@@ -62,7 +62,7 @@ const FullscreenExitControl = ({ onExit }: FullscreenExitControlProps) => {
       title="Exit fullscreen (Esc)"
       data-fullscreen-exit=""
       data-visible={visible ? '' : undefined}
-      className={`fixed right-4 top-4 z-50 flex items-center gap-1.5 rounded-full bg-gray-900/90 px-3 py-1.5 text-xs text-gray-100 shadow-lg backdrop-blur transition-opacity duration-150 ease-out motion-reduce:transition-none hover:bg-gray-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+      className={`fixed right-4 top-4 z-50 flex items-center gap-1.5 rounded-full border border-border bg-popover/90 px-3 py-1.5 text-xs text-popover-foreground shadow-lg backdrop-blur transition-opacity duration-150 ease-out motion-reduce:transition-none hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${visible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
     >
       <Minimize2 size={14} />
       <span>Exit fullscreen</span>

@@ -71,7 +71,7 @@ const ShopPreviewBar = observer(() => {
     <div
       data-editor-ui="true"
       data-shop-preview-bar=""
-      className="pointer-events-auto flex max-w-[640px] flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 shadow"
+      className="pointer-events-auto flex max-w-[640px] flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow"
     >
       <label className="flex items-center gap-2">
         <span className="shrink-0">Showing</span>
@@ -79,7 +79,7 @@ const ShopPreviewBar = observer(() => {
           aria-label="Shop control state to show"
           value={current}
           onChange={(event) => editorUI.setShopPreviewState(controlId, event.target.value)}
-          className="min-w-0 max-w-[260px] rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900"
+          className="min-w-0 max-w-[260px] rounded border border-input bg-background px-2 py-1 text-xs text-foreground"
         >
           {spec.states.map((state) => (
             <option key={state.id} value={state.id}>
@@ -88,7 +88,7 @@ const ShopPreviewBar = observer(() => {
           ))}
         </select>
       </label>
-      <span className="text-gray-500">Sample data. Orders are placed on the published site only.</span>
+      <span className="text-muted-foreground">Sample data. Orders are placed on the published site only.</span>
     </div>
   );
 });

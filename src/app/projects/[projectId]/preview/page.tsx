@@ -19,6 +19,8 @@ import ClosedBranch from '../../ClosedBranch';
 import { loadProjectSnapshot } from '../loader';
 import PreviewMount from './PreviewMount';
 
+export const metadata = { title: 'Preview | Lumitra Sites' };
+
 export const dynamic = 'force-dynamic';
 
 interface ProjectPreviewPageProps {

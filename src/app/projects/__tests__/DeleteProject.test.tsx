@@ -239,7 +239,9 @@ describe('Delete project dialog', () => {
     expect((await within(dialog).findByRole('alert')).textContent).toContain('was deleted, but');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(refreshMock).toHaveBeenCalled());
-    expect(screen.getByRole('status').textContent).toBe('Deleted the project Bakery.');
+    // A deleted-with-warning project is announced in the server's own words, the text the dialog showed (a bare "Deleted the
+    // project" would hide that the published pages may still be served from cache).
+    expect(screen.getByRole('status').textContent).toBe('The project was deleted, but its published pages may still be served from cache until the next deploy.');
   });
 
   it('a published project with an empty stored name: type the shown fallback, the real name is sent', async () => {

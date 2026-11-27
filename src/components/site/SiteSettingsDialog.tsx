@@ -619,7 +619,7 @@ const SiteSettingsForm = observer(({ project, onClose }: { project: ProjectModel
           </div>
           {mapsCheck && (
             <GoogleMapsPrivacyHint
-              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-950"
+              className="rounded-md border border-warning-edge bg-warning-surface text-foreground px-3 py-2"
               language={candidate.language}
               check={mapsCheck}
               onCreatePrivacy={() => openOrCreateLegal('privacy')}

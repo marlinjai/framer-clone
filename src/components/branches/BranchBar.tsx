@@ -52,7 +52,7 @@ export function BranchBadge({ className = '' }: { className?: string }) {
   const label = branch.status === 'ready' ? (branch.approved ? 'Approved' : 'Ready for review') : 'Branch';
   return (
     <span
-      className={`shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-warning ${className}`}
+      className={`shrink-0 rounded-full border border-warning-edge bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning ${className}`}
       // The same words follow as text a screen reader reads with the badge, and the switcher's menu shows them.
       title={branchExplanation(state.mainName)}
     >
