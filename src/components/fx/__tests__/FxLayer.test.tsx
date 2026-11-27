@@ -331,6 +331,24 @@ describe('the canvas renderer decides where Live draws', () => {
     expect(active()).toHaveLength(0);
   });
 
+  it.each([
+    ['has no stored scene', undefined],
+    ['has a scene the reader refuses', { version: 99 }],
+  ])('a box that %s is the plain box: its still is off, with no loading placeholder and no hold on the box', async (_what, stored) => {
+    vi.useFakeTimers();
+    const { box, frames } = setup();
+    act(() => box.setProps({ [FX_PROP]: stored }));
+    render(frames);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(5000)));
+    const stills = [...document.querySelectorAll<HTMLElement>('[data-fc-fx-still]')];
+    expect(stills.length).toBeGreaterThan(0);
+    for (const still of stills) {
+      expect(still.getAttribute('data-fc-fx-still')).toBe('off');
+      expect(still.querySelector('[data-fc-fx-placeholder]')!.getAttribute('data-fc-fx-placeholder')).toBe('hidden');
+      expect(still.parentElement!.style.isolation).toBe('');
+    }
+  });
+
   it('gives the context up under the preview over the editor, and takes it back', async () => {
     const { box, breakpoints, frames } = setup();
     render(frames);

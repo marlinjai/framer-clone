@@ -437,8 +437,8 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
   };
 
   useEffect(() => {
-    if (!read.ok && stored !== undefined) {
-      // A scene the reader refuses is drawn nowhere: the box's own background.
+    if (!read.ok) {
+      // A scene the reader refuses, or none at all, is drawn nowhere: the box's own background.
       setState('off');
       clearPicture();
       return;

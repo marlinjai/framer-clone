@@ -2,12 +2,17 @@
 // slice F5), on the real EditorApp in real Chromium. A box holding the reference scene
 // is put on the canvas. A cell passes only when all of this holds:
 //
-//  - by default the canvas draws the box with its own background and no scene at all
-//    (no layer, no canvas, no WebGL context);
-//  - with "Live" on for the box, the scene is drawn, in exactly one WebGL context;
-//  - the drawing fills the box, behind its content, and is a real picture (many
+//  - by default every frame shows a still picture of the scene (a real picture that
+//    fills the box, behind its content), with no live layer, and the context it was
+//    drawn in released again (the plan's addendum "Still frames in every breakpoint");
+//  - with "Live" on for the box, the scene is drawn live, in exactly one WebGL context;
+//  - the live drawing fills the box, behind its content, and is a real picture (many
 //    colours, not a blank or flat frame);
-//  - Live off gives the box back as it was and releases the context.
+//  - Live off gives the box back as it was, with its still, and releases the context.
+//
+// A scene that cannot be drawn must be drawn NOWHERE: no still picture, no live
+// canvas and no WebGL context at any time. Only then does the cell give the reader's
+// reason ("not drawn (off:refused)"); anything drawn is reported as drawn.
 //
 // The pixels themselves are the renderer column's (fx.score.ts): the canvas draws with
 // the same engine and the same strict reader, so this column asks whether the editor
@@ -47,10 +52,53 @@ const tree = (scene: unknown): ComponentNode =>
 
 interface ProbeWindow {
   __editor: { startFxLive: (id: string, frame: number | null) => void; stopFxLive: () => void; fxLiveStatus: () => string };
-  __fxContexts: { live: () => number };
+  __fxContexts: { made: () => number; live: () => number };
 }
 
 const BOX = '[data-viewport-content-id] [data-inner-component-id="fx-box"]';
+const STILL = `${BOX} [data-fc-fx-still]`;
+const LIVE = `${BOX} [data-fc-fx-layer]`;
+
+/** Each frame's still: its state, and whether its picture canvas holds anything. */
+const stillsOf = (page: Page) =>
+  page.locator(STILL).evaluateAll((layers) =>
+    layers.map((layer) => {
+      const picture = layer.querySelector(':scope > canvas') as HTMLCanvasElement;
+      return { state: layer.getAttribute('data-fc-fx-still'), drawn: picture.width > 0 && picture.height > 0 };
+    }),
+  );
+
+/** What is wrong with the picture shown in `layer` (its place in the box, its colours), or null, with the number of colours. */
+async function pictureIn(page: Page, layer: string): Promise<{ problem: string | null; seen: number }> {
+  const placed = await page.evaluate(
+    ([boxSelector, layerSelector]) => {
+      const box = document.querySelector(boxSelector) as HTMLElement;
+      const canvas = document.querySelector(`${layerSelector} > canvas, ${layerSelector} > * canvas`) as HTMLCanvasElement;
+      const a = box.getBoundingClientRect();
+      const b = canvas.getBoundingClientRect();
+      const title = box.querySelector('[data-inner-component-id="fx-title"]') as HTMLElement;
+      const t = title.getBoundingClientRect();
+      return {
+        fills: Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1 && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1,
+        contentOnTop: document.elementFromPoint(t.x + 4, t.y + t.height / 2) === title,
+      };
+    },
+    [BOX, layer] as const,
+  );
+  if (!placed.fills) return { problem: 'does not fill the box', seen: 0 };
+  if (!placed.contentOnTop) return { problem: 'covers the content of the box', seen: 0 };
+  const canvas = page.locator(`${layer} canvas`).first();
+  // The fade has ended and the frame is on screen: the layer's own and the canvas's (the still fades its picture).
+  await expect
+    .poll(() => canvas.evaluate((el) => [getComputedStyle(el).opacity, getComputedStyle(el.closest('[data-fc-fx-still], [data-fc-fx-layer]') as Element).opacity].join(' ')), { timeout: 5000 })
+    .toBe('1 1');
+  // The screenshot is the page clipped to the canvas, so the heading over the scene is hidden first: its text must not supply the colours.
+  const showTitle = (visibility: string) => page.evaluate((value) => ((document.querySelector('[data-inner-component-id="fx-title"]') as HTMLElement).style.visibility = value), visibility);
+  await showTitle('hidden');
+  const seen = colours(PNG.sync.read(await canvas.screenshot()));
+  await showTitle('');
+  return { problem: seen < 50 ? `is a blank or flat frame (${seen} colours)` : null, seen };
+}
 
 async function canvasCell(browser: Browser, bundle: string, scene: unknown): Promise<Cell> {
   let page: Page | undefined;
@@ -61,10 +109,11 @@ async function canvasCell(browser: Browser, bundle: string, scene: unknown): Pro
         const original = HTMLCanvasElement.prototype.getContext;
         HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
           const context = (original as (...args: unknown[]) => unknown).call(this, kind, ...rest);
-          if (context && /^webgl/.test(kind) && !made.includes(context as WebGLRenderingContext)) made.push(context as WebGLRenderingContext);
+          // A canvas in the page: a scene's. The engine's own probe (a detached canvas, released at once) is not one.
+          if (context && /^webgl/.test(kind) && this.isConnected && !made.includes(context as WebGLRenderingContext)) made.push(context as WebGLRenderingContext);
           return context;
         } as typeof HTMLCanvasElement.prototype.getContext;
-        (window as unknown as { __fxContexts: unknown }).__fxContexts = { live: () => made.filter((context) => !context.isContextLost()).length };
+        (window as unknown as { __fxContexts: unknown }).__fxContexts = { made: () => made.length, live: () => made.filter((context) => !context.isContextLost()).length };
       });
     });
     page = opened.page;
@@ -75,43 +124,47 @@ async function canvasCell(browser: Browser, bundle: string, scene: unknown): Pro
     await placeTree(view, opened.crashes, tree(scene));
     const status = () => view.evaluate(() => (window as unknown as ProbeWindow).__editor.fxLiveStatus());
     const contexts = () => view.evaluate(() => (window as unknown as ProbeWindow).__fxContexts.live());
+    const everMade = () => view.evaluate(() => (window as unknown as ProbeWindow).__fxContexts.made());
     const styleOf = () => view.locator(BOX).first().getAttribute('style');
+    const liveLayers = () => view.locator('[data-fc-fx-layer]').count();
+
+    if ((await liveLayers()) > 0) return fail('the canvas draws a live scene without Live');
+    // Every frame's still has settled (drawn, or given up), and the context the stills are drawn in is released.
+    await expect.poll(async () => (await stillsOf(view)).map((s) => s.state).every((state) => state === 'live' || state === 'off'), { timeout: 60_000 }).toBe(true);
+    await expect.poll(contexts, { timeout: 60_000 }).toBe(0);
+    const stills = await stillsOf(view);
+    if (stills.length === 0) return fail('the box has no still frame layer without Live');
+    const still = stills.every((s) => s.state === 'live' && s.drawn);
+    const nothingStill = stills.every((s) => s.state === 'off' && !s.drawn) && (await everMade()) === 0;
+    if (!still && !nothingStill) return fail(`without Live the still frames are neither drawn nor left out (${JSON.stringify(stills)}, ${await everMade()} contexts made)`);
+    if (still) {
+      const picture = await pictureIn(view, STILL);
+      if (picture.problem) return fail(`the still frame ${picture.problem}`);
+      if ((await liveLayers()) > 0) return fail('the canvas draws a live scene without Live');
+    }
 
     const before = await styleOf();
-    if ((await view.locator('canvas').count()) > 0 || (await view.locator('[data-fc-fx-layer]').count()) > 0 || (await contexts()) > 0) return fail('the canvas draws a scene without Live');
-
     await view.evaluate(() => (window as unknown as ProbeWindow).__editor.startFxLive('fx-box', 0));
     await expect.poll(status, { timeout: 60_000 }).not.toBe('loading');
     const drawn = await status();
-    if (drawn !== 'live') return fail(`with Live on the scene is not drawn (${drawn})`);
-    if ((await contexts()) !== 1 || (await view.locator('canvas').count()) !== 1) return fail(`Live holds ${await contexts()} WebGL contexts and ${await view.locator('canvas').count()} canvases, not one`);
-
-    const placed = await view.evaluate((selector) => {
-      const box = document.querySelector(selector) as HTMLElement;
-      const canvas = box.querySelector('canvas') as HTMLCanvasElement;
-      const a = box.getBoundingClientRect();
-      const b = canvas.getBoundingClientRect();
-      const title = box.querySelector('[data-inner-component-id="fx-title"]') as HTMLElement;
-      const t = title.getBoundingClientRect();
-      return {
-        fills: Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1 && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1,
-        contentOnTop: document.elementFromPoint(t.x + 4, t.y + t.height / 2) === title,
-      };
-    }, BOX);
-    if (!placed.fills) return fail('the drawing does not fill the box');
-    if (!placed.contentOnTop) return fail('the drawing covers the content of the box');
-    // The fade has ended and the frame is on screen.
-    await expect.poll(() => view.locator(`${BOX} [data-fc-fx-layer]`).first().evaluate((layer) => getComputedStyle(layer).opacity), { timeout: 5000 }).toBe('1');
-    // The screenshot is the page clipped to the canvas, so the heading over the scene is hidden first: its text must not supply the colours.
-    await view.evaluate(() => ((document.querySelector('[data-inner-component-id="fx-title"]') as HTMLElement).style.visibility = 'hidden'));
-    const seen = colours(PNG.sync.read(await view.locator(`${BOX} canvas`).first().screenshot()));
-    if (seen < 50) return fail(`the drawing is a blank or flat frame (${seen} colours)`);
+    if (drawn !== 'live') {
+      const nothing = nothingStill && (await everMade()) === 0 && (await view.locator('[data-fc-fx-layer] canvas').count()) === 0 && (await stillsOf(view)).every((s) => !s.drawn);
+      if (!nothing) return fail(`a scene Live does not draw (${drawn}) is drawn on the canvas all the same (still frames: ${JSON.stringify(stills)}, ${await everMade()} contexts made)`);
+      return fail(`with Live on the scene is not drawn (${drawn})`);
+    }
+    if (!still) return fail('without Live no still frame shows the scene Live draws');
+    const canvases = () => view.locator('[data-fc-fx-layer] canvas').count();
+    if ((await contexts()) !== 1 || (await canvases()) !== 1) return fail(`Live holds ${await contexts()} WebGL contexts and ${await canvases()} live canvases, not one`);
+    const live = await pictureIn(view, LIVE);
+    if (live.problem) return fail(`the live drawing ${live.problem}`);
 
     await view.evaluate(() => (window as unknown as ProbeWindow).__editor.stopFxLive());
-    await expect.poll(contexts, { timeout: 10_000 }).toBe(0);
-    if ((await view.locator('canvas').count()) > 0 || (await styleOf()) !== before) return fail('Live off does not give the box back as it was');
+    await expect.poll(async () => (await stillsOf(view)).every((s) => s.state === 'live' && s.drawn), { timeout: 60_000 }).toBe(true);
+    await expect.poll(contexts, { timeout: 60_000 }).toBe(0);
+    await expect.poll(styleOf, { timeout: 10_000 }).toBe(before);
+    if ((await liveLayers()) > 0) return fail('Live off leaves the live layer in the box');
     if (opened.crashes.length > 0) return fail(`the editor crashed: ${opened.crashes[0]}`);
-    return { status: 'pass', note: `nothing drawn by default; Live draws it in one WebGL context, filling the box behind its content (${seen} colours); off releases it` };
+    return { status: 'pass', note: `a still frame by default, its context released; Live draws it in one WebGL context, filling the box behind its content (${live.seen} colours); off releases it and shows the still again` };
   } catch (err) {
     return fail(err instanceof Error ? err.message.split('\n')[0] : String(err));
   } finally {
