@@ -137,7 +137,8 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           echo "nproc $(nproc), $(free -g | awk '/Mem:/ {print $2}') GB memory"
-          pnpm test --shard="$SHARD/3"
+          # vitest itself: `pnpm test --shard` is refused by pnpm, whose `test` shortcut takes no options.
+          pnpm exec vitest run --shard="$SHARD/3"
 
   build:
     name: build
