@@ -21,6 +21,7 @@ import 'server-only';
 // rate_limited with retryAfterSec), never a stack trace and never the key.
 
 import { z } from 'zod';
+import { INPUT_TYPES } from '@/lib/components/inputs';
 import {
   applyBatch,
   checkPlanAnchor,
@@ -516,6 +517,64 @@ export const OPERATION_SCHEMAS: JsonSchema[] = [
       description: "Input id to value; null goes back to the component's default. An unknown input, an event input, an input bound to data or a value its type refuses refuses the operation.",
     },
   }, ['nodeId', 'values']),
+  op('createComponent', "Make a reusable component from nodes next to each other under one parent; a placement takes their place and the nodes keep their ids inside the component (its page is listed in get_site).", {
+    pageId: idArg('The page'),
+    nodeIds: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' }, description: 'The nodes, ids or "ref:<name>".' },
+    name: { type: 'string', minLength: 1, maxLength: 120, description: 'Unique among the site\'s components.' },
+    ref: { ...refArg, description: 'Names the new component (its definition id) for later operations of the batch.' },
+    placementRef: { ...refArg, description: 'Names the placement that takes the nodes\' place.' },
+  }, ['pageId', 'nodeIds', 'name']),
+  op('renameComponent', 'Rename a component.', {
+    definitionId: idArg('The component definition'),
+    name: { type: 'string', minLength: 1, maxLength: 120 },
+  }, ['definitionId', 'name']),
+  op('addComponentInput', "Add an input to a component; with connect, a field of a node inside it reads the input (the editor's Make input), its current value becoming the default unless one is given.", {
+    definitionId: idArg('The component definition'),
+    input: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$', description: 'Derived from the name when absent.' },
+        name: { type: 'string', minLength: 1, maxLength: 80 },
+        type: { type: 'string', enum: [...INPUT_TYPES] },
+        default: { description: 'Checked against the type (describe_vocabulary).' },
+        description: { type: 'string', maxLength: 300 },
+        group: { type: 'string', maxLength: 80 },
+        options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, value: { type: 'string' } }, required: ['label', 'value'], additionalProperties: false }, description: 'A choice input\'s options.' },
+        multiline: { type: 'boolean' },
+        maxLength: { type: 'integer', minimum: 0 },
+        min: { type: 'number' },
+        max: { type: 'number' },
+        step: { type: 'number' },
+        unit: { type: 'string', description: 'A number input\'s unit, e.g. px.' },
+        fields: { type: 'array', items: { type: 'object' }, description: 'A list input\'s item fields: { id, name, type }.' },
+      },
+      required: ['name', 'type'],
+      additionalProperties: false,
+    },
+    connect: {
+      type: 'object',
+      properties: {
+        nodeId: { type: 'string', description: 'A node inside the component (get_page with the component\'s pageId).' },
+        slot: { type: 'string', description: 'children, href, src, alt, visible, style.<property>, or input.<id> on a component placed inside it.' },
+      },
+      required: ['nodeId', 'slot'],
+      additionalProperties: false,
+    },
+  }, ['definitionId', 'input']),
+  op('renameComponentInput', "Rename an input; its id, the placements' values and the connections stay.", {
+    definitionId: idArg('The component definition'),
+    inputId: { type: 'string' },
+    name: { type: 'string', minLength: 1, maxLength: 80 },
+  }, ['definitionId', 'inputId', 'name']),
+  op('removeComponentInput', "Remove an input with every connection inside the component and every placement's value of it on every page; the answer counts them.", {
+    definitionId: idArg('The component definition'),
+    inputId: { type: 'string' },
+  }, ['definitionId', 'inputId']),
+  op('setComponentInputDefault', 'Set the default every placement without its own value shows; null removes it.', {
+    definitionId: idArg('The component definition'),
+    inputId: { type: 'string' },
+    default: { description: 'The value, checked against the input\'s type; null removes the default.' },
+  }, ['definitionId', 'inputId', 'default']),
 ];
 
 const generateTarget = z
@@ -598,7 +657,7 @@ export const TOOLS: ToolDef[] = [
     title: 'Edit a site',
     description: [
       `Apply a batch of 1 to ${MAX_BATCH_OPS} edit operations to a site's working copy, in order, all or nothing, saved on expectedVersion.`,
-      'Operations: createPage, updatePageSettings, deletePage, insertNodes, updateStyle, updateText, setProps, setFxScene, moveNode, removeNode, addRule, setTheme, placeComponent, setComponentInputs (describe_vocabulary explains each).',
+      'Operations: createPage, updatePageSettings, deletePage, insertNodes, updateStyle, updateText, setProps, setFxScene, moveNode, removeNode, addRule, setTheme, placeComponent, setComponentInputs, createComponent, renameComponent, addComponentInput, renameComponentInput, removeComponentInput, setComponentInputDefault (describe_vocabulary explains each).',
       'A node or page an operation creates can carry "ref"; later operations of the batch name it as "ref:<name>", and the answer maps each ref to its new id.',
       'Answers the new `version` (name it in the next write), the created ids and one summary line per operation.',
       'Refusals write nothing: site_changed (with currentVersion: read again, then redo the batch on it) or rejected (each refused operation with its index and reason; fix those and resend the whole batch).',

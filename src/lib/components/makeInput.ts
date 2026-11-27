@@ -10,7 +10,7 @@
 //
 // PURE: no React, no MST. Client and server safe.
 
-import { inputExpressionFor, parseInputValue, type InputDefinition, type InputType } from './inputs';
+import { inputExpressionFor, mayBindToSlot, parseInputValue, type InputDefinition, type InputType } from './inputs';
 
 /** What the row is on: a node's tag and props, and, on a nested placement, the inner input it sets. */
 export interface MakeInputSource {
@@ -78,4 +78,40 @@ export function inputDraftFor(
     Object.entries({ ...shape, default: parsed?.ok ? parsed.value : undefined }).filter(([, v]) => v !== undefined),
   ) as unknown as InputDefinition;
   return { input, expression: inputExpressionFor(input, slot) };
+}
+
+/**
+ * Whether the draft is named after this input: the same name, or the name with the
+ * " 2" (" 3"...) `identity` adds because this input already took it.
+ */
+const namedAfter = (draft: string, candidate: string): boolean => {
+  const a = draft.trim().toLowerCase();
+  const b = candidate.trim().toLowerCase();
+  return a === b || (a.startsWith(`${b} `) && /^\d+$/.test(a.slice(b.length + 1)));
+};
+
+const sameValue = (a: unknown, b: unknown): boolean => a !== undefined && JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Of the inputs no field of the definition reads any more, the one Make input should
+ * connect again rather than add a second input beside it, or undefined to add the
+ * draft. A candidate has the draft's type, may set the slot, and is recognisably the
+ * one this field had: the draft is named after it (its name, or its name and the
+ * number a taken name gets), or its default is the field's current value (Make input
+ * took the default from this field). Exactly one such candidate is taken; one
+ * matching both wins over the rest; otherwise a new input, since a wrong pick would
+ * show another field's values in this one. Pure.
+ */
+export function unconnectedInputToReuse(
+  draft: InputDefinition,
+  unconnected: readonly InputDefinition[],
+  slot: string,
+): InputDefinition | undefined {
+  const fitting = unconnected.filter(input => input.type === draft.type && mayBindToSlot(input.type, slot));
+  const byName = (input: InputDefinition) => namedAfter(draft.name, input.name);
+  const byValue = (input: InputDefinition) => sameValue(input.default, draft.default);
+  const both = fitting.filter(input => byName(input) && byValue(input));
+  if (both.length === 1) return both[0];
+  const either = fitting.filter(input => byName(input) || byValue(input));
+  return either.length === 1 ? either[0] : undefined;
 }

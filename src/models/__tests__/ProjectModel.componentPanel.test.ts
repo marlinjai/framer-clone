@@ -94,7 +94,7 @@ describe('makeInput', () => {
   it('adds the input and binds the node as one step, and undo takes both back', () => {
     const { project, history } = setup();
     const result = project.makeInput('card', 'c-link', 'href', { id: 'link', name: 'Link', type: 'link', default: '/about' }, '{{input.link}}');
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, inputId: 'link', reused: false });
     const card = project.components.get('card')!;
     expect(card.inputs.map(i => i.id)).toEqual(['title', 'tone', 'link']);
     const link = card.page.findComponent('c-link')!;

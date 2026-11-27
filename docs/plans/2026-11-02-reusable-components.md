@@ -1083,9 +1083,13 @@ own checks, review and push.
 - One new model action `ProjectModel.setInputDefault`, used by the operation and by a Default field in the panel's
   Inputs section (A4, first half).
 - Make input (A4, second half): when the definition holds an input no field reads any more, of the type the row asks
-  for, Make input connects that one again instead of minting a second: the one with the row's name, else the only such
-  input. The placement values on it are read again. With several unnamed candidates it still makes a new one, and the
-  Inputs section's "Not connected" line shows the leftovers.
+  for, and it is recognisably this field's (the row's name, or its default equal to the field's current value, which
+  Make input took it from), Make input connects that one again instead of minting a second. The placement values on it
+  are read again. One matching both ways wins; with no match, or several, it still makes a new one (a wrong pick would
+  show another field's values), and the Inputs section's "Not connected" line shows the leftovers. Found by the review
+  of this branch: taking the only unconnected input whatever its name and value could connect an unrelated one.
+- An agent connects a field only to types that make sense there: text, number, formatted text, date or option for a
+  text; link or file for href; image for src and alt; toggle for visible; the CSS-like types for a style property.
 - Each definition operation counts as a touch of the definition's page, so every use of the definition is judged again
   by the gate (a default no use can take refuses the batch).
 - Changing an input's type is not an operation in this slice (not in the brief); the editor keeps it.

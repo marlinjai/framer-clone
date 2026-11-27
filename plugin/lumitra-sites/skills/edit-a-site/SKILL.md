@@ -37,7 +37,7 @@ you write and write on the version you read.
 
 Write down, briefly, before writing: which nodes change, which operations you use (`updateText`,
 `updateStyle`, `setProps`, `setFxScene`, `insertNodes`, `moveNode`, `removeNode`, `addRule`, `placeComponent`,
-`setComponentInputs`, `createPage`, `deletePage`),
+`setComponentInputs`, `createComponent`, `addComponentInput`, `setComponentInputDefault`, `createPage`, `deletePage`),
 and for which breakpoints. Use theme tokens (`var(--fc-t-<id>)`) instead of new raw values, so the
 change matches the rest of the site. Write copy in the site's language and voice; in English and
 German copy use no long dashes (the em dash or the en dash).

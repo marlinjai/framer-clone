@@ -282,4 +282,24 @@ describe('Make input inside a definition', () => {
     await act(async () => { card.setInputs([]); });
     await waitFor(() => expect(screen.getByText('input not found')).toBeTruthy());
   });
+
+  // Gap A4: unlink, then Make input again, made a second input, and the placements'
+  // values stayed on the first one, which nothing read any more.
+  it('after an unlink, Make input connects the same input again: no second one, and the values show again', async () => {
+    const { project } = setup();
+    const card = project.components.get('card')!;
+    card.setInputs([{ id: 'text', name: 'Text', type: 'text', default: 'Stored' }]);
+    const title = card.page.findComponent('c-title')!;
+    title.setBinding('children', { mode: 'read', expression: '{{input.text}}' });
+    await act(async () => store.editorUI.enterComponent('card'));
+    store.editorUI.selectComponent(title);
+    mount(<RightSidebar />);
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Unbind Text' })));
+    expect(title.bindings.children).toBeUndefined();
+    getHistoryStore()?.clear();
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Make Text an input' })));
+    expect(card.inputs.map((input) => input.id)).toEqual(['text']);
+    expect(title.bindings.children).toEqual({ mode: 'read', expression: '{{input.text}}' });
+    expect(getHistoryStore()?.history.length).toBe(1);
+  });
 });

@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import type { TenantScope } from '@/server/sites/repository';
+import { INPUT_TYPES } from '@/lib/components/inputs';
 
 /** The permissions the operations check (FRAMER_PERMISSIONS in src/lib/permissions.ts). */
 export type SiteOpsAction = 'viewSite' | 'editSite' | 'publishSite' | 'mergeBranch';
@@ -79,6 +80,7 @@ export const MAX_BATCH_OPS = 200;
 export const MAX_INSERT_NODES = 200;
 
 const id = z.string().trim().min(1).max(200);
+const inputId = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'an input id is 1 to 64 letters, digits, _ or -');
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'a ref is 1 to 64 letters, digits, _ or -');
 const breakpoint = z.string().trim().min(1).max(60).nullable().optional();
 const styleValue = z.union([z.string(), z.number(), z.null()]);
@@ -185,6 +187,49 @@ export const OperationSchema = z.discriminatedUnion('op', [
     nodeId: id,
     values: z.record(id, z.unknown()).refine((values) => Object.keys(values).length > 0, 'name at least one input'),
   }),
+  /** Make a component from nodes next to each other on a page (the editor's Create component); they become one placement. */
+  z.strictObject({
+    op: z.literal('createComponent'),
+    pageId: id,
+    nodeIds: z.array(id).min(1).max(50),
+    name: z.string().trim().min(1).max(120),
+    /** Names the new component (its definition id) for later operations of the batch. */
+    ref: ref.optional(),
+    /** Names the placement that takes the nodes' place. */
+    placementRef: ref.optional(),
+  }),
+  z.strictObject({ op: z.literal('renameComponent'), definitionId: id, name: z.string().trim().min(1).max(120) }),
+  /**
+   * Add an input to a component. With `connect`, a field of a node inside the component
+   * reads it (the editor's Make input): its default is then the field's current value
+   * unless one is given.
+   */
+  z.strictObject({
+    op: z.literal('addComponentInput'),
+    definitionId: id,
+    input: z.strictObject({
+      id: inputId.optional(),
+      name: z.string().trim().min(1).max(80),
+      type: z.enum(INPUT_TYPES),
+      default: z.unknown().optional(),
+      description: z.string().max(300).optional(),
+      group: z.string().max(80).optional(),
+      options: z.array(z.strictObject({ label: z.string().min(1).max(120), value: z.string().min(1).max(120) })).min(1).max(100).optional(),
+      multiline: z.boolean().optional(),
+      maxLength: z.number().int().min(0).optional(),
+      min: z.number().optional(),
+      max: z.number().optional(),
+      step: z.number().optional(),
+      unit: z.string().optional(),
+      fields: z.array(z.unknown()).min(1).max(20).optional(),
+    }),
+    connect: z.strictObject({ nodeId: id, slot: z.string().trim().min(1).max(100) }).optional(),
+  }),
+  z.strictObject({ op: z.literal('renameComponentInput'), definitionId: id, inputId, name: z.string().trim().min(1).max(80) }),
+  /** Remove an input with every value and connection to it, on every page (decision 6). */
+  z.strictObject({ op: z.literal('removeComponentInput'), definitionId: id, inputId }),
+  /** The value every placement without its own shows; null removes the default. */
+  z.strictObject({ op: z.literal('setComponentInputDefault'), definitionId: id, inputId, default: z.unknown().refine((value) => value !== undefined, 'give a default, or null to remove it') }),
 ]);
 
 export type Operation = z.infer<typeof OperationSchema>;

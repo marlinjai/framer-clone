@@ -24,7 +24,8 @@ import {
 import { detachRefusal, detachedTree, type StoredNode } from '@/lib/components/detach';
 import { mapNodeProps, mapResponsiveValue } from '@/lib/components/breakpoints';
 import { remapBehaviourRefs } from '@/lib/behaviour/format';
-import { inputDefinitionRefusal, mayBindToSlot, parseInputValue, type InputDefinition } from '@/lib/components/inputs';
+import { inputDefinitionRefusal, inputExpressionFor, mayBindToSlot, parseInputValue, type InputDefinition } from '@/lib/components/inputs';
+import { unconnectedInputToReuse } from '@/lib/components/makeInput';
 import { parseExpression } from '@/lib/bindings/resolver/expression';
 import { COMPONENT_LIMITS, PLACEMENT_TYPE, isPlacementType, serializedBytes, type PlacementProps } from '@/lib/components/placement';
 import { isRepeatable, REPEAT_PROP, repeatInputId } from '@/lib/components/repeat';
@@ -926,12 +927,43 @@ export const ProjectModel = types
 
     // "Make input" on a row of a node inside a definition: the input, with the node's
     // current value as its default, and the binding that reads it, as one step.
-    makeInput(definitionId: string, nodeId: string, slot: string, input: InputDefinition, expression: string): ComponentActionResult {
+    //
+    // With `reuseUnconnected` (the editor's button), an input of the same type that
+    // no field reads any more is connected again instead of a second one being made
+    // (gap A4: unlinking and making the input again left the placements' values on
+    // an input nothing read). Which one: `unconnectedInputToReuse` in makeInput.ts.
+    // It keeps its id, name and default, so the placements' values show again.
+    makeInput(
+      definitionId: string,
+      nodeId: string,
+      slot: string,
+      input: InputDefinition,
+      expression: string,
+      options: { reuseUnconnected?: boolean } = {},
+    ): ComponentActionResult<{ inputId: string; reused: boolean }> {
       const definition = self.components.get(definitionId);
       if (!definition) return { ok: false, message: 'That component no longer exists.' };
       const node = (definition.page as PageModelType).findComponent(nodeId);
       if (!node) return { ok: false, message: 'That element is no longer in the component.' };
       if (!mayBindToSlot(input.type, slot)) return { ok: false, message: `A ${input.type} input cannot set ${slot}.` };
+      if (node.getBinding(slot)) return { ok: false, message: `${slot} is already connected. Unlink it first.` };
+      if (options.reuseUnconnected) {
+        const page = definition.page as PageModelType;
+        const connected = new Set<string>();
+        for (const candidate of nodesOfPage(page)) {
+          for (const entry of Object.values(candidate.bindings)) {
+            const id = boundInputId(entry as { mode?: string; expression?: string });
+            if (id) connected.add(id);
+          }
+        }
+        const unconnected = definition.inputs.filter(other => !connected.has(other.id) && repeatsOf(page, other.id).length === 0);
+        const reuse = unconnectedInputToReuse(input, unconnected, slot);
+        if (reuse) {
+          node.setBinding(slot, { mode: 'read', expression: inputExpressionFor(reuse, slot) });
+          self.metadata.updatedAt = new Date();
+          return { ok: true, inputId: reuse.id, reused: true };
+        }
+      }
       const path = parseExpression(expression)?.path;
       if (path?.[0] !== 'input' || path[1] !== input.id) return { ok: false, message: 'The binding does not read the new input.' };
       if (definition.inputs.length >= COMPONENT_LIMITS.inputsPerDefinition) {
@@ -942,6 +974,27 @@ export const ProjectModel = types
       if (definition.inputs.some(other => other.id === input.id)) return { ok: false, message: 'This component already has that input.' };
       definition.setInputs([...definition.inputs, input]);
       node.setBinding(slot, { mode: 'read', expression });
+      self.metadata.updatedAt = new Date();
+      return { ok: true, inputId: input.id, reused: false };
+    },
+
+    // An input's default, what every placement without its own value shows; undefined
+    // removes it (a connected field then shows its own stored value). The panel's
+    // Default field and the site operations both write through here.
+    setInputDefault(definitionId: string, inputId: string, value: unknown): ComponentActionResult {
+      const definition = self.components.get(definitionId);
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const input = definition.inputs.find(candidate => candidate.id === inputId);
+      if (!input) return { ok: false, message: 'That input no longer exists.' };
+      const next: InputDefinition = { ...input };
+      if (value === undefined) delete next.default;
+      else {
+        if (input.type === 'event') return { ok: false, message: `${input.name} is an event: it has no default.` };
+        const parsed = parseInputValue(input, value);
+        if (!parsed.ok) return { ok: false, message: `${input.name}: ${parsed.reason}.` };
+        next.default = value;
+      }
+      definition.setInputs(definition.inputs.map(candidate => (candidate.id === inputId ? next : candidate)));
       self.metadata.updatedAt = new Date();
       return { ok: true };
     },
