@@ -386,7 +386,7 @@ export function cleanImageQuery(value: unknown): string | undefined {
  * Read the way a browser reads it: against a base, so that a backslash or a
  * protocol-relative address finds its host, and a trailing dot is the same host.
  */
-function isUnsplashPhotoUrl(value: string): boolean {
+export function isUnsplashPhotoUrl(value: string): boolean {
   try {
     return new URL(value.trim(), 'https://site.invalid').hostname.replace(/\.+$/, '') === 'images.unsplash.com';
   } catch {

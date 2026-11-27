@@ -746,6 +746,40 @@ export const ProjectModel = types
       return { ok: true };
     },
 
+    // A placement's own values: each key an input id, a value to set it (stored as
+    // written: the render step parses it again, and a parsed number with a unit
+    // would not parse twice), or undefined to go back to the default. All or
+    // nothing: one unknown input or refused value changes nothing. The panel's
+    // value rows and the site operations both write through here.
+    setPlacementInputs(placementId: string, changes: Readonly<Record<string, unknown>>): ComponentActionResult {
+      const found = allPages()
+        .map(page => page.findComponent(placementId) as ComponentInstance | undefined)
+        .find(Boolean);
+      if (!found || !isPlacementType(found.type)) return { ok: false, message: 'That component is no longer here.' };
+      const stored = found.props as Partial<PlacementProps>;
+      const definition = self.components.get(stored.component ?? '');
+      if (!definition) return { ok: false, message: 'That component no longer exists.' };
+      const next: Record<string, unknown> = { ...(stored.inputs ?? {}) };
+      for (const [inputId, value] of Object.entries(changes)) {
+        const input = definition.inputs.find(candidate => candidate.id === inputId);
+        if (!input) {
+          const known = definition.inputs.map(candidate => candidate.id).join(', ') || 'none';
+          return { ok: false, message: `${definition.name} has no input "${inputId}" (its inputs: ${known}).` };
+        }
+        if (value === undefined) {
+          delete next[inputId];
+          continue;
+        }
+        if (input.type === 'event') return { ok: false, message: `${input.name} is an event: it holds no value.` };
+        const parsed = parseInputValue(input, value);
+        if (!parsed.ok) return { ok: false, message: `${input.name}: ${parsed.reason}.` };
+        next[inputId] = value;
+      }
+      found.setProps({ inputs: Object.keys(next).length > 0 ? next : undefined });
+      self.metadata.updatedAt = new Date();
+      return { ok: true };
+    },
+
     // The panel's order. Nothing stored on a placement depends on it.
     moveInput(definitionId: string, inputId: string, toIndex: number): ComponentActionResult {
       const definition = self.components.get(definitionId);
