@@ -336,7 +336,7 @@ describe('the MCP endpoint against a real database', () => {
       // A stale version writes nothing and names the current one.
       const stale = await tool(KEY_A, 'apply_batch', { siteId, expectedVersion: version, ops: [{ op: 'setComponentInputs', nodeId: second, values: { text: null } }] });
       expect(stale.isError).toBe(true);
-      expect(stale.structuredContent).toMatchObject({ code: 'site_changed', currentVersion: version + 1 });
+      expect(stale.structuredContent).toMatchObject({ error: { code: 'site_changed', currentVersion: version + 1 } });
 
       const reset = await ok(KEY_A, 'apply_batch', { siteId, expectedVersion: version + 1, ops: [{ op: 'setComponentInputs', nodeId: second, values: { 'text-3': null } }] });
       expect(reset.version).toBe(version + 2);

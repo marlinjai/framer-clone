@@ -135,11 +135,12 @@ describe('getPage shows a placement\'s values and where each comes from (A1)', (
     expect(fed.title).toEqual({ id: 'title', name: 'Title', type: 'text', source: 'bound', expression: '{{row.title}}' });
   });
 
-  it('names the component, does not repeat the raw values under props, and marks a missing definition', () => {
+  it('names the component, keeps its id under props but not the raw values, and marks a missing definition', () => {
     const outline = pageOutline(home(makeProject()), { components: makeProject().components, maxChars: 80_000 });
     const mine = outline.nodes.find((n) => n.id === 'mine')!;
     expect(mine.component).toMatchObject({ definitionId: 'card', name: 'Glockenkarte' });
-    expect(mine.props).toBeUndefined();
+    // The definition id stays under props, as before; the values are only under component.
+    expect(mine.props).toEqual({ component: 'card' });
     expect(outline.nodes.find((n) => n.id === 'gone')!.component).toEqual({ definitionId: 'deleted-card', missing: true });
   });
 

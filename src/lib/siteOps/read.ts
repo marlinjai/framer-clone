@@ -272,7 +272,7 @@ function outlineNode(
   for (const [k, v] of Object.entries(props)) {
     if (OWN_PROPS.has(k) || k.startsWith('data-credit')) continue;
     // A placement's values are under `component`, whole and keyed by breakpoint key.
-    if (placement && (k === 'inputs' || k === 'component')) continue;
+    if (placement && k === 'inputs') continue;
     rest[k] = excerpt(isObj(v) ? getPlain(v) : v, VALUE_EXCERPT);
   }
   if (Object.keys(rest).length > 0) out.props = rest;
