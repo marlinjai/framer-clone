@@ -13,7 +13,7 @@ vi.mock('@/server/db', () => ({ getPrismaClient: () => ({}) }));
 import type { SiteOpsCaller } from '@/lib/siteOps/types';
 import { SiteNotFoundError } from '@/server/sites';
 
-import { getSiteProduct, listSiteProducts, resolveSiteCatalog, type CatalogOpsDeps } from '..';
+import { CATALOG_OPS_FAILURE, getSiteProduct, listSiteProducts, resolveSiteCatalog, type CatalogOpsDeps } from '..';
 
 const COMPANY = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
 const GROUP = '018f9c10-0000-7000-8000-0000000c4a71';
@@ -112,6 +112,19 @@ describe('resolveSiteCatalog', () => {
     quiet.mockRestore();
     expect(result).toMatchObject({ ok: false, error: { code: 'failed' } });
     if (!result.ok) expect(result.error.message).not.toContain('10.0.0.5');
+  });
+
+  it('a failing site lookup answers the catalogue failure, not the branch tools wording', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await listSiteProducts(
+      caller(() => true),
+      { siteId: 'site-1' },
+      deps(() => {
+        throw new Error('database gone');
+      }),
+    );
+    quiet.mockRestore();
+    expect(result).toMatchObject({ ok: false, error: { code: 'failed', message: CATALOG_OPS_FAILURE } });
   });
 
   it('a company id that is not a lowercase uuid owns no catalogue', async () => {

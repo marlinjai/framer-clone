@@ -96,7 +96,10 @@ export async function resolveSiteCatalog(
   if (!allowed.ok) return allowed;
 
   const site = await branchOfSite(caller, { siteId }, deps.branches ?? {});
-  if (!site.ok) return fail(site.error);
+  if (!site.ok) {
+    // The branch lookup's own failure text speaks of branch tools; a catalogue caller gets the catalogue's.
+    return fail(site.error.code === 'failed' ? { code: 'failed', message: CATALOG_OPS_FAILURE } : site.error);
+  }
   const mainSiteId = site.value?.mainSiteId ?? siteId;
 
   let tgId: string;

@@ -232,7 +232,8 @@ describe('catalogue read tools through the MCP endpoint', () => {
 
   it('a product switched off for a site is neither listed nor readable there, and stays on the other site', async () => {
     const popup = await ok(KEY_A, 'list_products', { siteId: popupSite });
-    expect(popup.items.map((p: { id: string }) => p.id)).not.toContain(necklace);
+    expect(popup.items.map((p: { id: string }) => p.id).sort()).toEqual([ring, sizing].sort());
+    expect(popup.total).toBe(2);
     expect(await refusal(KEY_A, 'get_product', { siteId: popupSite, productId: necklace })).toMatchObject({ code: 'not_found' });
     expect((await ok(KEY_A, 'get_product', { siteId: shopSite, productId: necklace })).product.title).toBe('Gold Necklace');
   });
