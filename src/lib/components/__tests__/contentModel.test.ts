@@ -56,3 +56,4 @@ describe('a placement inside a link', () => {
     expect(contentModelRefusal(of(trees), 'd', ['a'])).toMatch(/holds a link or a control/);
   });
 });
+// ci-replay touch

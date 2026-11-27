@@ -1195,3 +1195,4 @@ Everything in F1 to F20 is applied except the following, each checked rather tha
 Sources for Framer's types: [property controls](https://www.framer.com/developers/property-controls) and [component
 variables](https://www.framer.com/academy/lessons/component-variables-in-framer). The list of 17 editor types is the
 review's, from Framer's editor.
+<!-- ci-replay touch -->
