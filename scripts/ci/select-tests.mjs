@@ -184,6 +184,12 @@ export function shard(files, durations, { targetMs = 120_000, maxShards = 8 } = 
   return shards.map((s) => ({ ...s, files: s.files.sort() }));
 }
 
+/**
+ * The share of a two-engine effects proof's time its Chromium half takes: fxOracle ran 313 s in both engines and 222 s
+ * in Chromium alone (runs 46067309775 and 46073911035), Chromium being the slower engine for these.
+ */
+const CHROMIUM_SHARE = 0.7;
+
 /** Whether a spec's engine list goes through test/behaviour/engines.ts, so BEHAVIOUR_ENGINES narrows it. */
 export function narrowable(file) {
   return fs.readFileSync(path.join(ROOT, file), 'utf8').includes('behaviourEngines(');
@@ -191,12 +197,11 @@ export function narrowable(file) {
 
 /**
  * The behaviour shards. With `oneBrowser` (the pull request tier) every shard sets BEHAVIOUR_ENGINES=chromium: the
- * specs whose list goes through behaviourEngines (the long effects proofs, which run Chromium and WebKit, about half
- * their time each) then run in Chromium only, and count half their measured time; the others run as written.
+ * specs whose list goes through behaviourEngines (the long effects proofs, which run Chromium and WebKit) then run in Chromium only, and count about 70 percent of their measured time; the others run as written.
  */
 export function behaviourMatrix(files, durations, { oneBrowser = false } = {}) {
   const narrowed = new Set(oneBrowser ? files.filter(narrowable) : []);
-  const weights = Object.fromEntries(files.map((file) => [file, (durations[file] ?? 60_000) * (narrowed.has(file) ? 0.5 : 1)]));
+  const weights = Object.fromEntries(files.map((file) => [file, (durations[file] ?? 60_000) * (narrowed.has(file) ? CHROMIUM_SHARE : 1)]));
   const shards = shard(files, weights);
   return shards.map((s, index) => ({
     name: `${index + 1} of ${shards.length}`,

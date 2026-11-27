@@ -30,8 +30,11 @@ describe('the files there are', () => {
     expect(coreSpecs.length).toBeGreaterThan(15);
   });
 
-  it('has a measured duration for every behaviour spec, so shards stay balanced', () => {
-    expect(specs.filter((spec) => durations[spec] === undefined)).toEqual([]);
+  it('measures only specs that exist, and shards a spec it has not measured yet at the default', () => {
+    // A new spec on another branch is not a failure here: it counts 60 s until the durations are measured again.
+    expect(Object.keys(durations).filter((spec) => !specs.includes(spec))).toEqual([]);
+    const [only] = select.shard(['test/behaviour/new.spec.ts'], durations);
+    expect(only.ms).toBe(60_000);
   });
 
   it('reads each spec engines from its playwright import', () => {

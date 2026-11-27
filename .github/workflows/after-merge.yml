@@ -50,8 +50,9 @@ jobs:
     with:
       tier: ${{ github.event_name == 'schedule' && 'nightly' || inputs.tier || 'main' }}
       seed: ${{ inputs.seed || '' }}
-      # Leaves runners for pull requests (an account runs 20 jobs at once on the free plan).
-      max-parallel: 8
+      # Leaves runners for pull requests: the account runs 20 jobs at once on the free plan, shared by every
+      # repository, and this limit applies to each of the two matrices. After merge has no time budget.
+      max-parallel: 4
 
   prove-report:
     name: prove-report
