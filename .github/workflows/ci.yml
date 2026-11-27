@@ -21,10 +21,15 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  # proofs.yml: a behaviour shard reads its run's jobs to wait for the shared build.
+  actions: read
+
 jobs:
   roadmap-check:
     name: roadmap-check
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: marlinjai/actions-shared/roadmap-check@roadmap-check-v1
@@ -34,7 +39,7 @@ jobs:
   # Seconds, no install: the guards, the plugin, the score files.
   static:
     name: static
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LARGE || 'ubuntu-latest' }}
     env:
       # Dummy connection string for the steps that only need the generated Prisma client; none of these connect.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
@@ -109,7 +114,7 @@ jobs:
   # own (`--shard`), over both projects, so every file runs in exactly one of them.
   unit:
     name: unit (${{ matrix.shard }} of 3)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LARGE || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -142,7 +147,7 @@ jobs:
 
   build:
     name: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LARGE || 'ubuntu-latest' }}
     env:
       # The Next build needs a connection string to be set, never a database.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/framer_clone_ci
@@ -169,7 +174,7 @@ jobs:
   # they share nothing.
   integration:
     name: integration (${{ matrix.shard }} of 2)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LARGE || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -216,7 +221,7 @@ jobs:
     name: verify
     needs: [static, unit, build, integration]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Every verify job passed
         env:
@@ -227,7 +232,7 @@ jobs:
 
   docker-build:
     name: docker-build
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_LARGE || 'ubuntu-latest' }}
     # `pnpm build` above does not apply .dockerignore, so a Docker-only build
     # break (a prod import stripped by .dockerignore, for example) can be green
     # here and still fail at deploy. This job builds the real production image

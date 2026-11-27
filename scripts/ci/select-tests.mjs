@@ -90,7 +90,8 @@ export const RENDER_GATE_LONG = [
 /** Effects (fx), two thirds of the behaviour proofs' time, asked only when effects or the canvas they draw on change. */
 export const FX_SOURCES = [/^src\/.*(fx|scene|effect)/i, /^src\/components\/Canvas\.tsx$/, /^src\/lib\/canvas\//, /^src\/components\/ComponentRenderer\.tsx$/, /^src\/models\/ComponentModel\//];
 const isFxSpec = (file) => /^test\/behaviour\/fx[^/]*\.spec\.ts$/.test(file);
-const isFxHelper = (file) => /^test\/behaviour\/fx[^/]*\.entry\.tsx$/.test(file);
+// An effects proof's own helper (an entry it bundles, the scoped stage): asks the effects proofs, not everything.
+const isFxHelper = (file) => /^test\/behaviour\/fx[^/]*\.tsx?$/.test(file) && !isFxSpec(file);
 
 const matches = (rules, file) => rules.some((rule) => rule.test(file));
 
@@ -113,11 +114,21 @@ export const behaviourSpecs = () => walk('test/behaviour').filter((file) => file
 /** Every render gate file, as vitest.renderGate.config.ts includes them (test/renderGate/**\/*.gate.{ts,tsx}). */
 export const gateFiles = () => walk('test/renderGate').filter((file) => /\.gate\.tsx?$/.test(file)).sort();
 
-/** The engines a spec launches, read from its playwright import; none found means all three, never fewer. */
+const playwrightNames = (text) => [...text.matchAll(/import\s*{([^}]*)}\s*from\s*'playwright'/g)].flatMap((m) => m[1].split(',').map((name) => name.trim()));
+
+/**
+ * The engines a spec launches, read from its playwright import and those of the local modules it imports (one level:
+ * fxScoped.spec.ts launches through fxScopedStage.ts). None found means all three, never fewer.
+ */
 export function enginesOf(file) {
   const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
-  const named = [...text.matchAll(/import\s*{([^}]*)}\s*from\s*'playwright'/g)].flatMap((m) => m[1].split(','));
-  const engines = ['chromium', 'webkit', 'firefox'].filter((engine) => named.some((name) => name.trim() === engine));
+  const named = playwrightNames(text);
+  for (const [, rel] of text.matchAll(/from\s*'(\.\/[^']+)'/g)) {
+    const base = path.join(path.dirname(file), rel);
+    const found = [base, `${base}.ts`, `${base}.tsx`].find((candidate) => fs.existsSync(path.join(ROOT, candidate)) && fs.statSync(path.join(ROOT, candidate)).isFile());
+    if (found) named.push(...playwrightNames(fs.readFileSync(path.join(ROOT, found), 'utf8')));
+  }
+  const engines = ['chromium', 'webkit', 'firefox'].filter((engine) => named.includes(engine));
   return engines.length > 0 ? engines : ['chromium', 'webkit', 'firefox'];
 }
 
@@ -164,11 +175,12 @@ export function selectBehaviour(changed, specs = behaviourSpecs()) {
 
 /**
  * Longest first into the emptiest shard: shards finish together, so the slowest one is as short as it can be.
- * Each shard pays about 180 s before its first test (browsers, Postgres, a build; run 46067309775), so a target of
- * 120 s of tests puts the proofs that always run (about 790 s) on 7 runners and keeps one shard near five minutes.
+ * Since 2026-11-28 the shards share one build (proofs.yml) and pay about 70 s before their first test (install,
+ * browsers, Postgres) while it runs, and the jobs run on rented runners (Ubicloud) without the free plan's 20 jobs at
+ * once. So a target of 90 s of tests, at most 10 shards: the proofs that always run (about 790 s) take 9.
  */
 /** @param {string[]} files @param {Record<string, number>} durations @param {{ targetMs?: number, maxShards?: number }} [options] */
-export function shard(files, durations, { targetMs = 120_000, maxShards = 8 } = {}) {
+export function shard(files, durations, { targetMs = 90_000, maxShards = 10 } = {}) {
   if (files.length === 0) return [];
   const weight = (file) => durations[file] ?? 60_000;
   const sorted = [...files].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b));

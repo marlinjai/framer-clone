@@ -42,6 +42,8 @@ concurrency:
 
 permissions:
   contents: read
+  # proofs.yml: a behaviour shard reads its run's jobs to wait for the shared build.
+  actions: read
 
 jobs:
   proofs:
@@ -58,7 +60,7 @@ jobs:
     name: prove-report
     if: inputs.prove_report == true
     needs: proofs
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Fail on purpose
         run: |
@@ -71,7 +73,7 @@ jobs:
     name: report
     needs: [proofs, prove-report]
     if: always() && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       issues: write
     steps:
