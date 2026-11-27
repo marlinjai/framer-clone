@@ -13,12 +13,18 @@
 // - Remove takes every value and binding to the input across the site with it, in
 //   one step that undo brings back, as the contract decides.
 // - Moving is by buttons, so it works by keyboard and on a phone.
+// - The default, what every placement without its own value shows, is edited here
+//   whether or not a field reads the input (gap A4: a connected input's default had
+//   no field, its node showing the binding instead). ProjectModel.setInputDefault,
+//   the same action the site operations use.
 //
 // Contract: docs/plans/2026-11-02-reusable-components.md, "Making an input".
 
 import React from 'react';
 import { observer } from 'mobx-react-lite';
-import { ArrowDown, ArrowUp, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, RotateCcw, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { getSnapshot } from 'mobx-state-tree';
+import { extractBreakpoints } from '@/lib/renderer/server/componentSnapshot';
 import { useStore } from '@/hooks/useStore';
 import type { ComponentDefinitionInstance } from '@/models/ComponentDefinitionModel';
 import {
@@ -36,7 +42,7 @@ import {
 } from '@/lib/components/inputs';
 import { requestInputEdit } from '@/lib/components/editorCommands';
 import { CollapsibleSection, FIELD_LABEL, PropertySelect } from '../primitives';
-import { CommitField } from './ComponentSection';
+import { CommitField, EDITABLE, InputControl, valueOn } from './ComponentSection';
 
 const HINT = 'text-[11px] leading-snug text-muted-foreground';
 const ICON_BUTTON =
@@ -68,6 +74,12 @@ const InputItem = observer(({
     const result = project.removeInput(definition.id, input.id);
     if (!result.ok) refuse(result.message);
   };
+  const setDefault = (value: unknown) => {
+    const result = project.setInputDefault(definition.id, input.id, value);
+    if (!result.ok) refuse(result.message);
+  };
+  // The definition's own frames: a default per breakpoint is keyed by them; the largest shows.
+  const frames = extractBreakpoints(getSnapshot(definition.page.canvasNodes));
 
   return (
     <li className="flex min-w-0 flex-col gap-1.5 rounded border border-border p-2" data-testid={`definition-input-${input.id}`}>
@@ -154,6 +166,37 @@ const InputItem = observer(({
               requestInputEdit(editorUI, definition.id, next, !keepsDefault);
             }}
           />
+        </div>
+      )}
+      {input.type !== 'event' && (
+        <div className="flex min-w-0 flex-col gap-1" data-testid={`definition-input-default-${input.id}`}>
+          <div className="flex min-w-0 items-center gap-1">
+            <span className={`${FIELD_LABEL} min-w-0 flex-1`}>Default</span>
+            {input.default !== undefined && (
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={`Remove the default of ${input.name}`}
+                title="Placements without their own value then show what the component itself holds."
+                onClick={() => setDefault(undefined)}
+              >
+                <RotateCcw size={12} aria-hidden />
+              </button>
+            )}
+          </div>
+          {EDITABLE.has(input.type) ? (
+            <InputControl
+              // A default changed elsewhere (undo, an agent) shows at once.
+              key={JSON.stringify(input.default ?? null)}
+              // Its fields read "Default of Title", apart from the placement's own "Title".
+              input={{ ...input, name: `Default of ${input.name}` }}
+              value={valueOn(input.default, undefined, frames)}
+              onCommit={setDefault}
+            />
+          ) : (
+            <p className={HINT}>This type has no field here.</p>
+          )}
+          <p className={HINT}>What every placement without its own value shows.</p>
         </div>
       )}
       <p className={HINT}>

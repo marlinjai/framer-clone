@@ -44,7 +44,8 @@ import { PROJECT_BODY_MAX_BYTES } from '@/lib/api/respond';
 import { isProductPageSlug, productPagePath } from '@/lib/pages/slug';
 import { BASE_KEY, isAcceptedStyleKey, styleKeyFrom, type BreakpointKey } from '@/lib/ai/pageGen/schema';
 import { isUnsplashPhotoUrl, validateGeneration, type GeneratedNodeSnapshot, type ImageRequest } from '@/lib/ai/pageGen/validate';
-import type { InputDefinition } from '@/lib/components/inputs';
+import { inputExpressionFor, mayBindToSlot, type InputDefinition } from '@/lib/components/inputs';
+import { inputDraftFor } from '@/lib/components/makeInput';
 import { breakpointKeyMap, toEditorSnapshot } from '@/lib/ai/pageGen/apply';
 import { STOCK_CREDIT_ATTRS, isSameUnsplashPhoto } from '@/lib/ai/pageGen/stockCredit';
 import { siteAddressOf, siteContextFromSettings } from '@/lib/ai/pageGen/promptSections/siteContext';
@@ -253,20 +254,62 @@ function placementChanges(
       changes[inputId] = undefined;
       continue;
     }
-    if (input.type === 'event') throw new OpRefused(`${input.id} is an event input: it holds no value`);
     if (bindings[`input.${inputId}`] !== undefined) {
       throw new OpRefused(`${input.id} is bound to data on this placement (the value from data wins), so a value set here would never show`);
     }
-    const sources = input.type === 'image' ? [value] : input.type === 'gallery' && Array.isArray(value) ? value : [];
-    for (const entry of sources) {
-      const src = typeof entry === 'string' ? entry : isObj(entry) ? entry.src : undefined;
-      if (typeof src === 'string' && isUnsplashPhotoUrl(src)) {
-        throw new OpRefused(`${input.id}: an Unsplash photo needs its credit beside it, which a placement cannot hold; upload the picture, or use an img with setProps`);
-      }
-    }
-    changes[inputId] = input.type === 'color' && isObj(value) ? colourMapFor(holder, input.id, value) : value;
+    changes[inputId] = agentValue(input, value, holder);
   }
   return changes;
+}
+
+/**
+ * One value an agent gives an input (a placement's value or the input's default), as
+ * stored: a colour's map from breakpoint keys to the ids of `page`. Refuses an event
+ * and an Unsplash photo; the model checks the value against its type.
+ */
+function agentValue(input: InputDefinition, value: unknown, page: PageModelType): unknown {
+  if (input.type === 'event') throw new OpRefused(`${input.id} is an event input: it holds no value`);
+  const sources = input.type === 'image' ? [value] : input.type === 'gallery' && Array.isArray(value) ? value : [];
+  for (const entry of sources) {
+    const src = typeof entry === 'string' ? entry : isObj(entry) ? entry.src : undefined;
+    if (typeof src === 'string' && isUnsplashPhotoUrl(src)) {
+      throw new OpRefused(`${input.id}: an Unsplash photo needs its credit beside it, which a component cannot hold; upload the picture, or use an img with setProps`);
+    }
+  }
+  return input.type === 'color' && isObj(value) ? colourMapFor(page, input.id, value) : value;
+}
+
+/**
+ * The fields of a node inside a component that an input may be connected to, as the
+ * editor's Make input offers them: its text, a link's address, a picture's source and
+ * description, whether it shows, a style property, and an input of a component placed
+ * inside it. Why not, or null.
+ */
+function connectRefusal(node: ComponentInstance, slot: string): string | null {
+  const props = (node.props ?? {}) as Record<string, unknown>;
+  if (slot === 'children') {
+    return isTextNodeType(node.type) || typeof props.children === 'string' || typeof props.children === 'number'
+      ? null
+      : 'children: this node holds no text of its own (connect its text node, or a node that holds text)';
+  }
+  if (slot === 'href') return node.type === 'a' || typeof props.href === 'string' ? null : 'href: this node is no link';
+  if (slot === 'src' || slot === 'alt') return node.type === 'img' ? null : `${slot}: this node is no img`;
+  if (slot === 'visible') return null;
+  if (slot.startsWith('style.')) {
+    if (isTextNodeType(node.type)) return 'a text node has no style; connect its parent';
+    return isAcceptedStyleKey(styleKeyFrom(slot.slice('style.'.length))) ? null : `${slot}: not a style property the editor supports`;
+  }
+  if (slot.startsWith('input.')) return isPlacementType(node.type) ? null : `${slot}: only a placed component has inputs`;
+  return `${JSON.stringify(slot)} is not a field an input can set: children, href, src, alt, visible, style.<property>, or input.<id> on a placed component`;
+}
+
+/** A free input id from a name ("Opening hours" -> "opening-hours", "-2" when taken). */
+function inputIdFrom(name: string, taken: readonly InputDefinition[]): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'input';
+  const ids = new Set(taken.map((input) => input.id));
+  let id = base;
+  for (let n = 2; ids.has(id); n++) id = `${base}-${n}`;
+  return id;
 }
 
 /** A colour per breakpoint key, as the stored map per breakpoint id of the page the placement is on. */
@@ -506,6 +549,23 @@ export async function applyOperations(
     const page = pagesOf(project).find((p) => p.id === id);
     if (!page) throw new OpRefused(`unknown page id ${JSON.stringify(rawId)}`);
     return page;
+  };
+  const definitionFor = (rawId: string) => {
+    const definition = project.components.get(resolveId(rawId));
+    if (!definition) throw new OpRefused(`unknown component id ${JSON.stringify(rawId)}; getSite lists the site's components`);
+    return definition;
+  };
+  const placementsOfDefinition = (definitionId: string): Located[] => {
+    const out: Located[] = [];
+    const walk = (page: PageModelType, node: ComponentInstance) => {
+      if (isPlacementType(node.type) && (node.props as { component?: unknown }).component === definitionId) out.push({ page, node });
+      for (const child of node.children as ComponentInstance[]) walk(page, child);
+    };
+    for (const page of pagesOf(project)) {
+      walk(page, page.appComponentTree as ComponentInstance);
+      for (const floating of page.canvasNodes.values() as Iterable<ComponentInstance>) if (!floating.isViewportNode) walk(page, floating);
+    }
+    return out;
   };
   const targetFor = (page: PageModelType, to: { parentId: string; index?: number } | { siblingId: string; position: 'before' | 'after' }): InsertTarget => {
     if ('parentId' in to) {
@@ -891,6 +951,110 @@ export async function applyOperations(
         touched.push({ page, nodeId: result.placement.id });
         const valued = Object.keys(changes).length;
         return `placed component ${op.definitionId} on page "${page.metadata.title}" (${result.placement.id})${valued > 0 ? ` with ${valued} value(s) of its own` : ''}`;
+      }
+
+      case 'createComponent': {
+        const page = pageFor(op.pageId);
+        const nodeIds = op.nodeIds.map((raw) => {
+          const id = resolveId(raw);
+          if (!page.findComponent(id)) throw new OpRefused(`unknown node id ${JSON.stringify(raw)} on this page`);
+          return id;
+        });
+        const result = project.createComponentFromSelection(page.id, nodeIds, op.name);
+        if (!result.ok) throw new OpRefused(result.message);
+        claimRef(op.ref, result.definitionId);
+        claimRef(op.placementRef, result.placement.id);
+        touched.push({ page, nodeId: result.placement.id });
+        const definitionPage = project.components.get(result.definitionId)!.page as PageModelType;
+        return `made component "${op.name.trim()}" (${result.definitionId}, its page ${definitionPage.id}) from ${nodeIds.length} node(s); placement ${result.placement.id} takes their place, and the nodes keep their ids inside the component`;
+      }
+
+      case 'renameComponent': {
+        const definition = definitionFor(op.definitionId);
+        const before = definition.name;
+        const result = project.renameDefinition(definition.id as string, op.name);
+        if (!result.ok) throw new OpRefused(result.message);
+        return `renamed component "${before}" to "${definition.name}"`;
+      }
+
+      case 'addComponentInput': {
+        const definition = definitionFor(op.definitionId);
+        const definitionId = definition.id as string;
+        const page = definition.page as PageModelType;
+        const { id: wantedId, default: wantedDefault, ...rest } = op.input;
+        const id = wantedId ?? inputIdFrom(rest.name, definition.inputs);
+        const input = { ...rest, id } as InputDefinition;
+        if (wantedDefault !== undefined && wantedDefault !== null) input.default = agentValue(input, wantedDefault, page);
+        if (!op.connect) {
+          const result = project.addInput(definitionId, input);
+          if (!result.ok) throw new OpRefused(result.message);
+          touched.push({ page });
+          return `added input ${id} (${input.type}) to "${definition.name}", connected to no field yet`;
+        }
+        const nodeId = resolveId(op.connect.nodeId);
+        const node = page.findComponent(nodeId) as ComponentInstance | undefined;
+        if (!node || node.isViewportNode) throw new OpRefused(`unknown node ${JSON.stringify(op.connect.nodeId)} inside "${definition.name}" (getPage with its pageId ${page.id} lists them)`);
+        const slot = op.connect.slot;
+        const refused = connectRefusal(node, slot);
+        if (refused) throw new OpRefused(refused);
+        if (!mayBindToSlot(input.type, slot)) throw new OpRefused(`a ${input.type} input cannot set ${slot}: an address takes an image, link or file input`);
+        let inner: InputDefinition | undefined;
+        if (slot.startsWith('input.')) {
+          const innerDefinition = project.components.get(String(node.props?.component ?? ''));
+          inner = innerDefinition?.inputs.find((candidate) => candidate.id === slot.slice('input.'.length));
+          if (!inner) throw new OpRefused(`${slot}: the placed component has no such input`);
+          if (inner.type !== input.type) throw new OpRefused(`${slot} is a ${inner.type} input, so the new input must be one too`);
+        }
+        // As the editor does: the field's current value becomes the default, unless one was given or it is null.
+        if (wantedDefault === undefined) {
+          const draft = inputDraftFor({ type: node.type, props: ((getSnapshot(node) as { props?: Record<string, unknown> }).props ?? {}), ...(inner ? { inner } : {}) }, slot, input.name, definition.inputs);
+          if (draft.input.type === input.type && draft.input.default !== undefined) input.default = draft.input.default;
+        }
+        const result = project.makeInput(definitionId, node.id, slot, input, inputExpressionFor(input, slot));
+        if (!result.ok) throw new OpRefused(result.message);
+        touched.push({ page, nodeId: node.id });
+        return `added input ${id} (${input.type}) to "${definition.name}", read by ${slot} of ${node.id}`;
+      }
+
+      case 'renameComponentInput': {
+        const definition = definitionFor(op.definitionId);
+        const result = project.renameInput(definition.id as string, op.inputId, op.name);
+        if (!result.ok) throw new OpRefused(result.message);
+        return `renamed input ${op.inputId} of "${definition.name}" to "${op.name.trim()}" (its id, values and connections stay)`;
+      }
+
+      case 'removeComponentInput': {
+        const definition = definitionFor(op.definitionId);
+        const definitionId = definition.id as string;
+        if (!definition.inputs.some((input) => input.id === op.inputId)) throw new OpRefused(`"${definition.name}" has no input ${JSON.stringify(op.inputId)}`);
+        const connections = project.inputConnectionCount(definitionId, op.inputId);
+        const values = placementsOfDefinition(definitionId).filter(({ node }) => {
+          const own = (node.props as { inputs?: Record<string, unknown> }).inputs;
+          return (own !== undefined && own[op.inputId] !== undefined) || node.bindings?.[`input.${op.inputId}`] !== undefined;
+        });
+        const result = project.removeInput(definitionId, op.inputId);
+        if (!result.ok) throw new OpRefused(result.message);
+        touched.push({ page: definition.page as PageModelType });
+        for (const { page } of values) touched.push({ page });
+        const pages = new Set(values.map(({ page }) => page.id)).size;
+        return `removed input ${op.inputId} of "${definition.name}" with ${connections} connection(s) inside it and the values of ${values.length} placement(s) on ${pages} page(s)`;
+      }
+
+      case 'setComponentInputDefault': {
+        const definition = definitionFor(op.definitionId);
+        const input = definition.inputs.find((candidate) => candidate.id === op.inputId);
+        if (!input) throw new OpRefused(`"${definition.name}" has no input ${JSON.stringify(op.inputId)}`);
+        const page = definition.page as PageModelType;
+        const value = op.default === null ? undefined : agentValue(input, op.default, page);
+        const result = project.setInputDefault(definition.id as string, input.id, value);
+        if (!result.ok) throw new OpRefused(result.message);
+        // Every use without its own value shows the new default: the gate judges them all.
+        touched.push({ page });
+        const showing = placementsOfDefinition(definition.id as string).filter(({ node }) => {
+          const own = (node.props as { inputs?: Record<string, unknown> }).inputs;
+          return (own === undefined || own[input.id] === undefined) && node.bindings?.[`input.${input.id}`] === undefined;
+        }).length;
+        return `${value === undefined ? 'removed the default of' : 'set the default of'} input ${input.id} of "${definition.name}"; ${showing} placement(s) show it`;
       }
 
       case 'setComponentInputs': {

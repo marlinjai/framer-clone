@@ -99,7 +99,7 @@ const BindingControl = observer(({ node, slot, meta, children }: BindingControlP
     if (!project || !definitionId) return;
     const props = (getSnapshot(node) as { props?: Record<string, unknown> }).props ?? {};
     const { input, expression } = inputDraftFor({ type: node.type, props, inner: innerInput() }, slot, meta.label, inputFrame?.inputs ?? []);
-    const result = project.makeInput(definitionId, node.id, slot, input, expression);
+    const result = project.makeInput(definitionId, node.id, slot, input, expression, { reuseUnconnected: true });
     if (!result.ok) editorUI.setEditorNotice({ kind: 'refused', message: result.message });
   };
 

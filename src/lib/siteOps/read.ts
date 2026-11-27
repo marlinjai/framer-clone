@@ -399,8 +399,27 @@ colour or a map of breakpoint key to colour, image an address or {src, alt} (htt
 Unsplash photo, whose credit a placement cannot keep), link and file a safe address, choice one of its option values,
 richtext a string or {runs:[{text, marks?, href?}]}, date an ISO 8601 date, border, shadow and transition a CSS value,
 cursor a cursor keyword, list an array of items keyed by field id, gallery an array of images. An event input holds no
-value. An unknown input id, or a value its input refuses, refuses the operation with the reason. No operation yet
-makes or changes a component itself. The component's own page (pageId in getSite) can be read with getPage.
+value. An unknown input id, or a value its input refuses, refuses the operation with the reason.
+
+Making and changing components. A component's own page (pageId in getSite) reads with getPage, and its nodes are edited
+with the usual operations (insertNodes with that pageId, updateStyle, updateText...): every page using the component
+changes with it, and an edit a use cannot take refuses the batch.
+- {op:"createComponent", pageId, nodeIds:[...], name, ref?, placementRef?}: makes a component from nodes next to each
+  other under one parent (several get a wrapping div); a placement takes their place, and the nodes keep their ids
+  inside the component. ref names the component, placementRef the placement, for later operations of the batch.
+- {op:"renameComponent", definitionId, name}: names are unique on the site.
+- {op:"addComponentInput", definitionId, input:{id?, name, type, default?, options?, min?, max?, step?, unit?,
+  maxLength?, multiline?, fields?, description?, group?}, connect?:{nodeId, slot}}: adds an input (the id comes from
+  the name when absent). With connect, a field of a node inside the component reads it, as the editor's Make input:
+  slot is children (its text), href, src, alt, visible, style.<property>, or input.<id> on a component placed inside
+  it. The default is then the field's current value unless one is given. An address (href, src) takes only an image,
+  link or file input; a field already connected is refused.
+- {op:"renameComponentInput", definitionId, inputId, name}: the id, values and connections stay.
+- {op:"removeComponentInput", definitionId, inputId}: removes it with every connection inside the component and every
+  placement's value of it on every page; the answer counts them.
+- {op:"setComponentInputDefault", definitionId, inputId, default}: what every placement without its own value shows;
+  null removes the default (a connected field then shows the value stored in the component). A colour default per
+  breakpoint is keyed by the component page's breakpoint keys.
 
 Workflow: describeVocabulary once, getSite, getPage for the page you edit, then small batches; previewUrl to look at
 the result; publish when it is right.`;

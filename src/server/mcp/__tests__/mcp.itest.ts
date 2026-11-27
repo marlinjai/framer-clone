@@ -365,6 +365,95 @@ describe('the MCP endpoint against a real database', () => {
     }
   });
 
+  it('component authoring through MCP (gaps A3, A4): an agent makes, changes and uses a component alone; stored, reopened and read back; refusals and a stale version write nothing', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const { siteId, homePageId } = (await ok(KEY_A, 'create_site', { name: 'MCP component authoring' })) as { siteId: string; homePageId: string };
+      const made = await ok(KEY_A, 'apply_batch', {
+        siteId,
+        expectedVersion: 1,
+        ops: [
+          { op: 'insertNodes', pageId: homePageId, nodes: [{ ref: 'card', type: 'article', children: [
+            { ref: 'name', type: 'h3', props: { children: 'Glocke' } },
+            { ref: 'place', type: 'p', props: { children: 'Ort' } },
+            { ref: 'year', type: 'p', props: { children: 'Jahr' } },
+          ] }] },
+          { op: 'createComponent', pageId: homePageId, nodeIds: ['ref:card'], name: 'Glockenkarte', ref: 'bell', placementRef: 'first' },
+          { op: 'addComponentInput', definitionId: 'ref:bell', input: { id: 'text', name: 'Text', type: 'text' }, connect: { nodeId: 'ref:name', slot: 'children' } },
+          { op: 'addComponentInput', definitionId: 'ref:bell', input: { id: 'text-2', name: 'Text 2', type: 'text' }, connect: { nodeId: 'ref:place', slot: 'children' } },
+          { op: 'addComponentInput', definitionId: 'ref:bell', input: { id: 'text-3', name: 'Text 3', type: 'text' }, connect: { nodeId: 'ref:year', slot: 'children' } },
+          { op: 'setComponentInputs', nodeId: 'ref:first', values: { text: 'Erste Glocke', 'text-2': 'Turm' } },
+          { op: 'placeComponent', pageId: homePageId, definitionId: 'ref:bell', ref: 'second', inputs: { text: 'Zweite Glocke', 'text-3': '1901' } },
+        ],
+      });
+      expect(made.version).toBe(2);
+      const created = made.created as Record<string, string>;
+      const definitionId = created.bell;
+
+      const site = await ok(KEY_A, 'get_site', { siteId });
+      expect((site.components as Array<Record<string, unknown>>)[0]).toMatchObject({
+        id: definitionId,
+        name: 'Glockenkarte',
+        placements: 2,
+        inputs: [
+          { id: 'text', name: 'Text', type: 'text', default: 'Glocke' },
+          { id: 'text-2', name: 'Text 2', type: 'text', default: 'Ort' },
+          { id: 'text-3', name: 'Text 3', type: 'text', default: 'Jahr' },
+        ],
+      });
+
+      // Refused, nothing written: a taken name, a connection to an address with a text input, a default the type refuses.
+      for (const ops of [
+        [{ op: 'renameComponent', definitionId, name: '' }],
+        [{ op: 'createComponent', pageId: homePageId, nodeIds: [created.second], name: 'Glockenkarte' }],
+        [{ op: 'setComponentInputDefault', definitionId, inputId: 'text', default: { runs: [] } }],
+        [{ op: 'removeComponentInput', definitionId, inputId: 'text-9' }],
+      ]) {
+        const refused = await tool(KEY_A, 'apply_batch', { siteId, expectedVersion: 2, ops });
+        expect(refused.isError).toBe(true);
+      }
+      expect((await ok(KEY_A, 'get_site', { siteId })).version).toBe(2);
+
+      const changed = await ok(KEY_A, 'apply_batch', {
+        siteId,
+        expectedVersion: 2,
+        ops: [
+          { op: 'setComponentInputDefault', definitionId, inputId: 'text-2', default: 'Dorfkirche' },
+          { op: 'renameComponentInput', definitionId, inputId: 'text-3', name: 'Jahr' },
+          { op: 'removeComponentInput', definitionId, inputId: 'text' },
+          { op: 'renameComponent', definitionId, name: 'Glocke' },
+        ],
+      });
+      expect(changed.version).toBe(3);
+      expect((changed.summary as string[])[2]).toMatch(/1 connection\(s\) inside it and the values of 2 placement\(s\) on 1 page\(s\)/);
+
+      // An editor tab still on version 2 (or another agent) is refused.
+      const stale = await tool(KEY_A, 'apply_batch', { siteId, expectedVersion: 2, ops: [{ op: 'setComponentInputDefault', definitionId, inputId: 'text-2', default: 'Alt' }] });
+      expect(stale.structuredContent).toMatchObject({ code: 'site_changed', currentVersion: 3 });
+
+      const outline = await ok(KEY_A, 'get_page', { siteId, pageId: homePageId });
+      const nodes = outline.nodes as Array<{ id: string; component?: { name: string; inputs: Array<Record<string, unknown>> } }>;
+      const second = nodes.find((n) => n.id === created.second)!.component!;
+      expect(second.name).toBe('Glocke');
+      expect(second.inputs).toEqual([
+        { id: 'text-2', name: 'Text 2', type: 'text', source: 'default', value: 'Dorfkirche' },
+        { id: 'text-3', name: 'Jahr', type: 'text', source: 'own', value: '1901' },
+      ]);
+
+      const repository = new SiteRepository(prisma);
+      const reopened = await repository.loadProjectWithVersion({ workspaceId: 'mcp_ws_a', tenantGroupId: GROUP_A }, siteId);
+      expect(reopened.version).toBe(3);
+      const definition = reopened.project.components.get(definitionId)!;
+      expect(definition.name).toBe('Glocke');
+      expect(definition.inputs.map((input) => input.id)).toEqual(['text-2', 'text-3']);
+      const page = reopened.project.pages.get(homePageId)!;
+      expect((page.findComponent(created.first)!.props as { inputs?: unknown }).inputs).toEqual({ 'text-2': 'Turm' });
+      expect(definition.page.findComponent(created.name)!.bindings.children).toBeUndefined();
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   it('deletePage through apply_batch: the row goes, links are counted, refusals write nothing, the published page stays', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     try {

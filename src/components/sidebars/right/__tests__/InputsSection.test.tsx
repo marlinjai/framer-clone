@@ -304,3 +304,47 @@ describe('the styled input controls of a placement', () => {
     expect(valuesOf(node)?.edge).toBe('1px solid red');
   });
 });
+
+// Gap A4: a connected input's default had no field (its element shows the binding),
+// so it could not be changed at all. ProjectModel.setInputDefault, shared with agents.
+describe('the default of each input', () => {
+  it('forward: a connected input\'s default is edited here, one step, and placements with their own value keep it', async () => {
+    const { project, placement } = setup();
+    mount();
+    expect(screen.getByTestId('definition-input-title').textContent).toContain('Sets 2 fields');
+    await type(screen.getByLabelText('Default of Title'), 'Neuer Titel');
+    expect(card(project).inputs[0].default).toBe('Neuer Titel');
+    expect(valuesOf(placement)?.title).toBe('Mine');
+    expect(history()).toBe(1);
+  });
+
+  it('backtrack: a refused default is not stored and says why; undo brings the old one back', async () => {
+    const { project } = setup();
+    mount();
+    await type(screen.getByLabelText('Default of Link'), 'javascript:alert(1)');
+    expect(card(project).inputs[1].default).toBe('/');
+    expect(screen.getByTestId('definition-input-default-href').textContent).toMatch(/Not stored/);
+    await type(screen.getByLabelText('Default of Link'), '/kontakt');
+    expect(card(project).inputs[1].default).toBe('/kontakt');
+    await undo();
+    expect(card(project).inputs[1].default).toBe('/');
+  });
+
+  it('removing the default is one step, and the field then shows none', async () => {
+    const { project } = setup();
+    mount();
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Remove the default of Title' })));
+    expect(card(project).inputs[0].default).toBeUndefined();
+    expect(screen.queryByRole('button', { name: 'Remove the default of Title' })).toBeNull();
+    expect(history()).toBe(1);
+  });
+
+  it('resume and re-entry: a default changed elsewhere (an agent, undo) shows at once', async () => {
+    const { project } = setup();
+    mount();
+    await act(async () => {
+      project.setInputDefault('card', 'title', 'Von einem Agenten');
+    });
+    expect((screen.getByLabelText('Default of Title') as HTMLInputElement).value).toBe('Von einem Agenten');
+  });
+});

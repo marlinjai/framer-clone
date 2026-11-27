@@ -10,7 +10,7 @@
 //
 // PURE: no React, no MST. Client and server safe.
 
-import { inputExpressionFor, parseInputValue, type InputDefinition, type InputType } from './inputs';
+import { inputExpressionFor, mayBindToSlot, parseInputValue, type InputDefinition, type InputType } from './inputs';
 
 /** What the row is on: a node's tag and props, and, on a nested placement, the inner input it sets. */
 export interface MakeInputSource {
@@ -78,4 +78,33 @@ export function inputDraftFor(
     Object.entries({ ...shape, default: parsed?.ok ? parsed.value : undefined }).filter(([, v]) => v !== undefined),
   ) as unknown as InputDefinition;
   return { input, expression: inputExpressionFor(input, slot) };
+}
+
+/**
+ * Whether the draft is named after this input: the same name, or the name with the
+ * " 2" (" 3"...) `identity` adds because this input already took it.
+ */
+const namedAfter = (draft: string, candidate: string): boolean => {
+  const a = draft.trim().toLowerCase();
+  const b = candidate.trim().toLowerCase();
+  return a === b || (a.startsWith(`${b} `) && /^\d+$/.test(a.slice(b.length + 1)));
+};
+
+/**
+ * Of the inputs no field of the definition reads any more, the one Make input should
+ * connect again rather than add a second input beside it, or undefined to add the
+ * draft. A candidate has the draft's type and may set the slot. The one the draft is
+ * named after (its name, or its name and the number a taken name gets) wins; otherwise only a single
+ * candidate is taken, since with several nothing says which the person means, and a
+ * wrong pick would show another field's values. Pure.
+ */
+export function unconnectedInputToReuse(
+  draft: InputDefinition,
+  unconnected: readonly InputDefinition[],
+  slot: string,
+): InputDefinition | undefined {
+  const fitting = unconnected.filter(input => input.type === draft.type && mayBindToSlot(input.type, slot));
+  const named = fitting.filter(input => namedAfter(draft.name, input.name));
+  if (named.length === 1) return named[0];
+  return named.length === 0 && fitting.length === 1 ? fitting[0] : undefined;
 }

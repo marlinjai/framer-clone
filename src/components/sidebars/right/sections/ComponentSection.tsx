@@ -49,7 +49,7 @@ const ACTION =
   'flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded border border-border px-2 text-[11px] text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand phone:h-9';
 
 /** The types whose value has a control of its own here: all but an event, which is wired on the placement. */
-const EDITABLE = new Set([
+export const EDITABLE = new Set([
   'text', 'number', 'toggle', 'color', 'image', 'link', 'choice', 'richtext', 'file', 'date', 'border', 'shadow', 'cursor', 'transition',
   'list', 'gallery',
 ]);
@@ -64,7 +64,7 @@ const STYLE_EXAMPLES: Partial<Record<string, string>> = {
 };
 
 /** A stored value on this frame: a value per breakpoint resolves to the one that applies. */
-function valueOn(value: unknown, breakpointId: string | undefined, breakpoints: readonly BreakpointRef[]): unknown {
+export function valueOn(value: unknown, breakpointId: string | undefined, breakpoints: readonly BreakpointRef[]): unknown {
   return isResponsiveMap(value, new Set(breakpoints.map((b) => b.id))) ? resolveCascade(value, breakpointId, breakpoints).value : value;
 }
 
@@ -294,7 +294,7 @@ const ItemsControl = ({ input, value, onCommit }: { input: InputDefinition; valu
 };
 
 /** The control for one input, by its type. `value` is what the placement shows on this frame. */
-const InputControl = ({ input, value, onCommit }: { input: InputDefinition; value: unknown; onCommit: (value: unknown) => void }) => {
+export const InputControl = ({ input, value, onCommit }: { input: InputDefinition; value: unknown; onCommit: (value: unknown) => void }) => {
   // The value is stored as given once it parses: the renderer parses it again, and
   // what parsing gives back is for the page (a number with its unit, for one).
   const check = (raw: unknown): { ok: true; value: unknown } | { ok: false; reason: string } => {
