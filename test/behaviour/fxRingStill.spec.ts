@@ -337,3 +337,4 @@ describe.each(ENGINES)('in %s', (name, engine) => {
     expect(await page.locator('canvas').count()).toBe(1);
   });
 });
+// ci-replay touch

@@ -96,3 +96,4 @@ export function isFxIssuedAttribute(name: string): boolean {
  */
 export const FX_STATES = ['waiting', 'loading', 'live', 'calm', 'off'] as const;
 export type FxState = (typeof FX_STATES)[number];
+// ci-replay touch

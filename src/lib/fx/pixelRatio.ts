@@ -29,3 +29,4 @@ export function canvasPixelRatio([min, max]: readonly [number, number], deviceRa
 export function liveDprRange(stored: readonly [number, number], steppedDown: boolean): [number, number] {
   return steppedDown ? [1, 1] : [stored[0], stored[1]];
 }
+// ci-replay touch

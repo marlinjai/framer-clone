@@ -34,3 +34,4 @@ loads, by the same seeded generator the layer uses (`mulberry32`, seed 1), and t
 pointer under reduced motion, so a listener on the window stops pointer events before they reach it, and the test
 prints how many it stopped. It can be deleted with the test if the
 ring's reference ever moves into this repository.
+<!-- ci-replay touch -->

@@ -671,3 +671,4 @@ if (isMain) {
     `guards: clean (${files.length} files, ${knownTables.length} tenant tables, rules G1 to G5, FX1 and FX2; ${fxOnlyFiles.length} test files, FX1 and FX2)\n`,
   );
 }
+// ci-replay touch
