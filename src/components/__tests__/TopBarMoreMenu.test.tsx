@@ -164,6 +164,22 @@ describe('compact top bar', () => {
     expect(dialog.textContent).toContain('Moved Header');
   });
 
+  it('Initial state gets the selection ring when it is the current history row', () => {
+    history.undoIdx = 0;
+    try {
+      render(<TopBar />);
+      openMore();
+      act(() => {
+        fireEvent.click(screen.getByRole('menuitem', { name: /History/ }));
+      });
+      const row = screen.getByText('Initial state').closest('button')!;
+      expect(row.getAttribute('aria-current')).toBe('true');
+      expect(row.className).toContain('shadow-selection');
+    } finally {
+      history.undoIdx = 1;
+    }
+  });
+
   it('the unsaved demo has nothing published, so More leaves out Published versions until it is kept', () => {
     currentStore.editorUI.isUnsavedDemo = true;
     const { unmount } = render(<TopBar />);

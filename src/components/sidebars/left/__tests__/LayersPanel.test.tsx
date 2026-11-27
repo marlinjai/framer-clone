@@ -727,6 +727,20 @@ describe('the rows of an FX scene box', () => {
       expect(store.editorUI.editorNotice).toBeUndefined();
     });
 
+    it('drag: a picked row under a drag keeps its ring, the drop indicator drawn apart from it', () => {
+      render(<LayersPanel />);
+      fireEvent.click(nameButton('Bloom'));
+      const dataTransfer = transfer();
+      fireEvent.dragStart(rowOf('Grain'), { dataTransfer });
+      fireEvent(rowOf('Bloom'), createEvent.dragOver(rowOf('Bloom'), { dataTransfer }));
+      const row = rowOf('Bloom');
+      expect(row.getAttribute('data-fx-drop')).not.toBeNull();
+      expect(row.className).toContain('shadow-selection');
+      expect(row.className).not.toContain('shadow-[');
+      expect(row.className).toContain('after:bg-brand');
+      fireEvent.dragEnd(rowOf('Grain'), { dataTransfer });
+    });
+
     it('drag: a nested effect reorders among its siblings only', async () => {
       render(<LayersPanel />);
       await scope('bloom', 'gradient-bg');
