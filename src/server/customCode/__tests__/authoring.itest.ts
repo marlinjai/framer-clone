@@ -143,7 +143,7 @@ describe('forward: a block saved on its page is written', () => {
     if (!result.ok) throw new Error('not written');
     const blob = await readCustomCodeBlob({ siteId: SITE_ID, workspaceId: SCOPE.workspaceId }, result.sha256);
     expect(blob).toMatchObject({ sha256: result.sha256, document: '<p>hello</p>', title: 'Greeting', declaration: DECLARATION, blocked: false });
-    expect(await readCustomCodeStatus({ siteId: SITE_ID, ...SCOPE })).toEqual({ enabled: true, branch: false, usedBytes: 0 });
+    expect(await readCustomCodeStatus({ siteId: SITE_ID, ...SCOPE })).toEqual({ enabled: true, branch: false, usedBytes: 0, disabledByLumitra: null });
   });
 });
 

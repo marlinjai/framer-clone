@@ -23,6 +23,8 @@ import type { TenantScope } from '@/server/sites';
 import { SiteBranchRepository } from '@/server/sites/branches/repository';
 import { customCodeHash, parseDeclaration, type CustomCodeDeclaration } from '@/lib/customCode/contract';
 import { loadLiveCustomCode } from '@/server/customCode/liveBlocks';
+import { customCodeHashes } from '@/lib/renderer/server/applyCustomCode';
+import { parseRevisionDocument } from '@/server/sites/revision';
 import { readCustomCodeStatus, writeCustomCodeBlob } from '@/server/customCode/authoring';
 import { REWRITTEN_REPORT_MAX, blockCustomCodeHash, disableCustomCodeForSite, liftCustomCodeDisable, readRewrittenRows, unblockCustomCodeHash } from '@/server/customCode/takedown';
 import { latestVersionRepository } from '@/server/sites/__tests__/latestVersionRepository';
@@ -82,8 +84,12 @@ async function blob(site: TestSite, code: string): Promise<string> {
   return sha256;
 }
 
-const live = async (site: TestSite, hashes: string[]) =>
-  (await loadLiveCustomCode({ siteId: site.siteId, preview: false, hashes }, ENV))?.blobs ?? new Map();
+/** What the published page may run. Null is a failed read (or a closed gate), which must never pass as "nothing served". */
+const live = async (site: TestSite, hashes: string[]) => {
+  const loaded = await loadLiveCustomCode({ siteId: site.siteId, preview: false, hashes }, ENV);
+  if (!loaded) throw new Error('the live custom code read answered null');
+  return loaded.blobs;
+};
 
 const audit = (site: TestSite) =>
   prisma.customCodeAudit.findMany({ where: { siteId: site.siteId }, select: { action: true, actor: true, sha256: true, detail: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
@@ -159,6 +165,48 @@ describe('resume: a repeated block keeps the first time', () => {
   });
 });
 
+describe('overlapping calls on one hash', () => {
+  /** How many other backends of this database wait for a lock. */
+  const waiting = async () =>
+    Number((await prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT pg_catalog.count(*) AS n FROM pg_catalog.pg_stat_activity
+       WHERE datname = pg_catalog.current_database() AND wait_event_type = 'Lock'`)[0].n);
+  const untilWaiting = (n: number) => expect.poll(waiting, { timeout: 4_000, interval: 25 }).toBe(n);
+
+  it('serializes a block behind an unblock, so the list and the rows never disagree', async () => {
+    const sha256 = await blob(a, `render("overlap ${randomUUID()}")`);
+    await blockCustomCodeHash(sha256, OPERATOR);
+
+    // Hold the site row, so the unblock stops before it changes anything, then start the block behind it.
+    let release!: () => void;
+    let locked!: () => void;
+    const held = new Promise<void>((resolve) => { locked = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT s.id FROM public.sites s WHERE s.id = ${a.siteId} FOR NO KEY UPDATE`;
+      locked();
+      await gate;
+    }, { timeout: 12_000 });
+    await held;
+    let unblock: ReturnType<typeof unblockCustomCodeHash> | undefined;
+    let block: ReturnType<typeof blockCustomCodeHash> | undefined;
+    try {
+      unblock = unblockCustomCodeHash(sha256, OPERATOR);
+      await untilWaiting(1);
+      block = blockCustomCodeHash(sha256, OPERATOR);
+      await untilWaiting(2);
+    } finally {
+      release();
+      await holder;
+    }
+
+    expect(await unblock).toEqual({ sha256, listChanged: true, sites: [a.siteId] });
+    expect(await block).toEqual({ sha256, listChanged: true, sites: [a.siteId] });
+    expect(await prisma.customCodeBlockedHash.findUnique({ where: { sha256 } })).not.toBeNull();
+    expect((await prisma.customCodeBlob.findUniqueOrThrow({ where: { siteId_sha256: { siteId: a.siteId, sha256 } } })).blockedAt).not.toBeNull();
+  });
+});
+
 describe('backtrack: unblocking reverses a block made in error', () => {
   it('takes the hash off the list, clears every row and serves it again', async () => {
     const code = `render("mistake ${randomUUID()}")`;
@@ -200,12 +248,18 @@ describe('re-entry: hashes no site holds, and published versions', () => {
     await blockCustomCodeHash(first, OPERATOR);
 
     await repo.rollbackToRevision(a.scope, a.siteId, 1);
+    const site = await prisma.site.findUniqueOrThrow({ where: { id: a.siteId }, select: { publishedRevisionId: true } });
+    const revision = await prisma.siteRevision.findUniqueOrThrow({ where: { id: site.publishedRevisionId! }, select: { number: true, document: true } });
+    expect(revision.number).toBe(1);
+    const named = parseRevisionDocument(revision.document).pages.flatMap((page) => customCodeHashes(page.snapshot.appComponentTree as never));
+    expect(named).toEqual([first]);
     // The first version's blob is kept (a kept revision names it) and stays blocked: its block shows the fallback.
     const row = await prisma.customCodeBlob.findUnique({ where: { siteId_sha256: { siteId: a.siteId, sha256: first } }, select: { blockedAt: true } });
-    expect(row?.blockedAt).not.toBeNull();
-    const blobs = await live(a, [first, second]);
-    expect(blobs.has(first)).toBe(false);
-    expect(blobs.has(second)).toBe(true);
+    expect(row).not.toBeNull();
+    expect(row!.blockedAt).toBeInstanceOf(Date);
+    expect((await live(a, named)).size).toBe(0);
+    // The code that was not taken down is still servable, so the empty answer above is the block's doing.
+    expect((await live(a, [second])).has(second)).toBe(true);
   });
 });
 

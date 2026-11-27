@@ -88,6 +88,10 @@ async function lockHolders(tx: Tx, sha256: string): Promise<LockedSite[]> {
 }
 
 async function changeHash(tx: Tx, mode: 'block' | 'unblock', sha256: string, actor: TakedownActor, at: Date): Promise<HashTakedownResult> {
+  // One call at a time per hash, taken before any read or write (released at commit). A block of a listed hash
+  // locks no list row (ON CONFLICT DO NOTHING), so an overlapping unblock could otherwise delete the entry after
+  // the block's insert and before its marking: the hash unlisted while a row stays marked.
+  await tx.$queryRaw`SELECT 1 FROM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`custom_code_takedown:${sha256}`}))`;
   let listChanged = false;
   if (mode === 'block') {
     // The list first: from here on nothing serves or writes this hash anywhere, whatever the rows say.

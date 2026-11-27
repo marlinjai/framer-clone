@@ -1486,7 +1486,8 @@ making the chain slow enough to time out the whole transaction). **Decided, say 
 unblock changes only the hash it names, in one transaction, and after it commits a separate read that changes nothing
 (`readRewrittenRows`) lists one level of rows an erase rewrote that hash into, with their site and whether they are
 blocked (at most 200 erase lines, `rewrittenTruncated` past that; title-only erases skipped; a failed read answers
-`rewritten: null` and the takedown stands). The operator takes down or restores each listed hash with its own call,
+`rewritten: null` and the takedown stands; for rows past the cap or after a failed read, `deploy/README.md`, "Taking
+down custom code", gives the read-only query that lists them all). The operator takes down or restores each listed hash with its own call,
 which also reaches the next level. **Who following would have protected against:** nobody the takedown can stop
 anyway. An owner who wants to dodge a block by hash changes one byte through a normal save and gets a new hash, so
 the answer to an owner who keeps doing that is the site disable (D118), not a deeper chain. **Accepted residuals:**
@@ -1514,7 +1515,10 @@ leaves the switch off, and writes nothing when no operator disable stands. **For
 while `readOperatorDisable` (in `src/server/customCode/takedown.ts`) answers a reason, so an owner cannot undo a
 takedown by switching the site on again.
 
-**D119. Lock order and what the takedown never touches.** Every action is one transaction that locks the site rows it
+**D119. Lock order and what the takedown never touches.** A block or unblock first takes a transaction advisory lock
+keyed on the hash, so two overlapping calls on one hash run one after the other (a block of an already listed hash
+locks no list row, so an unblock could otherwise leave the hash unlisted with a row still marked). Every action is one
+transaction that locks the site rows it
 changes FOR NO KEY UPDATE, the lock the guarded write takes and that a save and a publish (FOR UPDATE) and the erase
 conflict with, so pruning (which skips a blocked row, D113) and a write never interleave with a takedown of the same
 site. The route never reads or returns code; its answers and log lines hold the action, the hash, the label and site

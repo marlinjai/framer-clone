@@ -779,13 +779,33 @@ takedown '{"action":"disable-site","siteId":"<site id>","reason":"<why>"}'
 characters and names no person, because the takedown list outlives a company erasure. The answer lists the sites
 changed by id and never carries code. A block or unblock changes only the hash it names. For a hash the answer
 also lists, under `rewritten`, rows a personal-data erase rewrote that code into, with their site and whether they
-are blocked (`null` when that read failed; `rewrittenTruncated` when there were more than it reads). Judge each:
+are blocked (`null` when that read failed; `rewrittenTruncated` when there were more than it reads; in both cases
+get the full list with the query below). Judge each:
 block or unblock it with its own call by its `sha256`, whose answer lists the next level in turn. Repeating a call is safe: it changes only what the first call left, which is normally nothing; a
 row of the same code that another site saved in the very moment of the block is marked by repeating the block (it is
 never served either way, because the takedown list decides). A site disabled this
 way stays off until an operator lifts it with `"action":"lift-site"` (same body as a disable); lifting leaves the
 switch off, and the site's own admin switches it on again through the enable step of slice C7, which must refuse while
 the operator's disable stands.
+
+The route reads only the newest 200 erase lines, and repeating the call returns the same ones. When the answer says
+`"rewrittenTruncated": true` (or `"rewritten": null`), list every rewritten row against a forwarded database (as for
+the operator commands below). The query is read only and selects no code. Set `TAKEN_DOWN` to the hash the call
+named; it goes to psql on standard input with the query, because psql fills in `:'hash'` there and not in `-c`:
+
+```bash
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -v hash="$TAKEN_DOWN" <<'SQL'
+SELECT DISTINCT b.site_id, b.sha256,
+       (b.blocked_at IS NOT NULL OR h.sha256 IS NOT NULL) AS blocked
+  FROM public.custom_code_audit a
+  JOIN public.custom_code_blobs b ON b.site_id = a.site_id AND b.sha256 = a.sha256
+  LEFT JOIN public.custom_code_blocked_hashes h ON h.sha256 = b.sha256
+ WHERE a.action = 'blob-erase' AND a.detail ->> 'replaces' = :'hash' AND a.sha256 <> :'hash'
+ ORDER BY blocked, b.site_id, b.sha256;
+SQL
+```
+
+Rows not yet blocked come first. Judge each as above, with its own call.
 
 ## Operator commands (from a checkout, against a forwarded database)
 

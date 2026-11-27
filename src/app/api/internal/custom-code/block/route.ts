@@ -54,7 +54,8 @@ const MAX_BODY_BYTES = 4 * 1024;
 const NO_STORE = { 'cache-control': 'no-store' };
 
 const common = {
-  reason: z.string().trim().min(1).max(TAKEDOWN_REASON_MAX),
+  // Postgres text cannot hold NUL, so it is refused here as a 400, never at the insert as a 500.
+  reason: z.string().trim().min(1).max(TAKEDOWN_REASON_MAX).refine((reason) => !reason.includes('\u0000'), 'reason must not contain a NUL character'),
   by: z.string().optional(),
 };
 

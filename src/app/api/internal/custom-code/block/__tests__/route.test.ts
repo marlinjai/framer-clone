@@ -87,6 +87,7 @@ describe('POST /api/internal/custom-code/block: the body', () => {
     ['a short hash', { ...block, sha256: 'a'.repeat(63) }],
     ['no reason', { action: 'block', sha256: HASH }],
     ['a blank reason', { ...block, reason: '   ' }],
+    ['a reason holding a NUL character', { action: 'block', sha256: HASH, reason: 'phishing\u0000form' }],
     ['a reason over 500 characters', { ...block, reason: 'x'.repeat(501) }],
     ['an unknown key', { ...block, siteId: 'site-1' }],
     ['disable-site without a site', { action: 'disable-site', reason: 'phishing' }],
