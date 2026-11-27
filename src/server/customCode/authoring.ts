@@ -27,6 +27,7 @@ import { BOX_LIMITS, BOX_SHA256_PATTERN, canonicalDeclarationJson, customCodeHas
 import { allNamed, bytesOfBlobs, liveCustomCodeBytes, namedHashes, pruneUnnamedBlobs } from '@/server/customCode/named';
 import { hasCustomCode, parseCustomCode } from '@/lib/customCode/customCode';
 import { REVISIONS_KEPT } from '@/server/sites/repository';
+import { readOperatorDisable } from '@/server/customCode/takedown';
 import {
   CUSTOM_CODE_WRITES_PER_HOUR,
   declarationStateRefusal,
@@ -273,6 +274,8 @@ export interface CustomCodeSiteStatus {
   enabled: boolean;
   branch: boolean;
   usedBytes: number;
+  /** Set when Lumitra's operator switched the site's custom code off (the takedown route), with the reason. */
+  disabledByLumitra: { reason: string; at: string } | null;
 }
 
 export async function readCustomCodeStatus(
@@ -288,6 +291,8 @@ export async function readCustomCodeStatus(
       enabled: rows[0].custom_code_enabled,
       branch: rows[0].branch_of_site_id !== null,
       usedBytes: await liveCustomCodeBytes(tx, site.siteId),
+      // A branch's switch is never on and never the operator's (D30, D118): no reason to read for it.
+      disabledByLumitra: rows[0].custom_code_enabled || rows[0].branch_of_site_id !== null ? null : await readOperatorDisable(tx, site.siteId),
     };
   });
 }

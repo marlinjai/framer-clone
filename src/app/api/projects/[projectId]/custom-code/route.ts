@@ -123,6 +123,7 @@ async function handleGET(req: Request, { params }: Ctx): Promise<Response> {
         canManage,
         serving: boxFrameSource({ CUSTOM_CODE_DISABLED: process.env.CUSTOM_CODE_DISABLED, SANDBOX_ORIGIN: process.env.SANDBOX_ORIGIN }) !== null,
         usedBytes: status.usedBytes,
+        disabledByLumitra: status.disabledByLumitra,
         limits: {
           blockBytes: BOX_LIMITS.documentBytes,
           siteBytes: BOX_LIMITS.siteBytes,

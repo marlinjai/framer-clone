@@ -102,6 +102,12 @@ describe('GET: the status and one blob', () => {
     expect(mockStatus).toHaveBeenCalledWith({ siteId: 'site_1', workspaceId: 'ws_marlin', tenantGroupId: 'tg_lumitra' });
   });
 
+  it('passes on why Lumitra switched the site off (D118)', async () => {
+    const disabledByLumitra = { reason: 'phishing form reported', at: '2026-11-27T12:00:00.000Z' };
+    mockStatus.mockResolvedValue({ enabled: false, branch: false, usedBytes: 0, disabledByLumitra });
+    expect(await (await GET(get(), ctx)).json()).toMatchObject({ enabled: false, disabledByLumitra });
+  });
+
   it('says when this server serves no block (the kill switch)', async () => {
     process.env.CUSTOM_CODE_DISABLED = '1';
     expect((await (await GET(get(), ctx)).json()).serving).toBe(false);

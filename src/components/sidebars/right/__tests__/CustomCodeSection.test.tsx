@@ -13,7 +13,7 @@ import { DataSourceProviderContext } from '@/lib/bindings/dataSource/context';
 import { InMemoryDataSourceProvider } from '@/lib/bindings/dataSource/inMemoryProvider';
 import { customCodeHash, type CustomCodeDeclaration } from '@/lib/customCode/contract';
 import { CustomCodeAuthoringProvider, canInsertCustomCode, type CustomCodeAuthoringValue } from '@/components/customCode/CustomCodeAuthoring';
-import { CUSTOM_CODE_READ_TIMEOUT_MS, CUSTOM_CODE_SAVE_TIMEOUT_MS } from '@/components/customCode/customCodeClient';
+import { CUSTOM_CODE_READ_TIMEOUT_MS, CUSTOM_CODE_SAVE_TIMEOUT_MS, type CustomCodeStatus } from '@/components/customCode/customCodeClient';
 
 // A whole sidebar on a real store, hashing in the browser's crypto: slow when the suite runs in parallel.
 vi.setConfig({ testTimeout: 30_000 });
@@ -41,7 +41,7 @@ const STATES = [
   { id: 'step', name: 'Step', type: 'number', initial: 0, min: 0, max: 9 },
   { id: 'label', name: 'Label', type: 'text', initial: '' },
 ];
-const STATUS = {
+const STATUS: CustomCodeStatus = {
   enabled: true, branch: false, canManage: true, serving: true, usedBytes: 0,
   limits: { blockBytes: 262144, siteBytes: 1048576, blocksPerPage: 4, writesPerHour: 30 },
 };
@@ -378,6 +378,26 @@ describe('who may write, and where', () => {
     act(() => store.editorUI.selectComponent(block));
     await waitFor(() => expect(screen.getByText(/written on the main site, not on a branch/)).toBeTruthy());
     expect(screen.queryByTestId('insert-custom-code')).toBeNull();
+  });
+
+  it('says Lumitra switched the site off, with the operator\'s reason, and offers no Save (D118)', async () => {
+    server.status = { ...STATUS, enabled: false, disabledByLumitra: { reason: 'phishing form reported', at: '2026-11-27T12:00:00.000Z' } };
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(screen.getByText(/Lumitra switched custom code off for this site/)).toBeTruthy());
+    expect(screen.getByText(/Reason given: phishing form reported/)).toBeTruthy();
+    expect(screen.queryByText(/not switched on for this site/)).toBeNull();
+    expect(section().queryByRole('button', { name: 'Save code' })).toBeNull();
+  });
+
+  it('keeps the plain sentence when the site\'s own people switched it off', async () => {
+    server.status = { ...STATUS, enabled: false, disabledByLumitra: null };
+    const block = page.insertCustomCodeBlock({ kind: 'parent', parentId: main.id })!;
+    mount();
+    act(() => store.editorUI.selectComponent(block));
+    await waitFor(() => expect(screen.getByText(/not switched on for this site/)).toBeTruthy());
+    expect(screen.queryByText(/Lumitra switched custom code off/)).toBeNull();
   });
 
   it('reads nothing from the route and offers nothing while CUSTOM_CODE_AVAILABLE is off', async () => {
