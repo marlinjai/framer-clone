@@ -88,7 +88,7 @@ describe('the sender from the real contacts database', () => {
   it('refuses while a sender field definition is archived', async () => {
     const { book, resolve } = await linkedCompany();
     await book.archiveField('iban');
-    await expect(resolve()).rejects.toMatchObject({ code: 'SENDER_INVALID', details: { problems: ['field_archived:iban'] } });
+    await expect(resolve()).rejects.toMatchObject({ code: 'SENDER_INVALID', details: { fields: ['field_archived:iban'] } });
   });
 
   it('an erased sender is not found; a merged away one too', async () => {

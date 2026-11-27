@@ -125,7 +125,8 @@ export function senderBlockFromContact(contact: Contact): SenderBlockV1 {
 }
 
 function invalidSender(problems: string[], message: string): BooksError {
-  return new BooksError('SENDER_INVALID', `SENDER_INVALID: ${message}`, { problems });
+  // `fields`, the detail the client lists beside its message (lib/books/api.ts).
+  return new BooksError('SENDER_INVALID', `SENDER_INVALID: ${message}`, { fields: problems });
 }
 
 /**
@@ -198,4 +199,21 @@ export async function resolveSender(
     });
   }
   return { block: checkSender(record), contact: { id: record.contact.id, version: record.contact.version } };
+}
+
+/**
+ * The sender to print under the Books transaction's own settings row. `resolved` was read before the transaction
+ * (a network read must not hold the document and counter locks): if the company's source changed in between it is
+ * CONCURRENT_EDIT. Unlinked, the block is the one the transaction sees.
+ */
+export function senderUnderTransaction(resolved: ResolvedSender, locked: SenderSource): ResolvedSender {
+  if ((resolved.contact?.id ?? null) !== locked.senderContactId) {
+    throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the sender contact was changed during this step');
+  }
+  return resolved.contact ? resolved : { block: locked.storedSenderBlock, contact: null };
+}
+
+/** What an `issued` event records about the sender: ids and the version read, never a value. */
+export function senderEventPayload(sender: ResolvedSender): { senderContactId?: string; senderContactVersion?: number } {
+  return sender.contact ? { senderContactId: sender.contact.id, senderContactVersion: sender.contact.version } : {};
 }

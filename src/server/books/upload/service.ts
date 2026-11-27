@@ -38,6 +38,7 @@ import { BooksError, isBooksError } from '../errors';
 import { counterRaiseUnconfirmed, IMPORT_RENDERER, importHistoricalInvoice, newImportSession } from '../importInvoices';
 import { isPdfBytes } from '../pdfBytes';
 import type { BooksScope } from '../scope';
+import { resolveSender } from '../sender';
 import { readSettings } from '../settings';
 import { extractPrintedInvoice } from './extract';
 import { describeError } from '../http/describeError';
@@ -142,7 +143,7 @@ async function revalidate(scope: BooksScope, book: ContactBook, item: ImportItem
   const bytes = await itemContent(scope.db, scope, item.id);
   if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId: item.id });
   const [others, settings] = await Promise.all([listOpenItems(scope.db, scope), readSettings(scope.db, scope)]);
-  const v = await validateItem(scope, book, item, { bytes, others, companySender: settings?.senderBlock ?? null, now });
+  const v = await validateItem(scope, book, item, { bytes, others, companySender: settings ? (await resolveSender(scope, settings)).block : null, now });
   const stored = await updateItem(scope.db, scope, item.id, { status: v.status, problems: v.problems }, {
     expectedVersion: item.version,
     whenStatus: ['ready', 'needs_attention'],
@@ -603,7 +604,7 @@ export async function confirmItem(
   const bytes = await itemContent(scope.db, scope, itemId);
   if (!bytes) throw new BooksError('NOT_RENDERABLE', 'NOT_RENDERABLE: the uploaded file is no longer stored', { itemId });
   const [others, settings] = await Promise.all([listOpenItems(scope.db, scope), readSettings(scope.db, scope)]);
-  const v = await validateItem(scope, book, item, { bytes, others, companySender: settings?.senderBlock ?? null, now });
+  const v = await validateItem(scope, book, item, { bytes, others, companySender: settings ? (await resolveSender(scope, settings)).block : null, now });
   const checked = await updateItem(scope.db, scope, itemId, { status: v.status, problems: v.problems }, {
     expectedVersion: item.version,
     whenStatus: ['ready', 'needs_attention'],

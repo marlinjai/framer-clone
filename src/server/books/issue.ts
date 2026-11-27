@@ -15,9 +15,10 @@
 //      counter locks; there is no cross-database transaction). Unreachable:
 //      RECIPIENT_UNAVAILABLE; missing: RECIPIENT_NOT_FOUND; archived:
 //      RECIPIENT_ARCHIVED; a section 34a field empty: RECIPIENT_INCOMPLETE with
-//      the field names. Never an empty, partial or cached recipient.
+//      the field names. Never an empty, partial or cached recipient. Then the sender (sender.ts): stored in
+//      the Books, or read now from the linked contact.
 //   3. Open the transaction; lock the document FOR UPDATE. No longer a draft: a
-//      concurrent issue won, return it. Its customer changed since step 2:
+//      concurrent issue won, return it. Its customer, or the company's sender source, changed since step 2:
 //      CONCURRENT_EDIT.
 //   4. Repeat the billable-line check on the lines under the lock. Read the
 //      company setting (SETTINGS_MISSING). Under regular taxation a service date or period is
@@ -73,6 +74,7 @@ import { cancelInvoiceIn } from './cancel';
 import { templateSnapshotFor } from './repository/templates';
 import { logoBlocks } from './template/schema';
 import type { BooksScope } from './scope';
+import { resolveSender, senderEventPayload, senderUnderTransaction } from './sender';
 import { requireSettings } from './settings';
 import {
   buildCustomerSnapshot,
@@ -232,6 +234,10 @@ export async function issue(
     snapshotPerson = { contactId: person.contactId, affiliationId: person.affiliationId, name: person.name, role: person.role };
   }
 
+  // The sender, like the recipient, before the transaction: linked, it is a read of the contacts database
+  // (SENDER_UNAVAILABLE, SENDER_NOT_FOUND, SENDER_INVALID). A replacement's credit note prints the same one.
+  const resolvedSender = await resolveSender(scope, await requireSettings(scope.db, scope));
+
   if (options.beforeTransaction) await options.beforeTransaction();
 
   return withDbErrors(() =>
@@ -292,7 +298,8 @@ export async function issue(
         }
         // The sender, now that the profile says whether this is reverse charge
         // (which needs the issuer's VAT id).
-        const missingSender = senderMissingFields(settings.senderBlock, {
+        const sender = senderUnderTransaction(resolvedSender, settings);
+        const missingSender = senderMissingFields(sender.block, {
           taxStatus: settings.taxStatus,
           reverseCharge: profile.reverseCharge,
         });
@@ -301,7 +308,7 @@ export async function issue(
             missing: missingSender,
           });
         }
-        const senderSnapshot = buildSenderSnapshot(settings.senderBlock);
+        const senderSnapshot = buildSenderSnapshot(sender.block);
 
         const now = options.now ?? new Date();
         const fields = await syncDraftTaxState(trx, scope, id, profile, customer, row.net_or_gross, {
@@ -344,6 +351,7 @@ export async function issue(
             issueDate,
             now,
             completedRecipient: null,
+            sender: resolvedSender,
             beforeCommit: options.beforeCommit,
             replacementId: id,
           });
@@ -400,6 +408,7 @@ export async function issue(
             issueDate,
             total: fields.total,
             taxProfileKey: fields.tax_profile_key,
+            ...senderEventPayload(sender),
             ...(replaced ? { replacesDocumentId: replaced.invoiceId, creditNoteId: replaced.creditNoteId } : {}),
           },
         });

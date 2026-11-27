@@ -66,6 +66,7 @@ import { getDocument, selectDocumentRow, type DocumentView } from '../repository
 import { selectCustomerRow } from '../repository/taxState';
 import { templateSnapshotFor } from '../repository/templates';
 import type { BooksScope } from '../scope';
+import { resolveSender } from '../sender';
 import { readSettings } from '../settings';
 import { printedContactPerson, type TemplateSnapshotV1 } from '../snapshots';
 import { printsSubject } from '../template/rules';
@@ -236,7 +237,7 @@ async function draftInput(
       draft: true,
       document: doc,
       lines: view.lines,
-      sender: settings?.senderBlock ?? null,
+      sender: settings ? (await resolveSender(scope, settings)).block : null,
       recipient,
       corrects: null,
       replaces: await replacedInvoice(scope.db, scope, doc),

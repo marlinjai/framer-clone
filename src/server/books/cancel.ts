@@ -12,9 +12,12 @@
 //      second credit note impossible). A draft, or not an invoice:
 //      NOT_CANCELLABLE.
 //   2. Read the setting and build a fresh sender snapshot (the credit note is a
-//      document the company issues today). The customer snapshot is copied from
-//      the invoice, so a cancellation never depends on the contacts database
-//      and always names the invoice's recipient. One exception, for an
+//      document the company issues today). A company with a linked sender
+//      contact (sender.ts) has it read from the contacts database before the
+//      transaction: the cancellation then depends on that database, fails closed
+//      and can be retried. The customer snapshot is copied from the invoice, so
+//      the recipient never depends on it and is always the invoice's. One
+//      exception, for an
 //      IMPORTED invoice whose printed recipient address was incomplete (the
 //      historical import keeps what was printed, never invents): the missing
 //      street, postal code or city of the credit note, a document issued today,
@@ -52,6 +55,7 @@ import { readPersistedView, selectDocumentRow, selectLineRows, type DocumentView
 import type { BooksScope } from './scope';
 import { requireSettings } from './settings';
 import { readRecipient } from './recipients';
+import { resolveSender, senderEventPayload, senderUnderTransaction, type ResolvedSender } from './sender';
 import { buildSenderSnapshot, senderMissingFields, toJsonb, type CustomerSnapshot } from './snapshots';
 
 const cancelInput = z.object({
@@ -96,6 +100,17 @@ async function completeImportedRecipient(scope: BooksScope, invoiceId: string): 
   };
 }
 
+/**
+ * The sender of the credit note, read before the transaction. null when there is nothing to cancel (unknown, a
+ * draft, not an invoice, already cancelled): the transaction gives that answer, so a retry of a finished
+ * cancellation never needs the contacts database.
+ */
+async function senderForCancellation(scope: BooksScope, invoiceId: string): Promise<ResolvedSender | null> {
+  const row = await selectDocumentRow(scope.db, scope, invoiceId);
+  if (!row || row.doc_type !== 'invoice' || row.status === 'draft' || row.status === 'cancelled') return null;
+  return resolveSender(scope, await requireSettings(scope.db, scope));
+}
+
 export async function cancelInvoice(
   scope: BooksScope,
   invoiceId: string,
@@ -115,6 +130,7 @@ export async function cancelInvoice(
   const args = parsed.data;
   const issueDate = resolveIssueDate(args.issueDate, options.now);
   const completedRecipient = await completeImportedRecipient(scope, invoiceId);
+  const sender = await senderForCancellation(scope, invoiceId);
 
   return withDbErrors(() =>
     scope.db
@@ -127,6 +143,7 @@ export async function cancelInvoice(
           issueDate,
           now: options.now ?? new Date(),
           completedRecipient,
+          sender,
           beforeCommit: options.beforeCommit,
         }),
       ),
@@ -143,6 +160,8 @@ export interface CancelInTransaction {
   now: Date;
   /** See completeImportedRecipient (null for an editor invoice). */
   completedRecipient: CustomerSnapshot | null;
+  /** The sender, resolved before the transaction; null only where the caller found nothing to cancel. */
+  sender: ResolvedSender | null;
   /** Runs with the issued credit note before the caller's commit (the routes store its PDF). */
   beforeCommit?: (trx: Transaction<CommerceDB>, creditNote: DocumentView) => Promise<void>;
   /**
@@ -201,7 +220,14 @@ export async function cancelInvoiceIn(
 
   // (2) A fresh sender; the invoice's recipient.
   const settings = await requireSettings(trx, scope);
-  const missingSender = senderMissingFields(settings.senderBlock, {
+  // null here means the invoice became cancellable after the caller looked (a draft issued meanwhile).
+  if (!core.sender) {
+    throw new BooksError('CONCURRENT_EDIT', 'CONCURRENT_EDIT: the invoice changed during this step', {
+      documentId: invoiceId,
+    });
+  }
+  const sender = senderUnderTransaction(core.sender, settings);
+  const missingSender = senderMissingFields(sender.block, {
     taxStatus: settings.taxStatus,
     reverseCharge: invoice.reverse_charge,
   });
@@ -210,7 +236,7 @@ export async function cancelInvoiceIn(
       missing: missingSender,
     });
   }
-  const senderSnapshot = buildSenderSnapshot(settings.senderBlock);
+  const senderSnapshot = buildSenderSnapshot(sender.block);
 
   // (3) The credit note as a draft, with copies of the lines.
   // A credit note is never dated before the invoice it cancels.
@@ -327,6 +353,7 @@ export async function cancelInvoiceIn(
       issueDate,
       total: invoice.total,
       correctsDocumentId: invoiceId,
+      ...senderEventPayload(sender),
     },
   });
 

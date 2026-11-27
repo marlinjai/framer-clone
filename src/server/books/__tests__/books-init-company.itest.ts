@@ -126,7 +126,7 @@ describe('books:init-company end to end', () => {
       { docType: 'offer', format: 'ANG-{n}', nextValue: 1, created: true },
     ]);
     // auth-brain wins for the fields it holds; the file fills the rest.
-    expect(result.settings.senderBlock).toMatchObject({
+    expect(result.settings.storedSenderBlock).toMatchObject({
       legalName: 'Example Studio',
       addressLine1: 'Musterstrasse 1',
       postalCode: '10115',
@@ -241,7 +241,7 @@ describe('books:init-company end to end', () => {
     });
     const logs: string[] = [];
     const fromAuthBrain = await runBooksInitCompany(argv(a.tenantId, a.senderFile, COUNTERS), cliEnv(), (l) => logs.push(l));
-    expect(fromAuthBrain.settings.senderBlock).toMatchObject({
+    expect(fromAuthBrain.settings.storedSenderBlock).toMatchObject({
       addressLine1: 'Musterstrasse 1',
       addressLine2: null,
       postalCode: '10115',
@@ -256,7 +256,7 @@ describe('books:init-company end to end', () => {
       file: { taxNumber: '12/345/67890', addressLine1: 'File Street 9', postalCode: '99999', city: 'Leipzig', countryCode: 'de' },
     });
     const fromFile = await runBooksInitCompany(argv(b.tenantId, b.senderFile, COUNTERS), cliEnv(), () => {});
-    expect(fromFile.settings.senderBlock).toMatchObject({
+    expect(fromFile.settings.storedSenderBlock).toMatchObject({
       addressLine1: 'File Street 9',
       postalCode: '99999',
       city: 'Leipzig',

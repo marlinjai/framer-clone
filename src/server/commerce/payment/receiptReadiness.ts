@@ -7,24 +7,28 @@ import 'server-only';
 // refuses to open such a payment, the pay route refuses to start one, and the owner's payments page names what is
 // missing and where it is set.
 //
-// The three things the Issue button needs from the company itself, with the same rules it applies:
+// The things the Issue button needs from the company itself, with the same rules it applies:
 //   - the Books settings (SETTINGS_MISSING at issue);
 //   - the invoice number series (COUNTER_MISSING at issue);
-//   - a sender block complete for a domestic invoice (SENDER_INCOMPLETE at issue). Domestic, because the shop only
+//   - a sender that can be read and used: with a linked sender contact (books/sender.ts) that is a read of the
+//     contacts database, so an outage refuses new payments before any money moves (`sender_unavailable`);
+//   - a sender complete for a domestic invoice (SENDER_INCOMPLETE at issue). Domestic, because the shop only
 //     invoices buyers in Germany (invoiceable.ts), and a German buyer is never reverse charge (germanVat.ts), so
 //     the issuer's VAT id is never the only acceptable tax id.
-// What depends on the buyer (the contacts database answering, an archived contact, a namesake with another VAT id) is
-// not the company's state and is not checked here.
+// What depends on the buyer (their contact being archived, a namesake with another VAT id) is not the company's state
+// and is not checked here.
 
 import type { Kysely } from 'kysely';
 
+import { isBooksError } from '@/server/books/errors';
 import { booksScope } from '@/server/books/scope';
+import { resolveSender, type SenderDirectory } from '@/server/books/sender';
 import { readCounters, readSettings } from '@/server/books/settings';
 import { senderMissingFields } from '@/server/books/snapshots';
 
 import type { CommerceDB } from '../db-types';
 
-export type ReceiptBlocker = 'books_not_set_up' | 'invoice_numbers_missing' | 'sender_incomplete';
+export type ReceiptBlocker = 'books_not_set_up' | 'invoice_numbers_missing' | 'sender_unavailable' | 'sender_incomplete';
 
 export type ReceiptReadiness =
   | { ready: true }
@@ -40,15 +44,27 @@ export async function receiptReadiness(
   db: Kysely<CommerceDB>,
   tenantGroupId: string,
   companyId: string,
+  options: { senders?: SenderDirectory } = {},
 ): Promise<ReceiptReadiness> {
-  const scope = booksScope(db, tenantGroupId, companyId);
+  const scope = booksScope(db, tenantGroupId, companyId, options);
   const settings = await readSettings(db, scope);
   if (!settings) return { ready: false, blocker: 'books_not_set_up', missing: [] };
   const counters = await readCounters(db, scope);
   if (!counters.some((counter) => counter.docType === 'invoice')) {
     return { ready: false, blocker: 'invoice_numbers_missing', missing: [] };
   }
-  const missing = senderMissingFields(settings.senderBlock, { taxStatus: settings.taxStatus, reverseCharge: false });
+  let block;
+  try {
+    block = (await resolveSender(scope, settings)).block;
+  } catch (err) {
+    if (!isBooksError(err, 'SENDER_UNAVAILABLE') && !isBooksError(err, 'SENDER_NOT_FOUND') && !isBooksError(err, 'SENDER_INVALID')) {
+      throw err;
+    }
+    // The code and its cause (names and ids only by the BooksError contract): an outage must be visible.
+    console.error(`[payments] company ${companyId}: the sender cannot be used, ${err.code}`, err.cause ?? err.message);
+    return { ready: false, blocker: 'sender_unavailable', missing: [] };
+  }
+  const missing = senderMissingFields(block, { taxStatus: settings.taxStatus, reverseCharge: false });
   if (missing.length > 0) return { ready: false, blocker: 'sender_incomplete', missing };
   return { ready: true };
 }

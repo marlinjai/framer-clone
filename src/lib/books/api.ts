@@ -262,7 +262,10 @@ export interface SettingsView {
   settings: {
     taxStatus: 'small_business' | 'regular';
     exemptionNote: string;
-    senderBlock: Record<string, string | null>;
+    /** null when the linked sender contact cannot be read or used (`senderProblem` says why). */
+    senderBlock: Record<string, string | null> | null;
+    senderSource: 'settings' | 'contact';
+    senderProblem: { code: 'sender_unavailable' | 'sender_not_found' | 'sender_invalid'; fields: string[] } | null;
     defaultPaymentTermsDays: number;
   } | null;
   counters: Array<{ docType: string; format: string; nextValue: number; nextNumber: string }>;
@@ -326,6 +329,11 @@ const MESSAGES: Record<string, string> = {
   asset_busy: 'This logo is being used by an invoice being issued or a template being saved. Try again in a moment.',
   variant_not_found: 'This item is not in the catalogue any more. Choose another one; nothing was changed.',
 };
+
+/** The words for a code the server answered inside a successful reply (the settings' sender problem). */
+export function messageFor(code: string): string {
+  return MESSAGES[code] ?? `Something is wrong (${code}).`;
+}
 
 export class BooksApiError extends Error {
   constructor(

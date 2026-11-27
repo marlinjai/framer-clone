@@ -146,7 +146,10 @@ export async function runBooksInitCompany(
       defaultPaymentTermsDays: values['payment-terms'] ? Number(values['payment-terms']) : undefined,
       counters,
     });
-    const filled = SENDER_FIELDS.filter((f) => result.settings.senderBlock[f] != null);
+    const filled = SENDER_FIELDS.filter((f) => result.settings.storedSenderBlock[f] != null);
+    if (result.settings.senderContactId !== null) {
+      log('note: this company is linked to a sender contact, which is what documents print; the stored block is only what --unlink returns to');
+    }
     log(`settings: tax status ${result.settings.taxStatus}, payment terms ${result.settings.defaultPaymentTermsDays} days`);
     log(`sender fields set: ${filled.join(', ')}`);
     for (const c of result.counters) {

@@ -31,6 +31,7 @@ import {
   BooksApiError,
   TYPE_LABELS,
   booksApi,
+  messageFor,
   type CustomerView,
   type DocumentListItem,
   type SettingsView,
@@ -156,7 +157,7 @@ export default function BooksHome({ initialTab = 'documents' }: { initialTab?: T
           <h1 className="text-2xl font-semibold tracking-tight">Books</h1>
           {settings?.settings ? (
             <p className="mt-1 text-sm text-muted-foreground">
-              {settings.settings.senderBlock.legalName ?? 'Company'} ·{' '}
+              {settings.settings.senderBlock?.legalName ?? 'Company'} ·{' '}
               {settings.settings.taxStatus === 'small_business'
                 ? 'small business (§ 19 UStG, no VAT charged)'
                 : 'regular VAT'}
@@ -183,6 +184,19 @@ export default function BooksHome({ initialTab = 'documents' }: { initialTab?: T
           series are configured once by an operator (<code>pnpm books:init-company</code>). Until then nothing can be
           issued.
         </div>
+      ) : null}
+
+      {settings?.settings?.senderProblem ? (
+        <div role="alert" className="mb-6 rounded-md border px-4 py-3 text-sm">
+          {messageFor(settings.settings.senderProblem.code)}
+          {settings.settings.senderProblem.fields.length > 0 ? ` Affected: ${settings.settings.senderProblem.fields.join(', ')}.` : ''}
+          {' '}Until then nothing can be issued or cancelled.
+        </div>
+      ) : settings?.settings?.senderSource === 'contact' ? (
+        <p className="mb-6 text-sm text-muted-foreground">
+          The sender details on your invoices come from your business contact. Edit them under Contacts in the receipts app
+          (<a className="underline" href="https://receipts.lumitra.co" target="_blank" rel="noreferrer">receipts.lumitra.co</a>).
+        </p>
       ) : null}
 
       <ErrorAlert message={error} onDismiss={() => setError(null)} />

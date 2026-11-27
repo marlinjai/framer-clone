@@ -111,7 +111,7 @@ describe('checkSender', () => {
     try {
       checkSender(r);
     } catch (err) {
-      return (err as { details?: { problems?: unknown } }).details?.problems;
+      return (err as { details?: { fields?: unknown } }).details?.fields;
     }
     return 'accepted';
   };
