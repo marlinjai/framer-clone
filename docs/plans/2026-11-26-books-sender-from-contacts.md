@@ -1,9 +1,9 @@
 ---
 type: plan
-status: draft
+status: decided
 date: 2026-11-26
 title: "Books: the invoice sender comes from shared contacts"
-summary: "Invoices read the business sender details (name, address, tax ids, bank details) from one organization in the shared contacts database instead of the separately maintained books_company_settings.sender_block. Books keeps a pointer to that contact; tax status, exemption note, payment terms, numbering and templates stay in Books. Issued documents keep their frozen sender snapshot. Draft: waits for the owner's decision on who may change what invoices print."
+summary: "Invoices read the business sender details (name, address, tax ids, bank details) from one organization in the shared contacts database instead of the separately maintained books_company_settings.sender_block. Books keeps a pointer to that contact; tax status, exemption note, payment terms, numbering and templates stay in Books. Issued documents keep their frozen sender snapshot. Decided 2026-11-27: no extra approval step while the company has one user; a Books confirmation of bank changes is required before a second user or a client company links a sender."
 tags: [framer-clone, books, invoices, contacts, tenancy, bank-details, migration]
 projects: [framer-clone, contacts, receipt-ocr-app]
 ---
@@ -102,7 +102,7 @@ render shows it); unlink and relink another contact; resume a draft after an out
 again after success with contacts down; erased, archived, merged or foreign-company sender; a
 conflicting field definition; an invalid IBAN.
 
-## Decision for Marlin: who may change what invoices print
+## Decision: who may change what invoices print
 
 Today only an operator with server access can change the sender. After the switch, these can change
 the IBAN that invoices and their payment code carry, or remove the sender contact: anyone holding
@@ -114,7 +114,7 @@ connection string. The threat is a wrong or hostile bank account on a real invoi
 owner, who is also the one workspace admin and the one tenant group owner. Service keys and server
 code were not counted.
 
-- **C (recommended now): no extra guard.** The only person who can edit the contact is the person
+- **C (chosen, 2026-11-27): no extra guard.** The only person who can edit the contact is the person
   who may change where customers pay, so a guard would protect against nobody today. The checksum
   still catches typing errors. **Condition:** A is built before a second user gets access to a
   company with a linked sender, or before a client company links one.
@@ -126,7 +126,8 @@ code were not counted.
 - **B: the receipts app restricts the sender contact** to owners and admins. It needs the receipts
   app to learn which contact is the sender and does not cover other writers.
 
-Until decided, nothing is built.
+**Decided by Marlin, 2026-11-27: C**, with its condition (on the roadmap). A and B are not built now.
+The production gates below stay separate decisions.
 
 ## Build parts, each its own branch
 
@@ -140,14 +141,14 @@ Each branch stays at about 1,500 changed lines at most.
 1. **`restoreField` (contacts and receipts):** the package method, its release, and the restore
    action on the receipts field screen.
 2. **Books resolver, not wired:** tenant migration for the pointer, `SenderDirectory` port,
-   mapping, validation, errors and their tests. The migration takes the next free number at build
-   time: held pull request 418 (form notification mail) already carries one past
-   `030_books_contact_person` and the checkout session migration, so agree the order with its owner.
+   mapping, validation, errors and their tests. The migration takes the next free number, checked
+   again at build time against `main` and open pull requests (pull request 418 merged and holds
+   `032_form_notification`).
 3. **Books readers switched,** pointer null everywhere: issue, cancel, correct, draft rendering,
    upload fallback, payment readiness, the settings screen (shows "from contact" with where to edit
    it), the operator command (`--sender-contact <id>`, `--dry-run` parity report that prints field
    names only, `--unlink`), the single-reader check and the flow tests. Gate 1 follows this part.
-4. **Only if A is chosen** (now or later): approval column, right, screen and tests.
+4. **Only when A's condition is met:** approval column, right, screen and tests.
 5. **Cleanup, a later release,** after at least one invoice issued from the contact: stop writing
    and requiring `sender_block` for linked companies, require a sender contact when a new company is
    initialised, then drop the column.

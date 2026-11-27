@@ -223,8 +223,11 @@ connections to the suite. The four lines below are in that order.
   test shop on 2026-10-26, built the same day. (2026-10-26)
 - [ ] Books: invoices read the business sender (name, address, tax ids, bank details) from one
   organization in the shared contacts database instead of the stored sender block (asked 2026-11-26).
-  Draft plan, nothing built; waits for the owner's decision on who may change what invoices print.
-  [plan](docs/plans/2026-11-26-books-sender-from-contacts.md) (2026-11-26)
+  Plan decided 2026-11-27, building.
+  [plan](docs/plans/2026-11-26-books-sender-from-contacts.md) (2026-11-27)
+- [ ] Books confirms a change of the sender's bank details (option A of the
+  [sender plan](docs/plans/2026-11-26-books-sender-from-contacts.md)): must be built BEFORE a second user gets
+  access to a company with a linked sender, or before a client company links one (decided 2026-11-27). (2026-11-27)
 - [ ] 3i. Contact person on a customer and on an invoice (the Books half of the contact affiliations plan in the contacts repository, the plan dated 2026-11-11 named contact affiliations, section 6): a business customer's people with their roles, a default per customer, "z. Hd. Name, Rolle" on the invoice (template block `attention`, off by default), frozen in the recipient snapshot version 2 at issue; migration `030_books_contact_person`. Built 2026-11-11 in the pull request that adds this line (needs `@marlinjai/contacts-core` 0.5.0, on npm). Left: deploy, which needs the shared contacts database at migration `0003` first (applied by the receipts app at its start), so it waits for the plan's production gate: a same-day verified backup, the dry run on a restored copy, Marlin's yes. Then prove it live on the Testfirma company without creating real data (read the customer screen and a draft's contact person select). (2026-11-11)
 - [ ] 3h. Shop buyers with the same name share one contact and one Books customer: the shared contacts
   database's identity is the name (and company or role), so two different buyers called "Anna Müller" (or one
