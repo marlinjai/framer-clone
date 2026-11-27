@@ -20,7 +20,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
-import { selectEngines, selection } from './selection';
+import { selectEngines, selection, skipWithoutEngines } from './selection';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
@@ -209,6 +209,7 @@ beforeAll(() => {
   if (!existsSync(path.join(FONTS, 'fraunces'))) execFileSync('pnpm', ['fonts:sync'], { stdio: 'ignore' });
 }, 120_000);
 
+skipWithoutEngines(ENGINES);
 describe.each(ENGINES)('the theme on the published page in %s', (_engine, type) => {
   let browser: Browser;
   beforeAll(async () => {

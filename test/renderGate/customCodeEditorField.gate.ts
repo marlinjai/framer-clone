@@ -8,7 +8,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { chromium, webkit, type Browser, type BrowserType } from 'playwright';
-import { selectEngines, selection } from './selection';
+import { selectEngines, selection, skipWithoutEngines } from './selection';
 
 let bundle = '';
 
@@ -31,10 +31,13 @@ const PAGE = () => `<!doctype html><html><head><meta charset="utf-8"></head><bod
 <script>${bundle}</script>
 </body></html>`;
 
-describe.each(selectEngines([
+const ENGINES = selectEngines([
   ['chromium', chromium],
   ['webkit', webkit],
-] as [string, BrowserType][], selection))('the field component in %s', (_name, type) => {
+] as [string, BrowserType][], selection);
+
+skipWithoutEngines(ENGINES);
+describe.each(ENGINES)('the field component in %s', (_name, type) => {
   let browser: Browser;
   beforeAll(async () => {
     browser = await type.launch();

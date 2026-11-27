@@ -13,7 +13,7 @@ import { DOM_MEMBER_NAMES, FORM_MEMBER_NAMES } from '@/lib/renderer/domMemberNam
 import { RENDERED_TAGS } from '@/lib/renderer/renderVocabulary';
 import { buildProbes, type Probe } from './probes';
 import { readBundle, runBatch, type Finding, type Surface } from './harness';
-import { describeSelection, selectEngines, selectProbes, selection } from './selection';
+import { describeSelection, selectEngines, selectProbes, selection, skipWithoutEngines } from './selection';
 
 const FULL = process.env.RENDER_GATE_FULL === '1';
 const BATCH_SIZE = 200;
@@ -53,6 +53,7 @@ const summary = (findings: readonly Finding[]) =>
     .map((f) => `${f.browser} ${f.surface} ${f.detector}: ${f.what} (${f.detail})`);
 
 describe('render gate', () => {
+  skipWithoutEngines(BROWSERS);
   let bundle = '';
 
   beforeAll(async () => {

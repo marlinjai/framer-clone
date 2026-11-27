@@ -88,7 +88,7 @@ export const RENDER_GATE_LONG = [
 ];
 
 /** Effects (fx), two thirds of the behaviour proofs' time, asked only when effects or the canvas they draw on change. */
-export const FX_SOURCES = [/^src\/.*(fx|scene|effect)/i, /^src\/components\/Canvas\.tsx$/, /^src\/lib\/canvas\//, /^src\/components\/ComponentRenderer\.tsx$/];
+export const FX_SOURCES = [/^src\/.*(fx|scene|effect)/i, /^src\/components\/Canvas\.tsx$/, /^src\/lib\/canvas\//, /^src\/components\/ComponentRenderer\.tsx$/, /^src\/models\/ComponentModel\//];
 const isFxSpec = (file) => /^test\/behaviour\/fx[^/]*\.spec\.ts$/.test(file);
 const isFxHelper = (file) => /^test\/behaviour\/fx[^/]*\.entry\.tsx$/.test(file);
 

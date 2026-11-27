@@ -11,7 +11,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { chromium, webkit, type BrowserType, type Page } from 'playwright';
-import { asks, selectEngines, selection } from './selection';
+import { asks, selectEngines, selection, skipWithoutEngines } from './selection';
 import { middleware } from '@/middleware';
 import { MAPS_CONSENT_COOKIE } from '@/lib/site/cspReportOnly';
 import { parseMapEmbed } from '@/lib/mapEmbed/mapEmbed';
@@ -188,6 +188,7 @@ describe('the enforced frame policy', () => {
 // real render of such a page, it must leave the header's decision about the map alone and
 // refuse another site's box path, which the header alone allows.
 describe("the per-site policy of a page with custom code", () => {
+  skipWithoutEngines(ENGINES);
   const SITE_ID = BOX_FRAME.split('/')[4];
   const OTHER_SITE_BOX = BOX_FRAME.replace(SITE_ID, 'ffffffff-1c2d-4e5f-8a9b-0c1d2e3f4a5b');
 
@@ -270,6 +271,7 @@ const CONSENT_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><b
 </script></body></html>`;
 
 describe('maps consent given on a page already loaded', () => {
+  skipWithoutEngines(ENGINES);
   it.each(ENGINES)(
     'in %s: the yes loads a new document whose policy allows the map, and the map loads',
     async (_name, type) => {
@@ -331,6 +333,7 @@ const PLUGIN_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><bo
 </script></body></html>`;
 
 describe('objects and embeds under the enforced policy', () => {
+  skipWithoutEngines(ENGINES);
   it.each(ENGINES)('in %s: a published page refuses both', async (_name, type) => {
     const url = `https://${SITE}/about`;
     const headers = await headersFor(url, '');

@@ -9,7 +9,7 @@ import { chromium, webkit, type BrowserType } from 'playwright';
 import { bundleEditor } from '../score/lib/canvasBundle';
 import { ComponentTypeEnum } from '@/models/ComponentModel';
 import { buildProbes, type ProbeNode } from './probes';
-import { describeSelection, selectEngines, selectProbes, selection } from './selection';
+import { describeSelection, selectEngines, selectProbes, selection, skipWithoutEngines } from './selection';
 
 const EMBEDS = 'script,style,iframe,object,embed,fencedframe,portal';
 const HOSTILE = /^tag .* in (?:html|svg)$|^<(?:x-y|div) \w+=html>$|proto|^an? \w+ ref$|as text|^a style|^<(?:a|form) (?:href|action)=js-array>$|^<form> holding <(?:input|image) id=|^<input id=\w+ form=>|^a stored form with a (?:field|submit button|marked div)/;
@@ -25,8 +25,11 @@ const toSnapshot = (node: ProbeNode): Record<string, unknown> => ({
   children: (node.children ?? []).map(toSnapshot),
 });
 
+const ENGINES = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
+
 describe('render gate on the mounted editor', () => {
-  it.each(selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection))('nothing stored acts on the canvas in %s', async (_name, type) => {
+  skipWithoutEngines(ENGINES);
+  it.each(ENGINES)('nothing stored acts on the canvas in %s', async (_name, type) => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const bundle = await bundleEditor();
     const hostile = buildProbes(false).filter((probe) => !probe.malformed && HOSTILE.test(probe.what));

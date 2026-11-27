@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { chromium, webkit, type Browser, type BrowserType } from 'playwright';
-import { selectEngines, selection } from './selection';
+import { selectEngines, selection, skipWithoutEngines } from './selection';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
@@ -97,6 +97,7 @@ const bannerFacts = () =>
     };
   })();
 
+skipWithoutEngines(ENGINES);
 describe.each(ENGINES)('a rule on the document in %s', (_name, type) => {
   const withBrowser = async (work: (browser: Browser) => Promise<void>) => {
     const browser = await type.launch();

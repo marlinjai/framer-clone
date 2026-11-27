@@ -11,6 +11,8 @@
 // A run prints what it asked (seed, sample, slice, counts), so a failure found with a fresh seed can be
 // asked again exactly: the same four variables give the same probes in the same order.
 
+import { it } from 'vitest';
+
 export type Engine = 'chromium' | 'webkit' | 'firefox';
 
 export interface Selection {
@@ -86,6 +88,15 @@ export function selectProbes<T>(probes: readonly T[], selection: Selection): T[]
 export function selectEngines<T extends readonly [string, unknown]>(engines: readonly T[], selection: Selection): T[] {
   if (!selection.engines) return [...engines];
   return engines.filter(([name]) => selection.engines!.includes(name as Engine));
+}
+
+/**
+ * Call beside the tests that run once per engine of `engines`. When the asked engines leave that list empty, those
+ * tests are never registered, and vitest fails an empty file or suite ("No test suite found"), so register one
+ * skipped test that says why.
+ */
+export function skipWithoutEngines(engines: readonly unknown[]): void {
+  if (engines.length === 0) it.skip('no engine asked of this run applies here (RENDER_GATE_ENGINES)', () => {});
 }
 
 /**

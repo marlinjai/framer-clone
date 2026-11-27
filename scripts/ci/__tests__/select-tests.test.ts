@@ -93,6 +93,20 @@ describe('every gate test honours the engines a job asks', () => {
   }
 });
 
+describe('a gate file left with no engine skips, and does not fail as empty', () => {
+  // vitest fails a file or suite that registers no test, which is what `describe.each` and `it.each` over an empty
+  // engine list do (a Firefox-only run of the whole gate failed 13 suites this way). This holds that each file
+  // narrowing a list calls the helper; whether it calls it in each such suite is seen by running the gate with
+  // RENDER_GATE_ENGINES=firefox.
+  for (const file of gates) {
+    const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    if (!text.includes('selectEngines(')) continue;
+    it(`${file} registers a skip for an empty engine list`, () => {
+      expect(text).toMatch(/\bskipWithoutEngines\(\w+\);/);
+    });
+  }
+});
+
 describe('a pull request asks what it can affect, and fails open', () => {
   const pr = (changed: string[]) => select.plan({ tier: 'pr', changed });
 
@@ -112,7 +126,7 @@ describe('a pull request asks what it can affect, and fails open', () => {
   });
 
   it('an effects path adds the effects proofs', () => {
-    for (const file of ['src/lib/fx/ring.ts', 'src/lib/fxScene/edit.ts', 'src/components/fx/FxLayer.tsx', 'src/components/Canvas.tsx']) {
+    for (const file of ['src/lib/fx/ring.ts', 'src/lib/fxScene/edit.ts', 'src/components/fx/FxLayer.tsx', 'src/components/Canvas.tsx', 'src/models/ComponentModel/index.ts']) {
       expect([...filesOf(pr([file]).behaviour)].sort()).toEqual(specs);
     }
   });

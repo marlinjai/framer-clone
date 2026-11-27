@@ -10,7 +10,7 @@ import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType } from 'playwright';
-import { selectEngines, selection } from './selection';
+import { selectEngines, selection, skipWithoutEngines } from './selection';
 import { HeadItemTags } from '@/components/site/HeadItemTags';
 import { META_NAMES, resolveHead } from '@/lib/site/headItems';
 
@@ -123,6 +123,7 @@ const refused = [
 
 const ENGINES: [string, BrowserType][] = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
 
+skipWithoutEngines(ENGINES);
 describe.each(ENGINES)('head items in %s', (_name, type) => {
   it('the detector sees a request that really happens (canary)', async () => {
     const browser = await type.launch();
