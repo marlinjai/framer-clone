@@ -15,6 +15,7 @@
     "start": "next start",
     "fonts:sync": "tsx scripts/sync-fonts.ts",
     "lint": "eslint .",
+    "verify": "bash scripts/verify.sh",
     "lint:guards": "node scripts/check-guards.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

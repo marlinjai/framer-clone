@@ -32,6 +32,7 @@ import { companyErasure } from './029_company_erasure';
 import { booksContactPerson } from './030_books_contact_person';
 import { checkoutSession } from './031_checkout_session';
 import { formNotification } from './032_form_notification';
+import { booksSenderContact } from './033_books_sender_contact';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -181,4 +182,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksContactPerson,
   checkoutSession,
   formNotification,
+  booksSenderContact,
 ];

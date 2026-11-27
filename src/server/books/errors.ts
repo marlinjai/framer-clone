@@ -34,6 +34,10 @@ export type BooksErrorCode =
   | 'INVALID_POSITIONS'
   | 'NO_BILLABLE_LINES'
   | 'SENDER_INCOMPLETE'
+  // A sender linked to the shared contacts database (sender.ts, 033_books_sender_contact).
+  | 'SENDER_UNAVAILABLE'
+  | 'SENDER_NOT_FOUND'
+  | 'SENDER_INVALID'
   | 'COUNTER_MISSING'
   | 'COUNTER_EXISTS'
   | 'SERVICE_DATE_REQUIRED'
