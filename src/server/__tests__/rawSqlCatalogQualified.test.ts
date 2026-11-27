@@ -8,8 +8,7 @@
 // that look like calls (IN, EXISTS, COALESCE, ...) and interpolations (`${...}`) are not function calls and are skipped.
 
 import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 /** Syntax that is followed by `(` but is not a function looked up through the search path. */
 const NOT_FUNCTIONS = new Set([
@@ -99,10 +98,11 @@ export function unqualifiedCalls(sql: string): string[] {
   return found;
 }
 
+// Read from the folder, not from `git ls-files`: `pnpm verify` also runs on a copy of the worktree without .git.
 function sourceFiles(): string[] {
-  const out = execFileSync('git', ['ls-files', '--', 'src', 'scripts'], { encoding: 'utf8' });
-  return out
-    .split('\n')
+  return ['src', 'scripts']
+    .flatMap((root) => readdirSync(root, { recursive: true, encoding: 'utf8' }).map((f) => `${root}/${f}`))
+    .filter((f) => !f.includes('node_modules/'))
     .filter((f) => /\.(ts|tsx|mjs|cjs|js)$/.test(f))
     .filter((f) => !/(__tests__\/|\.test\.|\.itest\.|\.spec\.)/.test(f));
 }
