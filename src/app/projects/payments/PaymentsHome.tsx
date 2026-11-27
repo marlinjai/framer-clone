@@ -22,7 +22,7 @@ type AccountStatus = 'not_connected' | 'pending' | 'ready' | 'restricted';
 /** Whether the Books can issue a paid order's receipt (receiptReadiness.ts): Stripe payments wait for it. */
 type BooksReadiness =
   | { ready: true }
-  | { ready: false; blocker: 'books_not_set_up' | 'invoice_numbers_missing' | 'sender_incomplete'; missing: string[] };
+  | { ready: false; blocker: 'books_not_set_up' | 'invoice_numbers_missing' | 'sender_unavailable' | 'sender_incomplete'; missing: string[] };
 
 /** The sender fields an invoice needs, as the owner reads them. */
 const SENDER_FIELD_TEXT: Record<string, string> = {
@@ -43,6 +43,8 @@ function booksBlockerText(books: Extract<BooksReadiness, { ready: false }>): str
       return `Your Books are not set up yet: the sender details, the tax status and the invoice number series. ${operator}`;
     case 'invoice_numbers_missing':
       return `Your Books have no invoice number series yet. ${operator}`;
+    case 'sender_unavailable':
+      return 'The sender details your invoices are issued under cannot be read right now. Open the Books to see why: they come from your business contact, which may be archived or have a field that needs correcting, or the contacts database is not answering.';
     case 'sender_incomplete': {
       const fields = books.missing.map((field) => SENDER_FIELD_TEXT[field] ?? field).join(', ');
       return `The sender details your invoices are issued under lack ${fields || 'required fields'}. ${operator}`;

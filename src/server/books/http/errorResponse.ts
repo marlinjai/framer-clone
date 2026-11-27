@@ -65,6 +65,9 @@ const STATUS: Record<BooksErrorCode, number> = {
   RECIPIENT_ARCHIVED: 422,
   RECIPIENT_INCOMPLETE: 422,
   SENDER_INCOMPLETE: 422,
+  SENDER_NOT_FOUND: 422,
+  SENDER_INVALID: 422,
+  SENDER_UNAVAILABLE: 503,
   SERVICE_DATE_REQUIRED: 422,
   TAX_CASE_UNSUPPORTED: 422,
   REVERSE_CHARGE_NOT_ALLOWED: 422,
@@ -105,6 +108,10 @@ const MESSAGES: Partial<Record<BooksErrorCode, string>> = {
   COUNTER_MISSING:
     'the number series for this document type is not set up (an operator runs pnpm books:init-company)',
   RECIPIENT_UNAVAILABLE: 'the contacts database could not be read; nothing was changed, retry shortly',
+  SENDER_UNAVAILABLE:
+    'the sender details could not be read from the contacts database; nothing was changed, retry shortly',
+  SENDER_NOT_FOUND:
+    "the company's sender contact is archived or no longer exists; restore it in the receipts app, or an operator links another one (nothing was changed)",
   CONCURRENT_EDIT: 'the document was changed elsewhere; reload it and apply your change again',
   NOT_DRAFT: 'the document is no longer a draft and cannot be changed',
   CUSTOMER_REQUIRED: 'pick a customer before issuing',

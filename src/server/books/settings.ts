@@ -39,7 +39,13 @@ export interface CompanySettings {
   tenantId: string;
   taxStatus: CompanyTaxStatus;
   exemptionNote: string;
-  senderBlock: SenderBlockV1;
+  /** The linked sender contact, or null: then {@link storedSenderBlock} is the sender. */
+  senderContactId: string | null;
+  /**
+   * The sender as stored in the Books. NOT the company's sender once a contact is linked: ask
+   * `resolveSender` (sender.ts), the one reader of this (singleReader.test.ts holds it).
+   */
+  storedSenderBlock: SenderBlockV1;
   defaultPaymentTermsDays: number;
 }
 
@@ -47,7 +53,7 @@ export interface CompanySettings {
 export async function readSettings(db: Db, scope: BooksScope): Promise<CompanySettings | null> {
   const row = await db
     .selectFrom('books_company_settings')
-    .select(['tenant_id', 'tax_status', 'exemption_note', 'sender_block', 'default_payment_terms_days'])
+    .select(['tenant_id', 'tax_status', 'exemption_note', 'sender_contact_id', 'sender_block', 'default_payment_terms_days'])
     .where('tenant_id', '=', scope.tenantId)
     .executeTakeFirst();
   if (!row) return null;
@@ -55,7 +61,8 @@ export async function readSettings(db: Db, scope: BooksScope): Promise<CompanySe
     tenantId: row.tenant_id,
     taxStatus: row.tax_status,
     exemptionNote: row.exemption_note,
-    senderBlock: senderBlockV1Schema.parse(row.sender_block),
+    senderContactId: row.sender_contact_id,
+    storedSenderBlock: senderBlockV1Schema.parse(row.sender_block),
     defaultPaymentTermsDays: row.default_payment_terms_days,
   };
 }

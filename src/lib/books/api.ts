@@ -262,7 +262,10 @@ export interface SettingsView {
   settings: {
     taxStatus: 'small_business' | 'regular';
     exemptionNote: string;
-    senderBlock: Record<string, string | null>;
+    /** null when the linked sender contact cannot be read or used (`senderProblem` says why). */
+    senderBlock: Record<string, string | null> | null;
+    senderSource: 'settings' | 'contact';
+    senderProblem: { code: 'sender_unavailable' | 'sender_not_found' | 'sender_invalid'; fields: string[] } | null;
     defaultPaymentTermsDays: number;
   } | null;
   counters: Array<{ docType: string; format: string; nextValue: number; nextNumber: string }>;
@@ -288,6 +291,9 @@ const MESSAGES: Record<string, string> = {
   recipient_incomplete: 'The customer’s address is incomplete in the contacts database.',
   recipient_archived: 'The customer’s contact is archived. Restore it in the contacts app or pick another customer.',
   sender_incomplete: 'The company’s sender details are incomplete (name, address and a tax number are required).',
+  sender_unavailable: 'The sender details could not be read from the contacts database. Nothing was changed; try again in a moment.',
+  sender_not_found: 'The company’s sender contact is archived or no longer exists. Restore it in the receipts app, or ask the operator to link another one. Nothing was changed.',
+  sender_invalid: 'The company’s sender contact cannot be used. Correct it in the receipts app (restore archived fields on its contact fields screen). Nothing was changed.',
   duplicate_customer: 'This contact is already a customer.',
   duplicate_contact: 'A contact with this name already exists. Search for it instead.',
   template_in_use: 'Drafts use this template, so it cannot be removed. Issue or delete those drafts, or give them another template, first.',
@@ -323,6 +329,11 @@ const MESSAGES: Record<string, string> = {
   asset_busy: 'This logo is being used by an invoice being issued or a template being saved. Try again in a moment.',
   variant_not_found: 'This item is not in the catalogue any more. Choose another one; nothing was changed.',
 };
+
+/** The words for a code the server answered inside a successful reply (the settings' sender problem). */
+export function messageFor(code: string): string {
+  return MESSAGES[code] ?? `Something is wrong (${code}).`;
+}
 
 export class BooksApiError extends Error {
   constructor(

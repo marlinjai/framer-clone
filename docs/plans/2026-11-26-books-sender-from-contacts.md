@@ -1,6 +1,6 @@
 ---
 type: plan
-status: decided
+status: in-progress
 date: 2026-11-26
 title: "Books: the invoice sender comes from shared contacts"
 summary: "Invoices read the business sender details (name, address, tax ids, bank details) from one organization in the shared contacts database instead of the separately maintained books_company_settings.sender_block. Books keeps a pointer to that contact; tax status, exemption note, payment terms, numbering and templates stay in Books. Issued documents keep their frozen sender snapshot. Decided 2026-11-27: no extra approval step while the company has one user; a Books confirmation of bank changes must be built before any company with more than one user, or any client company, has a linked sender."
@@ -57,6 +57,8 @@ is a company setting that an operator fills with `pnpm books:init-company`).
    | `taxNumber`, `iban`, `bic`, `bankName` | custom fields `steuernummer`, `iban`, `bic`, `bankname` (text, exist for Whiz-Art Media) |
    | `website`, `registerCourt`, `registerNumber`, `managingDirector`, `smallBusinessId` | custom fields `website` (url), `registergericht`, `registernummer`, `geschaeftsfuehrung`, `kleinunternehmer_id` (text) |
 
+   `legalName` is the contact's name with its `legalForm` appended unless the name already contains it
+   (found by the build's review: a company's documents must name its legal form).
    Custom field definitions are per company and hand made, so these keys become a reserved contract.
    The operator command that sets the pointer creates missing definitions and refuses, naming the
    key, when one exists archived or with another type. The resolver checks the same on every read.

@@ -204,6 +204,7 @@ const TABLE_DOCS: Record<string, string> = {
 
 /** Inline notes printed above a column. */
 const COLUMN_NOTES: Record<string, string> = {
+  'books_company_settings.sender_contact_id': "033_books_sender_contact: the organization in the shared contacts database the company issues as; NULL: `sender_block` is the sender (src/server/books/sender.ts).",
   'inventory_level.available_quantity': 'GENERATED ALWAYS AS (stocked_quantity - reserved_quantity) STORED.',
   'product.tax_class': 'Added in 004_pricing_and_tax (classification string, not a rate).',
   'product_variant.option_signature': 'Trigger-maintained (003_catalog). Nullable: a bare variant has NULL.',

@@ -73,6 +73,7 @@ const EXPECTED_MIGRATION_IDS = [
   '030_books_contact_person',
   '031_checkout_session',
   '032_form_notification',
+  '033_books_sender_contact',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {

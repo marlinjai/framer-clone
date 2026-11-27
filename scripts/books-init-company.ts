@@ -23,6 +23,16 @@
 // `--exemption-note` and `--payment-terms` are required (tax status) or
 // defaulted the first time; on a re-run an omitted flag keeps the stored value.
 //
+// The sender can instead come from the company's business contact in the shared contacts database
+// (docs/plans/2026-11-26-books-sender-from-contacts.md; the logic is src/server/books/senderLink.ts):
+//
+//   pnpm books:init-company --tenant-group <uuid> --tenant <uuid> --sender-contact <contact id> [--dry-run]
+//   pnpm books:init-company --tenant-group <uuid> --tenant <uuid> --unlink [--dry-run]
+//
+// Both compare the two sources first and refuse to switch while a field would print differently, unless
+// --accept-differences. While linked the stored block is not read; it is what --unlink returns to. These two
+// also need CONTACTS_DATABASE_URL.
+//
 // Environment (inject with Infisical, never a .env file):
 //   COMMERCE_APP_DATABASE_URL  the low-privilege app role (the Books tables are
 //                              ordinary tenant tables it reads and writes)
@@ -35,8 +45,12 @@
 // values.
 
 import { runBooksInitCompany } from '../src/server/books/initCompanyCli';
+import { isSenderLinkRun, runBooksSenderLink } from '../src/server/books/senderLink';
 
-runBooksInitCompany(process.argv.slice(2), process.env, (line) => console.log(line)).catch((err) => {
+const argv = process.argv.slice(2);
+const run = isSenderLinkRun(argv) ? runBooksSenderLink : runBooksInitCompany;
+
+run(argv, process.env, (line) => console.log(line)).catch((err) => {
   console.error(err instanceof Error ? err.message : err);
   process.exitCode = 1;
 });

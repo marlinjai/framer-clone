@@ -439,6 +439,8 @@ export interface BooksCompanySettingsTable {
   default_payment_terms_days: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  // 033_books_sender_contact: the organization in the shared contacts database the company issues as; NULL: `sender_block` is the sender (src/server/books/sender.ts).
+  sender_contact_id: string | null;
 }
 
 /**

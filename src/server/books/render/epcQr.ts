@@ -39,19 +39,40 @@ export function normalIban(iban: string): string {
 }
 
 /**
- * Whether a string is an IBAN: country, check digits, 11 to 30 letters or
- * digits, and the ISO 7064 mod-97 checksum, so a mistyped IBAN prints no code
- * (a banking app would refuse it, or the customer would pay a wrong account).
+ * Whether a string is a well formed IBAN of any country: country, check digits,
+ * 11 to 30 letters or digits, the registry length where the country is listed
+ * above, and the ISO 7064 mod-97 checksum.
  */
-export function looksLikeIban(iban: string): boolean {
+export function isValidIban(iban: string): boolean {
   const s = normalIban(iban);
   if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(s)) return false;
-  // An EPC code is a SEPA transfer: the IBAN must be of a SEPA country, at its length.
-  if (SEPA_IBAN_LENGTH[s.slice(0, 2)] !== s.length) return false;
+  const length = SEPA_IBAN_LENGTH[s.slice(0, 2)];
+  if (length !== undefined && length !== s.length) return false;
   const digits = (s.slice(4) + s.slice(0, 4)).replace(/[A-Z]/g, (ch) => String(ch.charCodeAt(0) - 55));
   let rest = 0;
   for (const d of digits) rest = (rest * 10 + Number(d)) % 97;
   return rest === 1;
+}
+
+/**
+ * Whether an IBAN can be put into a payment code: valid, and of a SEPA country
+ * (an EPC code is a SEPA transfer). A mistyped IBAN prints no code (a banking
+ * app would refuse it, or the customer would pay a wrong account).
+ */
+export function looksLikeIban(iban: string): boolean {
+  return SEPA_IBAN_LENGTH[normalIban(iban).slice(0, 2)] !== undefined && isValidIban(iban);
+}
+
+const BIC_SHAPE = /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/;
+
+/** A BIC as the code carries it: no spaces, upper case. */
+function normalBic(bic: string): string {
+  return bic.replace(/\s+/g, '').toUpperCase();
+}
+
+/** Whether a string has the shape of a BIC (8 or 11 characters). */
+export function looksLikeBic(bic: string): boolean {
+  return BIC_SHAPE.test(normalBic(bic));
 }
 
 const byteLength = (s: string) => new TextEncoder().encode(s).length;
@@ -80,8 +101,7 @@ export function epcAmount(cents: number): string {
 export function epcPayload(data: PaymentQrData): string {
   const iban = normalIban(data.iban);
   // Version 002 lets the BIC be empty; a malformed one is left out rather than make the code unusable.
-  const bicRaw = (data.bic ?? '').replace(/\s+/g, '').toUpperCase();
-  const bic = /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(bicRaw) ? bicRaw : '';
+  const bic = looksLikeBic(data.bic ?? '') ? normalBic(data.bic ?? '') : '';
   if (data.currency !== 'EUR') throw new Error('epcPayload: only EUR transfers have an EPC code');
   if (!looksLikeIban(iban)) throw new Error('epcPayload: not an IBAN');
   let name = Array.from(cut(data.beneficiaryName.trim(), NAME_MAX));

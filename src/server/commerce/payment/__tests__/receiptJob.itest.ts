@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { booksScope } from '@/server/books/scope';
+import type { SenderDirectory } from '@/server/books/sender';
 import { initBooksCompany } from '@/server/books/settings';
 import {
   FakeContactBook,
@@ -238,6 +239,40 @@ describe('the receipt job', () => {
     expect(receipt).toMatchObject({ status: 'issued', paid_on: berlinDay(T0) });
     expect(berlinDay(T0)).not.toBe(berlinDay(shop.clock.now));
     expect(await payment(shop, orderId)).toMatchObject({ receipt_document_id: receipt.id, receipt_error: null });
+  });
+
+  it('R: a linked sender that cannot be read keeps a taken payment on the retry path, and issues it once', async () => {
+    // The company issues under its business contact (books/sender.ts) and the contacts database is down.
+    const contactId = randomUUID();
+    await env.ownerDb.updateTable('books_company_settings').set({ sender_contact_id: contactId }).where('tenant_id', '=', shop.company).execute();
+    let down = true;
+    const stored = syntheticSender();
+    const senders: SenderDirectory = {
+      async getSender() {
+        if (down) throw new Error('synthetic contacts outage');
+        return {
+          definitions: [],
+          contact: { id: contactId, kind: 'organization', archived: false, version: 1, name: stored.legalName, addressLine1: stored.addressLine1, addressLine2: null, postalCode: stored.postalCode, city: stored.city, country: stored.countryCode, vatId: stored.vatId, email: null, phone: null, customFields: {} } as never,
+        };
+      },
+    };
+    const wired = shop;
+    const contacts = new FakeContactBook(wired.dir);
+    wired.deps.receipt = (orderId) =>
+      ensureReceipt(booksScope(env.appDb, env.tgId, wired.company, { recipients: wired.dir, senders }), contacts, orderId, { now: wired.clock.now });
+
+    const orderId = await placeOrder(shop);
+    const { jobIds } = await handlePaymentEvent(shop.deps, paid(shop, orderId));
+    expect(await runJobNow(group(), shop.company, jobIds[0], worker(shop))).toMatchObject({ outcome: 'retry' });
+    expect(await payment(shop, orderId)).toMatchObject({ status: 'paid', receipt_document_id: null, receipt_error: 'SENDER_UNAVAILABLE' });
+    expect((await receiptsOf(shop, orderId)).filter((d) => d.status !== 'draft')).toEqual([]);
+
+    down = false;
+    shop.clock.now = new Date(T0.getTime() + DAY);
+    expect(await runJobNow(group(), shop.company, jobIds[0], worker(shop))).toMatchObject({ outcome: 'done' });
+    const receipts = await receiptsOf(shop, orderId);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({ status: 'issued' });
   });
 
   it('R: the backfill gives a paid order without a receipt and without a job its job, once', async () => {

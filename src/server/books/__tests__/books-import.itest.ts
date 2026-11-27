@@ -489,7 +489,7 @@ describe('importHistoricalInvoice: the core the planned upload calls', () => {
         customerNumberText: null,
         vatId: null,
       },
-      sender: settings!.senderBlock,
+      sender: settings!.storedSenderBlock,
       lines: [{ kind: 'service', title: 'Design work', description: null, quantity: 1000, unitLabel: 'Stk', unitPrice: 5000, discountBp: 0, subtotal: 5000 }],
       total: 5000,
       currency: 'EUR',
@@ -501,7 +501,7 @@ describe('importHistoricalInvoice: the core the planned upload calls', () => {
     const first = await importHistoricalInvoice(scope, book, record, pdf, session);
     expect(first.status).toBe('imported');
     const view = await getDocument(scope, first.documentId);
-    expect(view.document.senderSnapshot).toMatchObject({ ...settings!.senderBlock, v: 1 });
+    expect(view.document.senderSnapshot).toMatchObject({ ...settings!.storedSenderBlock, v: 1 });
     expect(view.events[0].payload).toMatchObject({ source: 'import', importOrigin: 'upload_extracted', numberValue: 40 });
     expect(session.stats).toEqual({ contactsCreated: 1, contactsReused: 0, customersCreated: 1, addressDiffers: 0 });
 
