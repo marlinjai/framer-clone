@@ -1,7 +1,8 @@
 // pnpm test:render-gate: whether anything stored can act on a page, in Chromium and
 // WebKit, through both renderers. RENDER_GATE_FULL=1 crosses every row with every
 // value. While working on it, RENDER_GATE_ONLY=published narrows the surfaces and
-// RENDER_GATE_MATCH=<regexp> the probes, by what they are called.
+// RENDER_GATE_MATCH=<regexp> the probes, by what they are called. CI picks the engines,
+// a seeded sample and a slice of the probes through selection.ts.
 
 import fs from 'node:fs';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,7 @@ import { DOM_MEMBER_NAMES, FORM_MEMBER_NAMES } from '@/lib/renderer/domMemberNam
 import { RENDERED_TAGS } from '@/lib/renderer/renderVocabulary';
 import { buildProbes, type Probe } from './probes';
 import { readBundle, runBatch, type Finding, type Surface } from './harness';
+import { describeSelection, selectEngines, selectProbes, selection } from './selection';
 
 const FULL = process.env.RENDER_GATE_FULL === '1';
 const BATCH_SIZE = 200;
@@ -20,7 +22,7 @@ const SURFACES: Surface[] = (process.env.RENDER_GATE_ONLY?.split(',') as Surface
 const ONLY_PROBES = process.env.RENDER_GATE_MATCH ? new RegExp(process.env.RENDER_GATE_MATCH) : undefined;
 const REPORT = 'test/renderGate/.out/findings.json';
 
-const BROWSERS: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
+const BROWSERS: [string, BrowserType][] = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
 
 /**
  * WebKit stops following links after a burst of navigations from one page, which the
@@ -181,7 +183,8 @@ describe('render gate', () => {
         return parts.flat();
       }
     };
-    const probes = buildProbes(FULL).filter((probe) => !ONLY_PROBES || ONLY_PROBES.test(probe.what));
+    const built = buildProbes(FULL).filter((probe) => !ONLY_PROBES || ONLY_PROBES.test(probe.what));
+    const probes = selectProbes(built, selection);
     const findings: Finding[] = [];
     try {
       for (const surface of SURFACES) {
@@ -198,7 +201,7 @@ describe('render gate', () => {
     }
     fs.mkdirSync('test/renderGate/.out', { recursive: true });
     fs.writeFileSync(REPORT.replace('findings', `findings-${name}`), JSON.stringify(findings, null, 1));
-    process.stdout.write(`${name}: ${probes.length} probes on ${SURFACES.join(', ')}, ${findings.length} findings\n`);
+    process.stdout.write(`${name}: ${describeSelection(selection, probes.length, built.length)}${FULL ? ', RENDER_GATE_FULL=1' : ''}, on ${SURFACES.join(', ')}, ${findings.length} findings\n`);
     expect(summary(findings)).toEqual([]);
   });
 });

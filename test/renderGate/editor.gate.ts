@@ -1,6 +1,7 @@
 // The hostile probes on the mounted editor: the real EditorApp and ComponentRenderer,
 // where the document is the signed-in owner's, so a stored node that acts here is
 // worse than anywhere else. fuzz.gate.ts covers the width; this covers the real thing.
+// CI asks a seeded sample on a pull request and the whole list in slices on main (selection.ts).
 
 import fs from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
@@ -8,9 +9,13 @@ import { chromium, webkit, type BrowserType } from 'playwright';
 import { bundleEditor } from '../score/lib/canvasBundle';
 import { ComponentTypeEnum } from '@/models/ComponentModel';
 import { buildProbes, type ProbeNode } from './probes';
+import { describeSelection, selectEngines, selectProbes, selection } from './selection';
 
 const EMBEDS = 'script,style,iframe,object,embed,fencedframe,portal';
 const HOSTILE = /^tag .* in (?:html|svg)$|^<(?:x-y|div) \w+=html>$|proto|^an? \w+ ref$|as text|^a style|^<(?:a|form) (?:href|action)=js-array>$|^<form> holding <(?:input|image) id=|^<input id=\w+ form=>|^a stored form with a (?:field|submit button|marked div)/;
+
+/** How many form elements a probe's stored tree holds, so "the forms are on the canvas" is asked of what was placed. */
+const formsIn = (node: ProbeNode): number => (node.type === 'form' ? 1 : 0) + (node.children ?? []).reduce((sum, child) => sum + formsIn(child), 0);
 
 const toSnapshot = (node: ProbeNode): Record<string, unknown> => ({
   id: node.id,
@@ -21,10 +26,13 @@ const toSnapshot = (node: ProbeNode): Record<string, unknown> => ({
 });
 
 describe('render gate on the mounted editor', () => {
-  it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])('nothing stored acts on the canvas in %s', async (_name, type) => {
+  it.each(selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection))('nothing stored acts on the canvas in %s', async (_name, type) => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const bundle = await bundleEditor();
-    const probes = buildProbes(false).filter((probe) => !probe.malformed && HOSTILE.test(probe.what));
+    const hostile = buildProbes(false).filter((probe) => !probe.malformed && HOSTILE.test(probe.what));
+    const probes = selectProbes(hostile, selection);
+    const formsPlaced = probes.reduce((sum, probe) => sum + formsIn(probe.node), 0);
+    process.stdout.write(`editor gate in ${_name}: ${describeSelection(selection, probes.length, hostile.length)}, ${formsPlaced} stored forms\n`);
     const tree = {
       id: 'gate-root',
       type: 'div',
@@ -84,8 +92,10 @@ describe('render gate on the mounted editor', () => {
       expect(hits).toEqual(['canary']);
       expect(embedded).toBe(0);
       expect(clobbered.replaced).toBe(0);
-      // Not blind: the probes' forms are on the canvas to be asked.
-      expect(clobbered.forms).toBeGreaterThan(50);
+      // Not blind: the probes' forms are on the canvas to be asked. The whole list places well over 50; a sample or a
+      // slice places its own share, which must not come out empty.
+      expect(formsPlaced).toBeGreaterThan(0);
+      expect(clobbered.forms).toBeGreaterThan(selection.sample || selection.slice ? 0 : 50);
       expect(errors).toEqual([]);
     } finally {
       await browser.close();

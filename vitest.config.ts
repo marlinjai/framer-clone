@@ -61,6 +61,8 @@ export default defineConfig({
             'test/score/lib/**/*.test.ts',
             // The agent plugin's validator (plugin/validate.mjs), pure filesystem.
             'plugin/**/*.test.ts',
+            // CI's test selection (scripts/ci/select-tests.mjs) and the render gate's probe selection, pure.
+            'scripts/ci/**/*.test.ts',
           ],
         },
       },

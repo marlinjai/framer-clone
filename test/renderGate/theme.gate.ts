@@ -17,6 +17,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
+import { selectEngines, selection } from './selection';
 import { normalizeTheme, parseColorValue, themeCss, type SiteTheme } from '@/lib/site/theme';
 import { parseColor, parseCssColor, type ColorComponent } from '@/lib/color/cssColor';
 import { NAMED_COLOR_HEX } from '@/lib/color/namedColors';
@@ -87,7 +88,7 @@ function expectedRules(faces: number): string[] {
   return [...Array<string>(faces).fill('@font-face'), ':root', '@media (prefers-color-scheme: dark)', 'body'];
 }
 
-const browsers: Array<[string, BrowserType]> = [['chromium', chromium], ['webkit', webkit]];
+const browsers: Array<[string, BrowserType]> = selectEngines([['chromium', chromium], ['webkit', webkit]] as Array<[string, BrowserType]>, selection);
 
 describe.each(browsers)('the theme sheet in %s', (_name, type) => {
   let browser: Browser;

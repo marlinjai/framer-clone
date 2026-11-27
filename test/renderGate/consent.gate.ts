@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { chromium, webkit, type BrowserType } from 'playwright';
+import { selectEngines, selection } from './selection';
 import { CONSENT_BANNER_ID, consentRuntimeScript } from '@/lib/consent/consent';
 
 const page = (accept: string) => `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
@@ -17,7 +18,7 @@ const page = (accept: string) => `<!doctype html><html><head><meta charset="utf-
 const choice = () => (window as unknown as { __lumitraConsent: { get: () => string | null } }).__lumitraConsent.get();
 
 describe('consent', () => {
-  it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])('takes a choice only from the banner in %s', async (_name, type) => {
+  it.each(selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection))('takes a choice only from the banner in %s', async (_name, type) => {
     const browser = await type.launch();
     try {
       const tab = await browser.newPage();

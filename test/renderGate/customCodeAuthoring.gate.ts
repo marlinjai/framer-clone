@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getSnapshot } from 'mobx-state-tree';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
+import { selectEngines, selection } from './selection';
 import { createRootStore } from '@/stores/RootStore';
 import { customCodeHash, type CustomCodeDeclaration } from '@/lib/customCode/contract';
 import { bundleEditor, openBundle } from '../score/lib/canvasBundle';
@@ -135,10 +136,10 @@ async function write(page: Page, title: string, code: string) {
 const customCodeOf = (page: Page, id: string) =>
   page.evaluate((nodeId) => (window as unknown as { __customCodeOf(id: string): unknown }).__customCodeOf(nodeId), id);
 
-describe.each([
+describe.each(selectEngines([
   ['chromium', chromium],
   ['webkit', webkit],
-] as [string, BrowserType][])('writing a custom code block in %s', (_name, type) => {
+] as [string, BrowserType][], selection))('writing a custom code block in %s', (_name, type) => {
   let browser: Browser;
   beforeAll(async () => {
     browser = await type.launch();

@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { chromium, webkit, type BrowserType, type Page } from 'playwright';
+import { selectEngines, selection } from './selection';
 import { middleware } from '@/middleware';
 import { MAPS_CONSENT_COOKIE } from '@/lib/site/cspReportOnly';
 import { parseMapEmbed } from '@/lib/mapEmbed/mapEmbed';
@@ -146,8 +147,10 @@ const CASES: { name: string; url: string; cookie: string; expected: Record<strin
   },
 ];
 
+const ENGINES = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
+
 describe('the enforced frame policy', () => {
-  for (const [browserName, type] of [['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][]) {
+  for (const [browserName, type] of ENGINES) {
     it.each(CASES)(`in ${browserName}: $name`, async ({ url, cookie, expected }) => {
       const headers = await headersFor(url, cookie);
       expect(headers['content-security-policy']).toMatch(/frame-src /);
@@ -217,7 +220,7 @@ describe("the per-site policy of a page with custom code", () => {
       .replace("other: { src: ", `stranger: { src: ${JSON.stringify(OTHER_SITE_BOX)}, sandbox: 'allow-scripts' },\n    other: { src: `)
       .replace("{ box: 'pending', map: 'pending', other: 'pending' }", "{ box: 'pending', map: 'pending', other: 'pending', stranger: 'pending' }");
 
-  for (const [browserName, type] of [['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][]) {
+  for (const [browserName, type] of ENGINES) {
     it(`in ${browserName}: the map follows consent, and another site's box is refused`, async () => {
       const meta = await siteMeta();
       expect(meta).toContain(`frame-src ${BOX_ORIGIN}/box/${SITE_ID}/ https://www.google.com`);
@@ -266,7 +269,7 @@ const CONSENT_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><b
 </script></body></html>`;
 
 describe('maps consent given on a page already loaded', () => {
-  it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])(
+  it.each(ENGINES)(
     'in %s: the yes loads a new document whose policy allows the map, and the map loads',
     async (_name, type) => {
       const url = `https://${SITE}/contact`;
@@ -327,7 +330,7 @@ const PLUGIN_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><bo
 </script></body></html>`;
 
 describe('objects and embeds under the enforced policy', () => {
-  it.each([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][])('in %s: a published page refuses both', async (_name, type) => {
+  it.each(ENGINES)('in %s: a published page refuses both', async (_name, type) => {
     const url = `https://${SITE}/about`;
     const headers = await headersFor(url, '');
     expect(headers['content-security-policy']).toContain("object-src 'none'");

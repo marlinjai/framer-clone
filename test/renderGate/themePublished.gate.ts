@@ -20,6 +20,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
+import { selectEngines, selection } from './selection';
 import type { ComponentNode } from '@/lib/renderer/publish/hydrateBindings';
 import type { CmsReadRepository } from '@/server/cms';
 import { renderPublishedPage } from '@/lib/renderer/server/renderPublishedPage';
@@ -33,7 +34,7 @@ import { normalizeSiteSettings } from '@/lib/site/siteSettings';
 import { FIXTURES } from '../score/corpus/fixtures';
 import { BREAKPOINTS, publishedDocument, renderPublished } from '../score/lib/published';
 
-const ENGINES: [string, BrowserType][] = [['chromium', chromium], ['webkit', webkit]];
+const ENGINES: [string, BrowserType][] = selectEngines([['chromium', chromium], ['webkit', webkit]] as [string, BrowserType][], selection);
 const ORIGIN = 'https://theme-page.test';
 const FONTS = path.resolve(__dirname, '../../public/fonts');
 /** One public key for the whole run, so two renders of one page compare byte for byte. */

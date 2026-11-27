@@ -12,6 +12,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { chromium, webkit, type Browser, type BrowserType, type Page } from 'playwright';
+import { selectEngines, selection } from './selection';
 
 let bundle = '';
 
@@ -41,10 +42,10 @@ const focused = (page: Page) => page.evaluate(() => {
   return el?.id || (el?.classList.contains('cm-content') ? 'editor' : el?.tagName ?? 'none');
 });
 
-describe.each([
+describe.each(selectEngines([
   ['chromium', chromium],
   ['webkit', webkit],
-] as [string, BrowserType][])('the code field in %s', (_name, type) => {
+] as [string, BrowserType][], selection))('the code field in %s', (_name, type) => {
   let browser: Browser;
   let page: Page;
   // WebKit moves the focus to buttons with Tab only when told to (Alt+Tab otherwise, as Safari).

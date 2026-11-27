@@ -1,0 +1,191 @@
+// scripts/ci/select-tests.mjs places the long proofs in tiers. These hold what makes that safe: the main tier
+// asks every spec and gate file there is (nothing was deleted to get fast), the pull request tier fails open,
+// and the render gate's selection gives the same probes for the same seed.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+import * as select from '../select-tests.mjs';
+import { describeSelection, readSelection, selectEngines, selectProbes } from '../../../test/renderGate/selection';
+
+const ROOT = path.resolve(__dirname, '../../..');
+const durations = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/test-durations.json'), 'utf8')).behaviour as Record<string, number>;
+
+type Entry = { name: string; files: string; install: string; engines: string; seed: string; sample: string; slice: string; full: string };
+type Shard = { name: string; files: string; engines: string };
+
+const specs: string[] = select.behaviourSpecs();
+const gates: string[] = select.gateFiles();
+const fxSpecs = specs.filter((spec) => /\/fx[^/]*\.spec\.ts$/.test(spec));
+const coreSpecs = specs.filter((spec) => !fxSpecs.includes(spec));
+const filesOf = (shards: Shard[]) => shards.flatMap((s) => s.files.split(' '));
+
+describe('the files there are', () => {
+  it('finds the specs and gate files the configs include', () => {
+    expect(specs.length).toBeGreaterThan(30);
+    expect(gates.length).toBeGreaterThan(12);
+    expect(specs).toContain('test/behaviour/fx.spec.ts');
+    expect(gates).toContain('test/renderGate/editor.gate.ts');
+    expect(fxSpecs.length).toBeGreaterThan(5);
+    expect(coreSpecs.length).toBeGreaterThan(15);
+  });
+
+  it('has a measured duration for every behaviour spec, so shards stay balanced', () => {
+    expect(specs.filter((spec) => durations[spec] === undefined)).toEqual([]);
+  });
+
+  it('reads each spec engines from its playwright import', () => {
+    expect(select.enginesOf('test/behaviour/headItems.spec.ts')).toContain('firefox');
+    expect(select.enginesOf('test/behaviour/fxScoped.spec.ts')).toEqual(['chromium']);
+    for (const spec of specs) expect(select.enginesOf(spec)).toContain('chromium');
+  });
+});
+
+describe('main and nightly ask everything', () => {
+  for (const tier of ['main', 'nightly'] as const) {
+    it(`${tier}: every behaviour spec, exactly once`, () => {
+      const plan = select.plan({ tier, seed: 7 });
+      const asked = filesOf(plan.behaviour);
+      expect([...asked].sort()).toEqual(specs);
+      expect(new Set(asked).size).toBe(asked.length);
+    });
+
+    it(`${tier}: every gate file in chromium and webkit, and the bridge in firefox, every probe`, () => {
+      const plan = select.plan({ tier, seed: 7 });
+      const entries = plan.renderGate as Entry[];
+      for (const engine of ['chromium', 'webkit']) {
+        const mine = entries.filter((e) => e.engines === engine);
+        expect([...new Set(mine.flatMap((e) => e.files.split(' ')))].sort()).toEqual(gates);
+        expect(mine.every((e) => e.sample === '')).toBe(true);
+        // The editor gate's slices cover 1..n of n.
+        const editorSlices = mine.filter((e) => e.files === 'test/renderGate/editor.gate.ts').map((e) => e.slice);
+        expect(editorSlices).toEqual(Array.from({ length: select.EDITOR_SLICES }, (_, i) => `${i + 1}/${select.EDITOR_SLICES}`));
+        const fuzzSlices = mine.filter((e) => e.files === 'test/renderGate/fuzz.gate.ts').map((e) => e.slice);
+        const n = select.FUZZ_SLICES[tier];
+        expect(fuzzSlices).toEqual(n === 1 ? [''] : Array.from({ length: n }, (_, i) => `${i + 1}/${n}`));
+      }
+      expect(entries.filter((e) => e.engines === 'firefox').map((e) => e.files)).toEqual(['test/renderGate/customCodeBridge.gate.ts']);
+      if (tier === 'nightly') {
+        expect(entries.filter((e) => e.files.includes('fuzz.gate')).every((e) => e.full === '1' && e.seed === '7')).toBe(true);
+      } else {
+        expect(entries.every((e) => e.full === '' && e.seed === '')).toBe(true);
+      }
+    });
+  }
+
+  it('nightly draws a fresh seed when none is given, and prints it', () => {
+    const a = select.plan({ tier: 'nightly' });
+    expect(a.seed).toMatch(/^\d+$/);
+  });
+});
+
+describe('a pull request asks what it can affect, and fails open', () => {
+  const pr = (changed: string[]) => select.plan({ tier: 'pr', changed });
+
+  it('docs and other suites tests ask nothing', () => {
+    const plan = pr(['docs/plans/x.md', 'ROADMAP.md', 'src/lib/foo/__tests__/a.test.ts', 'test/integration/b.test.ts', 'src/server/c.itest.ts']);
+    expect(plan.behaviour).toEqual([]);
+    expect(plan.renderGate).toEqual([]);
+  });
+
+  it('a source path the map does not know asks the proofs that always run, and the short render gate', () => {
+    const plan = pr(['src/server/somewhere/new.ts']);
+    expect([...filesOf(plan.behaviour)].sort()).toEqual(coreSpecs);
+    expect(plan.form).toBe('sample');
+    expect(plan.renderGate).toHaveLength(1);
+    expect(plan.renderGate[0]).toMatchObject({ engines: 'chromium', install: 'chromium', seed: select.PR_SEED, sample: select.PR_SAMPLE });
+    expect(plan.renderGate[0].files.split(' ').sort()).toEqual(gates);
+  });
+
+  it('an effects path adds the effects proofs', () => {
+    for (const file of ['src/lib/fx/ring.ts', 'src/lib/fxScene/edit.ts', 'src/components/fx/FxLayer.tsx', 'src/components/Canvas.tsx']) {
+      expect([...filesOf(pr([file]).behaviour)].sort()).toEqual(specs);
+    }
+  });
+
+  it('CI, the toolchain, the shared harness and the renderer ask everything, the render gate in its long form', () => {
+    for (const file of ['.github/workflows/ci.yml', 'scripts/ci/select-tests.mjs', 'package.json', 'pnpm-lock.yaml', 'prisma/schema.prisma', 'src/lib/renderer/server/x.ts', 'src/middleware.ts']) {
+      const plan = pr([file]);
+      expect([...filesOf(plan.behaviour)].sort()).toEqual(specs);
+      expect(plan.form).toBe('long');
+      expect(plan.renderGate).toEqual(select.plan({ tier: 'main' }).renderGate);
+    }
+  });
+
+  it('the behaviour harness asks every behaviour proof and no render gate', () => {
+    for (const file of ['test/behaviour/setup.ts', 'test/behaviour/site.ts', 'test/behaviour/pages.ts']) {
+      const plan = pr([file]);
+      expect([...filesOf(plan.behaviour)].sort()).toEqual(specs);
+      expect(plan.renderGate).toEqual([]);
+    }
+  });
+
+  it('a stored-node format or the gate itself asks the long render gate', () => {
+    for (const file of ['src/models/ComponentModel/index.ts', 'src/lib/customCode/contract.ts', 'test/renderGate/probes.ts', 'vitest.renderGate.config.ts']) {
+      expect(pr([file]).form).toBe('long');
+    }
+    // A change to the gate alone asks no behaviour proof.
+    expect(pr(['test/renderGate/probes.ts']).behaviour).toEqual([]);
+  });
+
+  it('a changed spec runs, and a behaviour-only change asks no render gate', () => {
+    const plan = pr(['test/behaviour/maps.spec.ts']);
+    expect(filesOf(plan.behaviour)).toEqual(['test/behaviour/maps.spec.ts']);
+    expect(plan.renderGate).toEqual([]);
+    expect([...filesOf(pr(['test/behaviour/fxPick.entry.tsx']).behaviour)].sort()).toEqual(fxSpecs);
+  });
+});
+
+describe('shards', () => {
+  it('put the longest first into the emptiest shard and stay within the cap', () => {
+    const shards = select.shard(specs, durations);
+    expect(shards.length).toBeLessThanOrEqual(8);
+    const longest = Math.max(...specs.map((spec) => durations[spec]));
+    const loads = shards.map((s: { ms: number }) => s.ms);
+    // No shard is more than the longest file over the lightest one: the greedy bound.
+    expect(Math.max(...loads) - Math.min(...loads)).toBeLessThanOrEqual(longest);
+  });
+
+  it('use one shard for a single file and none for nothing', () => {
+    expect(select.shard([], durations)).toEqual([]);
+    expect(select.shard(['test/behaviour/maps.spec.ts'], durations)).toHaveLength(1);
+  });
+});
+
+describe('render gate selection', () => {
+  const list = Array.from({ length: 1000 }, (_, i) => i);
+
+  it('asks everything in the built order with nothing set', () => {
+    expect(selectProbes(list, readSelection({}))).toEqual(list);
+    expect(selectEngines([['chromium', 1], ['webkit', 2]] as const, readSelection({}))).toHaveLength(2);
+  });
+
+  it('gives the same sample for the same seed, and another for another seed', () => {
+    const a = selectProbes(list, readSelection({ RENDER_GATE_SEED: '20261127', RENDER_GATE_SAMPLE: '0.125' }));
+    const b = selectProbes(list, readSelection({ RENDER_GATE_SEED: '20261127', RENDER_GATE_SAMPLE: '0.125' }));
+    const c = selectProbes(list, readSelection({ RENDER_GATE_SEED: '1', RENDER_GATE_SAMPLE: '0.125' }));
+    expect(a).toHaveLength(125);
+    expect(a).toEqual(b);
+    expect(a).not.toEqual(c);
+  });
+
+  it('slices partition the list: every probe in exactly one slice', () => {
+    const seen = [1, 2, 3, 4, 5, 6].flatMap((k) => selectProbes(list, readSelection({ RENDER_GATE_SLICE: `${k}/6` })));
+    expect([...seen].sort((x, y) => x - y)).toEqual(list);
+    const shuffled = [1, 2, 3].flatMap((k) => selectProbes(list, readSelection({ RENDER_GATE_SEED: '9', RENDER_GATE_SLICE: `${k}/3` })));
+    expect([...shuffled].sort((x, y) => x - y)).toEqual(list);
+  });
+
+  it('narrows engines and refuses what it cannot read', () => {
+    expect(selectEngines([['chromium', 1], ['webkit', 2], ['firefox', 3]] as const, readSelection({ RENDER_GATE_ENGINES: 'webkit' }))).toEqual([['webkit', 2]]);
+    expect(() => readSelection({ RENDER_GATE_ENGINES: 'edge' })).toThrow();
+    expect(() => readSelection({ RENDER_GATE_SAMPLE: '0.5' })).toThrow(/needs RENDER_GATE_SEED/);
+    expect(() => readSelection({ RENDER_GATE_SEED: '1', RENDER_GATE_SAMPLE: '2' })).toThrow();
+    expect(() => readSelection({ RENDER_GATE_SLICE: '7/6' })).toThrow();
+    expect(() => readSelection({ RENDER_GATE_SEED: 'x' })).toThrow();
+  });
+
+  it('says what it asked, so a seed can be asked again', () => {
+    expect(describeSelection(readSelection({ RENDER_GATE_SEED: '5', RENDER_GATE_SLICE: '2/3' }), 10, 30)).toBe('10 of 30 probes, RENDER_GATE_SEED=5, RENDER_GATE_SLICE=2/3');
+  });
+});
