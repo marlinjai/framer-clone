@@ -201,9 +201,13 @@ export function behaviourMatrix(files, durations) {
 /** The share of probes the pull request form asks, and its fixed seed: the same probes on every pull request. */
 export const PR_SAMPLE = '0.125';
 export const PR_SEED = '20261127';
-/** Slices of the editor gate (41 minutes in one file on 2026-11-27) and of the fuzz on main and at night. */
-export const EDITOR_SLICES = 6;
-export const FUZZ_SLICES = { main: 1, nightly: 8 };
+/**
+ * Slices of the editor gate and of the fuzz on main, in the long pull request form, and at night. Few and long on
+ * purpose: an account runs 20 jobs at once, and in run 46068825364 six editor slices of about 70 s each waited up to
+ * 5.7 minutes for a runner. Two editor slices take about 3 minutes each; the WebKit fuzz (418 s whole) halves.
+ */
+export const EDITOR_SLICES = 2;
+export const FUZZ_SLICES = { main: 2, nightly: 8 };
 
 /** 'skip' (nothing it can see changed), 'sample' (the short form) or 'long' (main's form on a pull request). */
 export function renderGateForm(changed) {
