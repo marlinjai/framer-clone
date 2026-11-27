@@ -181,3 +181,4 @@ const PreviewFrame = observer(({ page, width, height, fill = false, smoothScroll
 
 PreviewFrame.displayName = 'PreviewFrame';
 export default PreviewFrame;
+// ci-replay touch

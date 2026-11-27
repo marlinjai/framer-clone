@@ -94,3 +94,4 @@ const ShopPreviewBar = observer(() => {
 });
 
 export default ShopPreviewBar;
+// ci-replay touch

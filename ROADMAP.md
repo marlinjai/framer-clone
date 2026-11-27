@@ -380,3 +380,4 @@ roadmap only tracks open work, per the one-home-per-open-item rule
 ## Leftovers
 
 - [x] fix: main is red after #489 (41c628749c): "score" failed (https://github.com/marlinjai/framer-clone/actions/runs/46077045897). Not caused by #489: red since #461 (4629721c, still frames of FX scenes in every breakpoint). The FX canvas score probe still expected an empty canvas without "Live", so it failed all three reference scenes and its own can-fail case. The probe now measures the still-frame contract and still goes red when a refused scene is drawn (as a still or live). Found on the way and fixed: a box with no stored scene showed the loading placeholder for ever. <!-- land-pr:main-red 41c62874 --> (2026-11-27)
+<!-- ci-replay touch -->

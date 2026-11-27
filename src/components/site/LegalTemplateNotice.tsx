@@ -64,3 +64,4 @@ const LegalTemplateNotice = observer(() => {
 
 LegalTemplateNotice.displayName = 'LegalTemplateNotice';
 export default LegalTemplateNotice;
+// ci-replay touch

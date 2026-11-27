@@ -16,3 +16,4 @@ describe('collection settings icon picker', () => {
     expect(second.className).not.toContain('forced-colors:');
   });
 });
+// ci-replay touch

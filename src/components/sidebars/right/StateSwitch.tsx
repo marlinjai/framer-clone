@@ -292,3 +292,4 @@ const StateSwitch = observer(({ variant = 'docked' }: { variant?: 'docked' | 'sh
 
 StateSwitch.displayName = 'StateSwitch';
 export default StateSwitch;
+// ci-replay touch

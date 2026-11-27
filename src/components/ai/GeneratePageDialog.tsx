@@ -768,3 +768,4 @@ export const GeneratePageButton = observer(function GeneratePageButton({
 });
 
 export default GeneratePageButton;
+// ci-replay touch

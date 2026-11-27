@@ -100,3 +100,4 @@ const CanvasDebugPanel = observer(() => {
 CanvasDebugPanel.displayName = 'CanvasDebugPanel';
 
 export default CanvasDebugPanel;
+// ci-replay touch
