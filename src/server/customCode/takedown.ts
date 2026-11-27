@@ -290,3 +290,4 @@ export async function readOperatorDisable(tx: Pick<Tx, 'customCodeAudit'>, siteI
   if (detail.lifted === true) return null;
   return { reason: typeof detail.reason === 'string' ? detail.reason : '', at: last.createdAt.toISOString() };
 }
+// ci-replay touch
