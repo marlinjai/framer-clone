@@ -64,10 +64,12 @@ jobs:
           echo "Asked to fail (prove_report), so the failure issue opens."
           exit 1
 
+  # Only for runs on main: a manual run on another branch or tag must neither open main's issue nor close it. Such a
+  # run still fails visibly by itself.
   report:
     name: report
     needs: [proofs, prove-report]
-    if: always()
+    if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       issues: write
