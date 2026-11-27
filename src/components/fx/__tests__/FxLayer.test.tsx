@@ -349,6 +349,22 @@ describe('the canvas renderer decides where Live draws', () => {
     }
   });
 
+  // No picture was asked for yet (here: no size; on the canvas also a box off screen), so the request's key is
+  // empty before and after: the still has to notice that there is no scene left all the same.
+  it('a scene taken away before its still was asked for turns the still off too', async () => {
+    vi.useFakeTimers();
+    const { box, frames } = setup();
+    render(frames);
+    const pass = () => act(async () => void (await vi.advanceTimersByTimeAsync(5000)));
+    await pass();
+    const states = () => [...document.querySelectorAll('[data-fc-fx-still]')].map((still) => still.getAttribute('data-fc-fx-still'));
+    expect(new Set(states())).toEqual(new Set(['waiting']));
+    act(() => box.setProps({ [FX_PROP]: undefined }));
+    await pass();
+    expect(new Set(states())).toEqual(new Set(['off']));
+    expect(document.querySelector('[data-fc-fx-placeholder="shown"]')).toBeNull();
+  });
+
   it('gives the context up under the preview over the editor, and takes it back', async () => {
     const { box, breakpoints, frames } = setup();
     render(frames);

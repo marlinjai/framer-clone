@@ -149,7 +149,7 @@ async function canvasCell(browser: Browser, bundle: string, scene: unknown): Pro
     const drawn = await status();
     if (drawn !== 'live') {
       const nothing = nothingStill && (await everMade()) === 0 && (await view.locator('[data-fc-fx-layer] canvas').count()) === 0 && (await stillsOf(view)).every((s) => !s.drawn);
-      if (!nothing) return fail(`a scene Live does not draw (${drawn}) is drawn on the canvas all the same (still frames: ${JSON.stringify(stills)}, ${await everMade()} contexts made)`);
+      if (drawn === 'off:refused' && !nothing) return fail(`a scene Live does not draw (${drawn}) is drawn on the canvas all the same (still frames: ${JSON.stringify(stills)}, ${await everMade()} contexts made)`);
       return fail(`with Live on the scene is not drawn (${drawn})`);
     }
     if (!still) return fail('without Live no still frame shows the scene Live draws');

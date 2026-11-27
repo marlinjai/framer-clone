@@ -487,8 +487,9 @@ export const FxStillLayer = observer(function FxStillLayer({ stored, ownPosition
       leave();
       window.clearTimeout(retryTimer);
     };
-    // `read`, `scene` and `size` are captured through `settledWanted`, which is keyed on all of them.
-  }, [settledWanted, editorUI, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+    // `scene` and `size` are captured through `settledWanted`, which is keyed on both. `read.ok` is named too:
+    // a scene taken away while nothing was asked for leaves the key empty, and the still must still go off.
+  }, [settledWanted, editorUI, attempt, read.ok]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A new scene or size starts the retries over.
   useEffect(() => setAttempt(0), [settledWanted]);
