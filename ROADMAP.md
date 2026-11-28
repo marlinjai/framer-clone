@@ -192,9 +192,11 @@ connections to the suite. The four lines below are in that order.
   `008_books_files`, download from the editor). The operator steps are done: the Books are live
   for Whiz-Art Media (app grant, contacts database, `008`, the company set up), checked
   2026-10-28 in the live editor: invoices 1 to 63 listed, counter at 64. Open: the first real
-  invoice from the editor (Nr. 64) closes this line. See
+  invoice from the editor (Nr. 64) closes this line; still open on 2026-11-28 (read-only on
+  production: the Whiz-Art Media schema holds 63 issued documents, the highest number 63, the last
+  issued 2026-10-27, no draft). See
   [plan](docs/plans/2026-08-15-books-receipts-invoices-integration.md), sections "Phase 1 build
-  specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-10-28)
+  specification" and "Phase 2 and 3 build notes (2026-10-20)". (2026-11-28)
 - [x] 3b. The invoice editor in the app's editor shell (PR #164, the glass redesign of the invoice
   editor and template composer): deployed (deploy run 40202044416) and proven live on the Books
   Testfirma company. Done 2026-10-25. See [plan](docs/plans/2026-10-25-books-invoice-editor-shell.md). (2026-10-26)
