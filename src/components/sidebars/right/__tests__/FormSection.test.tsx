@@ -154,3 +154,4 @@ describe('the Form section', () => {
     expect((submit.props as Record<string, unknown>).loadingLabel).toBe('Booking...');
   });
 });
+// ci-replay touch

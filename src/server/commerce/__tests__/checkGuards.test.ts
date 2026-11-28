@@ -257,3 +257,4 @@ describe('the repository scan (what `pnpm lint:guards` runs)', () => {
     // with the repository, so the 5 s default is no bound on the scanner, only on the machine's load.
   }, 30_000);
 });
+// ci-replay touch

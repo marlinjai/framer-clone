@@ -607,3 +607,4 @@ describe('012_books_template_v2 and a hand-set logo', () => {
     expect(col.n).toBe(1);
   });
 });
+// ci-replay touch

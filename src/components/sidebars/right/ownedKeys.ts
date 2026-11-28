@@ -96,3 +96,4 @@ const CATEGORY_PROPS: Partial<Record<ComponentCategory, readonly string[]>> = {
 export function ownedProps(category: ComponentCategory): ReadonlySet<string> {
   return new Set(CATEGORY_PROPS[category] ?? []);
 }
+// ci-replay touch
