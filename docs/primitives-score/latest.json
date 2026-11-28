@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-11-28T02:13:37.974Z",
+  "generatedAt": "2026-11-28T04:00:54.688Z",
   "versions": {
     "mdn-data": "2.27.1",
     "@mdn/browser-compat-data": "8.1.7",
     "playwright": "1.64.1"
   },
-  "durationSeconds": 555,
+  "durationSeconds": 816,
   "matrix": {
     "surfaces": {
       "format": {
@@ -7193,7 +7193,7 @@
           {
             "viewport": "Desktop",
             "state": "initial",
-            "ratio": 0,
+            "ratio": 0.0006141841779975278,
             "elementsCompared": 761,
             "elementsDiffering": 0,
             "differences": 0,
