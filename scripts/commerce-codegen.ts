@@ -123,6 +123,8 @@ const JSON_COLUMNS: Record<string, string> = {
   'shop_mail_connection.template_ids': 'Record<string, string>',
   // 025_commerce_job: ids and cursors, parsed by a per-kind schema at claim (src/server/commerce/jobs).
   'commerce_job.payload': 'Record<string, unknown>',
+  // 033_catalogue_site: the assignment run's report (src/server/commerce/provisioning/assignSites.ts).
+  'catalogue_per_site.report': 'Record<string, unknown>',
 };
 
 /** The type-only imports the JSON shapes need. */
@@ -153,6 +155,8 @@ const TABLE_DOCS: Record<string, string> = {
   collection: '020_catalogue_company: a manual collection of products.',
   collection_product: '020_catalogue_company: the ordered products of a collection.',
   product_site_hidden: '020_catalogue_company: a product switched off for one site of its company.',
+  catalogue_per_site:
+    "033_catalogue_site: the company's catalogue is assigned to its sites. With this row a NULL site_id is a company\nitem (Books only); without it a NULL site_id is a row from before the assignment, read the old way.",
   order_payment:
     '021_order_payment: the payment of one order (pending, paid, failed, cancelled, expired, refunded), its\n1% platform fee and its receipt in the Books. Guarded state machine (BK018).',
   payment_event: '021_order_payment: a provider event, recorded once (append-only, BK019).',
@@ -204,6 +208,8 @@ const TABLE_DOCS: Record<string, string> = {
 
 /** Inline notes printed above a column. */
 const COLUMN_NOTES: Record<string, string> = {
+  'product.site_id': '033_catalogue_site: the main site the product belongs to; NULL is a company item, or unassigned (see catalogue_per_site).',
+  'collection.site_id': '033_catalogue_site: the main site the collection belongs to (NULL as product.site_id).',
   'inventory_level.available_quantity': 'GENERATED ALWAYS AS (stocked_quantity - reserved_quantity) STORED.',
   'product.tax_class': 'Added in 004_pricing_and_tax (classification string, not a rate).',
   'product_variant.option_signature': 'Trigger-maintained (003_catalog). Nullable: a bare variant has NULL.',
