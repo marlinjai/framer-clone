@@ -161,7 +161,7 @@ function server(extra: Record<string, Handler> = {}) {
     },
     'GET /api/books/catalogue': () => ({
       status: 200,
-      body: { items: [item({ variantId: 'v1', title: 'Beratung', description: 'Strategie', unitLabel: 'Std', unitPrice: 9900, priceBasis: 'gross' })] },
+      body: { sites: [], assigned: false, items: [item({ variantId: 'v1', title: 'Beratung', description: 'Strategie', unitLabel: 'Std', unitPrice: 9900, priceBasis: 'gross' })] },
     }),
     ...extra,
   };
@@ -181,7 +181,7 @@ function server(extra: Record<string, Handler> = {}) {
 
 /** A catalogue item as GET /api/books/catalogue answers it. */
 function item(over: Json): Json {
-  return { variantId: 'v0', productId: `p-${over.variantId ?? 'v0'}`, kind: 'service', title: 'Item', description: null, unitLabel: 'Stk', unitPrice: 100, priceBasis: 'net', taxClass: 'standard', discountBp: 0, status: 'draft', ...over };
+  return { variantId: 'v0', productId: `p-${over.variantId ?? 'v0'}`, kind: 'service', title: 'Item', description: null, unitLabel: 'Stk', unitPrice: 100, priceBasis: 'net', taxClass: 'standard', discountBp: 0, status: 'draft', siteId: null, ...over };
 }
 
 function stripVersion(b: Json | null): Json {
@@ -477,7 +477,7 @@ describe('the invoice page: review fixes', () => {
           item({ variantId: 'v0', kind: 'product', title: 'Aaa first' }),
           item({ variantId: 'v1', title: 'Beratung', unitLabel: 'Std', unitPrice: 9900 }),
         ];
-        return { status: 200, body: { items: all.filter((p) => p.title.toLowerCase().includes(q.toLowerCase())) } };
+        return { status: 200, body: { sites: [], assigned: false, items: all.filter((p) => p.title.toLowerCase().includes(q.toLowerCase())) } };
       },
     });
     await opened();
@@ -494,6 +494,8 @@ describe('the invoice page: review fixes', () => {
       'GET /api/books/catalogue': () => ({
         status: 200,
         body: {
+          sites: [],
+          assigned: false,
           items: [
             item({ variantId: 'v0', kind: 'product', title: 'Aaa first' }),
             item({ variantId: 'v1', title: 'Beratung', unitLabel: 'Std', unitPrice: 9900 }),
@@ -517,11 +519,56 @@ describe('the invoice page: review fixes', () => {
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body?.title).toBe('Beratung'));
   });
 
+  it('items of more than one site are grouped under each site, and the arrows walk the grouped order', async () => {
+    server({
+      'GET /api/books/catalogue': () => ({
+        status: 200,
+        body: {
+          sites: [
+            { id: 'site-a', name: 'Bakery' },
+            { id: 'site-b', name: 'Catering' },
+          ],
+          assigned: true,
+          // Title order, as the server sends it: the two sites interleave.
+          items: [
+            item({ variantId: 'v-b', title: 'Brot', siteId: 'site-b', unitPrice: 450 }),
+            item({ variantId: 'v-a', title: 'Brot', siteId: 'site-a', unitPrice: 400 }),
+            item({ variantId: 'v-gone', title: 'Kuchen', siteId: 'site-deleted' }),
+            item({ variantId: 'v-c', title: 'Liefergebuehr', siteId: null }),
+          ],
+        },
+      }),
+    });
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    const bakery = await screen.findByRole('group', { name: 'Bakery' });
+    const groups = within(screen.getByRole('listbox', { name: 'Products and services' }))
+      .getAllByRole('group')
+      .map((g) => document.getElementById(g.getAttribute('aria-labelledby')!)!.textContent);
+    expect(groups).toEqual(['Bakery', 'Catering', 'A site no longer listed', 'Company items']);
+    expect(within(bakery).getAllByRole('option').map((o) => o.textContent)).toEqual([expect.stringContaining('4,00')]);
+    // The first option is the Bakery's Brot (grouped order), the next the Catering's.
+    const search = screen.getByRole('combobox', { name: 'Search products and services in the catalogue' });
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ title: 'Brot', variantRef: 'v-b' }));
+  });
+
+  it('items of one catalogue only show no headings', async () => {
+    server();
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
+    await screen.findByRole('option', { name: /Beratung/ });
+    expect(within(screen.getByRole('listbox', { name: 'Products and services' })).queryAllByRole('group')).toEqual([]);
+  });
+
   it('an arrow key pressed the moment the products appear is kept', async () => {
     server({
       'GET /api/books/catalogue': () => ({
         status: 200,
         body: {
+          sites: [],
+          assigned: false,
           items: [
             item({ variantId: 'v0', kind: 'product', title: 'Aaa first' }),
             item({ variantId: 'v1', title: 'Beratung', unitLabel: 'Std', unitPrice: 9900 }),
@@ -565,7 +612,7 @@ describe('the invoice page: the floating toolbar', () => {
   });
 
   it('the product picker with nothing to offer says so and leads to the Catalog, where products are added', async () => {
-    server({ 'GET /api/books/catalogue': () => ({ status: 200, body: { items: [] } }) });
+    server({ 'GET /api/books/catalogue': () => ({ status: 200, body: { sites: [], assigned: false, items: [] } }) });
     await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
     const picker = screen.getByRole('dialog', { name: 'Choose a product or service' });

@@ -40,6 +40,7 @@ import { readCompanySelectors } from '@/lib/activeCompanyCookie';
 import { withAuthAvailability } from '@/lib/authBrainAvailability';
 import { isEditorHost } from '@/lib/editorHost';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from '@/server/commerce/db';
+import type { TenantScope } from '@/server/sites/repository';
 import { activeScopeDenial, resolveActiveScope } from '@/server/sites/scope';
 
 import { companyHasBooksGrant } from '../access';
@@ -59,6 +60,8 @@ export interface BooksRequestContext {
   userId: string;
   /** The active company (auth-brain tenant id). */
   companyId: string;
+  /** The company's editor workspace (its sites), from the verified session. */
+  workspace: TenantScope;
   /** The verified session (for labels only, never for authorization). */
   session: SessionVerifyResponse;
   /** The editor's view of the shared contacts database. */
@@ -137,7 +140,7 @@ export async function resolveBooksRequest(req: Request, access: BooksAccess): Pr
   }
   return {
     ok: true,
-    ctx: { scope, userId: session.user.id, companyId, session, contactBook: deps.contactBook },
+    ctx: { scope, userId: session.user.id, companyId, workspace: workspaceScope, session, contactBook: deps.contactBook },
   };
 }
 

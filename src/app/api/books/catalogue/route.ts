@@ -1,6 +1,6 @@
 // src/app/api/books/catalogue/route.ts
 //
-// GET /api/books/catalogue[?q=...]  -> { items: CatalogueItemView[] }
+// GET /api/books/catalogue[?q=...]  -> { items: CatalogueItemView[], sites: { id, name }[], assigned: boolean }
 //
 // The active company's catalogue as the invoice line picker offers it
 // (catalogue design, "The Books' own list is replaced";
@@ -13,10 +13,14 @@
 // values (POST /api/books/documents/<id>/lines). Reading needs viewBooks; the
 // catalogue itself is edited in the Catalog area (/projects/catalog). Guard
 // chain and status codes: src/server/books/http/route.ts and errorResponse.ts.
+// Each item names its site (`siteId`); `sites` (the company's, from its own
+// workspace) and `assigned` let the picker group and label them
+// (catalogueSiteGroups).
 
 import { jsonError } from '@/lib/api/respond';
 import { booksRoute } from '@/server/books/http/route';
-import { MAX_SEARCH_LENGTH, searchCatalogue } from '@/server/books/repository/catalogue';
+import { MAX_SEARCH_LENGTH, catalogueAssigned, searchCatalogue } from '@/server/books/repository/catalogue';
+import { getSiteRepository } from '@/server/sites';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,5 +30,10 @@ export const GET = booksRoute('read', async (ctx, req) => {
   if (q.length > MAX_SEARCH_LENGTH) {
     return jsonError('bad_query', `the search is longer than ${MAX_SEARCH_LENGTH} characters`, 400);
   }
-  return Response.json({ items: await searchCatalogue(ctx.scope, q) });
+  const [items, sites, assigned] = await Promise.all([
+    searchCatalogue(ctx.scope, q),
+    getSiteRepository().listSites(ctx.workspace),
+    catalogueAssigned(ctx.scope),
+  ]);
+  return Response.json({ items, sites: sites.map((s) => ({ id: s.siteId, name: s.name, detail: s.subdomain })), assigned });
 });
