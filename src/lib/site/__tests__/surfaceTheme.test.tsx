@@ -254,3 +254,4 @@ describe('the switch', () => {
     expect(JSON.stringify(store.editorUI.currentProject!.site)).toBe(before);
   });
 });
+// ci-replay touch
