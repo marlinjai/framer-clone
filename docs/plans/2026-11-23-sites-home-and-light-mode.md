@@ -297,3 +297,4 @@ Found and fixed in the same change: the projects home, Books, Catalog, Payments 
 (slice S4 had named only `/`). Each editor page now names its tab "<what> | Lumitra Sites", the root gives the editor
 host "Lumitra Sites" as the fallback, published pages still name themselves, and `src/app/__tests__/pageTitles.test.ts`
 holds every editor page to it.
+<!-- ci-replay touch -->

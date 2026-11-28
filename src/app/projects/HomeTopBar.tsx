@@ -46,3 +46,4 @@ export default function HomeTopBar({ companyName, canSwitchCompany, accountHref 
     </header>
   );
 }
+// ci-replay touch

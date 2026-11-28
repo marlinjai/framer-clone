@@ -294,3 +294,4 @@ describe('inline text editing on a phone', () => {
     Object.defineProperty(window, 'visualViewport', { value: undefined, configurable: true });
   });
 });
+// ci-replay touch

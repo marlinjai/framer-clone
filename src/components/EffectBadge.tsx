@@ -44,3 +44,4 @@ const EffectBadge = observer(() => {
 
 EffectBadge.displayName = 'EffectBadge';
 export default EffectBadge;
+// ci-replay touch
