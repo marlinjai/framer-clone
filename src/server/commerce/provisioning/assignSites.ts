@@ -124,7 +124,11 @@ async function freeSku(tx: Sql, schema: string, sku: string): Promise<string> {
   throw new Error(`assignSites: no free SKU for a copy of ${sku}`);
 }
 
-/** Copy one product, with its options, values, variants, prices and images, onto `siteId`. */
+/**
+ * Copy one product, with its options, values, variants, prices and images, onto `siteId`. The child rows keep
+ * their original `created_at`: the editor and the shop order options, values and variants by it (then by id), so
+ * a copy lists them in the same order as the original.
+ */
 async function copyProduct(tx: Sql, schema: string, productId: string, siteId: string, now: string): Promise<{ id: string; skus: CopiedProduct['skus'] }> {
   const id = randomUUID();
   await copyRow(tx, schema, 'product', { column: 'id', value: productId }, {
@@ -135,7 +139,7 @@ async function copyProduct(tx: Sql, schema: string, productId: string, siteId: s
   for (const o of await tx<{ id: string }[]>`
       SELECT "id" FROM ${tx(schema)}."product_option" WHERE "product_id" = ${productId} AND "deleted_at" IS NULL ORDER BY "created_at", "id"`) {
     options.set(o.id, randomUUID());
-    await copyRow(tx, schema, 'product_option', { column: 'id', value: o.id }, { id: options.get(o.id)!, product_id: id, created_at: now, updated_at: now });
+    await copyRow(tx, schema, 'product_option', { column: 'id', value: o.id }, { id: options.get(o.id)!, product_id: id, updated_at: now });
   }
   const values = new Map<string, string>();
   for (const v of await tx<{ id: string; option_id: string }[]>`
@@ -143,7 +147,7 @@ async function copyProduct(tx: Sql, schema: string, productId: string, siteId: s
        WHERE "option_id" IN ${tx([...options.keys(), ''])} AND "deleted_at" IS NULL ORDER BY "created_at", "id"`) {
     values.set(v.id, randomUUID());
     await copyRow(tx, schema, 'product_option_value', { column: 'id', value: v.id }, {
-      id: values.get(v.id)!, option_id: options.get(v.option_id)!, created_at: now, updated_at: now,
+      id: values.get(v.id)!, option_id: options.get(v.option_id)!, updated_at: now,
     });
   }
 
@@ -155,7 +159,7 @@ async function copyProduct(tx: Sql, schema: string, productId: string, siteId: s
     const sku = v.sku ? await freeSku(tx, schema, v.sku) : null;
     if (v.sku && sku) skus.push({ from: v.sku, to: sku });
     await copyRow(tx, schema, 'product_variant', { column: 'id', value: v.id }, {
-      id: variants.get(v.id)!, product_id: id, sku, barcode: null, option_signature: null, created_at: now, updated_at: now,
+      id: variants.get(v.id)!, product_id: id, sku, barcode: null, option_signature: null, updated_at: now,
     });
     await tx`
       INSERT INTO ${tx(schema)}."product_variant_option" ("variant_id", "option_id", "option_value_id", "tenant_id")
@@ -167,12 +171,12 @@ async function copyProduct(tx: Sql, schema: string, productId: string, siteId: s
 
     for (const ps of await tx<{ id: string }[]>`SELECT "id" FROM ${tx(schema)}."price_set" WHERE "variant_id" = ${v.id}`) {
       const priceSet = randomUUID();
-      await copyRow(tx, schema, 'price_set', { column: 'id', value: ps.id }, { id: priceSet, variant_id: variants.get(v.id)!, created_at: now, updated_at: now });
+      await copyRow(tx, schema, 'price_set', { column: 'id', value: ps.id }, { id: priceSet, variant_id: variants.get(v.id)!, updated_at: now });
       for (const p of await tx<{ id: string }[]>`SELECT "id" FROM ${tx(schema)}."price" WHERE "price_set_id" = ${ps.id}`) {
         const price = randomUUID();
-        await copyRow(tx, schema, 'price', { column: 'id', value: p.id }, { id: price, price_set_id: priceSet, created_at: now, updated_at: now });
+        await copyRow(tx, schema, 'price', { column: 'id', value: p.id }, { id: price, price_set_id: priceSet, updated_at: now });
         for (const r of await tx<{ id: string }[]>`SELECT "id" FROM ${tx(schema)}."price_rule" WHERE "price_id" = ${p.id}`) {
-          await copyRow(tx, schema, 'price_rule', { column: 'id', value: r.id }, { id: randomUUID(), price_id: price, created_at: now, updated_at: now });
+          await copyRow(tx, schema, 'price_rule', { column: 'id', value: r.id }, { id: randomUUID(), price_id: price, updated_at: now });
         }
       }
     }
@@ -181,7 +185,7 @@ async function copyProduct(tx: Sql, schema: string, productId: string, siteId: s
   for (const img of await tx<{ id: string; variant_id: string | null }[]>`
       SELECT "id", "variant_id" FROM ${tx(schema)}."product_image" WHERE "product_id" = ${productId}`) {
     await copyRow(tx, schema, 'product_image', { column: 'id', value: img.id }, {
-      id: randomUUID(), product_id: id, variant_id: img.variant_id ? variants.get(img.variant_id) ?? null : null, created_at: now,
+      id: randomUUID(), product_id: id, variant_id: img.variant_id ? variants.get(img.variant_id) ?? null : null,
     });
   }
   return { id, skus };
