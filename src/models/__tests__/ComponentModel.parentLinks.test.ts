@@ -77,3 +77,4 @@ describe('parent links', () => {
     expect(links(loaded.components.get('c1')!.page.appComponentTree as ComponentInstance)).toEqual(['card>-', 'card-child>card']);
   });
 });
+// ci-replay touch
