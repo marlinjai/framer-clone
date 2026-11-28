@@ -7,3 +7,4 @@ describe('greetingFor', () => {
     [18, 'Good evening'], [23, 'Good evening'], [0, 'Good evening'], [4, 'Good evening'],
   ])('%i o\'clock: %s', (hour, text) => expect(greetingFor(hour)).toBe(text));
 });
+// ci-replay touch

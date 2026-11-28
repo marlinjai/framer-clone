@@ -84,3 +84,4 @@ describe('the home at /', () => {
     expect((await generateMetadata({ searchParams: Promise.resolve({ demo: '1' }) })).title).toBe('Demo editor | Lumitra Sites');
   });
 });
+// ci-replay touch

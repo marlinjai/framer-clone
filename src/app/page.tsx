@@ -40,3 +40,4 @@ export default async function Page({ searchParams }: { searchParams: Promise<Que
   if (entry.status === 'signed_in') redirect('/projects');
   return <Welcome signInHref={entry.loginUrl} authUnavailable={entry.status === 'auth_unavailable'} />;
 }
+// ci-replay touch

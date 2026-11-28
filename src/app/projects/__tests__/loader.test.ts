@@ -512,3 +512,4 @@ describe('loadHomeEntry: what `/` needs (plan 2026-11-23-sites-home-and-light-mo
     expect(await loadHomeEntry()).toEqual({ status: 'auth_unavailable', loginUrl: LOGIN_URL });
   });
 });
+// ci-replay touch
