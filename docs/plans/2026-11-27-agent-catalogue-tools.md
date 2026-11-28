@@ -309,8 +309,40 @@ Proof: `src/server/catalog/__tests__/siteRetire.itest.ts` (the job a no-op while
 after the delete, archive versus soft-delete, SKU reuse at zero stock, a second run changing nothing, another site's,
 another company's and siteless rows unchanged) and the delete route's unit tests.
 
-Part 2 (its own branch): the editor's catalogue in the project (a per-site list, creation with a `site_id`) and the
-Books invoice picker grouped by site.
+### Slice 2b, part 2: the editor's catalogue per site (decided here, say so if you disagree)
+
+- **One catalogue at a time.** The Catalog area (`/projects/catalog`) keeps its place and gets a "Catalog of" picker:
+  each main site of the company, plus the items without a site (`?site=company`, labelled "Company items (invoices
+  only)" once the company is assigned, "Shared by all sites" before). The address keeps the choice; no address opens the
+  first site (the company items when the company has no site, with a note pointing at creating one); a site the company
+  does not have (deleted, another company's, a branch) says so and shows the first site. Switching drops the open panels.
+  A separate page per project was not built: the picker covers it with less code, and a link from a project can pass `?site=`.
+- **Writes land in the catalogue shown.** Creating a product, a collection or the sample products requires `siteId` in
+  the body (a site of the company, or null for a company item; a missing one is refused, so no client silently makes an
+  item that shows on no shop). Lists take `site` or `companyItems=1`. Every site id is verified by one resolver,
+  `src/server/catalog/http/site.ts`: looked up in the session company's own workspace and tenant group, a branch resolves
+  to its main site, anything else answers `unknown_site` (404). Protects against a member of one company naming another
+  company's site to read or create in its catalogue. Repository functions take the verified site as a separate argument
+  (`createProduct(scope, input, { siteId })`), never from the input, so slice 3's agent tools reuse them unchanged.
+- **A collection holds only products of its own catalogue** (the same site, or both without one), refused as
+  `wrong_site` (409) from all three sides: the collection's product list, the product's collections, and the bulk "add to
+  collection". The panel and the collection picker offer only matching ones. `collectionOnSite`, the twin of
+  `productOnSite`, lives in `siteCatalogue.ts`.
+- **The per-site switch is refused where it does nothing** (`site_owned`, 409): for a product with a site, and for any
+  product of an assigned company; the meta answer carries `assigned`, and the panel shows a sentence instead of the switch.
+- **Handles stay unique per company across sites for new rows** (`freeHandle` unchanged): never a collision, at the cost
+  of `ring-2` on a second site when made in the editor. The database allows the same handle per site, so an explicit
+  handle may repeat on another site.
+- **Other insert paths, decided:** the test shop seed (`seedTestShop`, an operator script for the test jewellery company)
+  and the demo seed (`seedDemoSite`, dev and smoke tests) keep creating rows without a site: their companies are not
+  assigned, so those rows show on every site the old way, and the assignment places them like any other.
+- **The assignment copes with the mixed state** the per-site editor creates before the production run (a company not
+  yet assigned, with stamped rows next to rows without a site): a row that would land on a site where a stamped row holds
+  its handle takes the next free `-2`, `-3` there (listed in the report as `handlesRenamed`), and a stamped collection's
+  membership of a product without a site follows the product to its row on that site or goes
+  (`stampedCollectionMembers`). Rehearsed in `catalogue-site.itest.ts`.
+
+Part 3 (its own branch): the Books invoice picker grouped by site.
 
 ## Proof
 
