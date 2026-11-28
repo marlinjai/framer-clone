@@ -156,3 +156,4 @@ void main(){
  float f=smoothstep(0.25,0.0,d);
  o=vec4(pal(vT)*vA*f+vec3(0.08)*vA*f*f,1.0);
 }`;
+// ci-replay touch

@@ -181,3 +181,4 @@ describe('the one blend of the ring', () => {
     expect(deserializeScene(scene).layers[0].blend).toBe('add');
   });
 });
+// ci-replay touch
