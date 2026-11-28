@@ -34,7 +34,7 @@ import 'server-only';
 
 import { isTenantGroupId } from '@marlinjai/tenant-db';
 import type { PrismaClient } from '@prisma/client';
-import type { Kysely, Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 
 import type { CommerceDB } from '@/server/commerce/db-types';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from '@/server/commerce/db';
@@ -62,11 +62,23 @@ export async function retireSiteCatalogue(
   companyId: string,
   siteId: string,
   now: Date = new Date(),
+  options: { lockTimeoutMs?: number } = {},
 ): Promise<SiteCatalogueRetired> {
-  return db.transaction().execute(async (trx) => retireIn(trx, companyId, siteId, now));
+  return db.transaction().execute(async (trx) => {
+    // The immediate attempt answers the owner's delete request: it must not wait on a long checkout or editor save holding a
+    // product row, so it gives up after a bound and leaves the work to the job.
+    if (options.lockTimeoutMs !== undefined) await sql`SET LOCAL lock_timeout = ${sql.lit(`${Math.max(1, Math.floor(options.lockTimeoutMs))}ms`)}`.execute(trx);
+    return retireIn(trx, companyId, siteId, now);
+  });
 }
 
+/** How long the immediate retirement (in the owner's delete request) waits for a locked catalogue row before leaving it to the job. */
+export const IMMEDIATE_LOCK_TIMEOUT_MS = 5_000;
+
 async function retireIn(trx: Transaction<CommerceDB>, companyId: string, siteId: string, now: Date): Promise<SiteCatalogueRetired> {
+  // References are looked for among the company's order and Books lines. An order line from before 020 whose company could not be
+  // backfilled (tenant_id NULL) is not seen; a product it names would be soft-deleted rather than archived, which breaks nothing
+  // (the line keeps its snapshot and its variant_ref), and such a product would not carry a site in the first place.
   const products = await trx
     .selectFrom('product')
     .select((eb) => [
@@ -221,7 +233,7 @@ export async function retireDeletedSiteCatalogueNow(
     if (isCommerceTenantNotProvisioned(err)) return null;
     throw err;
   }
-  return retireSiteCatalogue(db, companyId, siteId);
+  return retireSiteCatalogue(db, companyId, siteId, new Date(), { lockTimeoutMs: IMMEDIATE_LOCK_TIMEOUT_MS });
 }
 
 /**

@@ -31,7 +31,7 @@ import { createProduct, getProduct } from '../repository/products';
 import { setVariantStock } from '../repository/stock';
 import { setOptions, updateVariant } from '../repository/variants';
 import { catalogScope, type CatalogScope } from '../scope';
-import { retireDeletedSiteCatalogue, retireSiteCatalogue, scheduleSiteCatalogueRetire } from '../siteRetire';
+import { IMMEDIATE_LOCK_TIMEOUT_MS, retireDeletedSiteCatalogue, retireDeletedSiteCatalogueNow, retireSiteCatalogue, scheduleSiteCatalogueRetire } from '../siteRetire';
 
 const ACME = newTenantId();
 const OTHER = newTenantId();
@@ -239,4 +239,21 @@ describe('deleting a project retires its shop catalogue', () => {
     await setVariantStock(acme, reuse, variant.id, 3);
     expect((await getProduct(acme, reuse)).variants[0].stock).toBe(3);
   });
+
+  it('the immediate attempt gives up on a row a long transaction holds (the delete request is not stalled); the job then finishes it', async () => {
+    const siteC = await createPublishedSite(env.fx, env.tgId, 'retireC', ACME);
+    const held = (await createProduct(acme, { title: 'Held', price: 500, status: 'published' })).id;
+    await stamp('product', held, siteC.siteId);
+    await env.fx.prisma.site.delete({ where: { id: siteC.siteId } });
+    const started = Date.now();
+    await env.fx.owner.begin(async (tx) => {
+      await tx`SELECT id FROM ${tx(env.schema)}.product WHERE id = ${held} FOR UPDATE`;
+      await expect(retireDeletedSiteCatalogueNow(env.tgId, ACME, siteC.siteId, async () => env.appDb)).rejects.toThrow(/lock timeout/);
+    });
+    expect(Date.now() - started).toBeLessThan(IMMEDIATE_LOCK_TIMEOUT_MS + 5_000);
+    expect((await product(held)).deleted_at).toBeNull();
+    // The lock released, the job's run retires it.
+    expect(await retireDeletedSiteCatalogue(env.appDb, ACME, siteC.siteId, env.fx.prisma, { now: clock.now })).toBe('retired');
+    expect((await product(held)).deleted_at).not.toBeNull();
+  }, 30_000);
 });
