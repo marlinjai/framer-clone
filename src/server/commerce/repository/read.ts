@@ -36,6 +36,7 @@ import type { ExpressionBuilder, Kysely } from 'kysely';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import type { CommerceDB } from '../db-types';
 import { UnknownVariantError } from './errors';
+import { productOnSite } from './siteCatalogue';
 
 import {
   ALL_LOCATIONS,
@@ -61,29 +62,21 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
-/** The products a view shows: the company's, live, published, unarchived, not hidden for the site. */
+/** The products a view shows: the company's, live, published, unarchived, in the site's catalogue (siteCatalogue.ts). */
 export function visibleProductConditions(eb: ExpressionBuilder<CommerceDB, 'product'>, view: CatalogueView) {
   return [
     eb('product.tenant_id', '=', view.companyId),
     eb('product.deleted_at', 'is', null),
     eb('product.archived_at', 'is', null),
     eb('product.status', '=', 'published'),
-    eb.not(
-      eb.exists(
-        eb
-          .selectFrom('product_site_hidden')
-          .select('product_site_hidden.product_id')
-          .whereRef('product_site_hidden.tenant_id', '=', 'product.tenant_id')
-          .whereRef('product_site_hidden.product_id', '=', 'product.id')
-          .where('product_site_hidden.site_id', '=', view.siteId),
-      ),
-    ),
+    productOnSite(eb, view.siteId),
   ];
 }
 
 /**
- * Whose catalogue a read shows, and for which site (020_catalogue_company): the company's live, published,
- * unarchived products that are not switched off for the site. The editor's canvas reads with the same view
+ * Whose catalogue a read shows, and for which site (020_catalogue_company, 033_catalogue_site): the company's
+ * live, published, unarchived products in the site's catalogue (siteCatalogue.ts). `siteId` is a MAIN site: a
+ * branch reads its main site's catalogue. The editor's canvas reads with the same view
  * as the published site, so a page shows in the editor exactly what it will show live.
  */
 export interface CatalogueView {
@@ -92,8 +85,8 @@ export interface CatalogueView {
 }
 
 /**
- * Build the product WHERE expression: always the view (company, live, published, unarchived, not hidden
- * for the site), plus one
+ * Build the product WHERE expression: always the view (company, live, published, unarchived, in the
+ * site's catalogue), plus one
  * ANDed, case-insensitive clause per filter (multiple clauses AND together).
  * Case-insensitivity uses ILIKE on the escaped value, mirroring the in-memory
  * lowercase-both comparison: `eq` -> exact ILIKE, `ne` -> NOT ILIKE,

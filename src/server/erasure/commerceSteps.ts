@@ -146,6 +146,7 @@ export const ERASURE_STEPS: ReadonlyArray<{ label: string; run: Step }> = [
   { label: 'books_asset', run: byCompany('books_asset') },
   { label: 'books_product', run: byCompany('books_product') },
   { label: 'product_site_hidden', run: byCompany('product_site_hidden') },
+  { label: 'catalogue_per_site', run: byCompany('catalogue_per_site') },
   { label: 'collection_product', run: byCompany('collection_product') },
   { label: 'product_image', run: byCompany('product_image') },
   { label: 'collection', run: byCompany('collection') },

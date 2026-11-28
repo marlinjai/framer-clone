@@ -67,14 +67,14 @@ export function constraintName(err: unknown): string | undefined {
 
 /** The unique indexes a person can run into, and what each means for them. */
 const UNIQUE: Record<string, { code: CatalogErrorCode; field: string }> = {
-  product_tenant_handle_active_key: { code: 'DUPLICATE_HANDLE', field: 'handle' },
+  product_tenant_site_handle_active_key: { code: 'DUPLICATE_HANDLE', field: 'handle' },
   product_variant_sku_active_key: { code: 'DUPLICATE_SKU', field: 'sku' },
   inventory_item_sku_active_key: { code: 'DUPLICATE_SKU', field: 'sku' },
   product_variant_barcode_active_key: { code: 'DUPLICATE_BARCODE', field: 'barcode' },
   product_option_product_id_title_active_key: { code: 'DUPLICATE_OPTION', field: 'options' },
   product_option_value_option_id_value_active_key: { code: 'DUPLICATE_OPTION', field: 'options' },
   product_variant_option_signature_active_key: { code: 'DUPLICATE_OPTION', field: 'options' },
-  collection_tenant_handle_live_key: { code: 'DUPLICATE_COLLECTION', field: 'handle' },
+  collection_tenant_site_handle_live_key: { code: 'DUPLICATE_COLLECTION', field: 'handle' },
 };
 
 /** Map an expected database error to its CatalogError; return every other error unchanged. */

@@ -73,6 +73,7 @@ const EXPECTED_MIGRATION_IDS = [
   '030_books_contact_person',
   '031_checkout_session',
   '032_form_notification',
+  '033_catalogue_site',
 ];
 
 const EXPECTED_ENUMS: Record<string, string[]> = {
@@ -99,6 +100,7 @@ const EXPECTED_TABLES = [
   'books_company_settings',
   'books_product',
   'catalog_image',
+  'catalogue_per_site',
   'collection',
   'collection_product',
   'commerce_job',
@@ -244,7 +246,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
   });
 
   // --- tables -------------------------------------------------------------
-  it('creates exactly the 30 commerce, 13 Books and 2 forms tables in the schema', async () => {
+  it('creates exactly the 31 commerce, 13 Books and 2 forms tables in the schema', async () => {
     const rows = await owner!`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = ${SCHEMA} AND table_type = 'BASE TABLE'
@@ -595,7 +597,7 @@ describe('CM-04 provisionTenant(COMMERCE_TENANT_MIGRATIONS) — structural probe
     // product.handle
     await expect(
       inSchema((tx) => tx`INSERT INTO product (tenant_id, id, title, handle, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_p2', 'P2', 'dup-handle', now())`),
-    ).rejects.toThrow(/product_tenant_handle_active_key/);
+    ).rejects.toThrow(/product_tenant_site_handle_active_key/);
     // product_option (product_id, title)
     await expect(
       inSchema((tx) => tx`INSERT INTO product_option (tenant_id, id, product_id, title, updated_at) VALUES ('018f9c10-0000-7000-8000-0000000000dc', 'pu_o2', 'pu_p1', 'Color', now())`),

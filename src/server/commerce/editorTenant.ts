@@ -101,7 +101,7 @@ export async function resolveEditorCommerce(
 
   const site = await prisma.site.findUnique({
     where: { id: projectId },
-    select: { workspaceId: true, tenantGroupId: true },
+    select: { workspaceId: true, tenantGroupId: true, branchOfSiteId: true },
   });
   if (!site) return forbidden();
 
@@ -154,7 +154,8 @@ export async function resolveEditorCommerce(
     return {
       ok: true,
       db: await commerceTenantDbChecked(tenantGroupId),
-      view: { companyId, siteId: projectId },
+      // A branch shows its main site's catalogue (033_catalogue_site: products name the main site).
+      view: { companyId, siteId: site.branchOfSiteId ?? projectId },
     };
   } catch (err) {
     // A valid tenant group whose tg_<id> schema does not exist.

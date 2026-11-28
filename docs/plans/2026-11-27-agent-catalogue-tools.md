@@ -228,12 +228,42 @@ catalogue's own codes in lower case (`not_found`, `duplicate_handle`, `duplicate
 
 ## Slices (each one branch, about 1,500 changed lines at most)
 
-1. **Now**: the operations layer with the verification above, the three read tools, the tool list test, the
-   server instructions and the plugin README, unit tests and an integration test through the MCP route.
-2. **Per project (decided 2026-11-28)**: 2a the migration, the backfill with its dry run, the storefront read
-   and site deletion; 2b the editor's catalogue in the project and the Books picker grouped by site.
+1. **Done (#524)**: the operations layer with the verification above, the two read tools (`list_products`,
+   `get_product`), the tool list test, the server instructions and the plugin README, unit tests and an
+   integration test through the MCP route.
+2. **Per project (decided 2026-11-28)**: 2a the migration, the assignment with its dry run, the storefront read;
+   2b site deletion, the editor's catalogue in the project and the Books picker grouped by site.
 3. **Writes**, scoped to the verified site, with the audit table.
 4. **Collections**, then a product list bound to a collection on published pages.
+
+### Slice 2a: how the assignment works (decided here, say so if you disagree)
+
+- **Migration `033_catalogue_site`** is additive: a nullable `site_id` on `product` and `collection`, handles
+  unique per company and site (company items, with no site, share one handle space), and a table
+  `catalogue_per_site` with one row per company whose catalogue has been assigned, holding the run's report.
+- **A NULL `site_id` has two meanings, told apart by `catalogue_per_site`.** For an assigned company it is a
+  company item (Books only, on no shop). For a company not yet assigned it is a row from before, and the shop
+  reads it the old way (the company's products not switched off for the site). One rule,
+  `src/server/commerce/repository/siteCatalogue.ts`, serves the published shop, its checkout, the editor canvas
+  and the agent read tools. So deploying 033 changes no live shop: each company switches when its assignment
+  runs, one company at a time if wanted (`--company`).
+- **The assignment** (`pnpm catalogue:assign-sites <tenant group> [--company <id>] [--apply]`, a dry run unless
+  `--apply`, one transaction, the catalogue tables locked against writes meanwhile) follows point 5 above. The
+  row of a product shown on several sites stays on the site that sold it most recently (orders on a site it is
+  switched off for do not count), else the oldest. Each copy keeps the handle, gets SKUs suffixed `-2`, `-3`, ...
+  until they are free in the tenant group (no barcode), and starts with no stock. A collection goes to the sites
+  of its products, an empty one to the oldest site. A company is marked even when it has no site, so from then on
+  its NULL rows are company items. A main site that names no company refuses an applying run.
+- **A branch reads its main site's catalogue**: the editor canvas of a branch now uses the main site's id.
+- **`product_site_hidden` stays** until every company is assigned (it is the input and the old rule); a later
+  migration drops it.
+- **The production run comes after 2b.** Once a company is assigned, a product created in today's company-wide
+  editor has no site and so appears on no shop. The run therefore waits until the editor creates products in a
+  project (2b), and needs Marlin's one-line yes. The rehearsal is `src/server/commerce/__tests__/catalogue-site.itest.ts`:
+  a throwaway database with a one-site company, a three-site company (a product shown on two sites and sold on
+  both, one switched off everywhere, a service on all three, a deleted product, collections) and a company
+  without a site. It covers the dry run writing nothing, the per-company switch, each shop's exact list, the
+  copies, and a second run changing nothing. Nothing is read from production.
 
 ## Proof
 

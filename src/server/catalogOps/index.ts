@@ -6,10 +6,11 @@ import 'server-only';
 // the MCP catalogue tools (src/server/mcp/catalogTools.ts) run. No query of its own: every read goes through
 // the repository functions the editor's catalogue routes call (src/server/catalog/repository).
 //
-// A catalogue is named by its SITE, under both models the plan leaves open to Marlin (the catalogue per
-// company, or per project): "the catalogue of this site" is today the company's products not switched off for
-// the site, and after a per-project migration the site's own products. Collections are left out until that
-// answer, so nothing read now changes meaning later.
+// A catalogue is named by its SITE: the catalogue belongs to the project (decided by Marlin on 2026-11-28).
+// "The catalogue of this site" is the site's own products once its company's catalogue is assigned to its sites
+// (033_catalogue_site), and before that the company's products not switched off for the site: one rule,
+// src/server/commerce/repository/siteCatalogue.ts, shared with the published shop. Collections are left out until
+// they are assigned too.
 //
 // Who may read what, checked on every call, first failure wins (the plan's "How the company and the site are
 // verified"):
@@ -24,7 +25,7 @@ import 'server-only';
 //      `site_not_found`; a branch id resolves to its main site, which owns the catalogue.
 //   4. The shop schema of the caller's tenant group; not provisioned is `catalog_not_provisioned`.
 //   5. The rows: the catalogue scope filters every query on the caller's company, and on the site. Another
-//      company's product, or one switched off for the site, is `not_found`, never `forbidden`.
+//      company's product, or one not in the site's catalogue, is `not_found`, never `forbidden`.
 //
 // Nothing here throws for an expected failure; every way out is a result.
 
@@ -37,7 +38,7 @@ import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from '@/serve
 import type { CommerceDB } from '@/server/commerce/db-types';
 import { catalogErrorBody } from '@/server/catalog/http/errorResponse';
 import { notFound } from '@/server/catalog/errors';
-import { getProduct, listProducts } from '@/server/catalog/repository/products';
+import { getProduct, isProductOnSite, listProducts } from '@/server/catalog/repository/products';
 import { catalogScope, type CatalogScope } from '@/server/catalog/scope';
 import { branchOfSite, type BranchOpsDeps } from '@/server/siteOps/branches';
 
@@ -202,8 +203,8 @@ export async function getSiteProduct(
   deps: CatalogOpsDeps = {},
 ): Promise<CatalogOpsResult<{ siteId: string; product: AgentProduct }>> {
   return run(caller, input.siteId, 'viewSite', deps, async ({ scope, siteId: site }) => {
+    if (!(await isProductOnSite(scope, input.productId, site))) throw notFound('product', input.productId);
     const product = await getProduct(scope, input.productId);
-    if (product.hiddenSiteIds.includes(site)) throw notFound('product', input.productId);
     return { siteId: site, product: productView(product) };
   });
 }

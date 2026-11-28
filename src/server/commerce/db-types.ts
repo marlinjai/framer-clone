@@ -248,6 +248,8 @@ export interface ProductTable {
   search_text: string | null;
   archived_at: Timestamp | null;
   books_product_id: string | null;
+  /** 033_catalogue_site: the main site the product belongs to; NULL is a company item, or unassigned (see catalogue_per_site). */
+  site_id: string | null;
 }
 
 /** 003_catalog: product option (e.g. "Size"). */
@@ -770,6 +772,8 @@ export interface CollectionTable {
   archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  /** 033_catalogue_site: the main site the collection belongs to (NULL as product.site_id). */
+  site_id: string | null;
 }
 
 /** 020_catalogue_company: the ordered products of a collection. */
@@ -778,6 +782,16 @@ export interface CollectionProductTable {
   collection_id: string;
   product_id: string;
   position: number;
+}
+
+/**
+ * 033_catalogue_site: the company's catalogue is assigned to its sites. With this row a NULL site_id is a company
+ * item (Books only); without it a NULL site_id is a row from before the assignment, read the old way.
+ */
+export interface CataloguePerSiteTable {
+  tenant_id: string;
+  assigned_at: Generated<Timestamp>;
+  report: JsonColumn<Record<string, unknown>>;
 }
 
 /** 020_catalogue_company: a product switched off for one site of its company. */
@@ -973,6 +987,7 @@ export interface CommerceDB {
   collection: CollectionTable;
   collection_product: CollectionProductTable;
   product_site_hidden: ProductSiteHiddenTable;
+  catalogue_per_site: CataloguePerSiteTable;
   order_payment: OrderPaymentTable;
   payment_event: PaymentEventTable;
   payment_account: PaymentAccountTable;
