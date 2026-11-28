@@ -273,3 +273,4 @@ frozen definitions, as the editor's check does.
 - Erase migration: `20261102230000_site_erasures`, additive (two columns with defaults, one table). Older code ignores
   them: it neither fences stale tabs nor keys the memo on `rewritten_at`, so an erase made while old code still runs
   can be undone by such a tab. Erase only once the new code is deployed everywhere.
+<!-- ci-replay touch -->
