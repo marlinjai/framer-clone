@@ -488,3 +488,4 @@ describe('the migration 20261112300000_site_model_coordination on a scratch data
     } finally { await s.file(rollbackFile).catch(() => undefined); await s.end(); }
   });
 });
+// ci-replay touch
