@@ -1741,3 +1741,4 @@ export function draftFramesInView(): boolean {
     return box.width > 0 && box.height > 0 && box.right > view.left && box.left < view.right && box.bottom > view.top && box.top < view.bottom;
   });
 }
+// ci-replay touch

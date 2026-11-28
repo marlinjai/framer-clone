@@ -287,3 +287,4 @@ describe('SiteChangedDialog: the pages keeping mine restores (F4)', () => {
     expect(screen.getByRole('dialog').textContent).not.toContain('restores');
   });
 });
+// ci-replay touch
