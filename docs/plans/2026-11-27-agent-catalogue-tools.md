@@ -347,7 +347,17 @@ another company's and siteless rows unchanged) and the delete route's unit tests
   membership of a product without a site follows the product to its row on that site or goes
   (`stampedCollectionMembers`). Rehearsed in `catalogue-site.itest.ts`.
 
-Part 3 (its own branch): the Books invoice picker grouped by site.
+### Slice 2b, part 3: the Books invoice picker grouped by site (decided here, say so if you disagree)
+
+- **Every item stays offered on an invoice**, whatever its site: the Books sell for the company, not for one shop. The
+  search (`searchCatalogue`) is unchanged except that each item names its site (`siteId`).
+- **The picker groups, the server does not filter.** `GET /api/books/catalogue` also answers the company's sites (from
+  its own workspace, the verified session's) and whether the company is assigned; `src/lib/books/catalogueGroups.ts`
+  groups the items under each site's name in the order of the sites, then the items without a site ("Company items" once
+  assigned, "All sites" before). A site the company no longer lists (a project just deleted, its catalogue not yet
+  retired) keeps its items under "A site no longer listed", so nothing is hidden. With one group only, no heading shows.
+- **The arrows walk the grouped order**, so the highlighted item is always the one Enter picks. The 50-item cap stays on
+  the title order; typing narrows, as before.
 
 ## Proof
 
