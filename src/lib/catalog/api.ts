@@ -116,12 +116,21 @@ export type BulkAction =
 const p = (id: string) => `/api/catalog/products/${encodeURIComponent(id)}`;
 const c = (id: string) => `/api/catalog/collections/${encodeURIComponent(id)}`;
 
+/**
+ * Which catalogue the editor works in (the catalogue per project, migration 033): a site's (its id), or the company items
+ * (null: no site, offered to the Books only once the company is assigned).
+ */
+export type CatalogPlace = string | null;
+
+const placeQuery = (place: CatalogPlace) => (place === null ? { companyItems: '1' } : { site: place });
+
 export const catalogApi = {
-  products: (q: ProductListQuery = {}) => send<ProductPage>('GET', `/api/catalog/products${query({ ...q })}`),
-  meta: () => send<{ sites: SiteView[]; productTypes: string[] }>('GET', '/api/catalog/meta'),
-  createProduct: (input: { title: string; kind?: 'physical' | 'service'; price?: number | null }) =>
-    send<ProductDetail>('POST', '/api/catalog/products', input),
-  addSamples: () => send<{ items: ProductDetail[] }>('POST', '/api/catalog/products/samples'),
+  products: (place: CatalogPlace, q: Omit<ProductListQuery, 'site' | 'companyItems'> = {}) =>
+    send<ProductPage>('GET', `/api/catalog/products${query({ ...q, ...placeQuery(place) })}`),
+  meta: () => send<{ sites: SiteView[]; productTypes: string[]; assigned: boolean }>('GET', '/api/catalog/meta'),
+  createProduct: (place: CatalogPlace, input: { title: string; kind?: 'physical' | 'service'; price?: number | null }) =>
+    send<ProductDetail>('POST', '/api/catalog/products', { ...input, siteId: place }),
+  addSamples: (place: CatalogPlace) => send<{ items: ProductDetail[] }>('POST', '/api/catalog/products/samples', { siteId: place }),
   bulk: (action: BulkAction) => send<{ changed: number }>('POST', '/api/catalog/products/bulk', action),
   product: (id: string) => send<ProductDetail>('GET', p(id)),
   updateProduct: (id: string, patch: ProductPatch) => send<ProductDetail>('PATCH', p(id), patch),
@@ -140,10 +149,11 @@ export const catalogApi = {
   setProductCollections: (id: string, collectionIds: string[]) => send<ProductDetail>('PUT', `${p(id)}/collections`, { collectionIds }),
   setHiddenSites: (id: string, hiddenSiteIds: string[]) => send<ProductDetail>('PUT', `${p(id)}/sites`, { hiddenSiteIds }),
   storeImage: (file: Blob) => send<{ sha256: string; width: number; height: number; contentType: string }>('POST', '/api/catalog/images', undefined, file),
-  collections: (includeArchived = false) =>
-    send<{ items: CollectionView[] }>('GET', `/api/catalog/collections${includeArchived ? '?includeArchived=1' : ''}`),
+  /** The collections of one catalogue: a site's, or (null) those without a site. */
+  collections: (place: CatalogPlace, includeArchived = false) =>
+    send<{ items: CollectionView[] }>('GET', `/api/catalog/collections${query({ includeArchived: includeArchived ? '1' : undefined, ...placeQuery(place) })}`),
   collection: (id: string) => send<CollectionDetail>('GET', c(id)),
-  createCollection: (title: string) => send<CollectionDetail>('POST', '/api/catalog/collections', { title }),
+  createCollection: (place: CatalogPlace, title: string) => send<CollectionDetail>('POST', '/api/catalog/collections', { title, siteId: place }),
   updateCollection: (
     id: string,
     patch: { title?: string; handle?: string; description?: string | null; descriptionFormat?: RichText | null; imageSha256?: string | null; archived?: boolean },

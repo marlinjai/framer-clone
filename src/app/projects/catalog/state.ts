@@ -133,3 +133,22 @@ export function priceRange(min: number | null, max: number | null): string {
   if (max === null || max === min) return money(min);
   return `${money(min)} to ${money(max)}`;
 }
+
+/** The address value of the company items view (`?site=company`): the products without a site. */
+export const COMPANY_ITEMS = 'company';
+
+/**
+ * Which catalogue the address names (the catalogue per project, migration 033), once the company's sites are known:
+ * `?site=<id>` a site of the company, `?site=company` the company items (null), nothing the first site (the company items
+ * when the company has no site). A site the company does not have (deleted, another company's, a branch) falls back to the
+ * first site and is reported as `unknown`, so the screen can say so instead of showing an empty list.
+ */
+export function placeFrom(params: URLSearchParams, siteIds: readonly string[]): { place: string | null; unknown: string | null } {
+  const requested = params.get('site');
+  const fallback = siteIds[0] ?? null;
+  if (requested === null || requested === '') return { place: fallback, unknown: null };
+  if (requested === COMPANY_ITEMS) return { place: null, unknown: null };
+  if (siteIds.includes(requested)) return { place: requested, unknown: null };
+  return { place: fallback, unknown: requested };
+}
+

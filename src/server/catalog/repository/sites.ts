@@ -7,6 +7,8 @@
 // site ids (from the session's workspace), so a product can only be hidden on
 // a site of its company (UNKNOWN_SITE otherwise). Rows for sites that no
 // longer exist are left alone: they hide nothing and vanish with the product.
+// Since the catalogue per project (033) this applies only to a company not yet
+// assigned and its products without a site (SITE_OWNED otherwise).
 
 import { z } from 'zod';
 
@@ -14,6 +16,8 @@ import type { ProductDetail } from '@/lib/catalog/types';
 
 import { CatalogError, invalid, withDbErrors } from '../errors';
 import type { CatalogScope } from '../scope';
+import { isCatalogueAssigned } from '@/server/commerce/repository/siteCatalogue';
+
 import { getProduct } from './products';
 import { lockProduct, touchProduct } from './shared';
 
@@ -36,6 +40,13 @@ export async function setHiddenSites(
   await withDbErrors(() =>
     scope.db.transaction().execute(async (trx) => {
       await lockProduct(trx, scope, productId);
+      // Switching a product off per site is the rule of a company not yet assigned, for its products without a site
+      // (src/server/commerce/repository/siteCatalogue.ts). For any other product the read rule ignores these rows, so the
+      // toggle would answer success and change nothing: it is refused instead.
+      const own = await trx.selectFrom('product').select('site_id').where('tenant_id', '=', scope.tenantId).where('id', '=', productId).executeTakeFirstOrThrow();
+      if (own.site_id !== null || (await isCatalogueAssigned(trx, scope.tenantId))) {
+        throw new CatalogError('SITE_OWNED', 'SITE_OWNED: this product is not shared by every site of the company', { productId });
+      }
       const known = [...companySiteIds];
       if (known.length > 0) {
         await trx

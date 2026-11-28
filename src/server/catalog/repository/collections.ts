@@ -8,6 +8,10 @@
 // collections are set from its panel (setProductCollections), a collection's
 // products and their order from the collection's panel (setCollectionProducts).
 // Every query filters on the company.
+//
+// Per project (migration 033): a collection belongs to one main site (`site_id`) or to none (a company item, or a collection
+// of a company not yet assigned). A collection holds only products of its own catalogue (src/lib/catalog/siteRule.ts
+// sameCatalogue; `WRONG_SITE` otherwise), so the shops never meet a collection reaching across sites.
 
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -16,7 +20,10 @@ import type { CollectionDetail, CollectionView, ProductDetail } from '@/lib/cata
 import { derivePair, richFromPlain, richTextSchema, type RichText } from '@/server/books/render/richText';
 import { toJsonb } from '@/server/books/snapshots';
 
-import { invalid, notFound, withDbErrors } from '../errors';
+import { sameCatalogue } from '@/lib/catalog/siteRule';
+import { collectionOnSite, isCatalogueAssigned } from '@/server/commerce/repository/siteCatalogue';
+
+import { invalid, notFound, withDbErrors, wrongSite } from '../errors';
 import type { CatalogScope } from '../scope';
 import { imageIdByHash } from './images';
 import { getProduct } from './products';
@@ -41,7 +48,7 @@ const updateInput = z
   .strict();
 export type UpdateCollectionInput = z.input<typeof updateInput>;
 
-async function collectionViews(db: Db, scope: CatalogScope, ids?: string[]): Promise<CollectionView[]> {
+async function collectionViews(db: Db, scope: CatalogScope, ids?: string[], siteId?: string | null): Promise<CollectionView[]> {
   let q = db
     .selectFrom('collection')
     .leftJoin('catalog_image', (j) => j.onRef('catalog_image.id', '=', 'collection.image_id').onRef('catalog_image.tenant_id', '=', 'collection.tenant_id'))
@@ -53,6 +60,7 @@ async function collectionViews(db: Db, scope: CatalogScope, ids?: string[]): Pro
       'collection.description_format as description_format',
       'collection.archived_at as archived_at',
       'collection.updated_at as updated_at',
+      'collection.site_id as site_id',
       'catalog_image.sha256 as sha256',
       'catalog_image.width as width',
       'catalog_image.height as height',
@@ -67,6 +75,8 @@ async function collectionViews(db: Db, scope: CatalogScope, ids?: string[]): Pro
     ])
     .where('collection.tenant_id', '=', scope.tenantId);
   if (ids) q = q.where('collection.id', 'in', ids);
+  if (siteId === null) q = q.where('collection.site_id', 'is', null);
+  else if (siteId !== undefined) q = q.where((eb) => collectionOnSite(eb, siteId));
   const rows = await q.orderBy((eb) => eb.fn('lower', ['collection.title'])).orderBy('collection.id').execute();
   return rows.map((r) => ({
     id: r.id,
@@ -78,12 +88,17 @@ async function collectionViews(db: Db, scope: CatalogScope, ids?: string[]): Pro
     archivedAt: r.archived_at ? iso(r.archived_at) : null,
     productCount: Number(r.product_count ?? 0),
     updatedAt: iso(r.updated_at),
+    siteId: r.site_id,
   }));
 }
 
-/** The company's collections by title; archived ones only with `includeArchived`. */
-export async function listCollections(scope: CatalogScope, opts: { includeArchived?: boolean } = {}): Promise<CollectionView[]> {
-  const all = await collectionViews(scope.db, scope);
+/**
+ * The company's collections by title; archived ones only with `includeArchived`. With `siteId` (a main site the caller has
+ * verified) only that site's catalogue (src/server/commerce/repository/siteCatalogue.ts collectionOnSite); with null only
+ * the collections without a site.
+ */
+export async function listCollections(scope: CatalogScope, opts: { includeArchived?: boolean; siteId?: string | null } = {}): Promise<CollectionView[]> {
+  const all = await collectionViews(scope.db, scope, undefined, opts.siteId);
   return opts.includeArchived ? all : all.filter((c) => c.archivedAt === null);
 }
 
@@ -133,8 +148,15 @@ export async function getCollection(scope: CatalogScope, id: string): Promise<Co
   };
 }
 
-/** Add a collection (its handle from the title, free among the company's live collections). */
-export async function createCollection(scope: CatalogScope, input: z.input<typeof createInput>): Promise<CollectionDetail> {
+/**
+ * Add a collection (its handle from the title, free among the company's live collections), in `placement.siteId`'s catalogue
+ * (a main site of the company the caller has verified) or, without one, as a company item.
+ */
+export async function createCollection(
+  scope: CatalogScope,
+  input: z.input<typeof createInput>,
+  placement: { siteId?: string | null } = {},
+): Promise<CollectionDetail> {
   const parsed = createInput.safeParse(input);
   if (!parsed.success) throw invalid(parsed.error.issues);
   const id = randomUUID();
@@ -143,7 +165,7 @@ export async function createCollection(scope: CatalogScope, input: z.input<typeo
       const handle = await freeHandle(trx, scope, 'collection', handleFrom(parsed.data.title));
       await trx
         .insertInto('collection')
-        .values({ id, tenant_id: scope.tenantId, title: parsed.data.title, handle, updated_at: new Date() })
+        .values({ id, tenant_id: scope.tenantId, title: parsed.data.title, handle, site_id: placement.siteId ?? null, updated_at: new Date() })
         .execute();
     }),
   );
@@ -200,13 +222,16 @@ export async function setCollectionProducts(scope: CatalogScope, id: string, pro
   const ids = parsed.data;
   await withDbErrors(() =>
     scope.db.transaction().execute(async (trx) => {
-      const current = await trx.selectFrom('collection').select('id').where('tenant_id', '=', scope.tenantId).where('id', '=', id).forUpdate().executeTakeFirst();
+      const current = await trx.selectFrom('collection').select(['id', 'site_id']).where('tenant_id', '=', scope.tenantId).where('id', '=', id).forUpdate().executeTakeFirst();
       if (!current) throw notFound('collection', id);
       if (ids.length > 0) {
-        const found = await trx.selectFrom('product').select('id').where('tenant_id', '=', scope.tenantId).where('id', 'in', ids).where('deleted_at', 'is', null).execute();
-        const have = new Set(found.map((r) => r.id));
+        const found = await trx.selectFrom('product').select(['id', 'site_id']).where('tenant_id', '=', scope.tenantId).where('id', 'in', ids).where('deleted_at', 'is', null).execute();
+        const have = new Map(found.map((r) => [r.id, r.site_id]));
         const missing = ids.find((p) => !have.has(p));
         if (missing) throw notFound('product', missing);
+        const assigned = await isCatalogueAssigned(trx, scope.tenantId);
+        const foreign = ids.find((p) => !sameCatalogue(have.get(p) ?? null, current.site_id, assigned));
+        if (foreign) throw wrongSite(foreign, id);
       }
       const before = await trx.selectFrom('collection_product').select('product_id').where('tenant_id', '=', scope.tenantId).where('collection_id', '=', id).execute();
       await trx.deleteFrom('collection_product').where('tenant_id', '=', scope.tenantId).where('collection_id', '=', id).execute();
@@ -238,18 +263,22 @@ export async function setProductCollections(scope: CatalogScope, productId: stri
   await withDbErrors(() =>
     scope.db.transaction().execute(async (trx) => {
       await lockProduct(trx, scope, productId);
+      const own = await trx.selectFrom('product').select('site_id').where('tenant_id', '=', scope.tenantId).where('id', '=', productId).executeTakeFirstOrThrow();
       if (wanted.length > 0) {
         const found = await trx
           .selectFrom('collection')
-          .select('id')
+          .select(['id', 'site_id'])
           .where('tenant_id', '=', scope.tenantId)
           .where('id', 'in', wanted)
           .orderBy('id')
           .forUpdate()
           .execute();
-        const have = new Set(found.map((r) => r.id));
+        const have = new Map(found.map((r) => [r.id, r.site_id]));
         const missing = wanted.find((c) => !have.has(c));
         if (missing) throw notFound('collection', missing);
+        const assigned = await isCatalogueAssigned(trx, scope.tenantId);
+        const foreign = wanted.find((c) => !sameCatalogue(own.site_id, have.get(c) ?? null, assigned));
+        if (foreign) throw wrongSite(productId, foreign);
       }
       const current = await trx
         .selectFrom('collection_product')

@@ -29,7 +29,9 @@ export type CatalogErrorCode =
   | 'UNSUPPORTED_IMAGE_TYPE'
   | 'IMAGE_INVALID'
   | 'IMAGE_LIMIT'
-  | 'UNKNOWN_SITE';
+  | 'UNKNOWN_SITE'
+  | 'WRONG_SITE'
+  | 'SITE_OWNED';
 
 export class CatalogError extends Error {
   readonly code: CatalogErrorCode;
@@ -115,4 +117,9 @@ export function invalidField(path: string, message: string): CatalogError {
 
 export function notFound(what: string, id: string | null): CatalogError {
   return new CatalogError('NOT_FOUND', `NOT_FOUND: ${what}`, { what, id });
+}
+
+/** A product and a collection of different catalogues (another site, or one with a site and one without). */
+export function wrongSite(productId: string, collectionId: string): CatalogError {
+  return new CatalogError('WRONG_SITE', 'WRONG_SITE: a collection holds only products of its own site', { productId, collectionId });
 }

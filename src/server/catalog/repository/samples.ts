@@ -16,6 +16,8 @@ import type { ProductDetail } from '@/lib/catalog/types';
 
 import { isCatalogError } from '../errors';
 import type { CatalogScope } from '../scope';
+import { productOnSite } from '@/server/commerce/repository/siteCatalogue';
+
 import { createProduct, getProduct, updateProduct } from './products';
 import { setVariantStock } from './stock';
 import { setOptions, updateVariant } from './variants';
@@ -72,12 +74,16 @@ const SAMPLES: Sample[] = [
 ];
 
 /** Add the sample products the company does not have yet; answers the three as they are now. */
-export async function addSampleProducts(scope: CatalogScope): Promise<ProductDetail[]> {
+export async function addSampleProducts(scope: CatalogScope, placement: { siteId: string | null } = { siteId: null }): Promise<ProductDetail[]> {
+  // Samples go into one catalogue (a site's, or the company items): "already there" is judged in that catalogue only.
+  const siteId = placement.siteId;
   const existing = await scope.db
     .selectFrom('product')
     .select(['id', 'handle'])
     .where('tenant_id', '=', scope.tenantId)
     .where('deleted_at', 'is', null)
+    // The catalogue the user sees: a site's by the read rule (with the shared rows of a company not yet assigned), or the items without a site.
+    .where((eb) => (siteId === null ? eb('site_id', 'is', null) : productOnSite(eb, siteId)))
     .where(
       'handle',
       'in',
@@ -100,7 +106,7 @@ export async function addSampleProducts(scope: CatalogScope): Promise<ProductDet
         kind: sample.kind,
         productType: sample.productType,
         price: sample.price,
-      });
+      }, { siteId });
     } catch (err) {
       if (!isCatalogError(err, 'DUPLICATE_HANDLE')) throw err;
       const winner = await scope.db
@@ -108,6 +114,7 @@ export async function addSampleProducts(scope: CatalogScope): Promise<ProductDet
         .select('id')
         .where('tenant_id', '=', scope.tenantId)
         .where('handle', '=', sample.handle)
+        .where((eb) => (siteId === null ? eb('site_id', 'is', null) : productOnSite(eb, siteId)))
         .where('deleted_at', 'is', null)
         .executeTakeFirstOrThrow();
       out.push(await getProduct(scope, winner.id));

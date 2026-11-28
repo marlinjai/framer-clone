@@ -4,7 +4,11 @@
 // POST /api/catalog/products                                                        -> 201 ProductDetail
 //
 // The active company's products for the catalogue table (catalogue design,
-// slice 2). GET: `q` matches title, type, tags, description and SKUs (folded,
+// slice 2), per site since the catalogue per project (033): GET `site` (a site
+// of the company, a branch reads its main site) lists that site's catalogue,
+// `companyItems=1` the items without a site; POST takes `siteId` (a site of the
+// company, or null for a company item; required). Sites are verified by
+// src/server/catalog/http/site.ts. GET: `q` matches title, type, tags, description and SKUs (folded,
 // every word); `status` draft, published, archived or all (default: every
 // unarchived product); `type` exact; `collection` an id; `stock` in_stock,
 // out_of_stock or untracked; `sort` updated (default), title, created, price or
@@ -15,6 +19,7 @@
 
 import type { ProductListQuery } from '@/lib/catalog/types';
 import { catalogRoute, readObject } from '@/server/catalog/http/route';
+import { placementFrom, verifiedMainSite } from '@/server/catalog/http/site';
 import { createProduct, listProducts } from '@/server/catalog/repository/products';
 
 export const runtime = 'nodejs';
@@ -29,6 +34,9 @@ export const GET = catalogRoute('read', async (ctx, req) => {
   }
   const limit = params.get('limit');
   if (limit !== null) query.limit = /^\d+$/.test(limit) ? Number(limit) : limit;
+  const site = params.get('site');
+  if (site !== null && site !== '') query.site = await verifiedMainSite(ctx, site);
+  if (params.get('companyItems') === '1') query.companyItems = true;
   // The repository validates every parameter (INVALID_INPUT, 422, names the offending ones).
   return Response.json(await listProducts(ctx.scope, query as ProductListQuery));
 });
@@ -36,5 +44,7 @@ export const GET = catalogRoute('read', async (ctx, req) => {
 export const POST = catalogRoute('write', async (ctx, req) => {
   const body = await readObject(req);
   if (!body.ok) return body.response;
-  return Response.json(await createProduct(ctx.scope, body.body as Parameters<typeof createProduct>[1]), { status: 201 });
+  const { siteId, ...input } = body.body;
+  const placement = await placementFrom(ctx, { siteId });
+  return Response.json(await createProduct(ctx.scope, input as Parameters<typeof createProduct>[1], placement), { status: 201 });
 });

@@ -97,7 +97,7 @@ function detail(over: Json = {}): Json {
   };
 }
 
-const META = { sites: [{ id: 'site-1', name: 'Shop' }], productTypes: ['Necklace'] };
+const META = { sites: [{ id: 'site-1', name: 'Shop' }], productTypes: ['Necklace'], assigned: false };
 const base = (list: () => Json[]): Record<string, Handler> => ({
   'GET /api/catalog/products': () => ({ status: 200, body: { items: list(), total: list().length, nextCursor: null } }),
   'GET /api/catalog/collections': () => ({ status: 200, body: { items: [] } }),
@@ -323,5 +323,82 @@ describe('the panel', () => {
     server(base(() => []));
     render(<CatalogHome initialQuery="product=gone" />);
     expect(await screen.findByText(/not in this company's catalogue any more/)).toBeTruthy();
+  });
+});
+
+describe('one catalogue at a time (the catalogue per site)', () => {
+  const TWO = { sites: [{ id: 'site-1', name: 'Shop' }, { id: 'site-2', name: 'Catering' }], productTypes: [], assigned: true };
+
+  it('opens the first site, lists and creates there, and switching the site drops the open product', async () => {
+    server({
+      ...base(() => [listItem()]),
+      'GET /api/catalog/meta': () => ({ status: 200, body: TWO }),
+      'POST /api/catalog/products': (body) => ({ status: 201, body: detail({ id: 'p9', title: body!.title, siteId: body!.siteId }) }),
+      'GET /api/catalog/products/p9': () => ({ status: 200, body: detail({ id: 'p9', siteId: 'site-1' }) }),
+    });
+    render(<CatalogHome />);
+    await screen.findByRole('button', { name: 'Pearl necklace' });
+    expect(calls.find((c) => c.url.startsWith('/api/catalog/products'))!.url).toContain('site=site-1');
+    expect(calls.find((c) => c.url.startsWith('/api/catalog/collections'))!.url).toContain('site=site-1');
+    expect(screen.getByText(/the shop on Shop/)).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add product' })[0]);
+    fireEvent.change(screen.getByPlaceholderText('Silver ring'), { target: { value: 'Torte' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create and open' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/catalog/products')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST')!.body).toEqual({ title: 'Torte', kind: 'physical', siteId: 'site-1' });
+    await waitFor(() => expect(window.location.search).toContain('product=p9'));
+
+    fireEvent.change(screen.getByLabelText('Catalog of'), { target: { value: 'site-2' } });
+    await waitFor(() => expect(window.location.search).toContain('site=site-2'));
+    expect(window.location.search).not.toContain('product=');
+    await waitFor(() => expect(calls.some((c) => c.url.startsWith('/api/catalog/products?') && c.url.includes('site=site-2'))).toBe(true));
+
+    fireEvent.change(screen.getByLabelText('Catalog of'), { target: { value: 'company' } });
+    await waitFor(() => expect(calls.some((c) => c.url.includes('companyItems=1'))).toBe(true));
+    expect(screen.getByText(/offered on your invoices, on no shop/)).toBeTruthy();
+  });
+
+  it('a site in the address the company does not have says so and shows the first site', async () => {
+    server({ ...base(() => [listItem()]), 'GET /api/catalog/meta': () => ({ status: 200, body: TWO }) });
+    render(<CatalogHome initialQuery="site=site-deleted" />);
+    expect(await screen.findByText(/not one of this company/)).toBeTruthy();
+    await screen.findByRole('button', { name: 'Pearl necklace' });
+    expect(calls.find((c) => c.url.startsWith('/api/catalog/products'))!.url).toContain('site=site-1');
+    expect(calls.some((c) => c.url.includes('site-deleted'))).toBe(false);
+  });
+
+  it('a slow answer for the site just left does not replace the collections of the site shown', async () => {
+    let releaseFirst: (() => void) | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+        if (url.startsWith('/api/catalog/meta')) return json(TWO);
+        if (url.startsWith('/api/catalog/products')) return json({ items: [listItem({ siteId: url.includes('site-2') ? 'site-2' : 'site-1' })], total: 1, nextCursor: null });
+        if (url.startsWith('/api/catalog/collections') && url.includes('site=site-1')) {
+          await new Promise<void>((resolve) => (releaseFirst = resolve));
+          return json({ items: [{ id: 'c1', title: 'Shop picks', handle: 'shop-picks', siteId: 'site-1', productCount: 0, archivedAt: null, image: null, description: null }] });
+        }
+        return json({ items: [{ id: 'c2', title: 'Catering trays', handle: 'catering-trays', siteId: 'site-2', productCount: 0, archivedAt: null, image: null, description: null }] });
+      }),
+    );
+    render(<CatalogHome />);
+    await screen.findByRole('button', { name: 'Pearl necklace' });
+    fireEvent.change(screen.getByLabelText('Catalog of'), { target: { value: 'site-2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Collections' }));
+    expect(await screen.findByText('Catering trays')).toBeTruthy();
+    await waitFor(() => expect(releaseFirst).not.toBeNull());
+    releaseFirst!();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText('Shop picks')).toBeNull();
+    expect(screen.getByText('Catering trays')).toBeTruthy();
+  });
+
+  it('a company without a site works on its company items and is pointed at creating a site', async () => {
+    server({ ...base(() => []), 'GET /api/catalog/meta': () => ({ status: 200, body: { sites: [], productTypes: [], assigned: false } }) });
+    render(<CatalogHome />);
+    expect(await screen.findByText(/has no site yet/)).toBeTruthy();
+    await waitFor(() => expect(calls.some((c) => c.url.includes('companyItems=1'))).toBe(true));
   });
 });

@@ -7,6 +7,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  COMPANY_ITEMS,
+  placeFrom,
   DEFAULT_COLUMNS,
   EMPTY_FILTERS,
   filtersFrom,
@@ -78,3 +80,18 @@ it('writes a price range', () => {
   expect(priceRange(4900, 4900)).toBe('49,00 €');
   expect(priceRange(4900, 8900)).toBe('49,00 € to 89,00 €');
 });
+
+describe('which catalogue the address names', () => {
+  const sites = ['site-1', 'site-2'];
+  it('a site of the company, the company items, or the first site', () => {
+    expect(placeFrom(new URLSearchParams('site=site-2'), sites)).toEqual({ place: 'site-2', unknown: null });
+    expect(placeFrom(new URLSearchParams(`site=${COMPANY_ITEMS}`), sites)).toEqual({ place: null, unknown: null });
+    expect(placeFrom(new URLSearchParams(''), sites)).toEqual({ place: 'site-1', unknown: null });
+    expect(placeFrom(new URLSearchParams(''), [])).toEqual({ place: null, unknown: null });
+  });
+  it('a site the company does not have falls back to the first and is reported', () => {
+    expect(placeFrom(new URLSearchParams('site=gone'), sites)).toEqual({ place: 'site-1', unknown: 'gone' });
+    expect(placeFrom(new URLSearchParams('site=gone'), [])).toEqual({ place: null, unknown: 'gone' });
+  });
+});
+

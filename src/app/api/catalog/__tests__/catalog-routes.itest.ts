@@ -47,9 +47,24 @@ vi.mock('@/server/sites', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/server/sites')>()),
   getSiteRepository: () => ({ listSites: async () => state.sites }),
 }));
+// The site a request names, looked up in the company's workspace (src/server/catalog/http/site.ts): the company's sites, and
+// one branch of the shop (`branch-of-shop`), which resolves to its main site.
+vi.mock('@/server/sites/branches/repository', async () => {
+  const { SiteNotFoundError } = await import('@/server/sites/errors');
+  return {
+    getSiteBranchRepository: () => ({
+      siteBranchContext: async (_scope: unknown, siteId: string) => {
+        if (siteId === 'branch-of-shop' && state.sites.some((s) => s.siteId === 'site-shop')) return { kind: 'branch', siteId, mainSiteId: 'site-shop' };
+        if (state.sites.some((s) => s.siteId === siteId)) return { kind: 'main', siteId, openBranches: 0 };
+        throw new SiteNotFoundError(siteId);
+      },
+    }),
+  };
+});
 
 import { newTenantId, openBooksEnv, type BooksEnv } from '@/server/books/__tests__/booksFixtures';
 import { png } from '@/server/catalog/__tests__/imageFixtures';
+import { toJsonb } from '@/server/books/snapshots';
 
 import * as productsRoute from '../products/route';
 import * as productRoute from '../products/[id]/route';
@@ -137,8 +152,9 @@ async function call(
   return { status: res.status, json, res };
 }
 
+/** A product of the company; without a site unless `extra.siteId` names one (the company is not assigned, so it shows on every site). */
 async function create(title: string, extra: Json = {}): Promise<Json> {
-  const r = await call(productsRoute.POST, 'POST', '/api/catalog/products', {}, { title, ...extra });
+  const r = await call(productsRoute.POST, 'POST', '/api/catalog/products', {}, { title, siteId: null, ...extra });
   expect(r.status).toBe(201);
   return r.json;
 }
@@ -314,7 +330,7 @@ describe('images, collections, sites, samples', () => {
   it('collections with ordered products, a collection image, sites and samples', async () => {
     const a = await create('Anklet');
     const b = await create('Brooch');
-    const col = await call(collectionsRoute.POST, 'POST', 'x', {}, { title: 'Summer' });
+    const col = await call(collectionsRoute.POST, 'POST', 'x', {}, { title: 'Summer', siteId: null });
     expect(col.status).toBe(201);
     const ordered = await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: col.json.id }, { productIds: [b.id, a.id] });
     expect(ordered.json.products.map((p: Json) => p.title)).toEqual(['Brooch', 'Anklet']);
@@ -325,7 +341,7 @@ describe('images, collections, sites, samples', () => {
     expect((await call(collectionsRoute.GET, 'GET', '/api/catalog/collections')).json.items.map((c: Json) => c.productCount)).toEqual([2]);
     const left = await call(productCollectionsRoute.PUT, 'PUT', 'x', { id: a.id }, { collectionIds: [] });
     expect(left.json.collections).toEqual([]);
-    const dupCollection = await call(collectionsRoute.POST, 'POST', 'x', {}, { title: '' });
+    const dupCollection = await call(collectionsRoute.POST, 'POST', 'x', {}, { title: '', siteId: null });
     expect(dupCollection.status).toBe(422);
 
     const meta = await call(metaRoute.GET, 'GET', 'x');
@@ -338,9 +354,9 @@ describe('images, collections, sites, samples', () => {
     const foreign = await call(productSitesRoute.PUT, 'PUT', 'x', { id: b.id }, { hiddenSiteIds: ['site-of-someone-else'] });
     expect([foreign.status, foreign.json.error.code]).toEqual([404, 'unknown_site']);
 
-    const samples = await call(samplesRoute.POST, 'POST', 'x');
+    const samples = await call(samplesRoute.POST, 'POST', 'x', {}, { siteId: null });
     expect(samples.json.items.map((p: Json) => p.title)).toEqual(['Stacking ring', 'Pearl necklace', 'Ring sizing']);
-    const again = await call(samplesRoute.POST, 'POST', 'x');
+    const again = await call(samplesRoute.POST, 'POST', 'x', {}, { siteId: null });
     expect(again.json.items.map((p: Json) => p.id)).toEqual(samples.json.items.map((p: Json) => p.id));
   });
 
@@ -351,5 +367,91 @@ describe('images, collections, sites, samples', () => {
       body: '{nope',
     });
     expect((await productsRoute.POST(req, { params: Promise.resolve({}) })).status).toBe(400);
+  });
+});
+
+describe('the catalogue per site (slice 2b)', () => {
+  const ids = (r: { json: Json }) => r.json.items.map((i: Json) => i.id).sort();
+
+  it('creates in a verified site, lists one site or the company items, and refuses a missing, foreign or mixed site', async () => {
+    const legacy = await create('Old ring');
+    const onShop = await create('Shop ring', { siteId: 'site-shop' });
+    expect(onShop.siteId).toBe('site-shop');
+    // A branch of the shop works on the shop's catalogue.
+    const viaBranch = await create('Branch ring', { siteId: 'branch-of-shop' });
+    expect(viaBranch.siteId).toBe('site-shop');
+    const onPopup = await create('Pop-up ring', { siteId: 'site-popup' });
+
+    const missing = await call(productsRoute.POST, 'POST', 'x', {}, { title: 'No place' });
+    expect([missing.status, missing.json.error.code]).toEqual([422, 'invalid_input']);
+    const foreign = await call(productsRoute.POST, 'POST', 'x', {}, { title: 'Theirs', siteId: 'site-of-someone-else' });
+    expect([foreign.status, foreign.json.error.code]).toEqual([404, 'unknown_site']);
+
+    // Not assigned yet: the old product without a site is still on every site.
+    expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?site=site-shop'))).toEqual([legacy.id, onShop.id, viaBranch.id].sort());
+    expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?site=branch-of-shop'))).toEqual([legacy.id, onShop.id, viaBranch.id].sort());
+    expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?site=site-popup'))).toEqual([legacy.id, onPopup.id].sort());
+    expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?companyItems=1'))).toEqual([legacy.id]);
+    const unknown = await call(productsRoute.GET, 'GET', '/api/catalog/products?site=site-of-someone-else');
+    expect([unknown.status, unknown.json.error.code]).toEqual([404, 'unknown_site']);
+    expect((await call(productsRoute.GET, 'GET', '/api/catalog/products?site=site-shop&companyItems=1')).status).toBe(422);
+
+    // A product stamped with a site has no per-site switch; the read rule would ignore it.
+    const switched = await call(productSitesRoute.PUT, 'PUT', 'x', { id: onShop.id }, { hiddenSiteIds: ['site-popup'] });
+    expect([switched.status, switched.json.error.code]).toEqual([409, 'site_owned']);
+
+    // Samples go into the catalogue named, once per catalogue.
+    const samples = await call(samplesRoute.POST, 'POST', 'x', {}, { siteId: 'site-popup' });
+    expect(samples.json.items.every((p: Json) => p.siteId === 'site-popup')).toBe(true);
+    const noPlace = await call(samplesRoute.POST, 'POST', 'x', {}, {});
+    expect(noPlace.status).toBe(422);
+  });
+
+  it('a collection holds only products of its own catalogue, from every side (the shared ones too while not assigned)', async () => {
+    const shopRing = await create('Shop ring', { siteId: 'site-shop' });
+    const popupRing = await create('Pop-up ring', { siteId: 'site-popup' });
+    const legacy = await create('Old ring');
+    const col = await call(collectionsRoute.POST, 'POST', 'x', {}, { title: 'Shop picks', siteId: 'site-shop' });
+    expect([col.status, col.json.siteId]).toEqual([201, 'site-shop']);
+    const legacyCol = await call(collectionsRoute.POST, 'POST', 'x', {}, { title: 'Everything', siteId: null });
+
+    expect((await call(collectionsRoute.GET, 'GET', '/api/catalog/collections?site=site-shop')).json.items.map((c: Json) => c.id).sort()).toEqual(
+      [col.json.id, legacyCol.json.id].sort(),
+    );
+    expect((await call(collectionsRoute.GET, 'GET', '/api/catalog/collections?site=site-popup')).json.items.map((c: Json) => c.id)).toEqual([legacyCol.json.id]);
+    expect((await call(collectionsRoute.GET, 'GET', '/api/catalog/collections?companyItems=1')).json.items.map((c: Json) => c.id)).toEqual([legacyCol.json.id]);
+
+    // Not assigned yet: the old product without a site is on the shop too, so the shop's collection may hold it.
+    expect((await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: col.json.id }, { productIds: [shopRing.id, legacy.id] })).status).toBe(200);
+    expect((await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: col.json.id }, { productIds: [shopRing.id] })).status).toBe(200);
+    const crossing = await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: col.json.id }, { productIds: [shopRing.id, popupRing.id] });
+    expect([crossing.status, crossing.json.error.code]).toEqual([409, 'wrong_site']);
+    const fromPanel = await call(productCollectionsRoute.PUT, 'PUT', 'x', { id: popupRing.id }, { collectionIds: [col.json.id] });
+    expect([fromPanel.status, fromPanel.json.error.code]).toEqual([409, 'wrong_site']);
+    const bulk = await call(bulkRoute.POST, 'POST', 'x', {}, { action: 'addToCollection', ids: [shopRing.id, popupRing.id], collectionId: col.json.id });
+    expect([bulk.status, bulk.json.error.code]).toEqual([409, 'wrong_site']);
+    // Nothing of the refused writes stuck.
+    expect((await call(collectionRoute.GET, 'GET', 'x', { id: col.json.id })).json.products.map((p: Json) => p.id)).toEqual([shopRing.id]);
+    // The old collection without a site may hold products of any site while the company is not assigned.
+    expect((await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: legacyCol.json.id }, { productIds: [legacy.id, shopRing.id, popupRing.id] })).status).toBe(200);
+  });
+
+  it('once the company is assigned, meta says so and a product without a site has no per-site switch', async () => {
+    const legacy = await create('Old ring');
+    const before = await call(metaRoute.GET, 'GET', 'x');
+    expect(before.json.assigned).toBe(false);
+    const tenantId = (state.session as { active_tenant: { id: string } }).active_tenant.id;
+    await env.ownerDb.insertInto('catalogue_per_site').values({ tenant_id: tenantId, report: toJsonb({ synthetic: true }) }).execute();
+    expect((await call(metaRoute.GET, 'GET', 'x')).json.assigned).toBe(true);
+    const switched = await call(productSitesRoute.PUT, 'PUT', 'x', { id: legacy.id }, { hiddenSiteIds: [] });
+    expect([switched.status, switched.json.error.code]).toEqual([409, 'site_owned']);
+    // Assigned: a company item and a shop's product no longer share a collection.
+    const shopRing = await create('Shop ring', { siteId: 'site-shop' });
+    const shopCol = await call(collectionsRoute.POST, 'POST', 'x', {}, { title: 'Shop', siteId: 'site-shop' });
+    const mixed = await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: shopCol.json.id }, { productIds: [shopRing.id, legacy.id] });
+    expect([mixed.status, mixed.json.error.code]).toEqual([409, 'wrong_site']);
+    // Assigned: the company items view and no shop list it.
+    expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?companyItems=1'))).toEqual([legacy.id]);
+    expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?site=site-shop'))).toEqual([shopRing.id]);
   });
 });

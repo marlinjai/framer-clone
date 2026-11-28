@@ -311,6 +311,61 @@ describe('033_catalogue_site and catalogue:assign-sites', () => {
   });
 });
 
+describe('the mixed state 2b leaves before the assignment runs (rows stamped in the editor beside rows without a site)', () => {
+  // MIXED is not yet assigned. Its owner used the per-site editor (slice 2b): a "Torte" on x1 now holds the handle `torte`
+  // that the company's older, siteless "Torte" (shown on both sites) brings to x1; and a collection stamped with x1 holds
+  // the siteless "Kekse" (shown on x2 only), and an old siteless collection holds both Tortes (both allowed until assigned).
+  const MIXED = newTenantId();
+  const [x1, x2] = ['x1', 'x2'].map((n) => `site-${n}-${randomUUID().slice(0, 8)}`);
+  const MIXED_SITES: MainSite[] = [
+    { id: x1, companyId: MIXED, createdAt: new Date('2026-04-01'), published: true },
+    { id: x2, companyId: MIXED, createdAt: new Date('2026-04-02'), published: true },
+  ];
+
+  it('the assignment completes: a clashing handle gets the next free one on the site, a stamped membership follows its product or goes', async () => {
+    const mixed = catalogScope(env.appDb, env.tgId, MIXED);
+    const oldTorte = (await createProduct(mixed, { title: 'Torte', handle: 'torte', price: 3800, status: 'published' })).id;
+    const kekse = (await createProduct(mixed, { title: 'Kekse', price: 900, status: 'published' })).id;
+    await setHiddenSites(mixed, kekse, [x1], new Set([x1, x2]));
+    const newTorte = (await createProduct(mixed, { title: 'Torte', handle: 'torte', price: 4200, status: 'published' }, { siteId: x1 })).id;
+    const stampedColl = (await createCollection(mixed, { title: 'Auf x1' }, { siteId: x1 })).id;
+    await setCollectionProducts(mixed, stampedColl, [newTorte]);
+    // An old collection without a site takes the new Torte too (allowed while the company is not assigned).
+    const oldColl = (await createCollection(mixed, { title: 'Alles' })).id;
+    await setCollectionProducts(mixed, oldColl, [oldTorte, newTorte]);
+    // Memberships of products without a site in the stamped collection (allowed until the assignment), written directly.
+    await env.ownerDb
+      .insertInto('collection_product')
+      .values([
+        { tenant_id: MIXED, collection_id: stampedColl, product_id: oldTorte, position: 2 },
+        { tenant_id: MIXED, collection_id: stampedColl, product_id: kekse, position: 3 },
+      ])
+      .execute();
+
+    const report = await assignCatalogueSites({ connectionString: ownerUrl, tenantGroupId: env.tgId, sites: MIXED_SITES, companyId: MIXED, apply: true });
+    const m = report.companies.find((c) => c.companyId === MIXED)!;
+    // The old Torte stays on x1 (the oldest live site, never sold) and must yield `torte` there to the stamped one; its copy on x2 keeps it.
+    expect(await siteOf(oldTorte)).toBe(x1);
+    expect(m.handlesRenamed).toEqual([{ table: 'product', id: oldTorte, siteId: x1, from: 'torte', to: 'torte-2' }]);
+    expect((await getProduct(mixed, oldTorte)).handle).toBe('torte-2');
+    expect((await getProduct(mixed, newTorte)).handle).toBe('torte');
+    const torteCopy = m.productCopies.find((c) => c.from === oldTorte)!;
+    expect(torteCopy.siteId).toBe(x2);
+    expect((await getProduct(mixed, torteCopy.id)).handle).toBe('torte');
+    // The stamped collection on x1: the old Torte's row is on x1, so it stays; Kekse is on x2 only, so its membership goes.
+    expect(m.stampedCollectionMembers).toEqual({ remapped: 0, dropped: 1 });
+    expect((await getCollection(mixed, stampedColl)).products.map((p) => p.id)).toEqual([newTorte, oldTorte]);
+    // The old collection goes to x1 with both Tortes, and its copy on x2 holds the old Torte's copy there.
+    expect((await getCollection(mixed, oldColl)).products.map((p) => p.id)).toEqual([oldTorte, newTorte]);
+    const collCopy = m.collectionCopies.find((c) => c.from === oldColl)!;
+    expect(collCopy.siteId).toBe(x2);
+    expect((await getCollection(mixed, collCopy.id)).products.map((p) => p.id)).toEqual([torteCopy.id]);
+    // Each shop lists its own products, with distinct handles on x1.
+    expect(await shop(MIXED, x1)).toEqual(['torte', 'torte-2']);
+    expect(await shop(MIXED, x2)).toEqual(['kekse', 'torte']);
+  });
+});
+
 function report2Collections(rows: Array<{ title: string; site_id: string | null }>): Map<string, Array<string | null>> {
   const out = new Map<string, Array<string | null>>();
   for (const r of rows) out.set(r.title, [...(out.get(r.title) ?? []), r.site_id]);

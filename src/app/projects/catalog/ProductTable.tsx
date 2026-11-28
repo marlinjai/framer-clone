@@ -27,8 +27,9 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 
 import { Button } from '@/components/ui/button';
 import { moneyInput, parseMoney } from '@/lib/books/units';
-import { CatalogApiError, catalogApi, type BulkAction } from '@/lib/catalog/api';
+import { CatalogApiError, catalogApi, type BulkAction, type CatalogPlace } from '@/lib/catalog/api';
 import type { CollectionView, ProductListItem, ProductPage, ProductSort, ProductStatus } from '@/lib/catalog/types';
+import { sameCatalogue } from '@/lib/catalog/siteRule';
 import { cn } from '@/lib/utils';
 
 import {
@@ -303,10 +304,14 @@ function FilterSelect<T extends string>({
 }
 
 export interface ProductTableProps {
+  /** The catalogue shown: a site's, or the company items (null). */
+  place: CatalogPlace;
   filters: Filters;
   onFilters: (next: Filters) => void;
   collections: CollectionView[];
   productTypes: string[];
+  /** Whether the company's catalogue has been assigned to its sites: decides which collections a selection may join. */
+  assigned: boolean;
   /** Who is looking (their columns are kept apart from another person's on the same browser). */
   userKey: string;
   /** Bumped by the parent after a change elsewhere (the panel) so the table reads again. */
@@ -332,6 +337,8 @@ export default function ProductTable({
   onBlocked,
   onAddProduct,
   onChanged,
+  place,
+  assigned,
 }: ProductTableProps) {
   const [page, setPage] = useState<ProductPage | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -347,7 +354,8 @@ export default function ProductTable({
   const [ownReload, setOwnReload] = useState(0);
   const [bulkCollection, setBulkCollection] = useState('');
 
-  const filterKey = JSON.stringify(filters);
+  // Another catalogue (site) is another list: its pages start again, as for other filters.
+  const filterKey = JSON.stringify([place, filters]);
   // New filters start again from the first page with nothing selected.
   useEffect(() => {
     setCursors([undefined]);
@@ -370,7 +378,7 @@ export default function ProductTable({
     let live = true;
     setLoading(true);
     catalogApi
-      .products({
+      .products(place, {
         q: filters.q || undefined,
         status: filters.status || undefined,
         type: filters.type || undefined,
@@ -594,7 +602,7 @@ export default function ProductTable({
                 setBusy(true);
                 setError(null);
                 try {
-                  await catalogApi.addSamples();
+                  await catalogApi.addSamples(place);
                   reload();
                   onChanged();
                   announce('Three sample products added');
@@ -758,11 +766,14 @@ export default function ProductTable({
                   className={cn(INPUT, 'h-8 w-auto')}
                 >
                   <option value="">Add to collection…</option>
-                  {collections.map((c) => (
+                  {/* Only collections every selected product may join (src/lib/catalog/siteRule.ts), so the bulk add is never refused for the site. */}
+                  {collections
+                    .filter((c) => !c.archivedAt && items.filter((p) => selected.has(p.id)).every((p) => sameCatalogue(p.siteId, c.siteId, assigned)))
+                    .map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.title}
                     </option>
-                  ))}
+                    ))}
                 </select>
               </label>
             ) : null}
