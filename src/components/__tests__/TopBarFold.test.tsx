@@ -522,3 +522,4 @@ describe('the wide top bar, folding', () => {
     await waitFor(() => expect(level()).toBe(2));
   });
 });
+// ci-replay touch

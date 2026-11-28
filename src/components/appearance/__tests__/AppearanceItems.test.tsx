@@ -71,3 +71,4 @@ describe('Appearance', () => {
     expect(checked(open())).toEqual(['Dark']);
   });
 });
+// ci-replay touch
