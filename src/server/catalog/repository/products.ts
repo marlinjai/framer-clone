@@ -593,6 +593,8 @@ const listInput = z
     status: z.enum(['draft', 'published', 'archived', 'all']).optional(),
     type: z.string().max(100).optional(),
     collection: z.string().max(100).optional(),
+    /** Only the products a site shows: not switched off for it (product_site_hidden). Any status, as the table. */
+    site: z.string().min(1).max(100).optional(),
     stock: z.enum(['in_stock', 'out_of_stock', 'untracked']).optional(),
     sort: z.enum(['updated', 'title', 'created', 'price', 'stock']).default('updated'),
     dir: z.enum(['asc', 'desc']).optional(),
@@ -696,7 +698,8 @@ function containsPattern(word: string): string {
  * with several words every word must occur. Filters: type (exact), collection,
  * stock state (in stock: tracked with more than nothing available; out of
  * stock: tracked with nothing; untracked). Sorted by the given column, ties by
- * id; paged by a keyset cursor bound to the sort.
+ * id; paged by a keyset cursor bound to the sort. `site` keeps only the products
+ * that site shows (not switched off for it).
  */
 export async function listProducts(scope: CatalogScope, query: ProductListQuery = {}): Promise<ProductPage> {
   const parsed = listInput.safeParse(query);
@@ -722,6 +725,20 @@ export async function listProducts(scope: CatalogScope, query: ProductListQuery 
             .whereRef('cp.tenant_id', '=', 'product.tenant_id')
             .where('cp.collection_id', '=', args.collection)
             .select('cp.product_id'),
+        ),
+      );
+    }
+    if (args.site) {
+      conds.push(
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('product_site_hidden as h')
+              .whereRef('h.product_id', '=', 'product.id')
+              .whereRef('h.tenant_id', '=', 'product.tenant_id')
+              .where('h.site_id', '=', args.site)
+              .select('h.product_id'),
+          ),
         ),
       );
     }

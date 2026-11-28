@@ -79,7 +79,7 @@ describe('the plugin names the tools the server has', () => {
     const section = README.split('## Tools')[1].split('\n## ')[0].split('### Branch tools')[0];
     const listed = [...section.matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]);
     expect(listed).toEqual(BASE_TOOL_NAMES);
-    expect(listed).toHaveLength(14);
+    expect(listed).toHaveLength(16);
   });
 
   it('the README branch tool table lists exactly the tools a company with branches is offered on top, in the same order', () => {

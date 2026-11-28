@@ -47,12 +47,18 @@ const MESSAGES: Partial<Record<CatalogErrorCode, string>> = {
   DUPLICATE_COLLECTION: 'another live collection of this company uses this URL handle (nothing was saved)',
 };
 
+/** A CatalogError as its lower-case code, sentence, HTTP status and details; null for anything else. */
+export function catalogErrorBody(err: unknown): { code: string; message: string; status: number; details: Record<string, unknown> } | null {
+  if (!isCatalogError(err)) return null;
+  const details: Record<string, unknown> = { ...(err.details ?? {}) };
+  // A single field's own sentence is the most useful message.
+  const issues = details.issues as Array<{ path: string; message: string }> | undefined;
+  const message = issues && issues.length === 1 ? issues[0].message : (MESSAGES[err.code] ?? err.message);
+  return { code: err.code.toLowerCase(), message, status: STATUS[err.code] ?? 500, details };
+}
+
 /** The HTTP answer for a CatalogError, or null for anything else (the caller logs and answers 500). */
 export function catalogErrorResponse(err: unknown): Response | null {
-  if (!isCatalogError(err)) return null;
-  const extra: Record<string, unknown> = { ...(err.details ?? {}) };
-  // A single field's own sentence is the most useful message.
-  const issues = extra.issues as Array<{ path: string; message: string }> | undefined;
-  const message = issues && issues.length === 1 ? issues[0].message : (MESSAGES[err.code] ?? err.message);
-  return jsonError(err.code.toLowerCase(), message, STATUS[err.code] ?? 500, extra);
+  const body = catalogErrorBody(err);
+  return body ? jsonError(body.code, body.message, body.status, body.details) : null;
 }
