@@ -353,7 +353,8 @@ async function assignCompany(tx: Sql, schema: string, companyId: string, sites: 
   const stampedProducts = await tx<{ id: string; site_id: string }[]>`
     SELECT "id", "site_id" FROM ${tx(schema)}."product"
      WHERE "tenant_id" = ${companyId} AND "site_id" IN ${tx([...siteIds, ''])} AND "deleted_at" IS NULL`;
-  for (const sp of stampedProducts) placement.set(sp.id, new Map([[sp.site_id, sp.id]]));
+  // The rows this run just placed are in `placement` already, with all their copies; only the earlier stamped ones are added.
+  for (const sp of stampedProducts) if (!placement.has(sp.id)) placement.set(sp.id, new Map([[sp.site_id, sp.id]]));
 
   const collections = await tx<{ id: string; handle: string; archived: boolean; members: string[] | null }[]>`
     SELECT c."id", c."handle", c."archived_at" IS NOT NULL AS archived,

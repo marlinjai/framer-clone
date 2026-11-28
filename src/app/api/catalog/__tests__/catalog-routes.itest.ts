@@ -50,7 +50,7 @@ vi.mock('@/server/sites', async (importOriginal) => ({
 // The site a request names, looked up in the company's workspace (src/server/catalog/http/site.ts): the company's sites, and
 // one branch of the shop (`branch-of-shop`), which resolves to its main site.
 vi.mock('@/server/sites/branches/repository', async () => {
-  const { SiteNotFoundError } = await import('@/server/sites');
+  const { SiteNotFoundError } = await import('@/server/sites/errors');
   return {
     getSiteBranchRepository: () => ({
       siteBranchContext: async (_scope: unknown, siteId: string) => {
