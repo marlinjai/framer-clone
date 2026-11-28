@@ -1,9 +1,9 @@
 ---
 type: plan
-status: draft
+status: decided
 date: 2026-11-27
-title: "Agent catalogue tools, and whether the shop catalogue belongs to the project (site) or to the company"
-summary: "MCP tools on the Lumitra Sites agent endpoint that read and write a shop catalogue (products, variants, options, prices in whole cents, tax class, stock through the stock ledger, collections) through the repository functions the editor uses, with the editor's access rule and the company, tenant group and site verified from the key on every call. Open for Marlin, who leans toward it: the whole catalogue per project (site) instead of per company. This plan lays out that model with a two-shop example, its costs (shared stock, Books, Stripe, existing data and the stock ledger, erasure) and a later shared catalogue. Only scope-neutral work (the read tools named by site, the access layer) starts before the answer."
+title: "Agent catalogue tools, and the shop catalogue per project (site)"
+summary: "MCP tools on the Lumitra Sites agent endpoint that read and write a shop catalogue (products, variants, options, prices in whole cents, tax class, stock through the stock ledger, collections) through the repository functions the editor uses, with the editor's access rule and the company, tenant group and site verified from the key on every call. Decided by Marlin on 2026-11-28: the whole catalogue per project (site) instead of per company, accepting the costs laid out here (migration of the existing company catalogue and the test companies, Books and Stripe staying per company); stock shared between two sites is out of scope until a real customer needs it. Build order: the read tools first, then the per-project scope change and the write tools; the production run of the catalogue migration needs Marlin's one-line yes."
 tags: [framer-clone, commerce, catalogue, mcp, agents]
 projects: [framer-clone]
 ---
@@ -20,11 +20,23 @@ Parents: [the catalogue design](2026-10-25-catalogue-design.md) (today's company
 [the business platform plan](2026-10-25-business-platform-architecture.md) (which decided one catalogue per
 company on 2026-10-25; the question below would revise that).
 
-## Open for Marlin: the shop catalogue per project (site), or per company
+## Decided by Marlin: the shop catalogue per project (site)
 
-Not decided. Marlin leans toward the whole catalogue per project (2026-11-27, through the Fritzenkoetter lead);
-the coordinator asks him the consolidated question. Until he answers, nothing in this plan's build commits to
-either model (see "What starts now").
+**Decided 2026-11-28 (01:25, relayed by the Fritzenkoetter concept session):** the whole catalogue (products,
+variants, prices, stock and collections) belongs to the project (site), not to the company. Marlin accepts the
+consequences listed below: the existing company catalogue and the test companies are migrated, and Books,
+contacts and Stripe stay per company.
+
+- **Shared stock across two sites is out of scope for now.** Each site has its own single stock. Sharing is built
+  the moment a real customer needs it (the later shared catalogue below); until then it is a dated ROADMAP line,
+  not a build item.
+- **Order:** land the read tools first (slice 1), then the per-project scope change and the write tools (slices
+  2 and 3), one branch per phase of about 1,500 changed lines at most, focused checks, one review, with a Claude
+  reviewer for the access and migration parts.
+- **The migration of the existing company catalogue is a data move on production.** It is prepared and rehearsed
+  on a copy; the production run waits for Marlin's one-line yes, sent through the coordinator.
+
+The sections below are the analysis that led to the decision, kept as the record of what it costs.
 
 ### Today: per company
 
@@ -113,16 +125,15 @@ table, one more condition in the storefront read, a "share with sites" control i
 
 Per project matches how Marlin wants Sites projects to work and keeps an agent on one site from touching
 another's prices. Its real cost is shared stock between sites; the shared catalogue above covers that when a
-customer needs it. If Marlin chooses per project, the build order below applies; if per company, slice 2 is
-dropped and the write tools act on the company catalogue.
+customer needs it. Marlin chose per project on 2026-11-28; the build order below applies.
 
-## What starts now (scope-neutral)
+## What started before the answer (scope-neutral)
 
 The read tools take a **required `siteId`** and answer "the catalogue of this site": today that is the company's
 products not switched off for the site; after a per-project migration it is the site's own products. The same
 contract holds under both models, so an agent written now keeps working. Nothing that creates or edits catalogue
-data is built before the answer, because a create would mean "a product of every site" under one model and "a
-product of this site" under the other.
+data was built before the answer, because a create would mean "a product of every site" under one model and "a
+product of this site" under the other. Slice 1 landed as #524.
 
 ## How the company and the site are verified (reads and writes)
 
@@ -219,9 +230,9 @@ catalogue's own codes in lower case (`not_found`, `duplicate_handle`, `duplicate
 
 1. **Now**: the operations layer with the verification above, the three read tools, the tool list test, the
    server instructions and the plugin README, unit tests and an integration test through the MCP route.
-2. **After the answer, per project only**: 2a the migration, the backfill with its dry run, the storefront read
+2. **Per project (decided 2026-11-28)**: 2a the migration, the backfill with its dry run, the storefront read
    and site deletion; 2b the editor's catalogue in the project and the Books picker grouped by site.
-3. **Writes** (site-scoped under per project, company-scoped under per company) with the audit table.
+3. **Writes**, scoped to the verified site, with the audit table.
 4. **Collections**, then a product list bound to a collection on published pages.
 
 ## Proof
