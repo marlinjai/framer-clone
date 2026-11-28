@@ -368,6 +368,33 @@ describe('one catalogue at a time (the catalogue per site)', () => {
     expect(calls.some((c) => c.url.includes('site-deleted'))).toBe(false);
   });
 
+  it('a slow answer for the site just left does not replace the collections of the site shown', async () => {
+    let releaseFirst: (() => void) | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+        if (url.startsWith('/api/catalog/meta')) return json(TWO);
+        if (url.startsWith('/api/catalog/products')) return json({ items: [listItem({ siteId: url.includes('site-2') ? 'site-2' : 'site-1' })], total: 1, nextCursor: null });
+        if (url.startsWith('/api/catalog/collections') && url.includes('site=site-1')) {
+          await new Promise<void>((resolve) => (releaseFirst = resolve));
+          return json({ items: [{ id: 'c1', title: 'Shop picks', handle: 'shop-picks', siteId: 'site-1', productCount: 0, archivedAt: null, image: null, description: null }] });
+        }
+        return json({ items: [{ id: 'c2', title: 'Catering trays', handle: 'catering-trays', siteId: 'site-2', productCount: 0, archivedAt: null, image: null, description: null }] });
+      }),
+    );
+    render(<CatalogHome />);
+    await screen.findByRole('button', { name: 'Pearl necklace' });
+    fireEvent.change(screen.getByLabelText('Catalog of'), { target: { value: 'site-2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Collections' }));
+    expect(await screen.findByText('Catering trays')).toBeTruthy();
+    await waitFor(() => expect(releaseFirst).not.toBeNull());
+    releaseFirst!();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText('Shop picks')).toBeNull();
+    expect(screen.getByText('Catering trays')).toBeTruthy();
+  });
+
   it('a company without a site works on its company items and is pointed at creating a site', async () => {
     server({ ...base(() => []), 'GET /api/catalog/meta': () => ({ status: 200, body: { sites: [], productTypes: [], assigned: false } }) });
     render(<CatalogHome />);

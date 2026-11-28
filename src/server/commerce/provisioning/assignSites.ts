@@ -347,6 +347,14 @@ async function assignCompany(tx: Sql, schema: string, companyId: string, sites: 
     placement.set(p.id, where);
   }
 
+  // Products the per-site editor already stamped (slice 2b, before this run) are where they are. While the company is not
+  // assigned, a collection without a site may hold them (src/lib/catalog/siteRule.ts), so they place like any other: the
+  // collection goes to their site too, and its copy there keeps them.
+  const stampedProducts = await tx<{ id: string; site_id: string }[]>`
+    SELECT "id", "site_id" FROM ${tx(schema)}."product"
+     WHERE "tenant_id" = ${companyId} AND "site_id" IN ${tx([...siteIds, ''])} AND "deleted_at" IS NULL`;
+  for (const sp of stampedProducts) placement.set(sp.id, new Map([[sp.site_id, sp.id]]));
+
   const collections = await tx<{ id: string; handle: string; archived: boolean; members: string[] | null }[]>`
     SELECT c."id", c."handle", c."archived_at" IS NOT NULL AS archived,
            (SELECT array_agg(cp."product_id" ORDER BY cp."position") FROM ${tx(schema)}."collection_product" cp

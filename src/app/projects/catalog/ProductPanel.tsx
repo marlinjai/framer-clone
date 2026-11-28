@@ -28,6 +28,7 @@ import { CatalogApiError, catalogApi } from '@/lib/catalog/api';
 import { TAX_CLASS_LABELS, type CollectionView, type ProductDetail, type SiteView } from '@/lib/catalog/types';
 import RichTextEditor from '@/app/projects/books/invoice/RichTextEditor';
 import { richFromPlain, type RichText } from '@/server/books/render/richText';
+import { sameCatalogue } from '@/lib/catalog/siteRule';
 import { cn } from '@/lib/utils';
 
 import PhotosSection from './PhotosSection';
@@ -426,7 +427,7 @@ export default function ProductPanel({ productId, collections, sites, assigned, 
                 <CheckList
                   label="Collections"
                   // A collection holds only products of its own catalogue: the same site, or both without one.
-                  items={collections.filter((c) => !c.archivedAt && c.siteId === p.siteId).map((c) => ({ id: c.id, label: c.title }))}
+                  items={collections.filter((c) => !c.archivedAt && sameCatalogue(p.siteId, c.siteId, assigned)).map((c) => ({ id: c.id, label: c.title }))}
                   checked={new Set(p.collections.map((c) => c.id))}
                   empty="No collections yet. Create one in the Collections tab."
                   onChange={(next) =>

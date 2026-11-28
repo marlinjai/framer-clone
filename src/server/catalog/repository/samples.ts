@@ -16,6 +16,8 @@ import type { ProductDetail } from '@/lib/catalog/types';
 
 import { isCatalogError } from '../errors';
 import type { CatalogScope } from '../scope';
+import { productOnSite } from '@/server/commerce/repository/siteCatalogue';
+
 import { createProduct, getProduct, updateProduct } from './products';
 import { setVariantStock } from './stock';
 import { setOptions, updateVariant } from './variants';
@@ -80,7 +82,8 @@ export async function addSampleProducts(scope: CatalogScope, placement: { siteId
     .select(['id', 'handle'])
     .where('tenant_id', '=', scope.tenantId)
     .where('deleted_at', 'is', null)
-    .where('site_id', siteId === null ? 'is' : '=', siteId)
+    // The catalogue the user sees: a site's by the read rule (with the shared rows of a company not yet assigned), or the items without a site.
+    .where((eb) => (siteId === null ? eb('site_id', 'is', null) : productOnSite(eb, siteId)))
     .where(
       'handle',
       'in',
@@ -111,7 +114,7 @@ export async function addSampleProducts(scope: CatalogScope, placement: { siteId
         .select('id')
         .where('tenant_id', '=', scope.tenantId)
         .where('handle', '=', sample.handle)
-        .where('site_id', siteId === null ? 'is' : '=', siteId)
+        .where((eb) => (siteId === null ? eb('site_id', 'is', null) : productOnSite(eb, siteId)))
         .where('deleted_at', 'is', null)
         .executeTakeFirstOrThrow();
       out.push(await getProduct(scope, winner.id));

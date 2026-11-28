@@ -17,12 +17,26 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { CatalogApiError, catalogApi, type CatalogPlace } from '@/lib/catalog/api';
 import type { CollectionDetail, CollectionView, ProductListItem } from '@/lib/catalog/types';
+import { sameCatalogue } from '@/lib/catalog/siteRule';
 import { cn } from '@/lib/utils';
 
 import { fileProblem } from './PhotosSection';
 import { ErrorAlert, INPUT, SaveField, Section, StatusPill, Thumb, errorText } from './ui';
 
-function CollectionPanel({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+function CollectionPanel({
+  id,
+  place,
+  assigned,
+  onClose,
+  onChanged,
+}: {
+  id: string;
+  /** The catalogue shown: its products are the ones offered. */
+  place: CatalogPlace;
+  assigned: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
   const [c, setC] = useState<CollectionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -58,10 +72,11 @@ function CollectionPanel({ id, onClose, onChanged }: { id: string; onClose: () =
     }
     let live = true;
     const t = setTimeout(() => {
-      // A collection holds only products of its own catalogue (same site, or both without one).
+      // The products of the catalogue shown are the ones this collection may hold (src/lib/catalog/siteRule.ts); the filter
+      // only guards a collection opened from an address that names another catalogue.
       const siteId = c?.siteId ?? null;
-      catalogApi.products(siteId, { q: search, limit: 8 }).then(
-        (page) => live && setFound(page.items.filter((p) => p.siteId === siteId)),
+      catalogApi.products(place, { q: search, limit: 8 }).then(
+        (page) => live && setFound(page.items.filter((p) => sameCatalogue(p.siteId, siteId, assigned))),
         (err) => live && setError(errorText(err)),
       );
     }, 250);
@@ -69,7 +84,7 @@ function CollectionPanel({ id, onClose, onChanged }: { id: string; onClose: () =
       live = false;
       clearTimeout(t);
     };
-  }, [search, c?.siteId]);
+  }, [search, c?.siteId, place, assigned]);
 
   async function save(run: () => Promise<CollectionDetail>) {
     // A refusal is thrown to the caller, which shows it where it happened (a field, or the alert above).
@@ -280,6 +295,7 @@ function CollectionPanel({ id, onClose, onChanged }: { id: string; onClose: () =
 
 export default function CollectionsTab({
   place,
+  assigned,
   collections,
   open,
   setOpen,
@@ -288,6 +304,8 @@ export default function CollectionsTab({
 }: {
   /** The catalogue shown: a site's, or the company items (null). New collections go there. */
   place: CatalogPlace;
+  /** Whether the company's catalogue has been assigned to its sites (which products a collection may hold). */
+  assigned: boolean;
   collections: CollectionView[] | null;
   /** The collection whose panel is open (kept in the address by the parent). */
   open: string | null;
@@ -383,7 +401,7 @@ export default function CollectionsTab({
           ))}
         </ul>
       )}
-      {open ? <CollectionPanel key={open} id={open} onClose={() => setOpen(null)} onChanged={onReload} /> : null}
+      {open ? <CollectionPanel key={open} id={open} place={place} assigned={assigned} onClose={() => setOpen(null)} onChanged={onReload} /> : null}
     </section>
   );
 }

@@ -10,8 +10,8 @@
 // Every query filters on the company.
 //
 // Per project (migration 033): a collection belongs to one main site (`site_id`) or to none (a company item, or a collection
-// of a company not yet assigned). A collection holds only products of its own catalogue: the same site, or both without one
-// (`WRONG_SITE` otherwise), so the assignment and the shops never meet a collection reaching across sites.
+// of a company not yet assigned). A collection holds only products of its own catalogue (src/lib/catalog/siteRule.ts
+// sameCatalogue; `WRONG_SITE` otherwise), so the shops never meet a collection reaching across sites.
 
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -20,7 +20,8 @@ import type { CollectionDetail, CollectionView, ProductDetail } from '@/lib/cata
 import { derivePair, richFromPlain, richTextSchema, type RichText } from '@/server/books/render/richText';
 import { toJsonb } from '@/server/books/snapshots';
 
-import { collectionOnSite } from '@/server/commerce/repository/siteCatalogue';
+import { sameCatalogue } from '@/lib/catalog/siteRule';
+import { collectionOnSite, isCatalogueAssigned } from '@/server/commerce/repository/siteCatalogue';
 
 import { invalid, notFound, withDbErrors, wrongSite } from '../errors';
 import type { CatalogScope } from '../scope';
@@ -228,7 +229,8 @@ export async function setCollectionProducts(scope: CatalogScope, id: string, pro
         const have = new Map(found.map((r) => [r.id, r.site_id]));
         const missing = ids.find((p) => !have.has(p));
         if (missing) throw notFound('product', missing);
-        const foreign = ids.find((p) => have.get(p) !== current.site_id);
+        const assigned = await isCatalogueAssigned(trx, scope.tenantId);
+        const foreign = ids.find((p) => !sameCatalogue(have.get(p) ?? null, current.site_id, assigned));
         if (foreign) throw wrongSite(foreign, id);
       }
       const before = await trx.selectFrom('collection_product').select('product_id').where('tenant_id', '=', scope.tenantId).where('collection_id', '=', id).execute();
@@ -274,7 +276,8 @@ export async function setProductCollections(scope: CatalogScope, productId: stri
         const have = new Map(found.map((r) => [r.id, r.site_id]));
         const missing = wanted.find((c) => !have.has(c));
         if (missing) throw notFound('collection', missing);
-        const foreign = wanted.find((c) => have.get(c) !== own.site_id);
+        const assigned = await isCatalogueAssigned(trx, scope.tenantId);
+        const foreign = wanted.find((c) => !sameCatalogue(own.site_id, have.get(c) ?? null, assigned));
         if (foreign) throw wrongSite(productId, foreign);
       }
       const current = await trx

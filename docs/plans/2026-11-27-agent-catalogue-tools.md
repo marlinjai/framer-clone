@@ -324,10 +324,15 @@ another company's and siteless rows unchanged) and the delete route's unit tests
   to its main site, anything else answers `unknown_site` (404). Protects against a member of one company naming another
   company's site to read or create in its catalogue. Repository functions take the verified site as a separate argument
   (`createProduct(scope, input, { siteId })`), never from the input, so slice 3's agent tools reuse them unchanged.
-- **A collection holds only products of its own catalogue** (the same site, or both without one), refused as
-  `wrong_site` (409) from all three sides: the collection's product list, the product's collections, and the bulk "add to
-  collection". The panel and the collection picker offer only matching ones. `collectionOnSite`, the twin of
-  `productOnSite`, lives in `siteCatalogue.ts`.
+- **A collection holds only products of its own catalogue**, by one rule shared by server and editor
+  (`src/lib/catalog/siteRule.ts`, `sameCatalogue`): the same site, or both without one; and, while the company is not yet
+  assigned, also a row without a site with any site's row, because such a row is still on every site then. Without that
+  last case the per-site editor could not combine the old products with new ones in the weeks between the deploy and the
+  production assignment (found by the review). Refused as `wrong_site` (409) from all three sides: the collection's
+  product list, the product's collections, and the bulk "add to collection". The panel, the collection's product search
+  and the bulk picker offer only what the rule allows. `collectionOnSite`, the twin of `productOnSite`, lives in
+  `siteCatalogue.ts`. The assignment places products already stamped with a site like the others, so an old collection
+  holding one goes to that site too and its copy there keeps it.
 - **The per-site switch is refused where it does nothing** (`site_owned`, 409): for a product with a site, and for any
   product of an assigned company; the meta answer carries `assigned`, and the panel shows a sentence instead of the switch.
 - **Handles stay unique per company across sites for new rows** (`freeHandle` unchanged): never a collision, at the cost

@@ -40,7 +40,9 @@ import { derivePair, richFromPlain, richTextSchema, type RichText } from '@/serv
 import { toJsonb } from '@/server/books/snapshots';
 
 import type { CommerceDB } from '../../commerce/db-types';
-import { productOnSite } from '../../commerce/repository/siteCatalogue';
+import { sameCatalogue } from '@/lib/catalog/siteRule';
+
+import { isCatalogueAssigned, productOnSite } from '../../commerce/repository/siteCatalogue';
 import { CatalogError, invalid, invalidField, notFound, withDbErrors, wrongSite } from '../errors';
 import type { CatalogScope } from '../scope';
 import {
@@ -589,7 +591,8 @@ export async function bulkProducts(scope: CatalogScope, input: BulkInput): Promi
         .executeTakeFirst();
       if (!collection) throw notFound('collection', args.collectionId);
       // A collection holds only products of its own catalogue (collections.ts header).
-      const foreign = ids.find((id) => have.get(id) !== collection.site_id);
+      const assigned = await isCatalogueAssigned(trx, scope.tenantId);
+      const foreign = ids.find((id) => !sameCatalogue(have.get(id) ?? null, collection.site_id, assigned));
       if (foreign) throw wrongSite(foreign, collection.id);
       const members = await trx
         .selectFrom('collection_product')

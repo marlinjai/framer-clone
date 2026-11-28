@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button';
 import { moneyInput, parseMoney } from '@/lib/books/units';
 import { CatalogApiError, catalogApi, type BulkAction, type CatalogPlace } from '@/lib/catalog/api';
 import type { CollectionView, ProductListItem, ProductPage, ProductSort, ProductStatus } from '@/lib/catalog/types';
+import { sameCatalogue } from '@/lib/catalog/siteRule';
 import { cn } from '@/lib/utils';
 
 import {
@@ -309,6 +310,8 @@ export interface ProductTableProps {
   onFilters: (next: Filters) => void;
   collections: CollectionView[];
   productTypes: string[];
+  /** Whether the company's catalogue has been assigned to its sites: decides which collections a selection may join. */
+  assigned: boolean;
   /** Who is looking (their columns are kept apart from another person's on the same browser). */
   userKey: string;
   /** Bumped by the parent after a change elsewhere (the panel) so the table reads again. */
@@ -335,6 +338,7 @@ export default function ProductTable({
   onAddProduct,
   onChanged,
   place,
+  assigned,
 }: ProductTableProps) {
   const [page, setPage] = useState<ProductPage | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -762,11 +766,14 @@ export default function ProductTable({
                   className={cn(INPUT, 'h-8 w-auto')}
                 >
                   <option value="">Add to collection…</option>
-                  {collections.map((c) => (
+                  {/* Only collections every selected product may join (src/lib/catalog/siteRule.ts), so the bulk add is never refused for the site. */}
+                  {collections
+                    .filter((c) => !c.archivedAt && items.filter((p) => selected.has(p.id)).every((p) => sameCatalogue(p.siteId, c.siteId, assigned)))
+                    .map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.title}
                     </option>
-                  ))}
+                    ))}
                 </select>
               </label>
             ) : null}

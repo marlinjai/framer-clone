@@ -407,7 +407,7 @@ describe('the catalogue per site (slice 2b)', () => {
     expect(noPlace.status).toBe(422);
   });
 
-  it('a collection holds only products of its own site, from every side', async () => {
+  it('a collection holds only products of its own catalogue, from every side (the shared ones too while not assigned)', async () => {
     const shopRing = await create('Shop ring', { siteId: 'site-shop' });
     const popupRing = await create('Pop-up ring', { siteId: 'site-popup' });
     const legacy = await create('Old ring');
@@ -421,18 +421,19 @@ describe('the catalogue per site (slice 2b)', () => {
     expect((await call(collectionsRoute.GET, 'GET', '/api/catalog/collections?site=site-popup')).json.items.map((c: Json) => c.id)).toEqual([legacyCol.json.id]);
     expect((await call(collectionsRoute.GET, 'GET', '/api/catalog/collections?companyItems=1')).json.items.map((c: Json) => c.id)).toEqual([legacyCol.json.id]);
 
+    // Not assigned yet: the old product without a site is on the shop too, so the shop's collection may hold it.
+    expect((await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: col.json.id }, { productIds: [shopRing.id, legacy.id] })).status).toBe(200);
     expect((await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: col.json.id }, { productIds: [shopRing.id] })).status).toBe(200);
-    for (const other of [popupRing.id, legacy.id]) {
-      const r = await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: col.json.id }, { productIds: [shopRing.id, other] });
-      expect([r.status, r.json.error.code]).toEqual([409, 'wrong_site']);
-    }
+    const crossing = await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: col.json.id }, { productIds: [shopRing.id, popupRing.id] });
+    expect([crossing.status, crossing.json.error.code]).toEqual([409, 'wrong_site']);
     const fromPanel = await call(productCollectionsRoute.PUT, 'PUT', 'x', { id: popupRing.id }, { collectionIds: [col.json.id] });
     expect([fromPanel.status, fromPanel.json.error.code]).toEqual([409, 'wrong_site']);
     const bulk = await call(bulkRoute.POST, 'POST', 'x', {}, { action: 'addToCollection', ids: [shopRing.id, popupRing.id], collectionId: col.json.id });
     expect([bulk.status, bulk.json.error.code]).toEqual([409, 'wrong_site']);
     // Nothing of the refused writes stuck.
     expect((await call(collectionRoute.GET, 'GET', 'x', { id: col.json.id })).json.products.map((p: Json) => p.id)).toEqual([shopRing.id]);
-    expect((await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: legacyCol.json.id }, { productIds: [legacy.id] })).status).toBe(200);
+    // The old collection without a site may hold products of any site while the company is not assigned.
+    expect((await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: legacyCol.json.id }, { productIds: [legacy.id, shopRing.id, popupRing.id] })).status).toBe(200);
   });
 
   it('once the company is assigned, meta says so and a product without a site has no per-site switch', async () => {
@@ -444,8 +445,13 @@ describe('the catalogue per site (slice 2b)', () => {
     expect((await call(metaRoute.GET, 'GET', 'x')).json.assigned).toBe(true);
     const switched = await call(productSitesRoute.PUT, 'PUT', 'x', { id: legacy.id }, { hiddenSiteIds: [] });
     expect([switched.status, switched.json.error.code]).toEqual([409, 'site_owned']);
+    // Assigned: a company item and a shop's product no longer share a collection.
+    const shopRing = await create('Shop ring', { siteId: 'site-shop' });
+    const shopCol = await call(collectionsRoute.POST, 'POST', 'x', {}, { title: 'Shop', siteId: 'site-shop' });
+    const mixed = await call(collectionProductsRoute.PUT, 'PUT', 'x', { id: shopCol.json.id }, { productIds: [shopRing.id, legacy.id] });
+    expect([mixed.status, mixed.json.error.code]).toEqual([409, 'wrong_site']);
     // Assigned: the company items view and no shop list it.
     expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?companyItems=1'))).toEqual([legacy.id]);
-    expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?site=site-shop'))).toEqual([]);
+    expect(ids(await call(productsRoute.GET, 'GET', '/api/catalog/products?site=site-shop'))).toEqual([shopRing.id]);
   });
 });

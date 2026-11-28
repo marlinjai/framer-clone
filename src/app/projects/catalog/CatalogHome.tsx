@@ -21,7 +21,7 @@
 
 import Link from 'next/link';
 import { Plus } from 'lucide-react';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SegmentedSwitch } from '@/app/projects/books/invoice/chrome';
@@ -92,9 +92,15 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
   const unknownSite = resolved?.unknown ?? null;
   const placeName = place === undefined ? '' : place === null ? (assigned ? 'Company items' : 'Shared by all sites') : (sites.find((s) => s.id === place)?.name ?? '');
 
+  // The catalogue the collections were last asked for: an answer for another one (the site switched meanwhile) is dropped.
+  const collectionsFor = useRef<CatalogPlace | undefined>(undefined);
   const loadCollections = useCallback(() => {
     if (place === undefined) return;
-    catalogApi.collections(place).then((r) => setCollections(r.items), fail);
+    collectionsFor.current = place;
+    catalogApi.collections(place).then(
+      (r) => collectionsFor.current === place && setCollections(r.items),
+      (err) => collectionsFor.current === place && fail(err),
+    );
   }, [place, fail]);
   useEffect(() => {
     setCollections(null);
@@ -289,6 +295,7 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
         ) : tab === 'products' ? (
           <ProductTable
             place={place}
+            assigned={assigned}
             filters={filters}
             onFilters={setFilters}
             collections={collections ?? []}
@@ -304,6 +311,7 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
         ) : (
           <CollectionsTab
             place={place}
+            assigned={assigned}
             collections={collections}
             open={openCollection}
             setOpen={openCollectionPanel}
