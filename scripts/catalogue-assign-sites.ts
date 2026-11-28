@@ -36,9 +36,15 @@ async function main(): Promise<void> {
     // Main sites only: a branch never owns a catalogue.
     const sites = await prisma.site.findMany({
       where: { tenantGroupId, branchOfSiteId: null },
-      select: { id: true, companyId: true, createdAt: true },
+      select: { id: true, companyId: true, createdAt: true, status: true },
     });
-    const report = await assignCatalogueSites({ connectionString, tenantGroupId, sites, companyId, apply });
+    const report = await assignCatalogueSites({
+      connectionString,
+      tenantGroupId,
+      sites: sites.map((s) => ({ id: s.id, companyId: s.companyId, createdAt: s.createdAt, published: s.status === 'published' })),
+      companyId,
+      apply,
+    });
     console.log(JSON.stringify(report, null, 2));
     console.log(apply ? 'applied' : 'dry run: nothing was written (run again with --apply to write it)');
   } finally {

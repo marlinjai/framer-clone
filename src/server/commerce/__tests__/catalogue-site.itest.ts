@@ -37,10 +37,11 @@ const s1 = `site-solo-${randomUUID().slice(0, 8)}`;
 const [m1, m2, m3] = ['m1', 'm2', 'm3'].map((n) => `site-${n}-${randomUUID().slice(0, 8)}`);
 
 const SITES: MainSite[] = [
-  { id: m2, companyId: MULTI, createdAt: new Date('2026-03-02') },
-  { id: s1, companyId: SOLO, createdAt: new Date('2026-01-01') },
-  { id: m3, companyId: MULTI, createdAt: new Date('2026-03-03') },
-  { id: m1, companyId: MULTI, createdAt: new Date('2026-03-01') },
+  { id: m2, companyId: MULTI, createdAt: new Date('2026-03-02'), published: true },
+  { id: s1, companyId: SOLO, createdAt: new Date('2026-01-01'), published: true },
+  { id: m3, companyId: MULTI, createdAt: new Date('2026-03-03'), published: true },
+  // The oldest site of MULTI is a draft: an unsold product's row (with its stock) prefers a live shop.
+  { id: m1, companyId: MULTI, createdAt: new Date('2026-03-01'), published: false },
 ];
 
 let env: BooksEnv;
@@ -123,7 +124,7 @@ beforeAll(async () => {
   await order(MULTI, m2, withSizes.variants[1].id, new Date('2026-06-01'));
   await order(MULTI, m3, withSizes.variants[1].id, new Date('2026-07-01')); // before it was switched off on m3
   rings = (await createCollection(multi, { title: 'Rings' })).id;
-  await setCollectionProducts(multi, rings, [ring, sizing]);
+  await setCollectionProducts(multi, rings, [ring, necklace, sizing]);
   empty = (await createCollection(multi, { title: 'Empty' })).id;
 
   const solo = catalogScope(env.appDb, env.tgId, SOLO);
@@ -152,7 +153,7 @@ describe('033_catalogue_site and catalogue:assign-sites', () => {
     expect(m.productsOnSite).toEqual({ [m1]: 2, [m2]: 2, [m3]: 1 });
     expect(m.companyItems).toBe(1);
     expect(m.productCopies.map((c) => [c.title, c.siteId]).sort()).toEqual([
-      ['Ring sizing', m2], ['Ring sizing', m3], ['Silver Ring', m1],
+      ['Ring sizing', m1], ['Ring sizing', m3], ['Silver Ring', m1],
     ].sort());
     expect(report.companies.find((c) => c.companyId === NOSITE)).toMatchObject({ sites: [], companyItems: 1 });
     expect(await rowCounts()).toEqual(before);
@@ -160,7 +161,7 @@ describe('033_catalogue_site and catalogue:assign-sites', () => {
   });
 
   it('a main site that names no company refuses an applying run, and a dry run lists it', async () => {
-    const unstamped = [...SITES, { id: 'site-unstamped', companyId: null, createdAt: new Date() }];
+    const unstamped = [...SITES, { id: 'site-unstamped', companyId: null, createdAt: new Date(), published: true }];
     const dry = await assignCatalogueSites({ connectionString: ownerUrl, tenantGroupId: env.tgId, sites: unstamped });
     expect(dry.unstampedSites).toEqual(['site-unstamped']);
     await expect(
@@ -185,7 +186,8 @@ describe('033_catalogue_site and catalogue:assign-sites', () => {
 
     // The ring sold last on m2 (the later m3 sale is on a site it is switched off for): the row moves there.
     expect(await siteOf(ring)).toBe(m2);
-    expect(await siteOf(sizing)).toBe(m1);
+    // Never sold: its row goes to the oldest PUBLISHED site it is shown on (m2), not to the draft m1.
+    expect(await siteOf(sizing)).toBe(m2);
     expect(await siteOf(necklace)).toBeNull();
     expect(await siteOf(gone)).toBeNull();
     expect(await siteOf(consulting)).toBeNull();
@@ -204,7 +206,10 @@ describe('033_catalogue_site and catalogue:assign-sites', () => {
     expect(copy.options.map((o) => [o.title, o.values.map((v) => v.value)])).toEqual([['Size', ['52', '54']]]);
     expect(copy.variants.map((v) => v.price)).toEqual([5200, 5200]);
     expect(copy.variants.map((v) => v.sku).sort()).toEqual(ringSkus.map((s) => `${s}-2`).sort());
-    expect(copy.variants.every((v) => !v.stock)).toBe(true);
+    expect(copy.variants.map((v) => v.stock)).toEqual([0, 0]);
+    // Each copied SKU has its own stock record (at zero), so checkout finds it as it found the original's.
+    const items = await env.ownerDb.selectFrom('inventory_item').select('sku').where('sku', 'in', copy.variants.map((v) => v.sku as string)).execute();
+    expect(items).toHaveLength(2);
     expect(new Set(copy.variants.map((v) => v.id)).isDisjointFrom(new Set(original.variants.map((v) => v.id)))).toBe(true);
 
     // The agent tools' site filter and check follow the same rule.
@@ -217,6 +222,9 @@ describe('033_catalogue_site and catalogue:assign-sites', () => {
     const c = report2Collections(await env.ownerDb.selectFrom('collection').select(['id', 'title', 'site_id']).where('tenant_id', '=', MULTI).execute());
     expect(c.get('Rings')).toEqual([m1, m2, m3]);
     expect(c.get('Empty')).toEqual([m1]);
+    // The necklace is a company item now (on no site): its membership is dropped, and counted in the report.
+    const stored = await env.ownerDb.selectFrom('catalogue_per_site').select('report').where('tenant_id', '=', MULTI).executeTakeFirstOrThrow();
+    expect((stored.report as { collectionMembersDropped: number }).collectionMembersDropped).toBe(1);
     const kept = await env.ownerDb.selectFrom('collection').select('site_id').where('id', '=', rings).executeTakeFirstOrThrow();
     expect(kept.site_id).toBe(m1);
     expect((await env.ownerDb.selectFrom('collection').select('site_id').where('id', '=', empty).executeTakeFirstOrThrow()).site_id).toBe(m1);

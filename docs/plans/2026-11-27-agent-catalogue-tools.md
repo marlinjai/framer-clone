@@ -250,10 +250,20 @@ catalogue's own codes in lower case (`not_found`, `duplicate_handle`, `duplicate
 - **The assignment** (`pnpm catalogue:assign-sites <tenant group> [--company <id>] [--apply]`, a dry run unless
   `--apply`, one transaction, the catalogue tables locked against writes meanwhile) follows point 5 above. The
   row of a product shown on several sites stays on the site that sold it most recently (orders on a site it is
-  switched off for do not count), else the oldest. Each copy keeps the handle, gets SKUs suffixed `-2`, `-3`, ...
-  until they are free in the tenant group (no barcode), and starts with no stock. A collection goes to the sites
+  switched off for do not count), else the oldest published one, else the oldest. Each copy keeps the handle,
+  gets SKUs suffixed `-2`, `-3`, ... until they are free in the tenant group (no barcode), and an empty stock
+  record per tracked SKU, so it starts at zero stock and checkout finds it. A collection goes to the sites
   of its products, an empty one to the oldest site. A company is marked even when it has no site, so from then on
   its NULL rows are company items. A main site that names no company refuses an applying run.
+- **What the run may meet on production, and what happens** (from the review):
+  - an old row that breaks a check 020 added without enforcing it on existing rows (a handle with uppercase,
+    a title with a trailing space) aborts the run, and the dry run shows the same error, so it is fixed first;
+  - a visitor whose cart holds a product whose row moved to another site gets the clear "unknown variant"
+    answer at checkout;
+  - an editor save at the same moment can make Postgres abort one side; if it aborts the run, nothing is
+    written and the run is repeated.
+
+  So the run happens at a quiet hour, after a clean dry run.
 - **A branch reads its main site's catalogue**: the editor canvas of a branch now uses the main site's id.
 - **`product_site_hidden` stays** until every company is assigned (it is the input and the old rule); a later
   migration drops it.

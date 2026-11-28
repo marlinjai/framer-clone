@@ -16,13 +16,15 @@
 //       one    it moves there;
 //       more   the row itself (its id, SKU, stock history, order and receipt references) moves to the site that
 //              sold it most recently (an order line naming one of its variants, on one of those sites), else to
-//              the oldest of them; every further site gets a copy: new ids, the same handle (handles are unique
-//              per site since 033), each SKU suffixed until it is free in the tenant group (no barcode, which is
-//              unique there too), so the copy has its own stock, starting at zero. The report lists the copies,
-//              so the owner can set their stock.
+//              the oldest published one of them, else the oldest; every further site gets a copy: new ids, the
+//              same handle (handles are unique per site since 033), each SKU suffixed until it is free in the
+//              tenant group (no barcode, which is unique there too), and an empty stock record per tracked SKU,
+//              so the copy has its own stock, starting at zero. The report lists the copies, so the owner can
+//              set their stock.
 //   - A collection goes to the sites of its products (after the step above); one without products on any site
 //     goes to the oldest site. The first of them keeps the row, every further site gets a copy; each lists, in
-//     the original order, the product (or the copy) that is on its site.
+//     the original order, the product (or the copy) that is on its site. Memberships of products on no site
+//     (deleted, or company items) are dropped and counted in the report.
 //   - A deleted product stays as it is (no shop shows it). A company without a site keeps every item as a company
 //     item. Either way the company is marked, so from then on a NULL site means "company item".
 //   - The company is marked in `catalogue_per_site`, with the report. From that moment its shops read their own
@@ -36,6 +38,8 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { assertTenantGroupId, tenantSchema } from '@marlinjai/tenant-db';
 
+import { DEFAULT_WORKSPACE_ID } from '../inventory/defaults';
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** A main site of the tenant group, as the public schema has it. */
@@ -44,6 +48,8 @@ export interface MainSite {
   /** NULL for a site nobody has opened since companies were stamped on sites (src/server/sites/siteCompany.ts). */
   companyId: string | null;
   createdAt: Date;
+  /** Published (live): an unsold product's row, with its stock, prefers a live site over a draft. */
+  published: boolean;
 }
 
 export interface CopiedRow {
@@ -74,6 +80,8 @@ export interface CompanyAssignment {
   collectionsOnSite: Record<string, number>;
   collectionCopies: CopiedRow[];
   collectionCompanyItems: number;
+  /** Collection memberships dropped: the product is deleted or a company item, so on no site. */
+  collectionMembersDropped: number;
 }
 
 export interface AssignSitesReport {
@@ -124,6 +132,32 @@ async function freeSku(tx: Sql, schema: string, sku: string): Promise<string> {
   throw new Error(`assignSites: no free SKU for a copy of ${sku}`);
 }
 
+/** The tenant group's default stock location, created on first use (as the editor's stock setter does). */
+async function defaultLocation(tx: Sql, schema: string, now: string): Promise<string> {
+  const [existing] = await tx<{ location_id: string }[]>`
+    SELECT "location_id" FROM ${tx(schema)}."fulfillment_location_default" WHERE "workspace_id" = ${DEFAULT_WORKSPACE_ID}`;
+  if (existing) return existing.location_id;
+  const id = randomUUID();
+  await tx`INSERT INTO ${tx(schema)}."stock_location" ("id", "name", "updated_at") VALUES (${id}, 'Main stock', ${now})`;
+  await tx`
+    INSERT INTO ${tx(schema)}."fulfillment_location_default" ("workspace_id", "location_id", "updated_at")
+    VALUES (${DEFAULT_WORKSPACE_ID}, ${id}, ${now})`;
+  return id;
+}
+
+/**
+ * The stock record of a copy's SKU, at zero: without one a tracked variant that allows backorders would show
+ * "add to cart" and then fail at checkout, where before the run it sold.
+ */
+async function emptyStock(tx: Sql, schema: string, sku: string, title: string | null, now: string): Promise<void> {
+  const item = randomUUID();
+  await tx`
+    INSERT INTO ${tx(schema)}."inventory_item" ("id", "sku", "title", "updated_at") VALUES (${item}, ${sku}, ${title}, ${now})`;
+  await tx`
+    INSERT INTO ${tx(schema)}."inventory_level" ("id", "inventory_item_id", "location_id", "updated_at")
+    VALUES (${randomUUID()}, ${item}, ${await defaultLocation(tx, schema, now)}, ${now})`;
+}
+
 /**
  * Copy one product, with its options, values, variants, prices and images, onto `siteId`. The child rows keep
  * their original `created_at`: the editor and the shop order options, values and variants by it (then by id), so
@@ -153,14 +187,15 @@ async function copyProduct(tx: Sql, schema: string, productId: string, siteId: s
 
   const variants = new Map<string, string>();
   const skus: CopiedProduct['skus'] = [];
-  for (const v of await tx<{ id: string; sku: string | null }[]>`
-      SELECT "id", "sku" FROM ${tx(schema)}."product_variant" WHERE "product_id" = ${productId} AND "deleted_at" IS NULL ORDER BY "created_at", "id"`) {
+  for (const v of await tx<{ id: string; sku: string | null; title: string | null; manage_inventory: boolean }[]>`
+      SELECT "id", "sku", "title", "manage_inventory" FROM ${tx(schema)}."product_variant" WHERE "product_id" = ${productId} AND "deleted_at" IS NULL ORDER BY "created_at", "id"`) {
     variants.set(v.id, randomUUID());
     const sku = v.sku ? await freeSku(tx, schema, v.sku) : null;
     if (v.sku && sku) skus.push({ from: v.sku, to: sku });
     await copyRow(tx, schema, 'product_variant', { column: 'id', value: v.id }, {
       id: variants.get(v.id)!, product_id: id, sku, barcode: null, option_signature: null, updated_at: now,
     });
+    if (sku && v.manage_inventory) await emptyStock(tx, schema, sku, v.title, now);
     await tx`
       INSERT INTO ${tx(schema)}."product_variant_option" ("variant_id", "option_id", "option_value_id", "tenant_id")
       SELECT ${variants.get(v.id)!}, m.new_option, n.new_value, pvo."tenant_id"
@@ -196,7 +231,7 @@ async function assignCompany(tx: Sql, schema: string, companyId: string, sites: 
   const out: CompanyAssignment = {
     companyId, alreadyAssigned: false, sites: siteIds,
     productsOnSite: {}, productCopies: [], companyItems: 0,
-    collectionsOnSite: {}, collectionCopies: [], collectionCompanyItems: 0,
+    collectionsOnSite: {}, collectionCopies: [], collectionCompanyItems: 0, collectionMembersDropped: 0,
   };
   const [done] = await tx`SELECT 1 FROM ${tx(schema)}."catalogue_per_site" WHERE "tenant_id" = ${companyId}`;
   if (done) return { ...out, alreadyAssigned: true };
@@ -226,7 +261,8 @@ async function assignCompany(tx: Sql, schema: string, companyId: string, sites: 
       out.companyItems++;
       continue;
     }
-    const home = p.last_site && showing.includes(p.last_site) ? p.last_site : showing[0];
+    const live = new Set(sites.filter((s) => s.published).map((s) => s.id));
+    const home = p.last_site && showing.includes(p.last_site) ? p.last_site : (showing.find((s) => live.has(s)) ?? showing[0]);
     await tx`UPDATE ${tx(schema)}."product" SET "site_id" = ${home} WHERE "tenant_id" = ${companyId} AND "id" = ${p.id}`;
     const where = new Map([[home, p.id]]);
     out.productsOnSite[home] = (out.productsOnSite[home] ?? 0) + 1;
@@ -248,6 +284,7 @@ async function assignCompany(tx: Sql, schema: string, companyId: string, sites: 
      ORDER BY c."created_at", c."id"`;
   for (const c of collections) {
     const members = c.members ?? [];
+    out.collectionMembersDropped += members.filter((m) => !placement.has(m)).length;
     if (siteIds.length === 0) {
       out.collectionCompanyItems++;
       continue;
