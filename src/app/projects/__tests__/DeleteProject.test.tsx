@@ -282,3 +282,4 @@ describe('Delete project dialog in a small window', () => {
   });
 });
 
+// ci-replay touch

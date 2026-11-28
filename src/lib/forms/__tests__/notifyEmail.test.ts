@@ -54,3 +54,4 @@ describe('the address is private', () => {
     expect(stripFormConfigProps({ [NOTIFY_EMAIL_PROP]: 'owner@bakery.example', id: 'x' })).toEqual({ id: 'x' });
   });
 });
+// ci-replay touch

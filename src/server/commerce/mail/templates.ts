@@ -286,3 +286,4 @@ export function templatesVersion(): string {
   const everything = MAIL_TEMPLATE_KINDS.map((kind) => ({ kind, template: templateCreate(kind), inputs: MAIL_INPUTS[kind] }));
   return createHash('sha256').update(JSON.stringify(everything)).digest('hex').slice(0, 16);
 }
+// ci-replay touch

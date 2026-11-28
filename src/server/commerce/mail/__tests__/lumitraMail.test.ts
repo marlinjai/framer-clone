@@ -165,3 +165,4 @@ describe('connecting', () => {
     await expect(mailWith(keyClient([], { templates: twice })).installTemplates('key')).rejects.toBeInstanceOf(MailRefused);
   });
 });
+// ci-replay touch
