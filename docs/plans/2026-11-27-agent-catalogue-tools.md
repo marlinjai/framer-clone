@@ -279,6 +279,39 @@ catalogue's own codes in lower case (`not_found`, `duplicate_handle`, `duplicate
   without a site. It covers the dry run writing nothing, the per-company switch, each shop's exact list, the
   copies, and a second run changing nothing. Nothing is read from production.
 
+### Slice 2b, part 1: site deletion takes its catalogue along (decided here, say so if you disagree)
+
+`src/server/catalog/siteRetire.ts`, with its job kind `catalogue_retire` (`src/server/catalog/siteRetireJob.ts`):
+
+- **What happens to the deleted site's rows.** A product that an order line or a Books document line names (`variant_ref`
+  on any of its variants) is archived and kept whole (variants, prices, stock), so orders, receipts, invoices and the
+  ledger keep pointing at real rows. Every other product is soft-deleted together with its variants and their stock items,
+  which releases its SKUs (the SKU indexes are partial on `deleted_at`): another site of the company may reuse one and
+  starts at zero stock, not at the deleted shop's count. Collections are archived and emptied (a collection has no
+  `deleted_at`; archiving frees its handle). The site's `product_site_hidden` rows go. Rows without a site (company items,
+  or the rows of a company not yet assigned) are never touched.
+- **Durable, as the form purge.** The site row (public schema) and the catalogue (tenant schema) are two connections, so
+  the delete route writes a `catalogue_retire` job BEFORE the site row goes (if it cannot, nothing is deleted), retires
+  at once after the commit, and the job, ten minutes later, is the backstop: it acts only once the site row is gone, looks
+  again for two hours while a delete has not committed, retries without giving up, and is counted by the job watchdog's
+  "stuck" figure with the form purges. The shared "is the site gone" look moved to `src/server/commerce/jobs/siteGone.ts`.
+- **Whose rows.** The company is the delete request's active company from the verified session (its workspace is the one
+  the site is deleted from), carried as the job's tenant; every statement filters on that company and the site id.
+  Protects against an admin of one company naming another company's site id (in the same tenant group) to retire its
+  catalogue: nothing of the other company's is touched (proven by forged rows in the integration test).
+- **An accepted race.** An order whose request resolved the site just before the delete committed can land after the
+  retirement looked for references; its product is then soft-deleted instead of archived. The order line keeps its own
+  snapshot and its `variant_ref` still names the soft-deleted row, so nothing issued breaks.
+- **The owner is told** in the delete dialog that the project's products and collections go with it and that ordered or
+  invoiced products are kept archived.
+
+Proof: `src/server/catalog/__tests__/siteRetire.itest.ts` (the job a no-op while the site exists, the job alone retiring
+after the delete, archive versus soft-delete, SKU reuse at zero stock, a second run changing nothing, another site's,
+another company's and siteless rows unchanged) and the delete route's unit tests.
+
+Part 2 (its own branch): the editor's catalogue in the project (a per-site list, creation with a `site_id`) and the
+Books invoice picker grouped by site.
+
 ## Proof
 
 Integration tests through the real MCP route (`/api/mcp`) and the real key verification, on a throwaway database

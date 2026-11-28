@@ -11,6 +11,7 @@ import type { Kysely } from 'kysely';
 import type { CommerceDB } from '../db-types';
 import { deliverFormNotification } from '@/server/forms/notify';
 import { purgeSiteSubmissions } from '@/server/forms/purge';
+import { retireDeletedSiteCatalogue } from '@/server/catalog/siteRetire';
 import { deliverShopMail, type OutboxDeps } from '../mail/outbox';
 import { outboxDeps } from '../mail/runtime';
 import { sessionAtExpiry } from '../payment/checkoutSession';
@@ -25,6 +26,7 @@ import {
   type CommerceJob,
   type CompanyContext,
   type JobKind,
+  type JobCatalogue,
   type JobForms,
   type JobKindRegistry,
   type JobMail,
@@ -108,6 +110,20 @@ function jobForms(group: JobTenantGroup, jobTenantId: string, now: () => Date): 
   };
 }
 
+/** A deleted project's shop catalogue, of the job's company (its tenant), in the job's tenant group (src/server/catalog/siteRetire.ts). */
+function jobCatalogue(group: JobTenantGroup, jobTenantId: string, now: () => Date): JobCatalogue {
+  return {
+    async retireSite(siteId, notAfter) {
+      try {
+        await retireDeletedSiteCatalogue(group.db, jobTenantId, siteId, undefined, { notAfter, now: now() });
+      } catch (err) {
+        console.error(`[catalog] retiring the catalogue of deleted project ${siteId} failed, will retry:`, err);
+        throw new JobRetryLater('retire_failed');
+      }
+    },
+  };
+}
+
 /** The handler's end, before it is written. */
 type Ending =
   | { type: 'done' }
@@ -156,6 +172,7 @@ async function invoke(
       payments: jobPayments(group, job.tenant_id, kind, now, wiring),
       mail: jobMail(group, job.tenant_id, now, mailWiring),
       forms: jobForms(group, job.tenant_id, now),
+      catalogue: jobCatalogue(group, job.tenant_id, now),
     });
     if (!answer) return { type: 'done' };
     if (answer.payload === undefined) return { type: 'rerun', rerunAt: answer.rerunAt };

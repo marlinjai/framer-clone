@@ -25,6 +25,10 @@ type Kind =
  * until whoever added the query has decided what it does with a branch and updated the count (and the why).
  */
 const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
+  'src/server/commerce/jobs/siteGone.ts': {
+    uses: 1, kind: 'sees-branches',
+    why: 'the cleanup jobs of a deleted project (form purge, catalogue retirement) read the site row by id only to learn whether it is gone: a row there, a branch included, means the delete has not happened and nothing is cleaned; a project delete refuses a branch, and the catalogue keys to main sites',
+  },
   'src/server/sites/repository.ts': {
     uses: 82, kind: 'sees-branches',
     why: 'listSites filters to mains; save works on a branch id, locking main\'s row shared first when it names an image (the image delete takes it exclusive) and FOR NO KEY UPDATE when it names a custom code hash (D113, D114), then its own row, which also reads its main site, and its image check against the images of main; a branch save is budget-checked against main\'s code and prunes nothing (main\'s next write does); publish, rollback, unpublish, domains, delete and erase refuse a branch; erase of a main covers its branches, moves an up-to-date fork point with main, and removes a kept pre-merge copy it could not clean fully and one past its 30 days, and lists the records with one narrow read; its custom code (D115) is main\'s blobs, and a block rewritten under a new hash is renamed in main, in every branch\'s working, base and pre-merge copy, and in the revisions; a rename of a branch drops its approval (the name is part of what a merge writes)',
@@ -89,10 +93,6 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   'src/server/forms/editorScope.ts': {
     uses: 1, kind: 'sees-branches',
     why: 'resolves the scope of an editor forms request by site id; a branch collects no submissions (it has no host)',
-  },
-  'src/server/forms/purge.ts': {
-    uses: 1, kind: 'sees-branches',
-    why: 'the purge job of a deleted project reads the site row by id only to learn whether it is gone: a row there, a branch included, means the delete has not happened and nothing is purged; submissions only ever name published mains, and a project delete refuses a branch',
   },
   'src/server/forms/repository.ts': { uses: 1, kind: 'mains-only', why: 'sites of submissions, posted only to published sites' },
   'src/lib/auth-machine.ts': {

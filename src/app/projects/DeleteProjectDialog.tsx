@@ -200,8 +200,12 @@ export default function DeleteProjectDialog({
                 </div>
               ) : null}
               <p>
-                Your company&rsquo;s CMS collections, shop catalog, orders, Books and analytics are
-                not affected.
+                Products and collections that belong to this project&rsquo;s shop are removed with it;
+                products that were already ordered or invoiced are archived and kept for those orders
+                and invoices.
+              </p>
+              <p>
+                Your company&rsquo;s CMS collections, orders, Books and analytics are not affected.
               </p>
             </div>
           </AlertDialogDescription>

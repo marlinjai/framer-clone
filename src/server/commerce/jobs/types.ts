@@ -178,6 +178,12 @@ export interface JobForms {
   purgeSite(siteId: string, workspaceId: string, notAfter?: string | null): Promise<void>;
 }
 
+/** What a handler may do to a deleted project's shop catalogue, bound to the job's company and tenant group (src/server/catalog/siteRetireJob.ts). */
+export interface JobCatalogue {
+  /** Retire the site's products and collections once its row is gone; throws `JobRetryLater` while that cannot be done yet. */
+  retireSite(siteId: string, notAfter?: string | null): Promise<void>;
+}
+
 export interface JobContext<P> {
   readonly job: Pick<CommerceJob, 'id' | 'kind' | 'attempts'>;
   readonly company: CompanyContext;
@@ -190,6 +196,8 @@ export interface JobContext<P> {
   readonly mail: JobMail;
   /** The form submissions of a deleted project, in this job's tenant group. */
   readonly forms: JobForms;
+  /** The shop catalogue of a deleted project, of this job's company. */
+  readonly catalogue: JobCatalogue;
 }
 
 export interface JobKind<P = unknown> {

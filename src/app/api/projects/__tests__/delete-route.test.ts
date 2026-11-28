@@ -56,6 +56,15 @@ vi.mock('@/server/forms/purge', () => ({
     scheduleProjectSubmissionsPurge(tenantGroupId, workspaceId, siteId),
 }));
 
+// The project's shop catalogue (src/server/catalog/siteRetire.ts): a durable job written before the delete, an attempt after it.
+const scheduleSiteCatalogueRetire = vi.fn<(tenantGroupId: string, companyId: string, siteId: string) => Promise<boolean>>(async () => true);
+type Retired = { archivedProducts: number; deletedProducts: number; archivedCollections: number };
+const retireDeletedSiteCatalogueNow = vi.fn<(tenantGroupId: string, companyId: string, siteId: string) => Promise<Retired | null>>(async () => null);
+vi.mock('@/server/catalog/siteRetire', () => ({
+  scheduleSiteCatalogueRetire: (tenantGroupId: string, companyId: string, siteId: string) => scheduleSiteCatalogueRetire(tenantGroupId, companyId, siteId),
+  retireDeletedSiteCatalogueNow: (tenantGroupId: string, companyId: string, siteId: string) => retireDeletedSiteCatalogueNow(tenantGroupId, companyId, siteId),
+}));
+
 // ---- in-memory database (sites, site_domains with ON DELETE CASCADE) ------
 type Site = { id: string; workspaceId: string; tenantGroupId: string; name: string; status: string; updatedAt?: Date };
 type Domain = {
@@ -193,6 +202,10 @@ beforeEach(() => {
   deleteProjectSubmissions.mockImplementation(async () => ({ deleted: 0, pending: false }));
   scheduleProjectSubmissionsPurge.mockReset();
   scheduleProjectSubmissionsPurge.mockImplementation(async () => true);
+  scheduleSiteCatalogueRetire.mockReset();
+  scheduleSiteCatalogueRetire.mockImplementation(async () => true);
+  retireDeletedSiteCatalogueNow.mockReset();
+  retireDeletedSiteCatalogueNow.mockImplementation(async () => null);
 });
 
 afterEach(() => {
@@ -350,6 +363,7 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     mockCan.mockResolvedValue(true);
     expect((await del('site_pub', 'not json')).status).toBe(400);
     expect(scheduleProjectSubmissionsPurge).not.toHaveBeenCalled();
+    expect(scheduleSiteCatalogueRetire).not.toHaveBeenCalled();
     expect(sites).toHaveLength(3);
   });
 
@@ -373,6 +387,57 @@ describe('DELETE /api/projects/<id> outcome for a published project', () => {
     expect(db.site.deleteMany).not.toHaveBeenCalled();
     expect(revalidateSiteCache).not.toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it("writes the catalogue retirement BEFORE the site row goes, in the session's company, then retires at once after the commit", async () => {
+    scheduleSiteCatalogueRetire.mockImplementation(async () => {
+      expect(sites.find((s) => s.id === 'site_pub')).toBeDefined();
+      return true;
+    });
+    retireDeletedSiteCatalogueNow.mockImplementation(async () => {
+      expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
+      return { archivedProducts: 1, deletedProducts: 2, archivedCollections: 1 };
+    });
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(200);
+    // The company is the active company of the verified session (its workspace ws_marlin belongs to tenant-1), never one the request names.
+    expect(scheduleSiteCatalogueRetire).toHaveBeenCalledWith('tg_lumitra', 'tenant-1', 'site_pub');
+    expect(retireDeletedSiteCatalogueNow).toHaveBeenCalledWith('tg_lumitra', 'tenant-1', 'site_pub');
+    infoSpy.mockRestore();
+  });
+
+  it('if the catalogue retirement cannot be written nothing is deleted (500, try again)', async () => {
+    scheduleSiteCatalogueRetire.mockImplementation(async () => {
+      throw new Error('tenant schema unreachable');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe('delete_failed');
+    expect(sites.find((s) => s.id === 'site_pub')).toBeDefined();
+    expect(db.site.deleteMany).not.toHaveBeenCalled();
+    expect(retireDeletedSiteCatalogueNow).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('a failed immediate retirement is left to the job: the delete still succeeds, and the failure is logged', async () => {
+    retireDeletedSiteCatalogueNow.mockImplementation(async () => {
+      throw new Error('lock timeout');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await del('site_pub', { confirmName: 'Bakery' });
+    expect(res.status).toBe(200);
+    expect(sites.find((s) => s.id === 'site_pub')).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('the background job will finish it'), expect.any(Error));
+    errorSpy.mockRestore();
+  });
+
+  it('a refused delete wrote its catalogue job (a no-op while the site exists) and retired nothing', async () => {
+    const res = await del('site_pub');
+    expect(res.status).toBe(409);
+    expect(scheduleSiteCatalogueRetire).toHaveBeenCalledTimes(1);
+    expect(retireDeletedSiteCatalogueNow).not.toHaveBeenCalled();
   });
 
   it('removed now: a plain success that says nothing is pending', async () => {
