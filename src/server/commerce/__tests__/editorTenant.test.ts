@@ -44,7 +44,7 @@ function session(workspaceId: string, groupId: string): SessionVerifyResponse {
   } as unknown as SessionVerifyResponse;
 }
 
-function prismaWith(site: { workspaceId: string; tenantGroupId: string } | null) {
+function prismaWith(site: { workspaceId: string; tenantGroupId: string; branchOfSiteId?: string | null } | null) {
   return {
     site: {
       findUnique: vi.fn(async () => site),
@@ -158,6 +158,13 @@ describe('resolveEditorCommerce', () => {
     if (!r.ok) return;
     expect(r.db).toEqual({ __scopedHandleFor: TG_A });
     expect(tenantDbMock).toHaveBeenCalledWith(TG_A);
+  });
+
+  it("reads a main site's own catalogue, and a branch reads its main site's (033_catalogue_site)", async () => {
+    const main = await resolveEditorCommerce(req, 'p1', prismaWith({ workspaceId: 'ws_a', tenantGroupId: TG_A, branchOfSiteId: null }));
+    expect(main.ok && main.view.siteId).toBe('p1');
+    const branch = await resolveEditorCommerce(req, 'b1', prismaWith({ workspaceId: 'ws_a', tenantGroupId: TG_A, branchOfSiteId: 'p1' }));
+    expect(branch.ok && branch.view.siteId).toBe('p1');
   });
 
   it('404s on a published storefront host EVEN WITH a valid session, without reading the session', async () => {

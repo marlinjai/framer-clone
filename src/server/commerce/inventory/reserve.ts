@@ -51,6 +51,7 @@ import { tenantSchemaRef } from '@marlinjai/tenant-db';
 import { MAX_ORDER_INTEGER } from '@/lib/commerce/dto';
 
 import type { CommerceDB, ReservationTable, StockMovementTable } from '../db-types';
+import { DEFAULT_WORKSPACE_ID } from './defaults';
 
 /**
  * The single isolation level the guarded decrement is proven against. Opening
@@ -62,7 +63,7 @@ export const RESERVE_ISOLATION_LEVEL: IsolationLevel = 'read committed';
  * v1 ships ONE constant workspace. resolveLocation keys the default-location
  * lookup by this id; a resolved per-site workspace id replaces it later.
  */
-export const DEFAULT_WORKSPACE_ID = 'default';
+export { DEFAULT_WORKSPACE_ID } from './defaults';
 
 /** A single unmet line of demand, returned when a guarded reserve matches zero rows. */
 export interface Shortage {

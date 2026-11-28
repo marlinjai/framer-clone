@@ -56,6 +56,7 @@ import { handlePaymentEvent, type PaymentDeps } from '@/server/commerce/payment/
 import { demoProvider } from '@/server/commerce/payment/provider';
 import { ensureReceipt } from '@/server/commerce/payment/receipt';
 import { insertFormSubmission, type NewFormSubmission } from '@/server/forms/repository';
+import { toJsonb } from '@/server/books/snapshots';
 import { resolvePublishedSite } from '@/server/sites/publicResolver';
 import { cachedDocument, documentEpoch, rememberDocument } from '@/server/sites/liveDocumentCache';
 import { endLiveGenerationOfSite, generationSnapshot, openLiveGeneration } from '@/server/sites/liveGeneration';
@@ -281,6 +282,8 @@ async function seedCompany(label: string): Promise<Company> {
   // version, and a row of the retired Books product list.
   await addProductImage(catalogScope(env.appDb, env.tgId, company), product.id, makePng(30, 30));
   await env.ownerDb.insertInto('product_site_hidden').values({ tenant_id: company, product_id: product.id, site_id: siteId }).execute();
+  // The company's catalogue marked as assigned to its sites (033_catalogue_site).
+  await env.ownerDb.insertInto('catalogue_per_site').values({ tenant_id: company, report: toJsonb({ sites: [siteId] }) }).execute();
   await createTemplate(scope, { name: `Vorlage ${label}` });
   await env.ownerDb
     .insertInto('books_product')

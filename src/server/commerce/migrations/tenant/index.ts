@@ -32,6 +32,7 @@ import { companyErasure } from './029_company_erasure';
 import { booksContactPerson } from './030_books_contact_person';
 import { checkoutSession } from './031_checkout_session';
 import { formNotification } from './032_form_notification';
+import { catalogueSite } from './033_catalogue_site';
 
 /**
  * CM-04 — `COMMERCE_TENANT_MIGRATIONS`: the per-tenant (`tg_<id>`) commerce
@@ -146,6 +147,9 @@ import { formNotification } from './032_form_notification';
  *                            address and id) with the hold moved past it (BK018)
  *   032_form_notification  : the outbox of the email that tells the site owner about a
  *                            form submission, one row per submission, deleted with it
+ *   033_catalogue_site     : the shop catalogue per project: product and collection name
+ *                            their site, catalogue_per_site marks an assigned company,
+ *                            handles unique per company and site
  */
 export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   enums,
@@ -181,4 +185,5 @@ export const COMMERCE_TENANT_MIGRATIONS: MigrationSet = [
   booksContactPerson,
   checkoutSession,
   formNotification,
+  catalogueSite,
 ];

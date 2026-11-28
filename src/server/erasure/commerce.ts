@@ -73,6 +73,7 @@ export const ERASURE_COVERAGE: Readonly<Record<string, string>> = {
   books_asset: 'company (bytes per company and SHA-256, so another company with the same file keeps its row)',
   books_product: 'company',
   product_site_hidden: 'company',
+  catalogue_per_site: 'company',
   collection_product: 'company',
   product_image: 'company',
   collection: 'company',

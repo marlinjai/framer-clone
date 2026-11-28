@@ -40,6 +40,7 @@ import { derivePair, richFromPlain, richTextSchema, type RichText } from '@/serv
 import { toJsonb } from '@/server/books/snapshots';
 
 import type { CommerceDB } from '../../commerce/db-types';
+import { productOnSite } from '../../commerce/repository/siteCatalogue';
 import { CatalogError, invalid, invalidField, notFound, withDbErrors } from '../errors';
 import type { CatalogScope } from '../scope';
 import {
@@ -135,6 +136,19 @@ export type UpdateProductInput = z.input<typeof updateInput>;
 // --- one product ------------------------------------------------------------
 
 /** The product with its options, variants, images, collections and hidden sites, or NOT_FOUND. */
+/** Whether the company's product is in `siteId`'s catalogue (src/server/commerce/repository/siteCatalogue.ts), any status. */
+export async function isProductOnSite(scope: CatalogScope, productId: string, siteId: string): Promise<boolean> {
+  const row = await scope.db
+    .selectFrom('product')
+    .select('product.id')
+    .where('product.tenant_id', '=', scope.tenantId)
+    .where('product.id', '=', productId)
+    .where('product.deleted_at', 'is', null)
+    .where((eb) => productOnSite(eb, siteId))
+    .executeTakeFirst();
+  return row !== undefined;
+}
+
 export async function getProduct(scope: CatalogScope, productId: string): Promise<ProductDetail> {
   const db = scope.db;
   const p = await db
@@ -593,7 +607,7 @@ const listInput = z
     status: z.enum(['draft', 'published', 'archived', 'all']).optional(),
     type: z.string().max(100).optional(),
     collection: z.string().max(100).optional(),
-    /** Only the products a site shows: not switched off for it (product_site_hidden). Any status, as the table. */
+    /** Only the products in a site's catalogue (src/server/commerce/repository/siteCatalogue.ts). Any status, as the table. */
     site: z.string().min(1).max(100).optional(),
     stock: z.enum(['in_stock', 'out_of_stock', 'untracked']).optional(),
     sort: z.enum(['updated', 'title', 'created', 'price', 'stock']).default('updated'),
@@ -728,20 +742,7 @@ export async function listProducts(scope: CatalogScope, query: ProductListQuery 
         ),
       );
     }
-    if (args.site) {
-      conds.push(
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('product_site_hidden as h')
-              .whereRef('h.product_id', '=', 'product.id')
-              .whereRef('h.tenant_id', '=', 'product.tenant_id')
-              .where('h.site_id', '=', args.site)
-              .select('h.product_id'),
-          ),
-        ),
-      );
-    }
+    if (args.site) conds.push(productOnSite(eb, args.site));
     if (args.stock === 'untracked') conds.push(sql<SqlBool>`(${stockOf(eb)}) IS NULL`);
     if (args.stock === 'in_stock') conds.push(sql<SqlBool>`(${stockOf(eb)}) > 0`);
     if (args.stock === 'out_of_stock') conds.push(sql<SqlBool>`(${stockOf(eb)}) <= 0`);

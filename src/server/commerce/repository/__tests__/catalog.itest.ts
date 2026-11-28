@@ -133,7 +133,7 @@ describe('catalog repository + 003_catalog guarantees (tenant schema, Dockerized
   it('a soft-deleted handle frees the partial-unique', async () => {
     const first = await catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Shoes', handle: 'shoes' });
     await expect(catalogRepository.createProduct(db, { tenantId: DEMO_COMPANY_ID, title: 'Shoes 2', handle: 'shoes' })).rejects.toThrow(
-      /product_tenant_handle_active_key/,
+      /product_tenant_site_handle_active_key/,
     );
 
     await db.updateTable('product').set({ deleted_at: new Date() }).where('id', '=', first.id).execute();

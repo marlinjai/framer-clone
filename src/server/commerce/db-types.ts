@@ -248,6 +248,8 @@ export interface ProductTable {
   search_text: string | null;
   archived_at: Timestamp | null;
   books_product_id: string | null;
+  // 033_catalogue_site: the main site the product belongs to; NULL is a company item, or unassigned (see catalogue_per_site).
+  site_id: string | null;
 }
 
 /** 003_catalog: product option (e.g. "Size"). */
@@ -770,6 +772,8 @@ export interface CollectionTable {
   archived_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Timestamp;
+  // 033_catalogue_site: the main site the collection belongs to (NULL as product.site_id).
+  site_id: string | null;
 }
 
 /** 020_catalogue_company: the ordered products of a collection. */
@@ -925,6 +929,16 @@ export interface FormNotificationTable {
   updated_at: Timestamp;
 }
 
+/**
+ * 033_catalogue_site: the company's catalogue is assigned to its sites. With this row a NULL site_id is a company
+ * item (Books only); without it a NULL site_id is a row from before the assignment, read the old way.
+ */
+export interface CataloguePerSiteTable {
+  tenant_id: string;
+  assigned_at: Generated<Timestamp>;
+  report: JsonColumn<Record<string, unknown>>;
+}
+
 // =============================================================================
 // The Database interface. GLOBAL keys are `public.`-qualified; tenant tables
 // are BARE. The two namespaces are disjoint by construction.
@@ -980,6 +994,7 @@ export interface CommerceDB {
   shop_mail: ShopMailTable;
   commerce_job: CommerceJobTable;
   form_notification: FormNotificationTable;
+  catalogue_per_site: CataloguePerSiteTable;
 }
 
 // --- compile-time discipline guards (the package's brand types) --------------

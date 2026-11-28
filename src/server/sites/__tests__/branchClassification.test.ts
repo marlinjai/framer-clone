@@ -82,7 +82,7 @@ const CLASSIFIED: Record<string, { uses: number; kind: Kind; why: string }> = {
   },
   'src/server/commerce/editorTenant.ts': {
     uses: 1, kind: 'sees-branches',
-    why: 'resolves the company of an editor request by site id; a branch has its main company',
+    why: 'resolves the company of an editor request by site id; a branch has its main company, and reads its main site\'s catalogue (033_catalogue_site)',
   },
   'src/server/commerce/mail/runtime.ts': { uses: 1, kind: 'mains-only', why: 'sites of orders, placed only on published sites' },
   'src/server/commerce/payment/expirySweep.ts': { uses: 1, kind: 'mains-only', why: 'sites of orders, placed only on published sites' },
