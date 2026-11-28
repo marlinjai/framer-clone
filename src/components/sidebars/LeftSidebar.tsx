@@ -322,3 +322,4 @@ const LeftSidebar = observer(({ variant = 'docked', onComponentInserted }: LeftS
 
 LeftSidebar.displayName = 'LeftSidebar';
 export default LeftSidebar;
+// ci-replay touch

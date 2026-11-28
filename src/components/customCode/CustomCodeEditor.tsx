@@ -110,3 +110,4 @@ export function CustomCodeEditor({ id, value, onChange, label, readOnly = false,
 function isMac(): boolean {
   return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 }
+// ci-replay touch

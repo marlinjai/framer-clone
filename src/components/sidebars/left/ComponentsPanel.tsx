@@ -172,3 +172,4 @@ export default ComponentsPanel;
 
 // Re-export for callers that want registry metadata.
 export { COMPONENT_REGISTRY };
+// ci-replay touch

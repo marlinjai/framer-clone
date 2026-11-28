@@ -152,3 +152,4 @@ const RightSidebar = observer(({ variant = 'docked' }: RightSidebarProps) => {
 RightSidebar.displayName = 'RightSidebar';
 
 export default RightSidebar;
+// ci-replay touch

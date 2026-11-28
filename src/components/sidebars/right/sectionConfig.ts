@@ -73,3 +73,4 @@ export const SECTION_MAP: Record<ComponentCategory, SectionId[]> = {
   // arrange and style the fallback, the elements inside it.
   customCode: ['customCode', 'size', 'position', 'layout', 'typography', 'styles', 'effects', 'custom'],
 };
+// ci-replay touch
