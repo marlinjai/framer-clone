@@ -1324,7 +1324,7 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => 
   }, [current, result, onPick]);
   const option = (i: number) => `product-option-${i}`;
   const productOption = (p: CatalogueItemView, i: number) => (
-    <li
+    <div
         key={p.variantId}
         id={option(i)}
         role="option"
@@ -1340,7 +1340,7 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => 
           {money(p.unitPrice)} / {p.unitLabel}
           {p.priceBasis === 'gross' ? ' brutto' : ''}
         </span>
-      </li>
+      </div>
   );
   return (
     <div role="dialog" aria-label="Choose a product or service" className={`absolute left-0 top-9 z-30 w-80 rounded-xl border p-1.5 text-popover-foreground ${GLASS_SURFACE}`}>
@@ -1391,24 +1391,23 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => 
           </Link>
         </div>
       ) : null}
-      <ul id="product-options" role="listbox" aria-label="Products and services" className="mt-1 max-h-64 overflow-y-auto empty:hidden">
+      {/* The grouped listbox of the ARIA practices: each group's heading is its first, presentational child. */}
+      <div id="product-options" role="listbox" aria-label="Products and services" className="mt-1 max-h-64 overflow-y-auto empty:hidden">
         {result && result.groups.length > 1
           ? result.groups.map((g) => {
               const first = result.items.indexOf(g.items[0]);
-              const headingId = `product-group-${g.siteId ?? 'none'}`;
+              const headingId = `product-group-${g.key}`;
               return (
-                <li key={g.siteId ?? 'none'} role="presentation">
-                  <div id={headingId} className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <div key={g.key} role="group" aria-labelledby={headingId}>
+                  <div id={headingId} role="presentation" className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     {g.label}
                   </div>
-                  <ul role="group" aria-labelledby={headingId}>
-                    {g.items.map((p, k) => productOption(p, first + k))}
-                  </ul>
-                </li>
+                  {g.items.map((p, k) => productOption(p, first + k))}
+                </div>
               );
             })
           : items?.map((p, i) => productOption(p, i))}
-      </ul>
+      </div>
     </div>
   );
 }

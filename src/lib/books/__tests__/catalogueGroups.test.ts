@@ -21,9 +21,22 @@ describe('catalogueSiteGroups', () => {
       ['Company items', ['2']],
     ]);
   });
-  it('a site no longer listed keeps its items, after the listed sites and before the items without one', () => {
-    const groups = catalogueSiteGroups([it_('1', null), it_('2', 'gone'), it_('3', 'a')], sites, false);
-    expect(groups.map((g) => g.label)).toEqual(['Bakery', 'A site no longer listed', 'All sites']);
+  it('the sites no longer listed share one group, after the listed sites and before the items without one', () => {
+    const groups = catalogueSiteGroups([it_('1', null), it_('2', 'gone'), it_('3', 'a'), it_('4', 'gone-too')], sites, false);
+    expect(groups.map((g) => [g.key, g.label, g.items.map((i) => i.id)])).toEqual([
+      ['a', 'Bakery', ['3']],
+      ['unlisted', 'A site no longer listed', ['2', '4']],
+      ['none', 'All sites', ['1']],
+    ]);
+  });
+  it('two sites of the same name are told apart by their detail', () => {
+    const twins = [
+      { id: 'a', name: 'Shop', detail: 'shop-north' },
+      { id: 'b', name: 'Shop', detail: 'shop-south' },
+      { id: 'c', name: 'Catering', detail: 'catering' },
+    ];
+    const groups = catalogueSiteGroups([it_('1', 'a'), it_('2', 'b'), it_('3', 'c')], twins, true);
+    expect(groups.map((g) => g.label)).toEqual(['Shop (shop-north)', 'Shop (shop-south)', 'Catering']);
   });
   it('the items without a site are shared by all sites before the assignment', () => {
     expect(catalogueSiteGroups([it_('1', null)], sites, false).map((g) => g.label)).toEqual(['All sites']);

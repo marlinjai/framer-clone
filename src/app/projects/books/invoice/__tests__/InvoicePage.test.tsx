@@ -542,7 +542,9 @@ describe('the invoice page: review fixes', () => {
     await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Product or service' }));
     const bakery = await screen.findByRole('group', { name: 'Bakery' });
-    const groups = within(screen.getByRole('listbox', { name: 'Products and services' })).getAllByRole('group').map((g) => g.getAttribute('aria-labelledby') && document.getElementById(g.getAttribute('aria-labelledby')!)!.textContent);
+    const groups = within(screen.getByRole('listbox', { name: 'Products and services' }))
+      .getAllByRole('group')
+      .map((g) => document.getElementById(g.getAttribute('aria-labelledby')!)!.textContent);
     expect(groups).toEqual(['Bakery', 'Catering', 'A site no longer listed', 'Company items']);
     expect(within(bakery).getAllByRole('option').map((o) => o.textContent)).toEqual([expect.stringContaining('4,00')]);
     // The first option is the Bakery's Brot (grouped order), the next the Catering's.

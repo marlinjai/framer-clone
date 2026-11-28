@@ -35,5 +35,5 @@ export const GET = booksRoute('read', async (ctx, req) => {
     getSiteRepository().listSites(ctx.workspace),
     catalogueAssigned(ctx.scope),
   ]);
-  return Response.json({ items, sites: sites.map((s) => ({ id: s.siteId, name: s.name })), assigned });
+  return Response.json({ items, sites: sites.map((s) => ({ id: s.siteId, name: s.name, detail: s.subdomain })), assigned });
 });

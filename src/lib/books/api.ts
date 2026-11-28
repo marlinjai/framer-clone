@@ -85,7 +85,8 @@ export interface CatalogueItemView {
 /** The picker's answer: the items, and what names their sites (src/lib/books/catalogueGroups.ts). */
 export interface CataloguePage {
   items: CatalogueItemView[];
-  sites: Array<{ id: string; name: string }>;
+  /** `detail` (the published subdomain) tells two sites of the same name apart. */
+  sites: Array<{ id: string; name: string; detail?: string | null }>;
   /** Whether the company's catalogue has been assigned to its sites. */
   assigned: boolean;
 }

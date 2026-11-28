@@ -8,35 +8,48 @@
 export interface CatalogueSite {
   id: string;
   name: string;
+  /** What tells two sites of the same name apart (the published subdomain), when there is one. */
+  detail?: string | null;
 }
 
 /** A heading of the picker and the items under it, in the order they came. */
 export interface CatalogueSiteGroup<T> {
-  /** The site id, or null for the items without a site. */
+  /** Unique among the groups: the site id, `unlisted` or `none`. */
+  key: string;
+  /** The site id, or null for the items without a site and for the sites no longer listed. */
   siteId: string | null;
   label: string;
   items: T[];
 }
 
 /**
- * One group per site the items name, in the order of the company's sites, then the items without a site. A site the
- * company no longer lists (a project just deleted, its catalogue not yet retired) is still a group, with a plain label,
- * so no item is hidden. The items without a site are "Company items" once the company is assigned to its sites, and
- * "All sites" before (they are on every shop then). The order within a group is the search's (title order).
+ * One group per site the items name, in the order of the company's sites, then the sites the company no longer lists
+ * (a project just deleted, its catalogue not yet retired: one group, "A site no longer listed", so no item is hidden),
+ * then the items without a site: "Company items" once the company is assigned to its sites, "All sites" before (they are
+ * on every shop then). Two sites of the same name are told apart by their detail. The order within a group is the
+ * search's (title order).
  */
 export function catalogueSiteGroups<T extends { siteId: string | null }>(items: T[], sites: CatalogueSite[], assigned: boolean): CatalogueSiteGroup<T>[] {
-  const groups = new Map<string | null, CatalogueSiteGroup<T>>();
+  const byId = new Map(sites.map((s, i) => [s.id, { site: s, rank: i }]));
+  const named = (site: CatalogueSite) =>
+    site.detail && sites.some((o) => o.id !== site.id && o.name === site.name) ? `${site.name} (${site.detail})` : site.name;
+  const groups = new Map<string, CatalogueSiteGroup<T>>();
+  const rankOf = new Map<string, number>();
   for (const item of items) {
-    let g = groups.get(item.siteId);
+    const listed = item.siteId === null ? undefined : byId.get(item.siteId);
+    const key = item.siteId === null ? 'none' : listed ? item.siteId : 'unlisted';
+    let g = groups.get(key);
     if (!g) {
-      const label =
-        item.siteId === null ? (assigned ? 'Company items' : 'All sites') : (sites.find((s) => s.id === item.siteId)?.name ?? 'A site no longer listed');
-      g = { siteId: item.siteId, label, items: [] };
-      groups.set(item.siteId, g);
+      g =
+        key === 'none'
+          ? { key, siteId: null, label: assigned ? 'Company items' : 'All sites', items: [] }
+          : listed
+            ? { key, siteId: listed.site.id, label: named(listed.site), items: [] }
+            : { key, siteId: null, label: 'A site no longer listed', items: [] };
+      groups.set(key, g);
+      rankOf.set(key, key === 'none' ? sites.length + 1 : listed ? listed.rank : sites.length);
     }
     g.items.push(item);
   }
-  const order = new Map(sites.map((s, i) => [s.id, i]));
-  const rank = (id: string | null) => (id === null ? sites.length + 1 : (order.get(id) ?? sites.length));
-  return [...groups.values()].sort((a, b) => rank(a.siteId) - rank(b.siteId));
+  return [...groups.values()].sort((a, b) => rankOf.get(a.key)! - rankOf.get(b.key)!);
 }
