@@ -67,6 +67,7 @@ import { z } from 'zod';
 import { revalidateCustomHostCache, revalidateSiteCache } from '@/server/sites/cachedResolver';
 import { deleteProjectSubmissions } from '@/server/forms/projectDelete';
 import { scheduleProjectSubmissionsPurge } from '@/server/forms/purge';
+import { retireDeletedSiteCatalogueNow, scheduleSiteCatalogueRetire } from '@/server/catalog/siteRetire';
 import {
   getSiteRepository,
   activeScopeDenial,
@@ -92,7 +93,7 @@ const renameBodySchema = z.object({
 const deleteBodySchema = z.object({ confirmName: z.string().optional() });
 
 type GuardResult =
-  | { ok: true; scope: TenantScope }
+  | { ok: true; scope: TenantScope; companyId: string }
   | { ok: false; response: Response };
 
 /**
@@ -115,7 +116,7 @@ async function guard(req: Request, alsoRequires: FramerAction[] = []): Promise<G
     const denial = activeScopeDenial(scopeResult.error);
     return { ok: false, response: jsonError(denial.code, denial.message, 403) };
   }
-  const { scope } = scopeResult;
+  const { scope, companyId } = scopeResult;
 
   const auth = await authenticateRequest(req, scope.workspaceId, 'editSite');
   if (!auth.authenticated) {
@@ -129,7 +130,7 @@ async function guard(req: Request, alsoRequires: FramerAction[] = []): Promise<G
       return { ok: false, response: jsonError('forbidden', 'Forbidden', 403) };
     }
   }
-  return { ok: true, scope };
+  return { ok: true, scope, companyId };
 }
 
 async function handlePATCH(req: Request, { params }: Ctx): Promise<Response> {
@@ -197,7 +198,7 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
   // editSite it needs what unpublishing and disconnecting a domain need.
   const guarded = await guard(req, ['publishSite', 'manageDomain']);
   if (!guarded.ok) return guarded.response;
-  const { scope } = guarded;
+  const { scope, companyId } = guarded;
 
   // The body is optional (an unpublished project needs no confirmation).
   let confirmName: string | undefined;
@@ -229,6 +230,14 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
     console.error(`[projects] scheduling the form cleanup of ${projectId} failed, nothing was deleted:`, err);
     return jsonError('delete_failed', 'deleting the project failed; nothing was deleted, try again', 500);
   }
+  // The same for the project's shop catalogue (src/server/catalog/siteRetire.ts): its products and collections are retired once
+  // the site row is gone, by a job written now, in the name of the company the session acts for (never a company the request names).
+  try {
+    await scheduleSiteCatalogueRetire(scope.tenantGroupId, companyId, projectId);
+  } catch (err) {
+    console.error(`[projects] scheduling the catalogue cleanup of ${projectId} failed, nothing was deleted:`, err);
+    return jsonError('delete_failed', 'deleting the project failed; nothing was deleted, try again', 500);
+  }
   let deleted: DeletedSite;
   try {
     deleted = await getSiteRepository().deleteSite(scope, projectId, { confirmName });
@@ -250,6 +259,19 @@ async function handleDELETE(req: Request, { params }: Ctx): Promise<Response> {
     const late = invalidateDeletedHosts(deleted);
     if (late.length > 0) console.error(`[projects] late cache invalidation after deleting ${projectId} failed for: ${late.join(', ')}`);
   }, LATE_INVALIDATION_MS).unref?.();
+
+  // The shop catalogue of the project, at once; the job written before the delete is the backstop and finishes it when this
+  // fails, so a failure here is logged and is not the owner's concern (the job never gives up; the watchdog counts it if stuck).
+  try {
+    const retired = await retireDeletedSiteCatalogueNow(scope.tenantGroupId, companyId, projectId);
+    if (retired && retired.archivedProducts + retired.deletedProducts + retired.archivedCollections > 0) {
+      console.info(
+        `[projects] retired the catalogue of ${projectId}: ${retired.deletedProducts} product(s) deleted, ${retired.archivedProducts} ordered product(s) archived, ${retired.archivedCollections} collection(s) archived`,
+      );
+    }
+  } catch (err) {
+    console.error(`[projects] retiring the catalogue of ${projectId} failed, the background job will finish it:`, err);
+  }
 
   // Then the form submissions the cascade cannot reach (another schema, another
   // connection): after the caches, so the site stops answering first, and

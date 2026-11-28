@@ -21,8 +21,10 @@ import type { Kysely } from 'kysely';
 import type { CommerceDB } from '@/server/commerce/db-types';
 import { commerceTenantDbChecked, isCommerceTenantNotProvisioned } from '@/server/commerce/db';
 import { scheduleJob } from '@/server/commerce/jobs/schedule';
+import { SITE_CLEANUP_DELAY_MS, SITE_CLEANUP_PATIENCE_MS, siteGoneOrLookAgain } from '@/server/commerce/jobs/siteGone';
 import { JobRefused, JobRetryLater } from '@/server/commerce/jobs/types';
 import { getPrismaClient } from '@/server/db';
+import { CATALOGUE_RETIRE_JOB_KIND } from '@/server/catalog/siteRetireJob';
 import { FORM_PURGE_JOB_KIND } from './purgeJob';
 import { FormBusyError, deleteSiteSubmissions } from './repository';
 
@@ -30,15 +32,16 @@ import { FormBusyError, deleteSiteSubmissions } from './repository';
 export const STUCK_PURGE_ATTEMPTS = 5;
 
 /**
- * The purge jobs that keep failing, for the watchdog: no transient error kills them and they never give up (the data must go), so without this a
- * permanent fault (a permission or constraint error on the submissions table) would retry silently every six hours and visitors'
- * words would stay stored with no alarm. A count, like the dead jobs.
+ * The cleanup jobs of deleted projects that keep failing, for the watchdog: the form purge and the catalogue retirement
+ * (src/server/catalog/siteRetire.ts). No transient error kills them and they never give up (the data must go), so without this a
+ * permanent fault (a permission or constraint error on the submissions or catalogue tables) would retry silently every six hours
+ * and visitors' words, or a deleted shop's products, would stay with no alarm. A count, like the dead jobs.
  */
 export async function countStuckPurges(db: Kysely<CommerceDB>): Promise<number> {
   const row = await db
     .selectFrom('commerce_job')
     .select((eb) => eb.fn.countAll<string>().as('jobs'))
-    .where('kind', '=', FORM_PURGE_JOB_KIND)
+    .where('kind', 'in', [FORM_PURGE_JOB_KIND, CATALOGUE_RETIRE_JOB_KIND])
     // Running included: a purge that keeps outliving its lease sits in `running` between claims.
     .where('status', 'in', ['pending', 'running'])
     .where('attempts', '>=', STUCK_PURGE_ATTEMPTS)
@@ -47,12 +50,12 @@ export async function countStuckPurges(db: Kysely<CommerceDB>): Promise<number> 
 }
 
 /** How long past its first look a purge job keeps waiting for a delete that has not committed yet (a long lock wait on the site row). */
-export const PURGE_PATIENCE_MS = 2 * 60 * 60 * 1000;
+export const PURGE_PATIENCE_MS = SITE_CLEANUP_PATIENCE_MS;
 
 const purgeJobKey = (siteId: string, workspaceId: string, at: Date) => `formpurge:${siteId}:${workspaceId}:${Math.floor(at.getTime() / PURGE_DELAY_MS)}`;
 
 /** How long after the delete starts the job first looks: past the delete itself and its own retries, so it is a backstop. */
-export const PURGE_DELAY_MS = 10 * 60 * 1000;
+export const PURGE_DELAY_MS = SITE_CLEANUP_DELAY_MS;
 
 /**
  * Write the intent to remove a project's submissions, before the project is deleted. A tenant group without a commerce
@@ -106,30 +109,19 @@ export async function purgeSiteSubmissions(
 ): Promise<'kept' | 'purged'> {
   // The job is written in its own tenant group: a payload cannot point the purge at another group's schema.
   if (jobTenantId !== group.id) throw new JobRefused('tenant_mismatch');
-  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { id: true } });
-  if (site) {
-    // The row is still there: the delete was refused, or it has not committed yet (it may be waiting on a lock for longer than
-    // the ten minutes this job waited). Until its patience runs out the job hands the look over to a fresh one ten minutes on, a job
-    // of its own so the retry count of a failing purge (the watchdog's "stuck") never moves for a refused delete.
-    const now = options.now ?? new Date();
-    const notAfter = options.notAfter ? new Date(options.notAfter) : null;
-    if (notAfter && !Number.isNaN(notAfter.getTime()) && now < notAfter) {
-      const runAt = new Date(now.getTime() + PURGE_DELAY_MS);
-      await group.db.transaction().execute(async (trx) => {
-        await scheduleJob(trx, {
-          tenantId: group.id,
-          kind: FORM_PURGE_JOB_KIND,
-          // Keys of their own: `scheduleJob` ignores a key that has ANY job, a finished one too, so a follow-up sharing the delete
-          // request's keys could swallow a later delete of the same window, which would then be told removal is pending with no job.
-          dedupeKey: `formpurge:look:${siteId}:${workspaceId}:${notAfter.getTime()}:${Math.floor(runAt.getTime() / PURGE_DELAY_MS)}`,
-          payload: { siteId, workspaceId, notAfter: notAfter.toISOString() },
-          runAt,
-          at: now,
-        });
-      });
-    }
-    return 'kept';
-  }
+  const now = options.now ?? new Date();
+  const gone = await siteGoneOrLookAgain(prisma, {
+    db: group.db,
+    tenantId: group.id,
+    kind: FORM_PURGE_JOB_KIND,
+    lookKeyPrefix: `formpurge:look:${siteId}:${workspaceId}`,
+    siteId,
+    payload: { siteId, workspaceId },
+    notAfter: options.notAfter,
+    now,
+  });
+  // The row is still there: the delete was refused, or it has not committed yet (src/server/commerce/jobs/siteGone.ts).
+  if (!gone) return 'kept';
   try {
     await deleteSiteSubmissions(group.db, { tenantId: group.id, siteId, workspaceId });
   } catch (err) {
