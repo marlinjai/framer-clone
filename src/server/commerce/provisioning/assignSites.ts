@@ -15,7 +15,8 @@
 //       none   it stays a company item (no site): sold through the Books only, as a company without a site;
 //       one    it moves there;
 //       more   the row itself (its id, SKU, stock history, order and receipt references) moves to the site that
-//              sold it most recently (an order line naming one of its variants, on one of those sites), else to
+//              sold it most recently (an order line naming one of its variants, on one of those sites; the order
+//              is not cancelled and its payment, if it has one, is paid), else to
 //              the oldest published one of them, else the oldest; every further site gets a copy: new ids, the
 //              same handle (handles are unique per site since 033), each SKU suffixed until it is free in the
 //              tenant group (no barcode, which is unique there too), and an empty stock record per tracked SKU,
@@ -159,9 +160,19 @@ async function emptyStock(tx: Sql, schema: string, sku: string, title: string | 
 }
 
 /**
+ * New ids for copies of the rows `ids` (given in the database's `ORDER BY "id"`), sorting among themselves as the
+ * originals do. Readers order child rows by id (the shop) or by `created_at` then id (the editor), and rows may
+ * share a `created_at`: with random ids a copy would list them in another order than the original.
+ */
+function idsInSameOrder(ids: readonly string[]): Map<string, string> {
+  const fresh = ids.map(() => randomUUID()).sort();
+  return new Map(ids.map((old, i) => [old, fresh[i]]));
+}
+
+/**
  * Copy one product, with its options, values, variants, prices and images, onto `siteId`. The child rows keep
- * their original `created_at`: the editor and the shop order options, values and variants by it (then by id), so
- * a copy lists them in the same order as the original.
+ * their original `created_at` and their order by id (idsInSameOrder), so every reader lists a copy's options,
+ * values, variants and prices in the same order as the original's.
  */
 async function copyProduct(tx: Sql, schema: string, productId: string, siteId: string, now: string): Promise<{ id: string; skus: CopiedProduct['skus'] }> {
   const id = randomUUID();
@@ -169,27 +180,32 @@ async function copyProduct(tx: Sql, schema: string, productId: string, siteId: s
     id, site_id: siteId, books_product_id: null, created_at: now, updated_at: now,
   });
 
-  const options = new Map<string, string>();
-  for (const o of await tx<{ id: string }[]>`
-      SELECT "id" FROM ${tx(schema)}."product_option" WHERE "product_id" = ${productId} AND "deleted_at" IS NULL ORDER BY "created_at", "id"`) {
-    options.set(o.id, randomUUID());
+  const optionRows = await tx<{ id: string }[]>`
+    SELECT "id" FROM ${tx(schema)}."product_option" WHERE "product_id" = ${productId} AND "deleted_at" IS NULL ORDER BY "id"`;
+  const options = idsInSameOrder(optionRows.map((o) => o.id));
+  for (const o of optionRows) {
     await copyRow(tx, schema, 'product_option', { column: 'id', value: o.id }, { id: options.get(o.id)!, product_id: id, updated_at: now });
   }
-  const values = new Map<string, string>();
-  for (const v of await tx<{ id: string; option_id: string }[]>`
-      SELECT "id", "option_id" FROM ${tx(schema)}."product_option_value"
-       WHERE "option_id" IN ${tx([...options.keys(), ''])} AND "deleted_at" IS NULL ORDER BY "created_at", "id"`) {
-    values.set(v.id, randomUUID());
+  const valueRows = await tx<{ id: string; option_id: string }[]>`
+    SELECT "id", "option_id" FROM ${tx(schema)}."product_option_value"
+     WHERE "option_id" IN ${tx([...options.keys(), ''])} AND "deleted_at" IS NULL ORDER BY "id"`;
+  const values = idsInSameOrder(valueRows.map((v) => v.id));
+  for (const v of valueRows) {
     await copyRow(tx, schema, 'product_option_value', { column: 'id', value: v.id }, {
       id: values.get(v.id)!, option_id: options.get(v.option_id)!, updated_at: now,
     });
   }
 
-  const variants = new Map<string, string>();
+  const variantRows = await tx<{ id: string; sku: string | null; title: string | null; manage_inventory: boolean }[]>`
+    SELECT "id", "sku", "title", "manage_inventory" FROM ${tx(schema)}."product_variant" WHERE "product_id" = ${productId} AND "deleted_at" IS NULL ORDER BY "id"`;
+  const variants = idsInSameOrder(variantRows.map((v) => v.id));
   const skus: CopiedProduct['skus'] = [];
-  for (const v of await tx<{ id: string; sku: string | null; title: string | null; manage_inventory: boolean }[]>`
-      SELECT "id", "sku", "title", "manage_inventory" FROM ${tx(schema)}."product_variant" WHERE "product_id" = ${productId} AND "deleted_at" IS NULL ORDER BY "created_at", "id"`) {
-    variants.set(v.id, randomUUID());
+  const priceSets = await tx<{ id: string; variant_id: string }[]>`
+    SELECT "id", "variant_id" FROM ${tx(schema)}."price_set" WHERE "variant_id" IN ${tx([...variants.keys(), ''])}`;
+  const priceRows = await tx<{ id: string; price_set_id: string }[]>`
+    SELECT "id", "price_set_id" FROM ${tx(schema)}."price" WHERE "price_set_id" IN ${tx([...priceSets.map((s) => s.id), ''])} ORDER BY "id"`;
+  const prices = idsInSameOrder(priceRows.map((p) => p.id));
+  for (const v of variantRows) {
     const sku = v.sku ? await freeSku(tx, schema, v.sku) : null;
     if (v.sku && sku) skus.push({ from: v.sku, to: sku });
     await copyRow(tx, schema, 'product_variant', { column: 'id', value: v.id }, {
@@ -204,11 +220,11 @@ async function copyProduct(tx: Sql, schema: string, productId: string, siteId: s
         JOIN jsonb_each_text(${tx.json(Object.fromEntries(values))}::jsonb) AS n(old_value, new_value) ON n.old_value = pvo."option_value_id"
        WHERE pvo."variant_id" = ${v.id}`;
 
-    for (const ps of await tx<{ id: string }[]>`SELECT "id" FROM ${tx(schema)}."price_set" WHERE "variant_id" = ${v.id}`) {
+    for (const ps of priceSets.filter((s) => s.variant_id === v.id)) {
       const priceSet = randomUUID();
       await copyRow(tx, schema, 'price_set', { column: 'id', value: ps.id }, { id: priceSet, variant_id: variants.get(v.id)!, updated_at: now });
-      for (const p of await tx<{ id: string }[]>`SELECT "id" FROM ${tx(schema)}."price" WHERE "price_set_id" = ${ps.id}`) {
-        const price = randomUUID();
+      for (const p of priceRows.filter((row) => row.price_set_id === ps.id)) {
+        const price = prices.get(p.id)!;
         await copyRow(tx, schema, 'price', { column: 'id', value: p.id }, { id: price, price_set_id: priceSet, updated_at: now });
         for (const r of await tx<{ id: string }[]>`SELECT "id" FROM ${tx(schema)}."price_rule" WHERE "price_id" = ${p.id}`) {
           await copyRow(tx, schema, 'price_rule', { column: 'id', value: r.id }, { id: randomUUID(), price_id: price, updated_at: now });
@@ -248,6 +264,9 @@ async function assignCompany(tx: Sql, schema: string, companyId: string, sites: 
               JOIN ${tx(schema)}."product_variant" v ON v."id" = li."variant_ref" AND v."tenant_id" = li."tenant_id"
              WHERE li."tenant_id" = p."tenant_id" AND v."product_id" = p."id"
                AND o."site_id" IN ${tx([...siteIds, ''])}
+               AND o."status" <> 'cancelled'
+               AND NOT EXISTS (SELECT 1 FROM ${tx(schema)}."order_payment" pay
+                                WHERE pay."tenant_id" = o."tenant_id" AND pay."order_id" = o."id" AND pay."status" <> 'paid')
                AND NOT EXISTS (SELECT 1 FROM ${tx(schema)}."product_site_hidden" h2
                                 WHERE h2."tenant_id" = p."tenant_id" AND h2."product_id" = p."id" AND h2."site_id" = o."site_id")
              ORDER BY o."created_at" DESC, o."id" DESC LIMIT 1) AS last_site

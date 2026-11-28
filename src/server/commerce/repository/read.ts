@@ -144,18 +144,24 @@ function selectProductGraph(db: Kysely<CommerceDB>) {
                 'product_option_value.value as value',
               ])
               .whereRef('product_option_value.option_id', '=', 'product_option.id')
-              .where('product_option_value.deleted_at', 'is', null),
+              .where('product_option_value.deleted_at', 'is', null)
+              .orderBy('product_option_value.created_at')
+              .orderBy('product_option_value.id'),
           ).as('values'),
         ])
         .whereRef('product_option.product_id', '=', 'product.id')
-        .where('product_option.deleted_at', 'is', null),
+        .where('product_option.deleted_at', 'is', null)
+        .orderBy('product_option.created_at')
+        .orderBy('product_option.id'),
     ).as('options'),
     jsonArrayFrom(
       eb
         .selectFrom('product_variant')
         .select('product_variant.id as id')
         .whereRef('product_variant.product_id', '=', 'product.id')
-        .where('product_variant.deleted_at', 'is', null),
+        .where('product_variant.deleted_at', 'is', null)
+        .orderBy('product_variant.created_at')
+        .orderBy('product_variant.id'),
     ).as('variants'),
   ]);
 }
@@ -342,12 +348,15 @@ export const commerceReadRepository: CommerceReadRepository = {
                   ),
               ).as('option_value'),
             ])
-            .whereRef('product_variant_option.variant_id', '=', 'product_variant.id'),
+            .whereRef('product_variant_option.variant_id', '=', 'product_variant.id')
+            .orderBy('product_variant_option.option_id'),
         ).as('options'),
       ])
       .where('product_variant.product_id', '=', productId)
       .where('product_variant.tenant_id', '=', view.companyId)
       .where('product_variant.deleted_at', 'is', null)
+      .orderBy('product_variant.created_at')
+      .orderBy('product_variant.id')
       .execute();
     return rows.map(mapVariantGraph);
   },
@@ -381,6 +390,8 @@ export const commerceReadRepository: CommerceReadRepository = {
         'price.min_quantity as min_quantity',
         'price.max_quantity as max_quantity',
       ])
+      .orderBy('price.created_at')
+      .orderBy('price.id')
       .execute();
     return prices.map((price) => mapPriceRow(price, variantId, resolvedTaxClass));
   },

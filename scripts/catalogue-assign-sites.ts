@@ -14,20 +14,14 @@
 import { PrismaClient } from '@prisma/client';
 
 import { assignCatalogueSites } from '@/server/commerce/provisioning/assignSites';
+import { parseAssignSitesArgs } from '@/server/commerce/provisioning/assignSitesArgs';
 
 function usage(): never {
   throw new Error('usage: pnpm catalogue:assign-sites <tenant group id> [--company <id>] [--apply]');
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const apply = args.includes('--apply');
-  const at = args.indexOf('--company');
-  const companyId = at >= 0 ? args[at + 1] : undefined;
-  if (at >= 0 && !companyId) usage();
-  const rest = args.filter((a, i) => a !== '--apply' && i !== at && i !== at + 1);
-  const [tenantGroupId] = rest;
-  if (!tenantGroupId || rest.length !== 1) usage();
+  const { tenantGroupId, companyId, apply } = parseAssignSitesArgs(process.argv.slice(2)) ?? usage();
   const connectionString = process.env.COMMERCE_OWNER_DATABASE_URL;
   if (!connectionString) throw new Error('COMMERCE_OWNER_DATABASE_URL is not set (the owner role, from Infisical)');
 

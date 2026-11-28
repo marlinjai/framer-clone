@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { openBooksEnv, newTenantId, type BooksEnv } from '@/server/books/__tests__/booksFixtures';
+import { toJsonb } from '@/server/books/snapshots';
 import { createCollection, getCollection, setCollectionProducts } from '@/server/catalog/repository/collections';
 import { createProduct, getProduct, isProductOnSite, listProducts } from '@/server/catalog/repository/products';
 import { setHiddenSites } from '@/server/catalog/repository/sites';
@@ -27,6 +28,7 @@ import { setVariantStock } from '@/server/catalog/repository/stock';
 import { setOptions, updateVariant } from '@/server/catalog/repository/variants';
 import { catalogScope, type CatalogScope } from '@/server/catalog/scope';
 import { AssignSitesRefused, assignCatalogueSites, type MainSite } from '../provisioning/assignSites';
+import { getCommerceServerRepository } from '../repository/read';
 import { listStorefrontProducts } from '../repository/storefront';
 
 const SOLO = newTenantId();
@@ -44,6 +46,9 @@ const SITES: MainSite[] = [
   { id: m1, companyId: MULTI, createdAt: new Date('2026-03-01'), published: false },
 ];
 
+// Six tied rows: random ids on a copy would keep their order by chance once in 720 runs only.
+const SIZES = ['52', '54', '56', '58', '60', '62'];
+
 let env: BooksEnv;
 let ownerUrl: string;
 let multi: CatalogScope;
@@ -57,8 +62,8 @@ let empty: string;
 let cake: string;
 let consulting: string;
 
-/** One paid order on `siteId` for one unit of `variantId`, placed at `at`. */
-async function order(companyId: string, siteId: string, variantId: string, at: Date): Promise<void> {
+/** One order on `siteId` for one unit of `variantId`, placed at `at`, without a payment record. Returns its id. */
+async function order(companyId: string, siteId: string, variantId: string, at: Date): Promise<string> {
   const id = randomUUID();
   await env.ownerDb
     .insertInto('order')
@@ -74,6 +79,26 @@ async function order(companyId: string, siteId: string, variantId: string, at: D
       tax_rate: 0, tax_amount: 0, tax_treatment: 'standard', variant_ref: variantId, variant_ref_source: 'owned',
     })
     .execute();
+  return id;
+}
+
+/** The payment record of an order: opened pending, then moved through `moves`. */
+async function payment(companyId: string, orderId: string, moves: Array<'paid' | 'refunded'>): Promise<void> {
+  const at = new Date('2026-06-02');
+  await env.ownerDb
+    .insertInto('order_payment')
+    .values({
+      tenant_id: companyId, order_id: orderId, provider: 'demo', amount: 5200, currency_code: 'EUR', application_fee_amount: 52,
+      buyer: toJsonb({}), expires_at: at, updated_at: at,
+    })
+    .execute();
+  for (const status of moves) {
+    await env.ownerDb
+      .updateTable('order_payment')
+      .set({ status, ...(status === 'paid' ? { paid_at: at } : {}) })
+      .where('order_id', '=', orderId)
+      .execute();
+  }
 }
 
 /** The handles a site's published shop lists. */
@@ -107,7 +132,7 @@ beforeAll(async () => {
   multi = catalogScope(env.appDb, env.tgId, MULTI);
   const r = await createProduct(multi, { title: 'Silver Ring', price: 4900, status: 'published' });
   ring = r.id;
-  const withSizes = await setOptions(multi, ring, [{ title: 'Size', values: [{ value: '52' }, { value: '54' }] }]);
+  const withSizes = await setOptions(multi, ring, [{ title: 'Size', values: SIZES.map((value) => ({ value })) }]);
   for (const v of withSizes.variants) {
     await updateVariant(multi, ring, v.id, { price: 5200 });
     await setVariantStock(multi, ring, v.id, 3);
@@ -121,8 +146,19 @@ beforeAll(async () => {
   await setHiddenSites(multi, ring, [m3], all);
   await setHiddenSites(multi, necklace, [m1, m2, m3], all);
   await order(MULTI, m1, withSizes.variants[0].id, new Date('2026-05-01'));
-  await order(MULTI, m2, withSizes.variants[1].id, new Date('2026-06-01'));
+  // The winning sale goes the checkout's way: a payment record that ends paid.
+  const sale = await order(MULTI, m2, withSizes.variants[1].id, new Date('2026-06-01'));
+  await payment(MULTI, sale, ['paid']);
   await order(MULTI, m3, withSizes.variants[1].id, new Date('2026-07-01')); // before it was switched off on m3
+  // Newer orders on m1 that are no sale: one still waiting for its payment, one refunded, one cancelled.
+  await payment(MULTI, await order(MULTI, m1, withSizes.variants[0].id, new Date('2026-08-01')), []);
+  await payment(MULTI, await order(MULTI, m1, withSizes.variants[0].id, new Date('2026-08-15')), ['paid', 'refunded']);
+  const cancelled = await order(MULTI, m1, withSizes.variants[0].id, new Date('2026-09-01'));
+  await env.ownerDb.updateTable('order').set({ status: 'cancelled' }).where('id', '=', cancelled).execute();
+  // The sizes were written at the same moment: only their ids order them, in the original and in a copy.
+  const tied = new Date('2026-04-01');
+  await env.ownerDb.updateTable('product_option_value').set({ created_at: tied }).where('tenant_id', '=', MULTI).execute();
+  await env.ownerDb.updateTable('product_variant').set({ created_at: tied }).where('product_id', '=', ring).execute();
   rings = (await createCollection(multi, { title: 'Rings' })).id;
   await setCollectionProducts(multi, rings, [ring, necklace, sizing]);
   empty = (await createCollection(multi, { title: 'Empty' })).id;
@@ -199,17 +235,39 @@ describe('033_catalogue_site and catalogue:assign-sites', () => {
     // The original keeps its SKUs and its stock; the copy on m1 has the same sizes and prices, new SKUs, no stock.
     const original = await getProduct(multi, ring);
     expect(original.variants.map((v) => v.sku).sort()).toEqual(ringSkus);
-    expect(original.variants.map((v) => v.stock)).toEqual([3, 3]);
+    expect(original.variants.map((v) => v.stock)).toEqual(SIZES.map(() => 3));
     const copyId = report.companies.find((c) => c.companyId === MULTI)!.productCopies.find((c) => c.siteId === m1)!.id;
     const copy = await getProduct(multi, copyId);
     expect(copy.handle).toBe(original.handle);
-    expect(copy.options.map((o) => [o.title, o.values.map((v) => v.value)])).toEqual([['Size', ['52', '54']]]);
-    expect(copy.variants.map((v) => v.price)).toEqual([5200, 5200]);
+    expect(copy.options.map((o) => [o.title, o.values.map((v) => v.value).sort()])).toEqual([['Size', SIZES]]);
+    // Every reader lists the copy's tied sizes and variants in the original's order: the editor, the shop's REST
+    // read and the published page's read.
+    const unsuffixed = (sku: string | undefined | null) => sku?.replace(/-2$/, '');
+    expect(copy.options.map((o) => o.values.map((v) => v.value))).toEqual(original.options.map((o) => o.values.map((v) => v.value)));
+    expect(copy.variants.map((v) => unsuffixed(v.sku))).toEqual(original.variants.map((v) => v.sku));
+    const rest = async (siteId: string) => {
+      const page = await listStorefrontProducts(env.appDb, { companyId: MULTI, siteId }, { limit: 100, currency: 'EUR' });
+      const p = page.products.find((x) => x.handle === 'silver-ring')!;
+      return { values: p.options.map((o) => o.values.map((v) => v.value)), skus: p.variants.map((v) => unsuffixed(v.sku)) };
+    };
+    expect(await rest(m1)).toEqual(await rest(m2));
+    const published = async (siteId: string, productId: string) => {
+      const shopRead = getCommerceServerRepository(env.appDb, { companyId: MULTI, siteId });
+      const p = (await shopRead.getProductByHandle('silver-ring'))!;
+      const variants = await shopRead.listVariants(productId);
+      return {
+        values: p.options.map((o) => o.values.map((v) => v.label)),
+        variantIds: p.variantIds.map((id) => unsuffixed(variants.find((v) => v.id === id)!.sku)),
+        skus: variants.map((v) => unsuffixed(v.sku)),
+      };
+    };
+    expect(await published(m1, copyId)).toEqual(await published(m2, ring));
+    expect(copy.variants.map((v) => v.price)).toEqual(SIZES.map(() => 5200));
     expect(copy.variants.map((v) => v.sku).sort()).toEqual(ringSkus.map((s) => `${s}-2`).sort());
-    expect(copy.variants.map((v) => v.stock)).toEqual([0, 0]);
+    expect(copy.variants.map((v) => v.stock)).toEqual(SIZES.map(() => 0));
     // Each copied SKU has its own stock record (at zero), so checkout finds it as it found the original's.
     const items = await env.ownerDb.selectFrom('inventory_item').select('sku').where('sku', 'in', copy.variants.map((v) => v.sku as string)).execute();
-    expect(items).toHaveLength(2);
+    expect(items).toHaveLength(SIZES.length);
     expect(new Set(copy.variants.map((v) => v.id)).isDisjointFrom(new Set(original.variants.map((v) => v.id)))).toBe(true);
 
     // The agent tools' site filter and check follow the same rule.

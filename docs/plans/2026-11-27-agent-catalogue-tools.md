@@ -250,7 +250,10 @@ catalogue's own codes in lower case (`not_found`, `duplicate_handle`, `duplicate
 - **The assignment** (`pnpm catalogue:assign-sites <tenant group> [--company <id>] [--apply]`, a dry run unless
   `--apply`, one transaction, the catalogue tables locked against writes meanwhile) follows point 5 above. The
   row of a product shown on several sites stays on the site that sold it most recently (orders on a site it is
-  switched off for do not count), else the oldest published one, else the oldest. Each copy keeps the handle,
+  switched off for do not count). "Sold" means a completed sale: the order is not cancelled and its payment is
+  paid, or it has no payment record (a free order, or one placed through the orders route without a checkout);
+  a pending, failed, cancelled, expired or refunded payment does not count. Else the row goes to the oldest
+  published one, else the oldest. Each copy keeps the handle,
   gets SKUs suffixed `-2`, `-3`, ... until they are free in the tenant group (no barcode), and an empty stock
   record per tracked SKU, so it starts at zero stock and checkout finds it. A collection goes to the sites
   of its products, an empty one to the oldest site. A company is marked even when it has no site, so from then on
@@ -259,7 +262,8 @@ catalogue's own codes in lower case (`not_found`, `duplicate_handle`, `duplicate
   - an old row that breaks a check 020 added without enforcing it on existing rows (a handle with uppercase,
     a title with a trailing space) aborts the run, and the dry run shows the same error, so it is fixed first;
   - a visitor whose cart holds a product whose row moved to another site gets the clear "unknown variant"
-    answer at checkout;
+    answer at checkout (the cart is kept, the line no longer sold there says so and keeps its remove button, and the
+    visitor adds the product again);
   - an editor save at the same moment can make Postgres abort one side; if it aborts the run, nothing is
     written and the run is repeated.
 
