@@ -35,10 +35,15 @@ const STATUS: Record<CatalogErrorCode, number> = {
   IMAGE_INVALID: 422,
   IMAGE_LIMIT: 409,
   UNKNOWN_SITE: 404,
+  WRONG_SITE: 409,
+  SITE_OWNED: 409,
 };
 
 const MESSAGES: Partial<Record<CatalogErrorCode, string>> = {
   NOT_FOUND: 'not found for this company; it may have been removed (reload the list)',
+  UNKNOWN_SITE: 'this site is not one of the company’s sites; it may have been deleted (reload the page)',
+  WRONG_SITE: 'a collection holds only products of its own site’s catalogue (nothing was saved)',
+  SITE_OWNED: 'this product belongs to one site’s catalogue; showing it on other sites applies only to products the whole company shares (nothing was saved)',
   INVALID_INPUT: 'some fields cannot be saved as entered; nothing was saved',
   DUPLICATE_HANDLE: 'another product of this company uses this URL handle; choose another one (nothing was saved)',
   DUPLICATE_SKU: 'another variant uses this SKU; SKUs are unique across the organisation (nothing was saved)',

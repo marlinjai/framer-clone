@@ -201,6 +201,8 @@ export interface ProductPanelProps {
   productId: string;
   collections: CollectionView[];
   sites: SiteView[];
+  /** Whether the company's catalogue has been assigned to its sites (the catalogue per project, migration 033). */
+  assigned: boolean;
   productTypes: string[];
   onClose: () => void;
   /** After every saved step, so the table reads again. */
@@ -208,7 +210,7 @@ export interface ProductPanelProps {
   onBlocked: (err: CatalogApiError) => void;
 }
 
-export default function ProductPanel({ productId, collections, sites, productTypes, onClose, onChanged, onBlocked }: ProductPanelProps) {
+export default function ProductPanel({ productId, collections, sites, assigned, productTypes, onClose, onChanged, onBlocked }: ProductPanelProps) {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loadError, setLoadError] = useState<CatalogApiError | Error | null>(null);
   const [undo, setUndo] = useState<UndoStep[]>([]);
@@ -423,7 +425,8 @@ export default function ProductPanel({ productId, collections, sites, productTyp
               <Section title="Collections" id="panel-collections">
                 <CheckList
                   label="Collections"
-                  items={collections.filter((c) => !c.archivedAt).map((c) => ({ id: c.id, label: c.title }))}
+                  // A collection holds only products of its own catalogue: the same site, or both without one.
+                  items={collections.filter((c) => !c.archivedAt && c.siteId === p.siteId).map((c) => ({ id: c.id, label: c.title }))}
                   checked={new Set(p.collections.map((c) => c.id))}
                   empty="No collections yet. Create one in the Collections tab."
                   onChange={(next) =>
@@ -433,20 +436,31 @@ export default function ProductPanel({ productId, collections, sites, productTyp
               </Section>
 
               <Section title="Sites" id="panel-sites">
-                <p className="mb-2 text-xs text-muted-foreground">Once published, the product shows on every site of the company that is ticked.</p>
-                <CheckList
-                  label="Shown on"
-                  items={sites.map((s) => ({ id: s.id, label: s.name }))}
-                  checked={new Set(sites.map((s) => s.id).filter((id) => !p.hiddenSiteIds.includes(id)))}
-                  empty="This company has no sites yet."
-                  onChange={(shown) =>
-                    apply(
-                      'sites',
-                      () => catalogApi.setHiddenSites(p.id, sites.map((s) => s.id).filter((id) => !shown.has(id))),
-                      () => catalogApi.setHiddenSites(p.id, p.hiddenSiteIds.filter((id) => sites.some((s) => s.id === id))),
-                    )
-                  }
-                />
+                {p.siteId !== null ? (
+                  <p className="text-xs text-muted-foreground">
+                    Part of the shop on {sites.find((s) => s.id === p.siteId)?.name ?? 'a site of this company'}: once published it shows there, and it is
+                    offered on your invoices. Other sites have their own catalog.
+                  </p>
+                ) : assigned ? (
+                  <p className="text-xs text-muted-foreground">A company item: offered on your invoices, on no shop.</p>
+                ) : (
+                  <>
+                    <p className="mb-2 text-xs text-muted-foreground">Once published, the product shows on every site of the company that is ticked.</p>
+                    <CheckList
+                      label="Shown on"
+                      items={sites.map((s) => ({ id: s.id, label: s.name }))}
+                      checked={new Set(sites.map((s) => s.id).filter((id) => !p.hiddenSiteIds.includes(id)))}
+                      empty="This company has no sites yet."
+                      onChange={(shown) =>
+                        apply(
+                          'sites',
+                          () => catalogApi.setHiddenSites(p.id, sites.map((s) => s.id).filter((id) => !shown.has(id))),
+                          () => catalogApi.setHiddenSites(p.id, p.hiddenSiteIds.filter((id) => sites.some((s) => s.id === id))),
+                        )
+                      }
+                    />
+                  </>
+                )}
               </Section>
 
               <Section title="Tax" id="panel-tax">

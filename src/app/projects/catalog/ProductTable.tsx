@@ -27,7 +27,7 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 
 import { Button } from '@/components/ui/button';
 import { moneyInput, parseMoney } from '@/lib/books/units';
-import { CatalogApiError, catalogApi, type BulkAction } from '@/lib/catalog/api';
+import { CatalogApiError, catalogApi, type BulkAction, type CatalogPlace } from '@/lib/catalog/api';
 import type { CollectionView, ProductListItem, ProductPage, ProductSort, ProductStatus } from '@/lib/catalog/types';
 import { cn } from '@/lib/utils';
 
@@ -303,6 +303,8 @@ function FilterSelect<T extends string>({
 }
 
 export interface ProductTableProps {
+  /** The catalogue shown: a site's, or the company items (null). */
+  place: CatalogPlace;
   filters: Filters;
   onFilters: (next: Filters) => void;
   collections: CollectionView[];
@@ -332,6 +334,7 @@ export default function ProductTable({
   onBlocked,
   onAddProduct,
   onChanged,
+  place,
 }: ProductTableProps) {
   const [page, setPage] = useState<ProductPage | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -347,7 +350,8 @@ export default function ProductTable({
   const [ownReload, setOwnReload] = useState(0);
   const [bulkCollection, setBulkCollection] = useState('');
 
-  const filterKey = JSON.stringify(filters);
+  // Another catalogue (site) is another list: its pages start again, as for other filters.
+  const filterKey = JSON.stringify([place, filters]);
   // New filters start again from the first page with nothing selected.
   useEffect(() => {
     setCursors([undefined]);
@@ -370,7 +374,7 @@ export default function ProductTable({
     let live = true;
     setLoading(true);
     catalogApi
-      .products({
+      .products(place, {
         q: filters.q || undefined,
         status: filters.status || undefined,
         type: filters.type || undefined,
@@ -594,7 +598,7 @@ export default function ProductTable({
                 setBusy(true);
                 setError(null);
                 try {
-                  await catalogApi.addSamples();
+                  await catalogApi.addSamples(place);
                   reload();
                   onChanged();
                   announce('Three sample products added');

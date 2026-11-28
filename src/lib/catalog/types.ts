@@ -51,6 +51,8 @@ export interface InlineVariant {
 
 export interface ProductListItem {
   id: string;
+  /** The main site whose catalogue the product belongs to, or null (as ProductDetail.siteId). */
+  siteId: string | null;
   title: string;
   handle: string;
   kind: ProductKind;
@@ -80,8 +82,10 @@ export interface ProductListQuery {
   status?: ProductStatus | 'all';
   type?: string;
   collection?: string;
-  /** Only the products this site shows (not switched off for it). */
+  /** Only the products in this site's catalogue (src/server/commerce/repository/siteCatalogue.ts). */
   site?: string;
+  /** Only the company items (no site): what an assigned company sells through the Books only. Not together with `site`. */
+  companyItems?: boolean;
   stock?: StockState;
   sort?: ProductSort;
   dir?: SortDirection;
@@ -147,6 +151,8 @@ export interface ProductDetail {
   images: ProductImageView[];
   collections: CollectionRef[];
   hiddenSiteIds: string[];
+  /** The main site whose catalogue the product belongs to (migration 033), or null: a company item, or a product of a company not yet assigned. */
+  siteId: string | null;
 }
 
 /** One option as the options editor sends it: ids for what exists (a rename keeps its variants), none for new. */
@@ -166,6 +172,8 @@ export interface CollectionView {
   archivedAt: string | null;
   productCount: number;
   updatedAt: string;
+  /** The main site whose catalogue the collection belongs to, or null (as ProductDetail.siteId). */
+  siteId: string | null;
 }
 
 export interface CollectionDetail extends CollectionView {

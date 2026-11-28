@@ -41,7 +41,7 @@ import { toJsonb } from '@/server/books/snapshots';
 
 import type { CommerceDB } from '../../commerce/db-types';
 import { productOnSite } from '../../commerce/repository/siteCatalogue';
-import { CatalogError, invalid, invalidField, notFound, withDbErrors } from '../errors';
+import { CatalogError, invalid, invalidField, notFound, withDbErrors, wrongSite } from '../errors';
 import type { CatalogScope } from '../scope';
 import {
   HANDLE_PATTERN,
@@ -170,6 +170,7 @@ export async function getProduct(scope: CatalogScope, productId: string): Promis
       'discount_bp',
       'seo_title',
       'seo_description',
+      'site_id',
       'created_at',
       'updated_at',
     ])
@@ -330,13 +331,22 @@ export async function getProduct(scope: CatalogScope, productId: string): Promis
     })),
     collections,
     hiddenSiteIds: hidden.map((h) => h.site_id),
+    siteId: p.site_id,
   };
 }
 
 // --- create -------------------------------------------------------------------
 
 /** Add a product (physical, with one tracked variant and a generated SKU) or a service (one untracked variant). */
-export async function createProduct(scope: CatalogScope, input: CreateProductInput): Promise<ProductDetail> {
+export async function createProduct(
+  scope: CatalogScope,
+  input: CreateProductInput,
+  /**
+   * The main site the product belongs to (migration 033), already verified by the caller as a site of the company (the editor's
+   * routes: src/server/catalog/http/site.ts); null or absent makes a company item, offered only to the Books once the company is assigned.
+   */
+  placement: { siteId?: string | null } = {},
+): Promise<ProductDetail> {
   const parsed = createInput.safeParse(input);
   if (!parsed.success) throw invalid(parsed.error.issues);
   const args = parsed.data;
@@ -358,6 +368,7 @@ export async function createProduct(scope: CatalogScope, input: CreateProductInp
           product_type: productType,
           tax_class: 'standard',
           search_text: productSearchText({ title: args.title, productType, tags: [], description: null }),
+          site_id: placement.siteId ?? null,
           created_at: now,
           updated_at: now,
         })
@@ -544,14 +555,14 @@ export async function bulkProducts(scope: CatalogScope, input: BulkInput): Promi
     scope.db.transaction().execute(async (trx) => {
       const found = await trx
         .selectFrom('product')
-        .select('id')
+        .select(['id', 'site_id'])
         .where('tenant_id', '=', scope.tenantId)
         .where('id', 'in', ids)
         .where('deleted_at', 'is', null)
         .orderBy('id')
         .forUpdate()
         .execute();
-      const have = new Set(found.map((r) => r.id));
+      const have = new Map(found.map((r) => [r.id, r.site_id]));
       const missing = ids.find((id) => !have.has(id));
       if (missing) throw notFound('product', missing);
       const now = new Date();
@@ -571,12 +582,15 @@ export async function bulkProducts(scope: CatalogScope, input: BulkInput): Promi
       }
       const collection = await trx
         .selectFrom('collection')
-        .select('id')
+        .select(['id', 'site_id'])
         .where('tenant_id', '=', scope.tenantId)
         .where('id', '=', args.collectionId)
         .forUpdate()
         .executeTakeFirst();
       if (!collection) throw notFound('collection', args.collectionId);
+      // A collection holds only products of its own catalogue (collections.ts header).
+      const foreign = ids.find((id) => have.get(id) !== collection.site_id);
+      if (foreign) throw wrongSite(foreign, collection.id);
       const members = await trx
         .selectFrom('collection_product')
         .select(['product_id', 'position'])
@@ -609,13 +623,16 @@ const listInput = z
     collection: z.string().max(100).optional(),
     /** Only the products in a site's catalogue (src/server/commerce/repository/siteCatalogue.ts). Any status, as the table. */
     site: z.string().min(1).max(100).optional(),
+    /** Only the products without a site (company items, offered to the Books only once the company is assigned). */
+    companyItems: z.boolean().optional(),
     stock: z.enum(['in_stock', 'out_of_stock', 'untracked']).optional(),
     sort: z.enum(['updated', 'title', 'created', 'price', 'stock']).default('updated'),
     dir: z.enum(['asc', 'desc']).optional(),
     limit: z.number().int().min(1).max(100).default(50),
     cursor: z.string().min(1).max(2000).optional(),
   })
-  .strict();
+  .strict()
+  .refine((q) => !(q.site !== undefined && q.companyItems), { message: 'list one site or the company items, not both', path: ['companyItems'] });
 
 type ProductEb = ExpressionBuilder<CommerceDB, 'product'>;
 
@@ -743,6 +760,7 @@ export async function listProducts(scope: CatalogScope, query: ProductListQuery 
       );
     }
     if (args.site) conds.push(productOnSite(eb, args.site));
+    if (args.companyItems) conds.push(eb('product.site_id', 'is', null));
     if (args.stock === 'untracked') conds.push(sql<SqlBool>`(${stockOf(eb)}) IS NULL`);
     if (args.stock === 'in_stock') conds.push(sql<SqlBool>`(${stockOf(eb)}) > 0`);
     if (args.stock === 'out_of_stock') conds.push(sql<SqlBool>`(${stockOf(eb)}) <= 0`);
@@ -767,6 +785,7 @@ export async function listProducts(scope: CatalogScope, query: ProductListQuery 
       'product.kind as kind',
       'product.status as status',
       'product.archived_at as archived_at',
+      'product.site_id as site_id',
       'product.product_type as product_type',
       'product.updated_at as updated_at',
       liveVariantsOf(eb).select((e) => e.fn.countAll<string>().as('n')).as('variant_count'),
@@ -860,6 +879,7 @@ export async function listProducts(scope: CatalogScope, query: ProductListQuery 
         ? { id: single.id, sku: single.sku, price: f?.price ?? null, manageInventory: single.manage_inventory, stock: f?.stock ?? null }
         : null,
       updatedAt: iso(r.updated_at),
+      siteId: r.site_id,
     };
   });
   const last = page[page.length - 1];

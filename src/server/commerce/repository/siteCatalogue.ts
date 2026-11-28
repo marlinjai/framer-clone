@@ -13,7 +13,7 @@
 // (src/server/commerce/provisioning/assignSites.ts). The caller adds the company condition (`product.tenant_id`):
 // the site id alone never decides whose products are read.
 
-import type { Expression, ExpressionBuilder, SqlBool } from 'kysely';
+import type { Expression, ExpressionBuilder, Kysely, SqlBool } from 'kysely';
 
 import type { CommerceDB } from '../db-types';
 
@@ -43,4 +43,31 @@ export function productOnSite(eb: ExpressionBuilder<CommerceDB, 'product'>, site
       ),
     ]),
   ]);
+}
+
+/**
+ * The collection is in `siteId`'s catalogue: the twin of `productOnSite`. A collection naming the site is on it; one naming no
+ * site is on every site of its company while the company is not yet assigned, and on none once it is (a company item).
+ */
+export function collectionOnSite(eb: ExpressionBuilder<CommerceDB, 'collection'>, siteId: string): Expression<SqlBool> {
+  return eb.or([
+    eb('collection.site_id', '=', siteId),
+    eb.and([
+      eb('collection.site_id', 'is', null),
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('catalogue_per_site')
+            .select('catalogue_per_site.tenant_id')
+            .whereRef('catalogue_per_site.tenant_id', '=', 'collection.tenant_id'),
+        ),
+      ),
+    ]),
+  ]);
+}
+
+/** Whether the company's catalogue has been assigned to its sites (`catalogue_per_site`; see the file header). */
+export async function isCatalogueAssigned(db: Kysely<CommerceDB>, tenantId: string): Promise<boolean> {
+  const row = await db.selectFrom('catalogue_per_site').select('tenant_id').where('tenant_id', '=', tenantId).executeTakeFirst();
+  return row !== undefined;
 }

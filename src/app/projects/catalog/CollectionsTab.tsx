@@ -15,7 +15,7 @@ import { ArrowDown, ArrowUp, ImagePlus, Plus, X } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { CatalogApiError, catalogApi } from '@/lib/catalog/api';
+import { CatalogApiError, catalogApi, type CatalogPlace } from '@/lib/catalog/api';
 import type { CollectionDetail, CollectionView, ProductListItem } from '@/lib/catalog/types';
 import { cn } from '@/lib/utils';
 
@@ -58,8 +58,10 @@ function CollectionPanel({ id, onClose, onChanged }: { id: string; onClose: () =
     }
     let live = true;
     const t = setTimeout(() => {
-      catalogApi.products({ q: search, limit: 8 }).then(
-        (page) => live && setFound(page.items),
+      // A collection holds only products of its own catalogue (same site, or both without one).
+      const siteId = c?.siteId ?? null;
+      catalogApi.products(siteId, { q: search, limit: 8 }).then(
+        (page) => live && setFound(page.items.filter((p) => p.siteId === siteId)),
         (err) => live && setError(errorText(err)),
       );
     }, 250);
@@ -67,7 +69,7 @@ function CollectionPanel({ id, onClose, onChanged }: { id: string; onClose: () =
       live = false;
       clearTimeout(t);
     };
-  }, [search]);
+  }, [search, c?.siteId]);
 
   async function save(run: () => Promise<CollectionDetail>) {
     // A refusal is thrown to the caller, which shows it where it happened (a field, or the alert above).
@@ -277,12 +279,15 @@ function CollectionPanel({ id, onClose, onChanged }: { id: string; onClose: () =
 }
 
 export default function CollectionsTab({
+  place,
   collections,
   open,
   setOpen,
   onReload,
   onBlocked,
 }: {
+  /** The catalogue shown: a site's, or the company items (null). New collections go there. */
+  place: CatalogPlace;
   collections: CollectionView[] | null;
   /** The collection whose panel is open (kept in the address by the parent). */
   open: string | null;
@@ -298,11 +303,11 @@ export default function CollectionsTab({
 
   useEffect(() => {
     if (!showArchived) return;
-    catalogApi.collections(true).then(
+    catalogApi.collections(place, true).then(
       (r) => setArchived(r.items.filter((c) => c.archivedAt)),
       (err) => setError(errorText(err)),
     );
-  }, [showArchived, collections]);
+  }, [showArchived, collections, place]);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -313,7 +318,7 @@ export default function CollectionsTab({
     setCreating(true);
     setError(null);
     try {
-      const c = await catalogApi.createCollection(title.trim());
+      const c = await catalogApi.createCollection(place, title.trim());
       setTitle('');
       onReload();
       setOpen(c.id);

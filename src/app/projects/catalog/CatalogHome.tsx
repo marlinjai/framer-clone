@@ -12,6 +12,12 @@
 // A refusal that concerns the whole area (signed out, Lumitra Sites not
 // enabled for the company, no edit or view right, the shop database not set
 // up) replaces the screen with a page that says so and what to do.
+//
+// Per project (migration 033, docs/plans/2026-11-27-agent-catalogue-tools.md):
+// the screen shows one catalogue at a time, a site's (`?site=<id>`) or the
+// company items without a site (`?site=company`, offered to the Books only once
+// the company's catalogue is assigned to its sites; before that they are shared
+// by every site). New products and collections go into the catalogue shown.
 
 import Link from 'next/link';
 import { Plus } from 'lucide-react';
@@ -19,14 +25,14 @@ import React, { useCallback, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SegmentedSwitch } from '@/app/projects/books/invoice/chrome';
-import { CatalogApiError, catalogApi } from '@/lib/catalog/api';
+import { CatalogApiError, catalogApi, type CatalogPlace } from '@/lib/catalog/api';
 import type { CollectionView, SiteView } from '@/lib/catalog/types';
 import { cn } from '@/lib/utils';
 
 import CollectionsTab from './CollectionsTab';
 import ProductPanel from './ProductPanel';
 import ProductTable, { BLOCKING } from './ProductTable';
-import { filtersFrom, queryWith, type Filters } from './state';
+import { COMPANY_ITEMS, filtersFrom, placeFrom, queryWith, type Filters } from './state';
 import { ErrorAlert, INPUT, errorText } from './ui';
 
 type Tab = 'products' | 'collections';
@@ -43,6 +49,8 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
   const [blocked, setBlocked] = useState<CatalogApiError | null>(null);
   const [collections, setCollections] = useState<CollectionView[] | null>(null);
   const [sites, setSites] = useState<SiteView[]>([]);
+  const [assigned, setAssigned] = useState(false);
+  const [metaLoaded, setMetaLoaded] = useState(false);
   const [types, setTypes] = useState<string[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
   const [adding, setAdding] = useState(false);
@@ -69,13 +77,38 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
   }, []);
 
   const loadMeta = useCallback(() => {
-    catalogApi.collections().then((r) => setCollections(r.items), fail);
     catalogApi.meta().then((m) => {
       setSites(m.sites);
       setTypes(m.productTypes);
+      setAssigned(m.assigned);
+      setMetaLoaded(true);
     }, fail);
   }, [fail]);
   useEffect(loadMeta, [loadMeta]);
+
+  // The catalogue shown, once the company's sites are known (undefined until then: nothing is listed or created before).
+  const resolved = metaLoaded ? placeFrom(params, sites.map((s) => s.id)) : null;
+  const place: CatalogPlace | undefined = resolved ? resolved.place : undefined;
+  const unknownSite = resolved?.unknown ?? null;
+  const placeName = place === undefined ? '' : place === null ? (assigned ? 'Company items' : 'Shared by all sites') : (sites.find((s) => s.id === place)?.name ?? '');
+
+  const loadCollections = useCallback(() => {
+    if (place === undefined) return;
+    catalogApi.collections(place).then((r) => setCollections(r.items), fail);
+  }, [place, fail]);
+  useEffect(() => {
+    setCollections(null);
+    loadCollections();
+  }, [loadCollections]);
+
+  /** Show another catalogue: its own list, so the open panels and the collection filter (of the old one) are dropped. */
+  function setPlace(next: CatalogPlace) {
+    const p = new URLSearchParams(params);
+    p.set('site', next === null ? COMPANY_ITEMS : next);
+    p.delete('product');
+    p.delete('collection');
+    navigate(p);
+  }
 
   const changed = useCallback(() => {
     setReloadKey((n) => n + 1);
@@ -121,8 +154,9 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
     }
     setCreating(true);
     setError(null);
+    if (place === undefined) return;
     try {
-      const product = await catalogApi.createProduct({ title: newTitle.trim(), kind: newKind });
+      const product = await catalogApi.createProduct(place, { title: newTitle.trim(), kind: newKind });
       setAdding(false);
       setNewTitle('');
       changed();
@@ -157,9 +191,34 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
               Projects
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight">Catalog</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">Products and services of this company, for its sites and its invoices.</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {place === undefined
+                ? 'Products and services of this company, for its sites and its invoices.'
+                : place === null
+                  ? assigned
+                    ? 'Products and services without a site: offered on your invoices, on no shop.'
+                    : 'Products and services every site of this company shares, unless switched off for a site.'
+                  : `Products and services of the shop on ${placeName}, also offered on your invoices.`}
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {metaLoaded ? (
+              <label className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Catalog of</span>
+                <select
+                  value={place === null ? COMPANY_ITEMS : (place ?? '')}
+                  onChange={(e) => setPlace(e.target.value === COMPANY_ITEMS ? null : e.target.value)}
+                  className={cn(INPUT, 'h-8 w-auto')}
+                >
+                  {sites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                  <option value={COMPANY_ITEMS}>{assigned ? 'Company items (invoices only)' : 'Shared by all sites'}</option>
+                </select>
+              </label>
+            ) : null}
             <SegmentedSwitch
               label="Catalog sections"
               value={tab}
@@ -169,7 +228,7 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
               ]}
               onChange={setTab}
             />
-            {tab === 'products' ? (
+            {tab === 'products' && place !== undefined ? (
               <Button type="button" onClick={() => setAdding((a) => !a)} aria-expanded={adding}>
                 <Plus aria-hidden /> Add product
               </Button>
@@ -207,9 +266,29 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
         ) : null}
 
         <ErrorAlert message={error} onDismiss={() => setError(null)} />
+        {unknownSite ? (
+          <p role="status" className="glass rounded-2xl px-4 py-3 text-sm">
+            The site in the address is not one of this company&rsquo;s sites (it may have been deleted).
+            {place ? ` Showing the catalog of ${placeName} instead.` : ' Showing the products without a site instead.'}
+          </p>
+        ) : null}
+        {metaLoaded && sites.length === 0 ? (
+          <p role="status" className="glass rounded-2xl px-4 py-3 text-sm">
+            This company has no site yet, so its products are offered on invoices only.{' '}
+            <Link href="/projects" className="underline underline-offset-4">
+              Create a site
+            </Link>{' '}
+            to sell them in a shop.
+          </p>
+        ) : null}
 
-        {tab === 'products' ? (
+        {place === undefined ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            Loading the catalog…
+          </p>
+        ) : tab === 'products' ? (
           <ProductTable
+            place={place}
             filters={filters}
             onFilters={setFilters}
             collections={collections ?? []}
@@ -224,10 +303,13 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
           />
         ) : (
           <CollectionsTab
+            place={place}
             collections={collections}
             open={openCollection}
             setOpen={openCollectionPanel}
-            onReload={() => catalogApi.collections().then((r) => setCollections(r.items), fail)} onBlocked={onBlocked} />
+            onReload={loadCollections}
+            onBlocked={onBlocked}
+          />
         )}
       </div>
 
@@ -237,6 +319,7 @@ export default function CatalogHome({ initialQuery = '' }: { initialQuery?: stri
           productId={openId}
           collections={collections ?? []}
           sites={sites}
+          assigned={assigned}
           productTypes={types}
           onClose={() => open(null)}
           onChanged={changed}
