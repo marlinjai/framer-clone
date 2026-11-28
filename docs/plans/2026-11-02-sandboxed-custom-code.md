@@ -1569,3 +1569,4 @@ belong to the 3D primitive alone.
 - Page-wide scripts in `head`: a block is always a node.
 - Running a React component's original source in a frame: the React import plan names it a later decision.
 - The 3D scene primitive itself: its own plan.
+<!-- ci-replay touch -->
