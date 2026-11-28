@@ -71,6 +71,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { BooksApiError, booksApi, type CatalogueItemView, type ContactPersonState, type ContactPersonView, type CustomerView, type DocumentDetail, type LineView } from '@/lib/books/api';
+import { catalogueSiteGroups, type CatalogueSiteGroup } from '@/lib/books/catalogueGroups';
 import { lineFromProduct } from '@/lib/books/products';
 import { money, parseMoney, parseQuantity } from '@/lib/books/units';
 import type { FieldRect, LayoutField } from '@/server/books/render/engine';
@@ -1281,11 +1282,12 @@ function LineActions({
 
 // The company's catalogue (GET /api/books/catalogue): every sellable variant of a product or service, drafts
 // included, archived ones never. A pick copies the item's values into a new line that keeps the variant as its
-// only reference (lineFromProduct).
+// only reference (lineFromProduct). With items of more than one site the list is grouped under each site's name
+// (catalogueSiteGroups), so the same product on two shops is told apart; the arrows walk the grouped order.
 function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => void; onClose: () => void }) {
   const [q, setQ] = useState('');
   // The answer, with the search it answers: Enter picks only from the answer to what is typed now.
-  const [result, setResult] = useState<{ q: string; items: CatalogueItemView[] } | null>(null);
+  const [result, setResult] = useState<{ q: string; items: CatalogueItemView[]; groups: CatalogueSiteGroup<CatalogueItemView>[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pickFirst = useRef(false);
   // The highlighted product (the combobox pattern: the focus stays in the search, the arrows move this).
@@ -1299,7 +1301,13 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => 
         .catalogue(query || undefined)
         // A new answer starts at its first product, in the same update that shows it: reset in an effect, it would
         // overwrite an arrow key pressed as the list appears.
-        .then((page) => !cancelled && (setResult({ q: query, items: page.items }), setActive(0), setError(null)))
+        .then((page) => {
+          if (cancelled) return;
+          const groups = catalogueSiteGroups(page.items, page.sites, page.assigned);
+          setResult({ q: query, items: groups.flatMap((g) => g.items), groups });
+          setActive(0);
+          setError(null);
+        })
         .catch((err: unknown) => !cancelled && setError(errorText(err)));
     }, 200);
     return () => {
@@ -1315,6 +1323,25 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => 
     }
   }, [current, result, onPick]);
   const option = (i: number) => `product-option-${i}`;
+  const productOption = (p: CatalogueItemView, i: number) => (
+    <li
+        key={p.variantId}
+        id={option(i)}
+        role="option"
+        aria-selected={i === active}
+        className={`flex cursor-pointer justify-between gap-3 rounded-lg px-2.5 py-2 text-[13px] ${i === active ? 'bg-accent' : ''}`}
+        // A press keeps the focus in the search, so the picker does not close before the pick.
+        onMouseDown={(e) => e.preventDefault()}
+        onMouseEnter={() => setActive(i)}
+        onClick={() => onPick(p)}
+      >
+        <span className="truncate font-medium">{p.title}</span>
+        <span className="shrink-0 tabular-nums text-muted-foreground">
+          {money(p.unitPrice)} / {p.unitLabel}
+          {p.priceBasis === 'gross' ? ' brutto' : ''}
+        </span>
+      </li>
+  );
   return (
     <div role="dialog" aria-label="Choose a product or service" className={`absolute left-0 top-9 z-30 w-80 rounded-xl border p-1.5 text-popover-foreground ${GLASS_SURFACE}`}>
       <label className="glass-inset flex items-center gap-2 rounded-lg px-2.5">
@@ -1365,25 +1392,22 @@ function ProductSearch({ onPick, onClose }: { onPick: (p: CatalogueItemView) => 
         </div>
       ) : null}
       <ul id="product-options" role="listbox" aria-label="Products and services" className="mt-1 max-h-64 overflow-y-auto empty:hidden">
-        {items?.map((p, i) => (
-          <li
-            key={p.variantId}
-            id={option(i)}
-            role="option"
-            aria-selected={i === active}
-            className={`flex cursor-pointer justify-between gap-3 rounded-lg px-2.5 py-2 text-[13px] ${i === active ? 'bg-accent' : ''}`}
-            // A press keeps the focus in the search, so the picker does not close before the pick.
-            onMouseDown={(e) => e.preventDefault()}
-            onMouseEnter={() => setActive(i)}
-            onClick={() => onPick(p)}
-          >
-            <span className="truncate font-medium">{p.title}</span>
-            <span className="shrink-0 tabular-nums text-muted-foreground">
-              {money(p.unitPrice)} / {p.unitLabel}
-              {p.priceBasis === 'gross' ? ' brutto' : ''}
-            </span>
-          </li>
-        ))}
+        {result && result.groups.length > 1
+          ? result.groups.map((g) => {
+              const first = result.items.indexOf(g.items[0]);
+              const headingId = `product-group-${g.siteId ?? 'none'}`;
+              return (
+                <li key={g.siteId ?? 'none'} role="presentation">
+                  <div id={headingId} className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {g.label}
+                  </div>
+                  <ul role="group" aria-labelledby={headingId}>
+                    {g.items.map((p, k) => productOption(p, first + k))}
+                  </ul>
+                </li>
+              );
+            })
+          : items?.map((p, i) => productOption(p, i))}
       </ul>
     </div>
   );

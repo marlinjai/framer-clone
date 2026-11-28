@@ -38,6 +38,7 @@ const item: CatalogueItemView = {
   taxClass: 'reduced',
   discountBp: 500,
   status: 'draft',
+  siteId: null,
 };
 
 describe('lineFromProduct', () => {

@@ -78,6 +78,16 @@ export interface CatalogueItemView {
   /** Basis points. */
   discountBp: number;
   status: 'draft' | 'published';
+  /** The main site whose shop the item belongs to, or null (a company item, or shared by all sites before the assignment). */
+  siteId: string | null;
+}
+
+/** The picker's answer: the items, and what names their sites (src/lib/books/catalogueGroups.ts). */
+export interface CataloguePage {
+  items: CatalogueItemView[];
+  sites: Array<{ id: string; name: string }>;
+  /** Whether the company's catalogue has been assigned to its sites. */
+  assigned: boolean;
 }
 
 export interface LineView {
@@ -413,7 +423,7 @@ export const booksApi = {
   updateCustomer: (id: string, body: unknown) => request<CustomerView>('PATCH', `/api/books/customers/${id}`, body),
   archiveCustomer: (id: string) => request<CustomerView>('DELETE', `/api/books/customers/${id}`),
   /** The catalogue's sellable items for a line (at most 50); `q` searches titles and descriptions. */
-  catalogue: (q?: string) => request<{ items: CatalogueItemView[] }>('GET', `/api/books/catalogue${query({ q })}`),
+  catalogue: (q?: string) => request<CataloguePage>('GET', `/api/books/catalogue${query({ q })}`),
   searchContacts: (search: string) =>
     request<{ items: ContactLabel[] }>('GET', `/api/books/contacts?search=${encodeURIComponent(search)}`),
   /** One page of documents (50 a page), optionally by number (contains) and issue year. */

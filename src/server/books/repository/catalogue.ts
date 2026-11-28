@@ -20,6 +20,11 @@
 //
 // Every query filters on the company on every joined table: another
 // company's products never appear, even within the same tenant group.
+//
+// Per project (migration 033): an item carries the site whose shop it belongs
+// to (`siteId`), or null for an item without a site. Every item is offered on
+// an invoice whatever its site; the picker groups them by site, so the same
+// product copied onto two shops is told apart (src/lib/books/catalogueGroups.ts).
 
 import { searchWords } from '@/lib/books/searchKey';
 
@@ -55,6 +60,14 @@ export interface CatalogueItem {
   discountBp: number;
   /** The catalogue status (a draft is offered too: the Books need no shop). */
   status: 'draft' | 'published';
+  /** The main site whose shop the item belongs to, or null (a company item, or shared by all sites before the assignment). */
+  siteId: string | null;
+}
+
+/** Whether the company's catalogue has been assigned to its sites (`catalogue_per_site`, migration 033). */
+export async function catalogueAssigned(scope: BooksScope): Promise<boolean> {
+  const row = await scope.db.selectFrom('catalogue_per_site').select('tenant_id').where('tenant_id', '=', scope.tenantId).executeTakeFirst();
+  return row !== undefined;
 }
 
 /**
@@ -127,6 +140,7 @@ export async function searchCatalogue(scope: BooksScope, q = ''): Promise<Catalo
       'product.price_basis as priceBasis',
       'product.tax_class as productTaxClass',
       'product.discount_bp as discountBp',
+      'product.site_id as siteId',
       'product_variant.id as variantId',
       'product_variant.title as variantTitle',
       'product_variant.tax_class as variantTaxClass',
@@ -167,5 +181,6 @@ export async function searchCatalogue(scope: BooksScope, q = ''): Promise<Catalo
     taxClass: lineTaxClass(r.variantTaxClass ?? r.productTaxClass),
     discountBp: r.discountBp,
     status: r.status === 'published' ? 'published' : 'draft',
+    siteId: r.siteId,
   }));
 }

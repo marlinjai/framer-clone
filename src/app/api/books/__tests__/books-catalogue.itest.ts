@@ -34,6 +34,8 @@ const state = vi.hoisted(() => ({
   contactBook: null as unknown,
   /** The relations the user holds on the workspace. */
   allowed: new Set<string>(['viewBooks', 'editBooks']),
+  /** The company's sites (a Prisma table, replaced here). */
+  sites: [] as Array<{ siteId: string; name: string }>,
 }));
 
 vi.mock('@/lib/auth-brain', () => ({
@@ -49,12 +51,17 @@ vi.mock('@/server/commerce/db', () => ({
   commerceTenantDbChecked: async () => state.db,
   isCommerceTenantNotProvisioned: () => false,
 }));
+vi.mock('@/server/sites', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/server/sites')>()),
+  getSiteRepository: () => ({ listSites: async () => state.sites }),
+}));
 vi.mock('@/server/books/http/dependencies', () => ({
   booksDependencies: () => ({ recipients: state.directory, contactBook: state.contactBook }),
 }));
 
 import type { CatalogueItemView } from '@/lib/books/api';
 import { foldKey } from '@/lib/books/searchKey';
+import { toJsonb } from '@/server/books/snapshots';
 import { lineFromProduct } from '@/lib/books/products';
 import { catalogRepository } from '@/server/commerce/repository/catalog';
 import { pricingRepository } from '@/server/commerce/repository/pricing';
@@ -115,6 +122,7 @@ async function newCompany(): Promise<string> {
 
 beforeEach(async () => {
   state.allowed = new Set(['viewBooks', 'editBooks']);
+  state.sites = [];
   await newCompany();
 });
 
@@ -311,6 +319,7 @@ describe('forward: search and pick', () => {
       taxClass: 'standard',
       discountBp: 500,
       status: 'draft',
+      siteId: null,
     });
     expect(items[1]).toMatchObject({ variantId: ring.variantIds[0], kind: 'product', unitPrice: 20000, priceBasis: 'net', taxClass: 'reduced', status: 'published' });
   });
@@ -381,6 +390,41 @@ describe('forward: search and pick', () => {
     const gross = await api.createDraft({ netOrGross: 'gross' });
     const inGross = await api.addLine(gross.json.document.id, { ...lineFromProduct(gold), quantity: 1000, expectedVersion: gross.json.document.version });
     expect(inGross.json.lines[0]).toMatchObject({ unitPrice: 21400, subtotal: 20000, taxAmount: 1400 });
+  });
+});
+
+describe('the catalogue per site (slice 2b part 3)', () => {
+  it("each item names its site; the answer carries the company's sites and whether its catalogue is assigned", async () => {
+    const { service, ring } = await sample();
+    state.sites = [
+      { siteId: 'site-bakery', name: 'Bakery' },
+      { siteId: 'site-catering', name: 'Catering' },
+    ];
+    await env.ownerDb.updateTable('product').set({ site_id: 'site-catering' }).where('tenant_id', '=', tenantId).where('id', '=', ring.productId).execute();
+
+    const before = await api.search();
+    expect(before.status).toBe(200);
+    expect(before.json.sites).toEqual([
+      { id: 'site-bakery', name: 'Bakery' },
+      { id: 'site-catering', name: 'Catering' },
+    ]);
+    expect(before.json.assigned).toBe(false);
+    const siteOf = (items: CatalogueItemView[]) => Object.fromEntries(items.map((i) => [i.variantId, i.siteId]));
+    expect(siteOf(before.json.items)).toEqual({
+      [service.variantIds[0]]: null,
+      [ring.variantIds[0]]: 'site-catering',
+      [ring.variantIds[1]]: 'site-catering',
+    });
+
+    await env.ownerDb.insertInto('catalogue_per_site').values({ tenant_id: tenantId, report: toJsonb({ synthetic: true }) }).execute();
+    // Assigned: every item is still offered on an invoice, whatever its site.
+    const after = await api.search();
+    expect(after.json.assigned).toBe(true);
+    expect(after.json.items).toHaveLength(3);
+
+    // Another company of the same group is not assigned by this company's mark.
+    await newCompany();
+    expect((await api.search()).json.assigned).toBe(false);
   });
 });
 
