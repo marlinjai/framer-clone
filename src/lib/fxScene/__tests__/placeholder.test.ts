@@ -76,3 +76,4 @@ describe('showFxPlaceholder', () => {
     expect(animate).not.toHaveBeenCalled();
   });
 });
+// ci-replay touch

@@ -407,3 +407,4 @@ describe('the canvas renderer decides where Live draws', () => {
     expect(store.editorUI.fxLiveStatus).toEqual({ state: 'idle' });
   });
 });
+// ci-replay touch

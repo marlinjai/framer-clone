@@ -230,3 +230,4 @@ describe('stillPixelRatio', () => {
     expect(200000 * 200000 * ratio * ratio).toBeLessThanOrEqual(STILL_PIXEL_BUDGET);
   });
 });
+// ci-replay touch

@@ -1271,3 +1271,4 @@ seven have a whole step, and each counts something whole:
 - the pixelate granularity.
 
 The pointer settings step 0.01 and 0.005.
+<!-- ci-replay touch -->

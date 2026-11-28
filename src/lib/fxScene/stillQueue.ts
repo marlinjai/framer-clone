@@ -240,3 +240,4 @@ export function whenBrowserIdle(run: () => void, timeout = 1000): () => void {
   const id = window.setTimeout(run, 50);
   return () => window.clearTimeout(id);
 }
+// ci-replay touch

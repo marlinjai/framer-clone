@@ -76,3 +76,4 @@ it('tuning a live scene: long tasks during a burst of edits and while the other 
   expect(await api<string>('(api) => api.fxLiveStatus()')).toBe('live');
   expect(crashes).toEqual([]);
 }, 180_000);
+// ci-replay touch
