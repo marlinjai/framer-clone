@@ -1162,3 +1162,4 @@ const Canvas = observer(() => {
 Canvas.displayName = 'Canvas';
 
 export default Canvas;
+// ci-replay touch
